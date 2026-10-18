@@ -80,6 +80,19 @@ export async function GET(req: NextRequest) {
     results.warrant_feed = { ok: false, error: e?.message || String(e) };
   }
 
+  // zzz1070 — also the home page's window (days=45): force=1 now writes the feed's shared last-good copy, so the home
+  // "Warrant" lane reads it at once instead of waiting on a cold NSE/BSE scan.
+  try {
+    const r = await railwaySelfFetch(`${origin}/api/v1/concall-intel/warrant-feed?days=45&force=1`, {
+      cache: 'no-store',
+      headers: { 'User-Agent': 'MC-Cron-ConcallWarm/1.0' },
+      signal: AbortSignal.timeout(90_000),
+    });
+    results.warrant_feed_home = r.ok ? { ok: true, count_relevant: (await r.json())?.count_relevant } : { ok: false, status: r.status };
+  } catch (e: any) {
+    results.warrant_feed_home = { ok: false, error: e?.message || String(e) };
+  }
+
   // Warm the keyword-watch feed
   try {
     const r = await railwaySelfFetch(`${origin}/api/v1/concall-intel/keyword-watch?days=14&force=1`, {

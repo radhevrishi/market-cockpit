@@ -18,7 +18,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextRequest, NextResponse } from 'next/server';
-import { swrGet, swrHeaders, privateCache, SwrUnusableError } from '@/lib/swr-cache';
+import { swrGet, swrHeaders, privateCache, SwrUnusableError, SwrPendingError } from '@/lib/swr-cache';
 import { railwaySelfFetch } from '@/lib/railway-self-fetch';
 import { extractFirstPdf } from '@/lib/pdf-text-extractor';
 import { analyzeTransformation } from '@/lib/transformation-analyzer';
@@ -141,7 +141,11 @@ export async function GET(req: NextRequest) {
 // never cached (zzz810 rule) and never replaces the last good scan. minPatterns is now part of the key (the old key
 // ignored it, so a request with a different floor could be served another floor's result).
 const SCREEN_FRESH_MS = CACHE_TTL * 1000;
-const SCREEN_MAX_STALE_MS = 24 * 3_600_000;
+// zzz1070 — last good scan kept 7 days (was 24 h: off-season, a day without a reader meant the next open scanned cold), and a
+// cold scan is awaited at most SCREEN_WAIT_MS: past it the reader gets an honest "building" answer (`building: true`) while the
+// scan finishes in the background and is served on the next ask. It used to hang the home page for 70 s+ ("radar returned nothing").
+const SCREEN_MAX_STALE_MS = 7 * 24 * 3_600_000;
+const SCREEN_WAIT_MS = 9_000;
 type Built = { payload: ScreenPayload; cacheable: boolean };
 async function handle(req: NextRequest, days: number, limit: number, minPatterns: number) {
   const sp = req.nextUrl.searchParams;
@@ -151,9 +155,13 @@ async function handle(req: NextRequest, days: number, limit: number, minPatterns
       key: `transform-screener:swr:v4:${days}:${limit}:${minPatterns}`, freshMs: SCREEN_FRESH_MS, maxStaleMs: SCREEN_MAX_STALE_MS, force: forceFresh,
       build: () => buildScreen(req, days, limit, minPatterns, forceFresh),
       isUsable: (b) => !!b && b.cacheable,
+      waitMs: forceFresh ? undefined : SCREEN_WAIT_MS,
     });
     return NextResponse.json(r.value.payload, { headers: swrHeaders(r, privateCache(120, 1800)) });
   } catch (e) {
+    if (e instanceof SwrPendingError) {
+      return NextResponse.json({ ...emptyPayload(days), building: true, error: undefined, message: 'Scanning the latest concalls — ask again in a minute' }, { headers: { 'Cache-Control': 'no-store', 'x-mc-cache': 'building' } });
+    }
     if (e instanceof SwrUnusableError && (e.value as Built | undefined)?.payload) return NextResponse.json((e.value as Built).payload);
     throw e;
   }
@@ -163,7 +171,13 @@ async function buildScreen(req: NextRequest, days: number, limit: number, minPat
   const origin = new URL(req.url).origin;
   // zzz810 — a forced Rescan also forces the feed, so an empty/failed feed
   // is re-fetched from NSE/BSE instead of re-read from cache.
-  const r = await railwaySelfFetch(`${origin}/api/v1/concall-intel/live-feed?days=${days}${forceFresh ? '&force=1' : ''}`, { cache: 'no-store' });
+  // zzz1070 — never wait on the feed forever (Railway does not enforce maxDuration): 45 s, then a "couldn't load" scan (not cached).
+  let r: Response;
+  try {
+    r = await railwaySelfFetch(`${origin}/api/v1/concall-intel/live-feed?days=${days}${forceFresh ? '&force=1' : ''}`, { cache: 'no-store', signal: AbortSignal.timeout(45_000) });
+  } catch (e: any) {
+    return { payload: emptyPayload(days, `Couldn't load the concall feed (${e?.name === 'TimeoutError' ? 'timed out' : 'unreachable'}) — retrying`), cacheable: false };
+  }
   if (!r.ok) return { payload: emptyPayload(days, `Couldn't load the concall feed (live-feed HTTP ${r.status}) — retrying`), cacheable: false };
   const data = await r.json();
   const filings: any[] = Array.isArray(data.filings) ? data.filings : [];

@@ -13,8 +13,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
-import { cachedRoute } from '@/lib/server-memo';   // zzz1053
-import { serverTiming } from '@/lib/server-timing';
+import { swrGet, swrHeaders, privateCache, SwrPendingError, SwrUnusableError } from '@/lib/swr-cache';   // zzz1070
 import { fetchNSEAnnouncements, fetchBSEAnnouncements, type FilingRecord } from '@/lib/nse-bse-feed';
 import { isUsableSubwindow } from '@/lib/concall-feed';
 import { extractFirstPdf } from '@/lib/pdf-text-extractor';
@@ -29,7 +28,7 @@ import {
 // count_relevant=0 due to over-budget early-break bug.
 // PATCH 0536 — v9 → v10 to flush the strict-gate cache (count_passing=0)
 // after gate-D promoter-premium-proxy was added and the floor dropped to 5.5.
-const CACHE_KEY = (days: number) => `warrant-feed:v10:days:${days}`;
+// zzz1070 — the answer cache is now `swr:warrant-feed:swr:v1:<days>` (see GET); the old `warrant-feed:v10:days:<n>` key is unused.
 const CACHE_TTL_SHORT = 5 * 60;
 const CACHE_TTL_LONG = 30 * 60;
 // PATCH 0422 — bumped 15 → 40 so more warrant candidates get full PDF
@@ -136,25 +135,31 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-async function warrantGET(req: NextRequest) {
-  try {
-    return await handleWarrantFeed(req);
-  } catch (err) {
-    // PATCH 0416 — Never return HTTP 500
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error('[warrant-feed] uncaught error', msg);
-    // PATCH zzz65 — sanitize error response (no raw msg leak to client).
-    return NextResponse.json({
-      generated_at: new Date().toISOString(),
-      count_total: 0, count_relevant: 0, count_passing: 0,
-      filings: [], ranked_all: [],
-      sources: { nse: 'NSE_BLOCKED', bse: 'BSE_BLOCKED' },
-      error: 'warrant-feed temporarily unavailable',
-    });
-  }
+/** zzz1070 — the query parameters (shared by the cached and the forced path). */
+function warrantParams(sp: URLSearchParams) {
+  // PATCH 0393 — max lookback bumped 30 → 60 days per user request
+  // PATCH 0405 — bumped 60 → 90 days for full-quarter view
+  // PATCH 0407 — bumped 90 → 180 days for historical validation
+  // PATCH zzz65 — NaN guards on numeric params so ?days=abc / ?threshold=foo
+  // can't poison downstream arithmetic.
+  const daysRaw = parseInt(sp.get('days') || '14');
+  const days = Math.min(180, Math.max(1, Number.isFinite(daysRaw) ? daysRaw : 14));
+  // PATCH 0392 — threshold default dropped 8 → 5 (ranking, not hard gate)
+  // PATCH 0536 — keep ranking floor at 5 but the hard passing gate in
+  // warrant-momentum.ts is now 5.5 (was 6.5); callers passing threshold=6.5
+  // get the old behaviour but the default surface is more permissive.
+  const thresholdRaw = parseFloat(sp.get('threshold') || '5');
+  const threshold = Number.isFinite(thresholdRaw) ? thresholdRaw : 5;
+  const passingOnly = sp.get('passingOnly') === '1';
+  // PATCH 0392 — top-N ranking mode (returns best N regardless of threshold)
+  const topNRaw = parseInt(sp.get('topN') || '0');
+  const topN = Number.isFinite(topNRaw) ? Math.max(0, Math.min(500, topNRaw)) : 0;
+  const force = sp.get('force') === '1';
+  return { days, threshold, passingOnly, topN, force };
 }
 
-async function handleWarrantFeed(req: NextRequest) {
+/** zzz1070 — the feed itself (NSE + BSE sub-windows, warrant filings, PDF scoring), without any answer-level cache. */
+async function buildWarrantPayload(days: number, force: boolean): Promise<WarrantFeedPayload> {
   // PATCH 0420 — Strict time budget to prevent Vercel 60s hard cap kills.
   // Hard cap is 60s; soft budget is 45s, bail out of expensive operations
   // (PDF extraction + per-filing async work) once exceeded and return what
@@ -162,31 +167,6 @@ async function handleWarrantFeed(req: NextRequest) {
   const STARTED_AT = Date.now();
   const TIME_BUDGET_MS = 45_000;
   const overBudget = () => Date.now() - STARTED_AT > TIME_BUDGET_MS;
-
-  // PATCH 0393 — max lookback bumped 30 → 60 days per user request
-  // PATCH 0405 — bumped 60 → 90 days for full-quarter view
-  // PATCH 0407 — bumped 90 → 180 days for historical validation
-  // PATCH zzz65 — NaN guards on numeric params so ?days=abc / ?threshold=foo
-  // can't poison downstream arithmetic.
-  const daysRaw = parseInt(req.nextUrl.searchParams.get('days') || '14');
-  const days = Math.min(180, Math.max(1, Number.isFinite(daysRaw) ? daysRaw : 14));
-  // PATCH 0392 — threshold default dropped 8 → 5 (ranking, not hard gate)
-  // PATCH 0536 — keep ranking floor at 5 but the hard passing gate in
-  // warrant-momentum.ts is now 5.5 (was 6.5); callers passing threshold=6.5
-  // get the old behaviour but the default surface is more permissive.
-  const thresholdRaw = parseFloat(req.nextUrl.searchParams.get('threshold') || '5');
-  const threshold = Number.isFinite(thresholdRaw) ? thresholdRaw : 5;
-  const passingOnly = req.nextUrl.searchParams.get('passingOnly') === '1';
-  // PATCH 0392 — top-N ranking mode (returns best N regardless of threshold)
-  const topNRaw = parseInt(req.nextUrl.searchParams.get('topN') || '0');
-  const topN = Number.isFinite(topNRaw) ? Math.max(0, Math.min(500, topNRaw)) : 0;
-  const force = req.nextUrl.searchParams.get('force') === '1';
-
-  const cacheKey = CACHE_KEY(days);
-  if (!force && isRedisAvailable()) {
-    const cached = await kvGet<WarrantFeedPayload>(cacheKey);
-    if (cached) return NextResponse.json(applyWarrantFilters(cached, { passingOnly, threshold, topN }));
-  }
 
   // PATCH 0408 — Long-window chunked fetch (same as live-feed). NSE
   // corp-announcements caps per-call rows; one 180-day request returns
@@ -503,13 +483,7 @@ async function handleWarrantFeed(req: NextRequest) {
     filings: deduped,
     sources: { nse: nseResult.source, bse: bseResult.source },
   };
-
-  if (isRedisAvailable()) {
-    const ttl = days <= 3 ? CACHE_TTL_SHORT : CACHE_TTL_LONG;
-    await kvSet(cacheKey, payload, ttl);
-  }
-
-  return NextResponse.json(applyWarrantFilters(payload, { passingOnly, threshold, topN }));
+  return payload;
 }
 
 function applyWarrantFilters(payload: WarrantFeedPayload, opts: { passingOnly: boolean; threshold: number; topN: number }): WarrantFeedPayload {
@@ -528,13 +502,36 @@ function applyWarrantFilters(payload: WarrantFeedPayload, opts: { passingOnly: b
   return { ...payload, filings, ranked_all };
 }
 
-// zzz1053 — when the 30-minute KV copy lapsed, the next page load rebuilt the feed in-line (NSE + BSE sub-windows, 1.7 s+). The
-// answer per query is now kept in memory 5 minutes and served while ONE rebuild runs behind it for up to 6 hours (its generated_at
-// says how old it is). force=1 always rebuilds; the "temporarily unavailable" answer is never kept.
+// zzz1070 — the feed (per window) lives in the shared stale-while-revalidate cache (memory + Redis, so a deploy no longer empties
+// it — zzz1053 kept it in process memory only, and a cold rebuild hung the home page for 70 s+ with "feed warming up"):
+// fresh 30 min (5 min for ≤ 3 days), last good kept 7 days and served at once while ONE rebuild runs; a cold rebuild is awaited
+// at most WARRANT_WAIT_MS, then the reader gets `building: true` and the rebuild finishes for the next ask. A feed where neither
+// exchange returned a filing is never kept. Filters (threshold / passingOnly / topN) are applied per request. force=1 rebuilds.
+const WARRANT_WAIT_MS = 9_000;
 export async function GET(req: NextRequest) {
-  const sp = new URLSearchParams(req.nextUrl.searchParams);
-  if (sp.get('force') === '1') return warrantGET(req);
-  const key = `warrant-feed|${[...sp.entries()].sort().map(([k, v]) => `${k}=${v}`).join('&')}`;
-  return cachedRoute(req, { key, freshMs: 5 * 60_000, staleMs: 6 * 3_600_000, handler: () => warrantGET(req), timing: serverTiming(),
-    cacheable: (a) => a.status === 200 && !a.text.includes('warrant-feed temporarily unavailable') });
+  const sp = req.nextUrl.searchParams;
+  const { days, threshold, passingOnly, topN, force } = warrantParams(sp);
+  const opts = { passingOnly, threshold, topN };
+  try {
+    // force=1 (the warm job, "rescan"): rebuild now, wait for it, and write it as the new last good copy.
+    const r = await swrGet<WarrantFeedPayload>({
+      key: `warrant-feed:swr:v1:${days}`, freshMs: (days <= 3 ? CACHE_TTL_SHORT : CACHE_TTL_LONG) * 1000, maxStaleMs: 7 * 24 * 3_600_000,
+      build: () => buildWarrantPayload(days, force), isUsable: (p) => !!p && Array.isArray(p.filings) && p.count_total > 0,
+      force, waitMs: force ? undefined : WARRANT_WAIT_MS,
+    });
+    return NextResponse.json(applyWarrantFilters(r.value, opts), { headers: swrHeaders(r, privateCache(120, 1800)) });
+  } catch (e) {
+    if (e instanceof SwrPendingError) {
+      return NextResponse.json({
+        generated_at: new Date().toISOString(), count_total: 0, count_relevant: 0, count_passing: 0, filings: [], ranked_all: [],
+        sources: { nse: 'PENDING', bse: 'PENDING' }, building: true, message: 'Reading the latest warrant filings — ask again in a minute',
+      }, { headers: { 'Cache-Control': 'no-store', 'x-mc-cache': 'building' } });
+    }
+    if (e instanceof SwrUnusableError && e.value) return NextResponse.json(applyWarrantFilters(e.value as WarrantFeedPayload, opts), { headers: { 'Cache-Control': 'no-store' } });
+    console.error('[warrant-feed] build failed', e instanceof Error ? e.message : String(e));
+    return NextResponse.json({
+      generated_at: new Date().toISOString(), count_total: 0, count_relevant: 0, count_passing: 0, filings: [], ranked_all: [],
+      sources: { nse: 'NSE_BLOCKED', bse: 'BSE_BLOCKED' }, error: 'warrant-feed temporarily unavailable',
+    }, { headers: { 'Cache-Control': 'no-store' } });
+  }
 }

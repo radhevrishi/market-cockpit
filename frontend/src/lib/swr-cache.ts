@@ -57,6 +57,10 @@ export interface SwrOptions<T> {
   lockTtlS?: number;
   /** Skip all cached layers and rebuild now (e.g. ?refresh=1). Still single-flight; still never caches an empty result. */
   force?: boolean;
+  /** zzz1070 — a synchronous (cold / too-old) build is awaited at most this long. Past it the request gets the too-old last-good
+   *  value (state 'stale', refreshing) when one exists, else SwrPendingError — while the build KEEPS RUNNING (single-flight) and
+   *  writes its result for the next request. Unset = wait for the build (old behaviour). */
+  waitMs?: number;
   store?: SwrStore;
   now?: () => number;
 }
@@ -135,6 +139,11 @@ export class SwrUnusableError extends Error {
   constructor(key: string, public readonly value?: unknown) { super(`swr: build for ${key} returned an empty/unusable payload; last-good kept`); this.name = 'SwrUnusableError'; }
 }
 
+/** zzz1070 — the build is still running after `waitMs` and there is no older value to serve: answer "being built, ask again". */
+export class SwrPendingError extends Error {
+  constructor(key: string) { super(`swr: ${key} is still being built`); this.name = 'SwrPendingError'; }
+}
+
 function refreshInBackground<T>(o: SwrOptions<T>, store: SwrStore, now: () => number, useMem: boolean, useKv: boolean): void {
   if (INFLIGHT.has(o.key) || REFRESHING.has(o.key)) return;
   REFRESHING.add(o.key);   // marked synchronously so concurrent stale requests in this instance start one refresh
@@ -192,9 +201,22 @@ export async function swrGet<T>(o: SwrOptions<T>): Promise<SwrResult<T>> {
 
   // cold, forced, or too old: build synchronously (shared per instance)
   try {
-    const built = await runBuild(o, store, now, useMem, useKv);
+    const p = runBuild(o, store, now, useMem, useKv);
+    let built: Envelope<T>;
+    if (o.waitMs != null && o.waitMs >= 0) {
+      p.catch(() => { /* a build that outlives the request reports through its own log */ });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const late = new Promise<'late'>((res) => { timer = setTimeout(() => res('late'), o.waitMs); });
+      const first = await Promise.race([p, late]).finally(() => { if (timer) clearTimeout(timer); });
+      if (first === 'late') {
+        if (env) return { value: env.value, state: 'stale', ageMs: Math.max(0, now() - env.ts), builtAt: env.ts, refreshing: true, source };
+        throw new SwrPendingError(o.key);
+      }
+      built = first as Envelope<T>;
+    } else built = await p;
     return { value: built.value, state: 'miss', ageMs: Math.max(0, now() - built.ts), builtAt: built.ts, refreshing: false, source: 'build' };
   } catch (e) {
+    if (e instanceof SwrPendingError) throw e;
     // too-old / forced rebuild failed: an honest old value beats an error, labelled stale with its real age
     let fallback = env;
     if (!fallback && o.force) {

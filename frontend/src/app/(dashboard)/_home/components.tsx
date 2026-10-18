@@ -1,7 +1,7 @@
 'use client';
 
 // Moved verbatim out of page.tsx (pure refactor, no behaviour change).
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import NavLink from '@/components/NavLink';   // zzz1052 — prefetch on hover / focus / press, not on scroll-into-view
 import { getConvictionList } from '@/lib/conviction-beats';
 import { fetchQuoteAutofill, calculatePE } from '@/lib/valuation-calculators';
@@ -240,6 +240,10 @@ export function DailySignalInbox() {
   const [transformWindowDays, setTransformWindowDays] = useState<number>(0);
   const [transformSeen, setTransformSeen] = useState<number>(0);
   const [laneStatus, setLaneStatus] = useState<Record<LaneKey, boolean>>({ momentum: false, warrant: false, transform: false, bench: false });
+  // zzz1070 — what a lane with no rows should say while its feed is being built or after it failed (never "warming up" forever).
+  const [laneNote, setLaneNote] = useState<Partial<Record<LaneKey, string>>>({});
+  const loadGen = useRef(0);
+  useEffect(() => () => { loadGen.current = -1; }, []);
 
   // zzz855 — `bypass` = a user click on Refresh/Fresh (skip the client TTL
   // cache); the first load on mount reuses whatever the page already fetched.
@@ -254,6 +258,23 @@ export function DailySignalInbox() {
       setSignals((prev) => [...prev.filter((s) => s.lane !== lane), ...rows]);
       setLaneStatus((prev) => ({ ...prev, [key]: rows.length > 0 || prev[key] }));
     };
+
+    // zzz1070 — a feed that answers `building: true` is asked again (past the client cache) every 20 s, up to 5 times; a newer
+    // load (Refresh) or leaving the page stops the loop. Returns the last answer (null = no answer at all).
+    const gen = ++loadGen.current;
+    const live = () => loadGen.current === gen;
+    const note = (k: LaneKey, text: string | undefined) => { if (live()) setLaneNote((p) => ({ ...p, [k]: text })); };
+    const poll = async (lane: LaneKey, url: string, ms: number): Promise<any | null> => {
+      let got: any = null;
+      for (let attempt = 0; attempt < 6 && live(); attempt++) {
+        got = await getJson<any>(url, { timeoutMs: ms, ttlMs: TTL_FEED, force: bypass || force || attempt > 0 });
+        if (!got?.building) break;
+        note(lane, attempt < 5 ? 'building — checking again shortly…' : undefined);
+        if (attempt < 5) await new Promise((r) => setTimeout(r, 20_000));
+      }
+      return live() ? got : null;
+    };
+    setLaneNote({});
 
     // ══ PHASE 1 · INSTANT (localStorage only) — the bench lane shows at once ══
     // zzz1052 — the "Quality pullbacks" lane (and its live-quote / 52-week-high passes) was removed at the owner's request.
@@ -309,8 +330,14 @@ export function DailySignalInbox() {
     });
 
     // WARRANT — 45d window (was 90d, which cold-scanned too many PDFs and stalled).
-    j('/api/v1/concall-intel/warrant-feed?days=45', 16000).then((warrant) => {
-      if (!warrant || warrant.error) return;
+    poll('warrant', '/api/v1/concall-intel/warrant-feed?days=45', 16000).then((warrant) => {
+      if (!live()) return;
+      if (!warrant || warrant.error || warrant.building) {
+        note('warrant', warrant?.building ? 'still building — press ↻ Refresh in a minute' : "couldn't load the warrant feed — press ↻ Refresh");
+        setLaneStatus((prev) => ({ ...prev, warrant: true }));
+        return;
+      }
+      note('warrant', undefined);
       const rows: InboxSignal[] = [];
       const all = (warrant.ranked_all && warrant.ranked_all.length ? warrant.ranked_all : warrant.filings) || [];
       const isDistress = (f: any) => /distress/i.test(f?.conviction?.tier || '') || (f?.conviction?.distress_probability ?? 0) >= 0.5;
@@ -344,25 +371,35 @@ export function DailySignalInbox() {
     // recent signal is worth more than an old one, then 90, then 120. The
     // widget states which window produced the result, so a lane filled from
     // 120 days can never be mistaken for a lane filled from this week.
+    // zzz1070 — the first window is days=60 & limit=80: the same scan the warm job and the Radar page keep (limit=60 was a scan of
+    // its own that nothing warmed, so every visit started it cold).
     const transformWindows = [
-      { days: 60, limit: 60 },
+      { days: 60, limit: 80 },
       { days: 90, limit: 200 },
       { days: 120, limit: 200 },
     ];
     (async () => {
       let transform: any = null;
       let usedDays = 0;
+      let building = false, failed = false;
       for (const w of transformWindows) {
-        const got = await j(
+        const got = await poll('transform',
           `/api/v1/concall-intel/transformation-screener?days=${w.days}&limit=${w.limit}${force ? '&refresh=1' : ''}`,
           force ? 55000 : 22000,
         );
-        if (got && !got.error) {
-          transform = got; usedDays = w.days;
-          if ((got.entries || []).length) break;   // stop at the first window that sees anything
-        }
+        if (!live()) return;
+        if (got?.building) { building = true; continue; }
+        if (!got || got.error) { failed = true; continue; }
+        transform = got; usedDays = w.days;
+        if ((got.entries || []).length) break;   // stop at the first window that sees anything
       }
-      if (!transform) { setLaneStatus((prev) => ({ ...prev, transform: true })); return; }
+      if (!transform) {
+        // zzz1070 — say WHY the lane is empty: still building, or the radar could not be read (never "returned nothing").
+        note('transform', building ? 'still building — press ↻ Refresh in a minute' : failed ? "couldn't load the radar — press ↻ Refresh" : undefined);
+        setLaneStatus((prev) => ({ ...prev, transform: true }));
+        return;
+      }
+      note('transform', undefined);
       setTransformWindowDays(usedDays);
       const rows: InboxSignal[] = [];
       const entries = transform.entries || [];
@@ -457,8 +494,10 @@ export function DailySignalInbox() {
                   </div>
                   {laneSignals.length === 0 ? (
                     <div style={{ fontSize: 10, color: DIM }}>{
-                      !laneStatus[lane.toLowerCase() as LaneKey]
-                        ? (lane === 'BENCH' ? 'no bench names yet' : 'feed warming up')
+                      laneNote[lane.toLowerCase() as LaneKey]
+                        ? laneNote[lane.toLowerCase() as LaneKey]
+                        : !laneStatus[lane.toLowerCase() as LaneKey]
+                        ? (lane === 'BENCH' ? 'no bench names yet' : 'loading…')
                         : lane === 'TRANSFORM'
                           // zzz724 — three genuinely different silences, and the
                           // widget used to print the most reassuring one over all
