@@ -36,7 +36,7 @@ async function readOne(t: string, stored: InRaw | null, name?: string): Promise<
   // zzz1090b — a BSE-only company has no page under its symbol: use the page slug the earnings engine already found for it
   // (KV screener-slug:v3:<SYMBOL>, usually the BSE code), else ask screener.in's company search (direct, like the engine does)
   let slug: string | null = null;
-  try { const c = await kvGet<string>(`screener-slug:v3:${t}`); if (c && c !== '-') slug = c; } catch { /* optional */ }
+  try { const c = await kvGet<unknown>(`screener-slug:v3:${t}`); if (c != null && String(c) && String(c) !== '-') slug = String(c); } catch { /* optional */ }   // a BSE code can come back as a number
   if (!slug) {
     const words = String(name || '').replace(/&amp;/g, '&').replace(/\b(ltd|limited|pvt|private|the)\b\.?/gi, ' ').replace(/[^A-Za-z0-9& ]+/g, ' ').trim().split(/\s+/).slice(0, 4).join(' ');
     for (const q of [t, words].filter(Boolean)) {
