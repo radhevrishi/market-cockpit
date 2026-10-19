@@ -267,6 +267,12 @@ async function withPage<T>(rows: unknown[], fn: (h: { act: any; click: (pred: (b
   const { createRoot } = await import('react-dom/client');
   Object.assign(globalThis, { self: dom.window, React, IS_REACT_ACT_ENVIRONMENT: true });
   (globalThis as any).fetch = async (u: string) => ({ ok: true, status: 200, json: async () => (u.includes('detail=') ? { ok: true, geometry: { D: [], W: [], M: [], L: [] } } : u.includes('/api/v1/pine-screener') ? { ok: true, builtAt: '2026-10-13T12:00:00Z', ...leanRows(rows as ScreenRow[]), notes: [] } : { ok: true }) });
+  // zzz1110 — the fixture's analysis dates are fixed (12 Oct 2026): the page reads "now" at 13 Oct, so the conditions do not
+  // turn "expired" as the calendar moves on (the test failed on 19 Oct only because of the date)
+  const RealDate = Date;
+  const FIXED = RealDate.parse('2026-10-13T15:00:00Z');
+  class FixedDate extends RealDate { constructor(...a: any[]) { if (a.length) super(...(a as [any])); else super(FIXED); } static now() { return FIXED; } }
+  (globalThis as any).Date = FixedDate;
   const root = createRoot(document.getElementById('root')!);
   const settle = () => new Promise<void>((r) => setTimeout(r, 30));
   const text = () => document.body.textContent || '';
@@ -279,6 +285,7 @@ async function withPage<T>(rows: unknown[], fn: (h: { act: any; click: (pred: (b
     return await fn({ act, click, text, settle, key });
   } finally {
     await act(async () => { root.unmount(); });
+    (globalThis as any).Date = RealDate;
     await new Promise<void>((r) => setTimeout(r, 3000));
     for (const [k, d] of old) { if (d) Object.defineProperty(globalThis, k, d); else delete (globalThis as any)[k]; }
     dom.window.close();

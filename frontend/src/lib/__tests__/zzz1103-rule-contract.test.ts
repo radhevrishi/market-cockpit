@@ -17,7 +17,7 @@ test('N07 — returned:false survives cleaning and keeps rejecting a breakout ba
   assert.equal(evalPattern(row('X'), cleaned).status, 'fail', 'back-below breakout rejected after the round trip');
   assert.equal(evalPattern(row('X'), { ...cleaned, returned: undefined }).status, 'pass', 'default still counts it');
   assert.equal(cleanPatternRule({ ...rule, returned: true }).returned, undefined, 'true stays the default (no change for old screens)');
-  const sigHold = ruleSignature({ ...rule } as Filter), sigAny = ruleSignature({ ...rule, returned: true } as Filter);
+  const sigHold = ruleSignature({ ...rule } as unknown as Filter), sigAny = ruleSignature({ ...rule, returned: true } as unknown as Filter);
   assert.notEqual(sigHold, sigAny);
   assert.match(patternRuleLabel(cleaned), /breakouts holding only/);
 });

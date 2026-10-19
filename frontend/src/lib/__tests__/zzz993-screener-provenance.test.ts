@@ -252,7 +252,7 @@ test('zzz993 lean rows: the rule-editor fields are sent, numbers rounded, repeat
   Object.assign(r, { pe: 23.456789, de: 0.0123456, avgVol60: 1234567, fs: 7, rsiW: 61.005 });
   const l = leanRows([r]);
   const lr = l.rows[0] as any;
-  assert.equal(lr.pe, 23.46); assert.equal(lr.de, 0.01235); assert.equal(lr.avgVol60, 1234567); assert.equal(lr.fs, 7); assert.equal(lr.px, 0.1235);
+  assert.equal(lr.pe, 23.46); assert.equal(lr.de, 0.01235); assert.equal(lr.avgVol60, 1234567); assert.equal(lr.fs, 7); assert.equal(lr.px, 0.123456);   // zzz1106 (N02): price levels travel at full precision
   assert.equal(lr.scan.v, undefined, 'current version is sent once (scanV)'); assert.equal(lr.scan.e, undefined);
   assert.equal(l.scanV, V); assert.equal(l.engine, null, 'fixture scan carries no engine version'); assert.equal(l.scanBasis, SCAN_BASIS); assert.equal(lr.scanBasis, undefined);
   assert.equal(lr.scanSrc, 'yahoo');

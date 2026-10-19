@@ -180,7 +180,7 @@ for (const [market, liveAt, afterAt] of [['US', '2026-10-13T18:00:00Z', '2026-10
     assert.ok((live.patLive || []).every((t) => t.lv === 1));
     // price figures: the live bar (scanPx), the completed ones apart (cc)
     assert.equal(live.scanAt, '2026-10-13'); assert.equal(live.scanPx, Number(b.c[n - 1].toPrecision(6)));
-    assert.ok(live.cc && live.cc.px === r2(b.c[n - 2]), 'cc = the completed session');
+    assert.ok(live.cc && live.cc.px === Number(b.c[n - 2].toPrecision(12)), 'cc = the completed session (zzz1106: full-precision close)');
     // the same bars after the close: one completed reading, no provisional one
     const after = techEntry(b, null, false, null, { market, now: new Date(afterAt) });
     assert.equal(after.scan!.session, 'completed'); assert.equal(after.patAt, '2026-10-13'); assert.equal(after.scanLive, undefined); assert.equal(after.patLive, undefined); assert.equal(after.cc, undefined);
