@@ -71,11 +71,11 @@ export function useSkyGoldFacts(keys: string[], names?: Record<string, string>):
 
 /** The score cell: '83 STRONG', 'not enough data', or '…' while the figures load. Click opens the breakdown. */
 export function SkyScoreCell({ s, waiting, open, onToggle, td }: { s: SkyScore | null; waiting: boolean; open: boolean; onToggle: () => void; td: React.CSSProperties }) {
-  if (!s) return <td style={{ ...td, color: R.dim, fontSize: 12 }}>{waiting ? 'reading figures…' : '—'}</td>;
+  if (!s) return <td data-c="sky" style={{ ...td, color: R.dim, fontSize: 12 }}>{waiting ? 'reading figures…' : '—'}</td>;
   const col = s.band ? SKY_BAND_COLOR[s.band] : R.grey;
   const tip = `${s.summary}${s.capNote ? `. ${s.capNote}` : ''}. Click for every check.`;
   return (
-    <td style={td}>
+    <td data-c="sky" style={td}>
       <button type="button" onClick={onToggle} aria-expanded={open} title={tip} style={{ all: 'unset', cursor: 'pointer', display: 'grid', gap: 2 }}>
         {s.score == null
           ? <span style={{ fontSize: 12, fontWeight: 700, color: R.grey, whiteSpace: 'nowrap' }}>not enough data</span>

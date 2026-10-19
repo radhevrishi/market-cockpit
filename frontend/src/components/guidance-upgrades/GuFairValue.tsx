@@ -12,15 +12,15 @@ export const FV_COLS = 3;
 export function FvCells({ fv, waiting, td }: { fv: FvResult | null; waiting: boolean; td: React.CSSProperties }) {
   if (!fv) {
     const w = waiting ? '…' : '—';
-    return <><td style={{ ...td, color: R.dim }}>{w}</td><td style={{ ...td, color: R.dim }}>{w}</td><td style={{ ...td, color: R.dim }}>{w}</td></>;
+    return <><td data-c="price" style={{ ...td, color: R.dim }}>{w}</td><td data-c="fair" style={{ ...td, color: R.dim }}>{w}</td><td data-c="upside" style={{ ...td, color: R.dim }}>{w}</td></>;
   }
   const tip = fvTooltip(fv);
   const dim: React.CSSProperties = { ...td, color: R.dim, whiteSpace: 'nowrap' };
   if (!fv.ok || !fv.base) {
     return (
       <>
-        <td style={{ ...td, whiteSpace: 'nowrap' }} title={fv.price != null ? `Price read from the company page / quote feed.` : tip}>{fmtPrice(fv.price, fv.currency)}</td>
-        <td colSpan={2} style={{ ...dim, whiteSpace: 'normal', fontSize: 11.5, fontStyle: 'italic' }} title={tip}>No fair value: {shortReason(fv.reason)}</td>
+        <td data-c="price" style={{ ...td, whiteSpace: 'nowrap' }} title={fv.price != null ? `Price read from the company page / quote feed.` : tip}>{fmtPrice(fv.price, fv.currency)}</td>
+        <td data-c="fair upside" colSpan={2} style={{ ...dim, whiteSpace: 'normal', fontSize: 11.5, fontStyle: 'italic' }} title={tip}>No fair value: {shortReason(fv.reason)}</td>
       </>
     );
   }
@@ -30,14 +30,14 @@ export function FvCells({ fv, waiting, td }: { fv: FvResult | null; waiting: boo
   const chk = fv.checks.length > 0;
   return (
     <>
-      <td style={{ ...td, whiteSpace: 'nowrap' }} title="Share price read from the company page / quote feed (see the fair-value hover for the day).">{fmtPrice(fv.price, fv.currency)}</td>
-      <td style={{ ...td, whiteSpace: 'nowrap' }} title={tip}>
+      <td data-c="price" style={{ ...td, whiteSpace: 'nowrap' }} title="Share price read from the company page / quote feed (see the fair-value hover for the day).">{fmtPrice(fv.price, fv.currency)}</td>
+      <td data-c="fair" style={{ ...td, whiteSpace: 'nowrap' }} title={tip}>
         <b>{fmtPrice(fv.base.fair, fv.currency)}</b>
         <div style={{ fontSize: 10.5, color: R.dim }}>{fmtPrice(fv.bear?.fair, fv.currency)} – {fmtPrice(fv.bull?.fair, fv.currency)}</div>
         <div style={{ fontSize: 10.5, color: R.dim }}>{fv.basis === 'history' ? 'Historical-growth model' : 'Guidance-based model'}</div>
         {fv.inputs.some((v) => v.includes('latest quarter × 4 used as the yearly base')) ? <div style={{ fontSize: 10.5, color: R.amber }}>Quarter ×4 base</div> : null}
       </td>
-      <td style={{ ...td, whiteSpace: 'nowrap' }} title={tip}>
+      <td data-c="upside" style={{ ...td, whiteSpace: 'nowrap' }} title={tip}>
         <b style={{ color: col }}>{fmtUpside(up)}</b>
         <div style={{ fontSize: 10.5, color: st.key === 'below' ? R.green : st.key === 'near' ? R.dim : R.amber, fontWeight: 700, whiteSpace: 'normal', maxWidth: 120, lineHeight: 1.25 }}>
           {st.label}{fv.marketPe != null && st.key === 'far-above' ? ` (~${Math.round(fv.marketPe)}× profit today)` : ''}

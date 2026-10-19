@@ -167,12 +167,16 @@ export interface GuLedgerRow {
   label?: string;
   change: 'INITIAL' | 'RAISED' | 'CUT' | 'REITERATED' | 'NARROWED_UP' | 'NARROWED_DOWN';
   result?: 'BEAT' | 'INLINE' | 'MISS' | 'PENDING' | 'UNKNOWN';
+  /** zzz1145: 'pp' when revisionPct is a growth-rate / margin change in percentage points, '%' for an amount */
+  revisionUnit?: 'pp' | '%';
   revisionPct?: number | null;     // additive: size of this revision in % (or pp for growth/margin metrics); null/absent = unknown
 }
 
 export interface GuHistoryStats {
   upgrades: number; downgrades: number; reiterations: number;
   avgRevisionPct: number | null;
+  /** zzz1145: average revision of growth-rate / margin guidance, in percentage points (kept apart from the % average) */
+  avgRevisionPp?: number | null;
   beatRateAfterUpgrades: number | null;   // 0..1, null when < 2 resolved results
   resolved: number;
 }

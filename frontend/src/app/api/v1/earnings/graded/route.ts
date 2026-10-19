@@ -36,7 +36,7 @@ import { serverTiming } from '@/lib/server-timing';
 // zzz1053 — the guidance documents index is read when this route is first loaded, not inside the first request (it waited up to 4 s)
 if (process.env.NEXT_PHASE !== 'phase-production-build') void prewarmInGuideIndex();
 import { swrGet, swrHeaders, privateCache, SwrUnusableError } from '@/lib/swr-cache';
-import { checkQuarterLabel, refetchTickers } from '@/lib/india-eo-card-data';  // zzz820 · zzz826
+import { checkQuarterLabel, refetchTickers, filedAwaitingFigures } from '@/lib/india-eo-card-data';  // zzz820 · zzz826
 import { filedFiguresPendingReason } from '@/lib/india-results-filing';   // zzz1068
 import { CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, marginQualityDelta, decideTier, marketReactionDelta, typicalDailyMovePct, thinFloatGate, quadrantForIndiaRow } from '@/lib/earnings-grade-shared';
 
@@ -1161,12 +1161,18 @@ async function gradedLegacyGET(req: Request) {
   // (and only those — the day's others keep the cache) are fetched with the
   // cache bypassed, in the same chunk size and route limits as refreshMissing.
   const refetchSet = new Set<string>();
-  if (force && searchParams.get('refetch') === '1' && isRedisAvailable()) {
+  const recheck = force && searchParams.get('refetch') === '1';
+  // zzz1146 — a company whose results are FILED but whose figures were not out yet when the day was last built ("filed — figures being
+  // read": Bajaj Finance, Hindustan Zinc, LTTS on 19 Oct, Screener still on the June quarter) is fetched again with the cache bypassed
+  // on EVERY rebuild of the day, so the next figure source (NSE filing, worker, Yahoo, results PDF) is tried instead of re-reading the
+  // cached June figures until tomorrow.
+  if (isRedisAvailable()) {
     try {
       for (const k of gradedKeyCandidates(date)) {
         const prior: any = await kvGet<any>(k);
         if (!prior?.by_tier) continue;
-        for (const t of refetchTickers(prior)) if (symbols.includes(t)) refetchSet.add(t);
+        if (recheck) for (const t of refetchTickers(prior)) if (symbols.includes(t)) refetchSet.add(t);
+        for (const t of filedAwaitingFigures(prior)) if (symbols.includes(t)) refetchSet.add(t);
         break;
       }
     } catch { /* best effort */ }

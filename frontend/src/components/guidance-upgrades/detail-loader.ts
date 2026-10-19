@@ -14,6 +14,8 @@ export class DetailLoader {
   private errors = new Map<string, string>();
   private inflight: { id: string; attempt: number; ctrl: AbortController; timer: ReturnType<typeof setTimeout> } | null = null;
   private attempt = 0;
+  /** zzz1143 (E2) — the newest attempt started for each event: an answer from an older attempt is dropped, never cached */
+  private latest = new Map<string, number>();
   requests = 0;
   constructor(private o: DetailLoaderOpts) {}
 
@@ -48,6 +50,7 @@ export class DetailLoader {
   /** A new event window: cached full records stay valid (same event ids), a running request is restarted by the next open. */
   private start(id: string, lean: unknown): void {
     const attempt = ++this.attempt; this.requests++;
+    this.latest.set(id, attempt);
     const ctrl = new AbortController();
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, this.o.deadlineMs ?? 20_000);
@@ -61,7 +64,9 @@ export class DetailLoader {
         const j = await r.json().catch(() => null);
         const ev = normalizeFullEvent(j?.event ? { ...(lean as object), ...j.event, lean: false } : null, id);
         if (!ev) throw new Error('the answer did not contain this event');
-        if (!mine()) { this.done.set(id, ev); return; }   // a finished answer is still a good cache entry
+        // not the running attempt: keep the answer only if it is the newest attempt for this event (closed before it arrived, nothing
+        // newer asked) and nothing is cached yet — an older answer arriving after a newer one never replaces it (evening verification E2)
+        if (!mine()) { if (this.latest.get(id) === attempt && !this.done.has(id)) this.done.set(id, ev); return; }
         this.done.set(id, ev); this.inflight = null; clearTimeout(timer); this.o.onChange();
       })
       .catch((e: any) => {

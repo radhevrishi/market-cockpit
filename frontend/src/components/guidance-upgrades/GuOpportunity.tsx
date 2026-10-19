@@ -22,20 +22,20 @@ export function OppHead({ sort, onSort }: { sort: string; onSort: () => void }) 
 export function OppCells({ o, waiting, open, onToggle, td }: { o: Opportunity | null; waiting: boolean; open: boolean; onToggle: () => void; td: React.CSSProperties }) {
   if (!o) {
     const w = waiting ? '…' : '—';
-    return <><td style={{ ...td, color: R.dim }}>{w}</td><td style={{ ...td, color: R.dim, fontSize: 12 }}>{waiting ? 'reading figures…' : '—'}</td></>;
+    return <><td data-c="eps" style={{ ...td, color: R.dim }}>{w}</td><td data-c="opp" style={{ ...td, color: R.dim, fontSize: 12 }}>{waiting ? 'reading figures…' : '—'}</td></>;
   }
   const ic = impliedCell(o);
   const col = o.band ? OPP_BAND_COLOR[o.band] : R.grey;
   const tip = `${o.summary}${o.capNote ? `. ${o.capNote}` : ''}. Click for every part.`;
   return (
     <>
-      <td style={{ ...td, whiteSpace: 'nowrap' }} title={o.implied.pct == null ? `Implied EPS growth not worked out: ${o.implied.reason}` : `${o.implied.basis}. EPS = net profit growth with the share count unchanged.`}>
+      <td data-c="eps" style={{ ...td, whiteSpace: 'nowrap' }} title={o.implied.pct == null ? `Implied EPS growth not worked out: ${o.implied.reason}` : `${o.implied.basis}. EPS = net profit growth with the share count unchanged.`}>
         <b style={{ color: o.implied.pct != null && o.implied.pct >= 20 ? R.green : undefined }}>{ic.main}</b>
         <div style={{ fontSize: 10.5, color: R.dim }}>{o.implied.pct == null ? '' : o.implied.approx ? 'Model estimate · fixed shares' : 'Guidance-based · fixed shares'}</div>
         {o.implied.basis.includes('capped at 100%') ? <div style={{ fontSize: 10.5, color: R.amber }}>Growth capped in model</div> : null}
         {ic.sub ? <div style={{ fontSize: 10.5, color: R.dim }}>{ic.sub}</div> : null}
       </td>
-      <td style={td}>
+      <td data-c="opp" style={td}>
         <button type="button" onClick={onToggle} aria-expanded={open} title={tip} style={{ all: 'unset', cursor: 'pointer', display: 'grid', gap: 2 }}>
           {o.score == null
             ? <span style={{ fontSize: 12, fontWeight: 700, color: R.grey, whiteSpace: 'nowrap' }}>not enough data</span>

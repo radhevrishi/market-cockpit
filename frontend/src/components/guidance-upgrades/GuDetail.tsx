@@ -67,7 +67,7 @@ export function GuDetail({ e, onClose, now }: { e: GuidanceEvent; onClose: () =>
             <tbody>{e.history.map((h, i) => <tr key={i} style={{ borderTop: `1px solid ${R.border}` }}><td>{h.date.slice(0, 10)}</td><td>{h.label || METRIC_LABEL[h.metric]}</td><td>{h.period}</td><td>{h.text}</td><td>{h.change.replace('_', ' ')}</td><td>{h.result || 'UNKNOWN'}</td></tr>)}</tbody>
           </table></div>)}
         <div style={{ marginTop: 6, fontSize: 12 }}>
-          {st ? <>Raises {st.upgrades} · cuts {st.downgrades} · repeated {st.reiterations} · average revision {st.avgRevisionPct == null ? UNAVAILABLE : `${st.avgRevisionPct.toFixed(1)}%`} · results beat after a raise {st.beatRateAfterUpgrades == null ? `${UNAVAILABLE} (fewer than 2 results known)` : `${Math.round(st.beatRateAfterUpgrades * 100)}% of ${st.resolved}`}</> : `Accuracy record: ${UNAVAILABLE}`}
+          {st ? <>Raises {st.upgrades} · cuts {st.downgrades} · repeated {st.reiterations} · average revision {st.avgRevisionPct == null && st.avgRevisionPp == null ? UNAVAILABLE : [st.avgRevisionPct != null ? `${st.avgRevisionPct.toFixed(1)}% (amounts)` : '', st.avgRevisionPp != null ? `${st.avgRevisionPp.toFixed(1)} points (growth rates / margins)` : ''].filter(Boolean).join(' · ')} · results beat after a raise {st.beatRateAfterUpgrades == null ? `${UNAVAILABLE} (fewer than 2 results known)` : `${Math.round(st.beatRateAfterUpgrades * 100)}% of ${st.resolved}`}</> : `Accuracy record: ${UNAVAILABLE}`}
         </div>
       </Section>
 

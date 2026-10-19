@@ -8,7 +8,7 @@ import { kvMGet, kvSet } from './kv';
 import { nextResultsDateIn, timingEffectsOf } from './guidance-upgrades';
 
 export interface DocFacts { nextResultsDate: string | null; timing: string[] | null; v: number }
-export const DOC_FACTS_VERSION = 1;
+export const DOC_FACTS_VERSION = 2;   // zzz1144: v2 — denied one-offs and boilerplate are no longer timing evidence
 const KEY = (id: string) => `gu-docfacts:v${DOC_FACTS_VERSION}:${id}`;
 const mem = new Map<string, DocFacts>();
 

@@ -480,6 +480,16 @@ export function cashRefetchRows(p: any): number {
  * year-ago quarter, or cash figures from an older rule. A plain rebuild would
  * read the enrichment cache and could re-serve the same figures.
  */
+/** zzz1146 — tickers the day's payload dropped as "filed — figures being read" (results filed, figures not out yet). Pure. */
+export function filedAwaitingFigures(p: any): string[] {
+  const out = new Set<string>();
+  for (const d of Array.isArray(p?._dropped) ? p._dropped : []) {
+    const t = String(d?.ticker || '').trim().toUpperCase();
+    if (t && d?.filed === true && /figures being read|numbers didn['’]t load/i.test(String(d?.reason || ''))) out.add(t);
+  }
+  return Array.from(out);
+}
+
 export function refetchTickers(p: any): string[] {
   const out = new Set<string>();
   for (const list of Object.values(p?.by_tier || {})) {

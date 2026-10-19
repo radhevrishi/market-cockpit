@@ -18,7 +18,14 @@ import { FvCells, FV_HEAD, FV_COLS } from './GuFairValue';
 import { opportunityScore, type Opportunity } from '@/lib/gu-opportunity';
 import { OppCells, OppHead, OppBreakdownRow, OPP_COLS } from './GuOpportunity';
 
-function FocusTable({ title, sub, head, empty, children, tableId }: { title: string; sub: string; head: React.ReactNode[]; empty: string; children: React.ReactNode; tableId?: 'A' | 'B' }) {
+/** zzz1142 (evening verification E1) — every header and cell carries its column's NAME (`data-c`), and Compact hides columns by name
+ *  (price, EPS estimate, source), never by position: a "no fair value" cell spanning two columns shifted the positions, so Compact hid
+ *  the Opportunity score and left the EPS estimate under the Opportunity heading. */
+/** Columns Compact hides, by name (see the CSS in gu-tokens). */
+export const COMPACT_HIDDEN = ['price', 'eps', 'source'];
+export const COLS_A = ['rank', 'company', 'raised', 'reported', 'price', 'fair', 'upside', 'eps', 'opp', 'sky', 'verdict'];
+export const COLS_B = ['rank', 'company', 'growth', 'source', 'reported', 'price', 'fair', 'upside', 'eps', 'opp', 'sky', 'verdict'];
+function FocusTable({ title, sub, head, colIds, empty, children, tableId }: { title: string; sub: string; head: React.ReactNode[]; colIds: string[]; empty: string; children: React.ReactNode; tableId?: 'A' | 'B' }) {
   const th: React.CSSProperties = { textAlign: 'left', padding: '6px 8px', fontSize: 11, fontWeight: 800, color: R.dim, borderBottom: `1px solid ${tint(R.grey, 40)}`, whiteSpace: 'nowrap' };
   const has = React.Children.toArray(children).length > 0;   // zzz906: toArray drops false / null
   return (
@@ -28,7 +35,7 @@ function FocusTable({ title, sub, head, empty, children, tableId }: { title: str
       {has ? (
         <div className="gu-scroll" role="region" aria-label={`${title} — scroll sideways for more columns`} tabIndex={0}>
           <table className="gu-focus-table" data-t={tableId} style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr>{head.map((h, i) => <th key={i} style={th}>{h}</th>)}</tr></thead>
+            <thead><tr>{head.map((h, i) => <th key={i} data-c={colIds[i]} style={th}>{h}</th>)}</tr></thead>
             <tbody>{children}</tbody>
           </table>
         </div>
@@ -111,6 +118,7 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
   // in the detail); "All columns" brings them back. Remembered in this browser.
   const [cols, setCols0] = useState<'compact' | 'all'>('compact');
   useEffect(() => { try { const v = localStorage.getItem('mc:gu-focus-cols:v1'); if (v === 'all' || v === 'compact') setCols0(v); } catch { /* blocked */ } }, []);
+  const hiddenIn = (ids: readonly string[]) => (cols === 'compact' ? ids.filter((c) => COMPACT_HIDDEN.includes(c)).length : 0);
   const setCols = (v: 'compact' | 'all') => { setCols0(v); try { localStorage.setItem('mc:gu-focus-cols:v1', v); } catch { /* blocked */ } };
   const uni = useGuUniverse({ market: 'ALL', view: 'active' });
   const { data } = uni;
@@ -207,7 +215,7 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
     const none = !k || (k in facts && facts[k] == null) || (skyFailed && !(k in facts));
     if (waiting || none) {
       return (
-        <td colSpan={FV_COLS + OPP_COLS + 1} data-keep data-figures={waiting ? 'reading' : 'none'} style={{ ...td, color: R.dim, fontSize: 12, fontStyle: 'italic' }}>
+        <td colSpan={FV_COLS + OPP_COLS + 1 - (cols === 'compact' ? 2 : 0)} data-c="figures" data-figures={waiting ? 'reading' : 'none'} style={{ ...td, color: R.dim, fontSize: 12, fontStyle: 'italic' }}>
           {waiting ? 'Reading company figures…' : r.market === 'IN' ? 'Company figures not on screener.in yet — the guidance above still counts' : 'Company figures not in the SEC filings yet — the guidance above still counts'}
         </td>
       );
@@ -279,7 +287,7 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
         <div style={{ fontSize: 13, color: R.dim }}>{uni.state === 'loading' ? 'Reading the guidance data…' : uni.state === 'error' && !events.length ? 'Nothing to show until the guidance data loads (see above).' : 'No names for this market in the current data.'}</div>
       ) : (<>
         <FocusTable tableId="A" title={`A. Raised their guidance (${raisedAll.length})`} sub={`Old and new figures both read from the company's own filing, ${window} window.${smallRaises ? ` ${smallRaises} small raise${smallRaises === 1 ? '' : 's'} (under 5%, or only EPS from a small base) left out.` : ''}`}
-          head={[<RankHead key="n" sort={sortA} onReset={() => setSortA('rank')} />, 'Company', 'What was raised (old → new)', <DateHead key="d" sort={sortA} onSort={() => setSortA((v) => (v === 'new' ? 'old' : 'new'))} />, ...FV_HEAD, 'EPS estimate (fixed shares)', <OppHead key="o" sort={sortA} onSort={() => setSortA((v) => (v === 'opp' ? 'rank' : 'opp'))} />, <ScoreHead key="s" sort={sortA} onSort={() => setSortA((v) => (v === 'score' ? 'rank' : 'score'))} />, 'Verdict']} empty="No raise of 5% or more in this window for this market.">
+          head={[<RankHead key="n" sort={sortA} onReset={() => setSortA('rank')} />, 'Company', 'What was raised (old → new)', <DateHead key="d" sort={sortA} onSort={() => setSortA((v) => (v === 'new' ? 'old' : 'new'))} />, ...FV_HEAD, 'EPS estimate (fixed shares)', <OppHead key="o" sort={sortA} onSort={() => setSortA((v) => (v === 'opp' ? 'rank' : 'opp'))} />, <ScoreHead key="s" sort={sortA} onSort={() => setSortA((v) => (v === 'score' ? 'rank' : 'score'))} />, 'Verdict']} colIds={COLS_A} empty="No raise of 5% or more in this window for this market.">
           {raisedRows.map((r, i) => (<React.Fragment key={r.key}>
             <tr>
               <td style={{ ...td, color: R.dim }}>{i + 1}</td>
@@ -294,19 +302,19 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
               {figuresCells(r)}
               <VerdictCell r={r} td={td} fv={fvs.get(r.key) ?? null} />
             </tr>
-            {skyOpen(r, 5 + 1 + FV_COLS + OPP_COLS)}
-            {oppOpen(r, 5 + 1 + FV_COLS + OPP_COLS)}
+            {skyOpen(r, COLS_A.length - hiddenIn(COLS_A))}
+            {oppOpen(r, COLS_A.length - hiddenIn(COLS_A))}
           </React.Fragment>))}
-          {raisedAll.length > FOCUS_STEP && <MoreRow shown={raisedRows.length} total={raisedAll.length} open={allA} onToggle={() => setAllA((v) => !v)} cols={5 + 1 + FV_COLS + OPP_COLS} />}
+          {raisedAll.length > FOCUS_STEP && <MoreRow shown={raisedRows.length} total={raisedAll.length} open={allA} onToggle={() => setAllA((v) => !v)} cols={COLS_A.length - hiddenIn(COLS_A)} />}
         </FocusTable>
         <FocusTable tableId="B" title={`B. Guiding 30%+ growth — no qualifying raise in this window (${growthAll.length})`} sub="Active guidance with 30%+ growth and no raise qualifying for table A in the selected window. This can include first guidance, repeats, older raises, or a small raise."
-          head={[<RankHead key="n" sort={sortB} onReset={() => setSortB('rank')} />, 'Company', 'Growth guided', 'Source', <DateHead key="d" sort={sortB} onSort={() => setSortB((v) => (v === 'new' ? 'old' : 'new'))} />, ...FV_HEAD, 'EPS estimate (fixed shares)', <OppHead key="o" sort={sortB} onSort={() => setSortB((v) => (v === 'opp' ? 'rank' : 'opp'))} />, <ScoreHead key="s" sort={sortB} onSort={() => setSortB((v) => (v === 'score' ? 'rank' : 'score'))} />, 'Verdict']} empty="No 30%+ growth guidance for this market.">
+          head={[<RankHead key="n" sort={sortB} onReset={() => setSortB('rank')} />, 'Company', 'Growth guided', 'Source', <DateHead key="d" sort={sortB} onSort={() => setSortB((v) => (v === 'new' ? 'old' : 'new'))} />, ...FV_HEAD, 'EPS estimate (fixed shares)', <OppHead key="o" sort={sortB} onSort={() => setSortB((v) => (v === 'opp' ? 'rank' : 'opp'))} />, <ScoreHead key="s" sort={sortB} onSort={() => setSortB((v) => (v === 'score' ? 'rank' : 'score'))} />, 'Verdict']} colIds={COLS_B} empty="No 30%+ growth guidance for this market.">
           {growthRows.map((r, i) => (<React.Fragment key={r.key}>
             <tr>
               <td style={{ ...td, color: R.dim }}>{i + 1}</td>
               <CompanyCell r={r} td={td} />
               <td style={td}><b style={{ color: r.growthTrust === 'derived' ? R.amber : R.green }}>{r.growth}</b><div style={{ fontSize: 11.5, color: R.dim }}>{r.growthPeriod || ''}{r.growthTrust === 'derived' ? <b style={{ color: R.amber }}> · worked out by us from company numbers — not a stated target</b> : ' · stated by company'}</div></td>
-              <td style={{ ...td, fontSize: 12 }}>
+              <td data-c="source" style={{ ...td, fontSize: 12 }}>
                 {r.growthSourceUrl && /^https?:\/\//i.test(r.growthSourceUrl) ? <a href={r.growthSourceUrl} target="_blank" rel="noopener noreferrer">{r.growthSource || 'Company document'}</a> : r.growthSource || 'Company document'}
                 <div style={{ fontSize: 11.5, color: r.growthFreshness === 'STALE' ? R.amber : R.dim }}>{r.growthTrust === 'derived' ? 'Derived from company figures' : 'Source verified'}{r.growthFreshness === 'STALE' ? ' · recheck required' : ''}</div>
                 <div style={{ fontSize: 11, color: R.dim }}>{typeof r.growthVerifiedDaysAgo === 'number' && Number.isFinite(r.growthVerifiedDaysAgo) && r.growthVerifiedDaysAgo >= 0 ? `Last verified ${r.growthVerifiedDaysAgo} days ago` : 'Verification age unavailable'}</div>
@@ -316,10 +324,10 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
               {figuresCells(r)}
               <VerdictCell r={r} td={td} fv={fvs.get(r.key) ?? null} />
             </tr>
-            {skyOpen(r, 6 + 1 + FV_COLS + OPP_COLS)}
-            {oppOpen(r, 6 + 1 + FV_COLS + OPP_COLS)}
+            {skyOpen(r, COLS_B.length - hiddenIn(COLS_B))}
+            {oppOpen(r, COLS_B.length - hiddenIn(COLS_B))}
           </React.Fragment>))}
-          {growthAll.length > FOCUS_STEP && <MoreRow shown={growthRows.length} total={growthAll.length} open={allB} onToggle={() => setAllB((v) => !v)} cols={6 + 1 + FV_COLS + OPP_COLS} />}
+          {growthAll.length > FOCUS_STEP && <MoreRow shown={growthRows.length} total={growthAll.length} open={allB} onToggle={() => setAllB((v) => !v)} cols={COLS_B.length - hiddenIn(COLS_B)} />}
         </FocusTable>
         {heldShown.length > 0 && (
           <div data-gu-held style={{ fontSize: 12, color: R.dim, display: 'grid', gap: 2 }}>

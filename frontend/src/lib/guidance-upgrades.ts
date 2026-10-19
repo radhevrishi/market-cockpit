@@ -852,6 +852,7 @@ function rowsFromChanges(changes: GuChange[], date: string): GuLedgerRow[] {
     return {
       date, metric: c.metric, period: c.after.period, text: fmtPoint(c.after), change, label: measureLabel(c.metric, c.after.raw, METRIC_LABEL[c.metric]),
       revisionPct: c.direction === 'UNKNOWN' ? null : (c.after.isGrowthRate ? c.percentagePointChange : c.percentageChange),
+      revisionUnit: c.after.isGrowthRate ? 'pp' as const : '%' as const,
     };
   });
 }
@@ -1184,6 +1185,7 @@ export function thesisLabel(x: { changes: GuChange[]; driver: GuDriverResult; te
 // ---------------------------------------------------------------------------------------------
 // 13. buildHistory + flags
 // ---------------------------------------------------------------------------------------------
+const RATE_METRICS = new Set<string>(['REVENUE_GROWTH', 'ORGANIC_GROWTH', 'OP_MARGIN', 'FCF_CONVERSION', 'CAPACITY_UTIL']);
 const isUp = (r: GuLedgerRow) => r.change === 'RAISED' || r.change === 'NARROWED_UP';
 const isDown = (r: GuLedgerRow) => r.change === 'CUT' || r.change === 'NARROWED_DOWN';
 export function buildHistory(ledger: GuLedgerRow[], current: GuLedgerRow[]): { rows: GuLedgerRow[]; stats: GuHistoryStats | null } {
@@ -1196,13 +1198,18 @@ export function buildHistory(ledger: GuLedgerRow[], current: GuLedgerRow[]): { r
   if (!rows.length) return { rows, stats: null };
   const upgrades = rows.filter(isUp).length; const downgrades = rows.filter(isDown).length;
   const reiterations = rows.filter(r => r.change === 'REITERATED').length;
-  const revs = rows.filter(r => (isUp(r) || isDown(r)) && r.revisionPct != null && isFinite(r.revisionPct as number)).map(r => r.revisionPct as number);
-  const avgRevisionPct = revs.length ? round(revs.reduce((a, b) => a + b, 0) / revs.length, 1) : null;
+  // zzz1145 — a growth rate / margin revision is in percentage POINTS, an amount revision in %: never averaged together
+  const revRows = rows.filter(r => (isUp(r) || isDown(r)) && r.revisionPct != null && isFinite(r.revisionPct as number));
+  const isPts = (r: GuLedgerRow) => (r.revisionUnit ? r.revisionUnit === 'pp' : RATE_METRICS.has(r.metric));
+  const amt = revRows.filter(r => !isPts(r)).map(r => r.revisionPct as number);
+  const pts = revRows.filter(isPts).map(r => r.revisionPct as number);
+  const avgRevisionPct = amt.length ? round(amt.reduce((a, b) => a + b, 0) / amt.length, 1) : null;
+  const avgRevisionPp = pts.length ? round(pts.reduce((a, b) => a + b, 0) / pts.length, 1) : null;
   const resolvedRows = rows.filter(r => isUp(r) && (r.result === 'BEAT' || r.result === 'INLINE' || r.result === 'MISS'));
   const resolved = resolvedRows.length;
   // beat rate counts BEAT only (meeting the raised guidance exactly is not a beat); null until 2+ resolved results
   const beatRateAfterUpgrades = resolved >= 2 ? round(resolvedRows.filter(r => r.result === 'BEAT').length / resolved, 3) : null;
-  return { rows, stats: { upgrades, downgrades, reiterations, avgRevisionPct, beatRateAfterUpgrades, resolved } };
+  return { rows, stats: { upgrades, downgrades, reiterations, avgRevisionPct, avgRevisionPp, beatRateAfterUpgrades, resolved } };
 }
 
 const DETERIORATION = /\b(?:margins? (?:pressure|compression|contraction|decline|dilution|erosion|squeeze)|(?:lower|declining|weaker|falling|shrinking) margins?|free cash flow (?:decline|declin\w+|fell|lower|negative|outflow)|(?:lower|negative|declining|weaker) (?:free )?cash flow|cash burn|working capital (?:strain|stress|build-?up))\b/i;
@@ -1319,8 +1326,35 @@ export function nextResultsDateIn(text: string | null | undefined, after: string
 }
 
 /** Timing / one-time effects named in the release (short phrases, at most 3), or null. */
+// zzz1144 (evening verification E3) — evidence is read sentence by sentence and only counts where it is meant: a sentence that DENIES
+// a one-off ("the quarter doesn't have any one-off") or is legal boilerplate ("forward-looking statements … risks") is never evidence,
+// and a one-time CHARGE in reported EPS is not a cause of a SALES guidance change (JNJ talc charge next to adjusted sales guidance).
+const ONEOFF_CUE = /\b(?:one[- ]?time|one[- ]?off|non[- ]?recurring|pull(?:ed|ing)?[- ](?:forward|in)|pulled ahead|timing of|milestone|upfront payment|catch[- ]up|exceptional|write[- ]?back)\b/i;
+const NEGATED_CUE = /\b(?:no|not|nor|never|without|excluding|excludes?|exclusive of|barring|absent|free of|doesn['’]?t|don['’]?t|didn['’]?t|isn['’]?t|wasn['’]?t|aren['’]?t|nothing)\b[^.;]{0,40}\b(?:one[- ]?time|one[- ]?off|non[- ]?recurring|pull(?:ed|ing)?[- ](?:forward|in)|timing|milestone|exceptional)\b|\b(?:one[- ]?time|one[- ]?off|non[- ]?recurring|exceptional)\b[^.;]{0,30}\b(?:excluded|not included|none)\b/i;
+const BOILERPLATE = /\b(?:forward[- ]looking statements?|safe harbou?r|risks? and uncertainties|could cause actual|may differ materially|private securities litigation reform|undue reliance)\b/i;
+const EARNINGS_ITEM = /\b(?:charges?|EPS|earnings per share|net (?:income|earnings|loss)|litigation|settlements?|impairments?|tax (?:benefit|charge|expense)|amorti[sz]ation|restructuring)\b/i;
+const SALES_WORD = /\b(?:revenues?|sales|top[- ]?line|turnover|orders?|shipments?|bookings?|volumes?|demand|purchas\w*)\b/i;
+const SALES_FAMILY = new Set<string>(['REVENUE', 'REVENUE_GROWTH', 'ORGANIC_GROWTH', 'ORDER_INTAKE', 'BACKLOG', 'VOLUME', 'PRODUCTION', 'CAPACITY_UTIL']);
+/** A sentence that is not evidence for any driver: a denied one-off, or legal boilerplate. Pure. */
+export function notEvidenceSentence(sn: string): boolean { return NEGATED_CUE.test(sn) || BOILERPLATE.test(sn); }
+/**
+ * The text a driver / durability / timing reading may use for these changes: denied one-offs and boilerplate removed; when every
+ * change is a sales-type measure, one-time sentences that talk about an earnings item (a charge, EPS, net income) and never about
+ * sales are moved to `context` (shown as separate context, never as the cause of the raise). Pure.
+ */
+export function causalEvidence(text: string | null | undefined, changes: ReadonlyArray<{ metric: string }>): { text: string; context: string[] } {
+  const salesOnly = changes.length > 0 && changes.every((c) => SALES_FAMILY.has(c.metric));
+  const keep: string[] = []; const context: string[] = [];
+  for (const sn of splitSentences(String(text || ''))) {
+    if (notEvidenceSentence(sn)) continue;
+    if (salesOnly && ONEOFF_CUE.test(sn) && EARNINGS_ITEM.test(sn) && !SALES_WORD.test(sn)) { context.push(sn.trim()); continue; }
+    keep.push(sn);
+  }
+  return { text: keep.join(' '), context };
+}
+
 export function timingEffectsOf(text: string | null | undefined): string[] | null {
-  const t = String(text || '').replace(/\s+/g, ' ');
+  const t = splitSentences(String(text || '').replace(/\s+/g, ' ')).filter((sn) => !notEvidenceSentence(sn)).join(' ');
   const re = /[^.]{0,80}\b(?:pull(?:ed|ing)?[- ](?:forward|in(?:to)?)|pulled ahead|accelerated (?:from|out of) (?:the )?(?:fourth|third|second|first|next|following) quarter|timing of (?:orders|shipments|revenue)|milestone payments?|one[- ]time|one[- ]off|non[- ]recurring|upfront payment|catch[- ]up (?:orders|revenue))\b[^.]{0,80}/gi;
   const out: string[] = [];
   for (const m of t.matchAll(re)) { const p = m[0].trim().replace(/^[,;:\s]+/, ''); if (p && !out.some((x) => x === p)) out.push(p.length > 160 ? `${p.slice(0, 157)}…` : p); if (out.length >= 3) break; }
@@ -1386,6 +1420,9 @@ export function driverNotStatedLine(e: Pick<GuidanceEvent, 'sources' | 'announce
 }
 function driverPhrase(e: GuidanceEvent): string | null {
   const v = e.v2?.operatingVariable;
+  // zzz1144 (E3) — WHY NOW agrees with the driver field: when the release names timing / one-time effects, say so
+  const st = /^Stated in the release: (.+?) — part of the raise may be timing or one-time/.exec(e.guidance_driver || '');
+  if (st) return `with the release naming ${st[1]} (timing or one-time effects — not a stated lasting driver)`;
   if (e.guidance_quality === 'UNKNOWN' || /not stated|unresolved|^stated operating/i.test(e.guidance_driver)) return v ? `driven by ${v}` : null;
   return `driven by ${e.guidance_driver.charAt(0).toLowerCase()}${e.guidance_driver.slice(1)}${v ? ` (stated: ${v})` : ''}`;
 }
@@ -1450,7 +1487,13 @@ export function whatItMeans(e: GuidanceEvent): string {
   }
   if (rev != null && prof != null && prof > rev)
     parts.push('Profit is rising faster than revenue. That points to operating leverage: extra sales add more profit because costs do not rise as fast.');
-  else if (rev != null && prof == null) parts.push('There is no profit guidance in the source, so we cannot say what this does to earnings.');
+  else if (rev != null && prof == null) {
+    // zzz1145 (evening verification E4) — an extraction gap is never a claim about the source: JNJ's release does give adjusted EPS guidance
+    const profOther = (e.otherChanges || []).find((c) => ['EPS', 'ADJ_EPS', 'NET_PROFIT', 'EBITDA', 'EBIT'].includes(c.metric));
+    parts.push(profOther
+      ? `Profit guidance is in the same release (${metricLabel(profOther)} ${fmtPoint(profOther.after)}${profOther.before ? `, from ${fmtPoint(profOther.before)}` : ''}) but is not part of this raise, so its effect on earnings is not worked out here.`
+      : 'No profit guidance was extracted into this record (the release may still give one), so we cannot say what this does to earnings.');
+  }
   return parts.join(' ');
 }
 
@@ -2217,10 +2260,12 @@ export function buildGuidanceEvent(input: GuCandidate[] | GuSkeleton, ctx: GuCon
   if (ups.length) changes = ups;
   const otherChanges = [...allChanges.filter(c => !changes.includes(c) && !!c.before && c.direction !== 'UNKNOWN'), ...bs.secondary];
   const ver = verificationOf(sk.sources);
-  const driver = classifyDriver(text);
-  const duration0 = classifyDuration(text, changes, driver);
-  const why = researchWhyNow(text, driver);
-  const dur2 = assessDurability(text, changes, driver, duration0, why);
+  // zzz1144 (E3): driver, durability and timing read only the sentences that can be evidence for THESE changes
+  const ce = causalEvidence(text, changes);
+  const driver = classifyDriver(ce.text);
+  const duration0 = classifyDuration(ce.text, changes, driver);
+  const why = researchWhyNow(ce.text, driver);
+  const dur2 = assessDurability(ce.text, changes, driver, duration0, why);
   const duration: GuDuration = duration0 === 'UNKNOWN' ? DUR_FROM_LEVEL[dur2.level] : duration0;
   const ranges: GuRangeMath[] = changes.map(c => {
     const r = computeRangeMath(c.before, c.after);
@@ -2321,8 +2366,12 @@ export function buildGuidanceEvent(input: GuCandidate[] | GuSkeleton, ctx: GuCon
   if (driver.quality === 'UNKNOWN' && why.variable) base.guidance_driver = `Stated operating drivers: ${why.variable}`;
   // zzz1117 (G05) — timing / one-time effects named in the release (MaxCyte: instrument orders pulled forward from Q4, a milestone
   // payment) are part of the driver, and such a raise is not assumed to last several quarters; an explicit next-results date is kept
-  const timing = timingEffectsOf(text) ?? sk.extracted?.facts?.timing ?? null;   // zzz1132: the document's own text when the event holds only quotes
-  if (timing) {
+  const timing = timingEffectsOf(ce.text) ?? (sk.extracted?.facts?.timing || []).filter((x) => !notEvidenceSentence(x) && !(changes.every((c) => SALES_FAMILY.has(c.metric)) && EARNINGS_ITEM.test(x) && !SALES_WORD.test(x))) ?? null;
+  if (ce.context.length) {
+    const ctx0 = ce.context[0].length > 180 ? `${ce.context[0].slice(0, 177)}…` : ce.context[0];
+    base.evidenceGaps.push(`Separate context (about earnings, not linked to this sales guidance): ${ctx0}`);
+  }   // zzz1132: the document's own text when the event holds only quotes
+  if (timing && timing.length) {
     const note = `${timing.join('; ')}`;
     base.guidance_driver = driver.quality === 'UNKNOWN' || /not stated|unresolved/i.test(base.guidance_driver)
       ? `Stated in the release: ${note} — part of the raise may be timing or one-time` : `${base.guidance_driver} Also stated: ${note} (timing / one-time).`;

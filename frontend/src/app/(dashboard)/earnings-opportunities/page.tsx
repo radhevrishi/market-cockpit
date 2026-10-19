@@ -1694,9 +1694,9 @@ export default function EarningsOpportunitiesPage() {
             // fires for today's date (see below). Past dates were getting
             // the same misleading "Re-checking automatically..." copy even
             // though no auto-retry was happening.
-            setRefreshFeedback(`⚠ ${stamp} · 0/${total} updated — NSE/BSE/Screener haven't published Q-data yet for ${tickerListFromServer()}. Auto-rechecking at 60s + 5min.`);
+            setRefreshFeedback(`⚠ ${stamp} · 0/${total} updated — no figure source (NSE filing data, screener.in, Yahoo, results PDF) has this quarter yet for ${tickerListFromServer()}. Auto-rechecking at 60s + 5min.`);
           } else if (ageDays >= 1 && ageDays <= 7) {
-            setRefreshFeedback(`⚠ ${stamp} · 0/${total} updated for ${tickerListFromServer()}. Screener.in's Cloudflare temporarily blocked these tickers from our server. NSE/BSE filings are in our KV — they'll enrich next time Screener accepts our request. Move on for now.`);
+            setRefreshFeedback(`⚠ ${stamp} · 0/${total} updated for ${tickerListFromServer()}. None of the figure sources had this quarter yet (NSE filing data, screener.in, our worker copy, Yahoo, the results PDF). The filing itself is stored; the figures are fetched again, cache bypassed, every time the day is rebuilt.`);
           } else if (ageDays >= 8) {
             setRefreshFeedback(`⚠ ${stamp} · 0/${total} updated — past-date sources rarely backfill. Use Coverage Probe ↓ for individual tickers, or move to a fresher date.`);
           } else {

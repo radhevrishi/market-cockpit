@@ -191,8 +191,8 @@ describe('4 · UNCONFIRMED rows: the re-check re-fetches and regrades (synthetic
   });
   test('so the re-check fetches those tickers with the enrichment cache bypassed', () => {
     const g = read('app', 'api', 'v1', 'earnings', 'graded', 'route.ts');
-    assert.match(g, /if \(force && searchParams\.get\('refetch'\) === '1' && isRedisAvailable\(\)\)/);
-    assert.match(g, /for \(const t of refetchTickers\(prior\)\) if \(symbols\.includes\(t\)\) refetchSet\.add\(t\);/);
+    assert.match(g, /const recheck = force && searchParams\.get\('refetch'\) === '1';/);   // zzz1146: the prior day is read on every rebuild
+    assert.match(g, /if \(recheck\) for \(const t of refetchTickers\(prior\)\) if \(symbols\.includes\(t\)\) refetchSet\.add\(t\);/);
     assert.match(g, /const r = await _enrichCall\(freshSyms\.slice\(i, i \+ REFETCH_CHUNK\), true\);/);
     assert.match(g, /\$\{nocache \? '&nocache=1' : ''\}/);
     const cron = read('app', 'api', 'v1', 'cron', 'prewarm-earnings', 'route.ts');

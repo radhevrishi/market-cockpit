@@ -8,7 +8,7 @@ const read = (p: string) => readFileSync(join(root, p), 'utf8');
 
 test('figures missing or loading → one merged cell, never six dashes', () => {
   const s = read('components/guidance-upgrades/GuFocusList.tsx');
-  assert.match(s, /colSpan=\{FV_COLS \+ OPP_COLS \+ 1\}/);
+  assert.match(s, /colSpan=\{FV_COLS \+ OPP_COLS \+ 1 - \(cols === 'compact' \? 2 : 0\)\}/);   // zzz1142: fewer columns in Compact
   assert.match(s, /Reading company figures…/);
   assert.match(s, /Company figures not on screener\.in yet/);
   const fv = read('components/guidance-upgrades/GuFairValue.tsx');
