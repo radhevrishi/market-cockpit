@@ -35,7 +35,7 @@ const MAX_RAW_EXTRAS = 64;
 
 /** What each extra indicator is, its default numbers and their names (shown in the settings). */
 export const EXTRA_INFO: Record<ExtraType, { label: string; pane: boolean; defaults: number[]; names: string[]; min: number[]; max: number[]; color: string }> = {
-  BOLL: { label: 'Bollinger Bands', pane: false, defaults: [20, 2], names: ['Length', 'Width (std dev)'], min: [2, 0.1], max: [400, 10], color: '#2962FF' },
+  BOLL: { label: 'Bollinger Bands', pane: false, defaults: [20, 2], names: ['Length', 'Width (std dev)'], min: [2, 0.1], max: [400, 10], color: '#8E24AA' },   // zzz1127: purple (Supertrend up is teal) — EMA 50 is #2962FF, the two read as one line (deep audit §6.1)
   ST: { label: 'Supertrend', pane: false, defaults: [10, 3], names: ['ATR length', 'Multiplier'], min: [1, 0.1], max: [200, 20], color: '#089981' },
   RSI: { label: 'RSI', pane: true, defaults: [14], names: ['Length'], min: [2], max: [200], color: '#7E57C2' },
   MACD: { label: 'MACD', pane: true, defaults: [12, 26, 9], names: ['Fast', 'Slow', 'Signal'], min: [1, 2, 1], max: [200, 400, 200], color: '#2962FF' },

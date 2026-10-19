@@ -133,3 +133,19 @@ export function compareCandidates(screens: readonly Screen[], currentId: string,
   const list = screens.filter((s) => s.id !== currentId && !off.has(s.id));
   return [...list.filter((s) => s.market === market), ...list.filter((s) => s.market !== market)];
 }
+
+/**
+ * zzz1124 (deep audit §6.7) — the difference between two screens in plain words, so variants such as "Super Scalers Full" vs "Main"
+ * read as "B adds the buyback and YTD limits; B allows equal averages" instead of only a rule table. `label` turns a rule into its
+ * text (the page passes filterLabel). At most `max` items per sentence; the table below keeps every rule. Pure.
+ */
+export function rulesInWords(r: RuleCompare, label: (f: Filter) => string, max = 6): string[] {
+  const list = (fs: readonly Filter[]) => { const t = fs.map(label); return t.length > max ? `${t.slice(0, max).join('; ')} and ${t.length - max} more` : t.join('; '); };
+  const out: string[] = [];
+  if (!r.changed.length && !r.onlyA.length && !r.onlyB.length) return ['The two screens apply the same rules.'];
+  if (r.onlyA.length) out.push(`Only A has: ${list(r.onlyA)}.`);
+  if (r.onlyB.length) out.push(`Only B has: ${list(r.onlyB)}.`);
+  if (r.changed.length) out.push(`Same field, different limit: ${r.changed.slice(0, max).map((c) => `A “${label(c.a)}” vs B “${label(c.b)}”`).join('; ')}${r.changed.length > max ? ` and ${r.changed.length - max} more` : ''}.`);
+  out.push(`${r.shared.length} rule${r.shared.length === 1 ? ' is' : 's are'} identical.`);
+  return out;
+}

@@ -32,7 +32,7 @@ import {
   querySummary, presetLine, scopeCoverage, coverageLine, chipApplicability, unsupportedNotice, familyOf, latestConditions, lengthDays, lengthTip,
   analysisOf, sessionLabel, chartIdentityParams, ANALYSIS_CSV_HEAD, analysisCsvCells, listCoverageRows, withCarriedR40, scopeAfterScreen, scopePicked, r40AfterScreen, r40WasUser, type ScopeState,
   queryRebuild, setupRebuild, tfCoverageWarnings, technicalSession, conflictWords,
-  NO_STAGE_TEXT, ALL_TYPES_TEXT, conditionState, WORKFLOWS, workflowScope, stagesDiffer, presetStages, screenFunnel, perfPath, stageTip, stageWindowText,
+  NO_STAGE_TEXT, ALL_TYPES_TEXT, conditionState, WORKFLOWS, uniqueWorkflows, aliasListToRows, notInDataReason, workflowScope, stagesDiffer, presetStages, screenFunnel, perfPath, stageTip, stageWindowText,
   type PineHandoff, type Workflow, type SetupCard, type PortfolioMode,
 } from '@/lib/screener/pine-view';
 import { loadHoldings, localIndiaHoldings } from '@/lib/screener/portfolio-scope';
@@ -443,7 +443,8 @@ export default function PineScreener() {
     if (k === 'stock') return sc === scope ? !stockSet && !stockData[market]?.error : !userStock && !stockData[market]?.error;
     return false;
   }, [hold, scope, stockSet, userStock, stockData, market]);
-  const listTickers = useMemo<Set<string> | null>(() => tickersFor(scope), [tickersFor, scope]);
+  // zzz1126 (S02) — "MOG-A" in a list is "MOG.A" in the data
+  const listTickers = useMemo<Set<string> | null>(() => aliasListToRows(tickersFor(scope), rows), [tickersFor, scope, rows]);
   const scopeName = kind === 'cb' ? 'Conviction Beats' : kind === 'portfolio' ? 'My portfolio' : kind === 'stock' ? (stockScreen ? `Stock screen “${stockScreen.name}”` : 'a Stock screen')
     : kind === 'tech' ? `${TECH_LIST_LABEL[market]}${techBy[market]?.source === 'server' ? ' (server files)' : ''}` : kind === 'hand' ? `From the Stock Screener: ${handoff?.label || ''}` : watchlists?.lists.find((x) => `wl:${x.id}` === scope)?.name || '';
   const scopeWaiting = (kind === 'tech' && !techBy[market]) || (kind === 'stock' && !stockSet && !stockData[market]?.error) || (kind === 'portfolio' && hold?.status === 'loading' && !hold.tickers.length);
@@ -804,7 +805,7 @@ export default function PineScreener() {
       {/* zzz1011 — one-click workflows (each opens its screen with its company list; the count is on that list) */}
       <nav className="pnx-flows" aria-label="Workflows" data-testid="workflows">
         <span className="pnx-lab" style={{ marginRight: 2 }}>Workflows</span>
-        {WORKFLOWS.map((w) => {
+        {uniqueWorkflows().map((w) => {
           const n = wfCounts[w.id];
           const on = view === 'setups' && !dirty && screenId === w.presetId && (w.scope !== 'pf' || scope === 'pf') && (w.scope !== 'wl' || scope.startsWith('wl:'));
           return (
@@ -1117,7 +1118,7 @@ export default function PineScreener() {
               {showDetails && snap && scopeCov ? (
                 <div className="pnx-note" data-testid="coverage" style={{ display: 'grid', gap: 1 }}>
                   {scopeCov.perTf.map((c) => <div key={c.tf} data-tf={c.tf}>{coverageLine(c)}</div>)}
-                  <div>{kind === 'all' ? `${scopeCov.inData.toLocaleString('en-US')} companies in the ${market === 'IN' ? 'Indian' : 'US'} data` : `${scopeName}: ${scopeCov.inData} in the data${scopeCov.notInData.length ? `, ${scopeCov.notInData.length} not in the data (${scopeCov.notInData.slice(0, 8).join(', ')}${scopeCov.notInData.length > 8 ? '…' : ''})` : ''}`}{builtAt ? ` · data built ${builtAt.toLocaleString()}` : ''}</div>
+                  <div>{kind === 'all' ? `${scopeCov.inData.toLocaleString('en-US')} companies in the ${market === 'IN' ? 'Indian' : 'US'} data` : `${scopeName}: ${scopeCov.inData} in the data${scopeCov.notInData.length ? `, ${scopeCov.notInData.length} not in the data (${scopeCov.notInData.slice(0, 8).map((t) => `${t}: ${notInDataReason(t, market)}`).join('; ')}${scopeCov.notInData.length > 8 ? '…' : ''})` : ''}`}{builtAt ? ` · data built ${builtAt.toLocaleString()}` : ''}</div>
                 </div>
               ) : null}
               {snap && qRebuild.state !== 'ok' ? (

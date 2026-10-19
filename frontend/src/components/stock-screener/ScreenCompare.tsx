@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ScreenMarket, ScreenRow } from '@/lib/screener/types';
 import { fieldOf, filterLabel, type Filter, type Screen } from '@/lib/screener/filters';
-import { compareCandidates, compareScreens } from '@/lib/screener/screen-compare';
+import { compareCandidates, compareScreens, rulesInWords } from '@/lib/screener/screen-compare';
 import { tvSectorOf } from '@/lib/screener/tv-sectors';
 
 const mk = (m: ScreenMarket) => (m === 'US' ? 'USA' : 'India');
@@ -78,6 +78,10 @@ export default function ScreenCompare({ screens, current, currentId, rows, other
           </div>
           {!res.marketsDiffer ? <div>{res.both.toLocaleString('en-US')} companies are in both results · {res.onlyInACount.toLocaleString('en-US')} only in A · {res.onlyInBCount.toLocaleString('en-US')} only in B</div> : null}
 
+          <div data-compare-words style={{ display: 'grid', gap: 2 }}>
+            <div className="mcss-h4" style={{ marginTop: 0 }}>In plain words</div>
+            {rulesInWords(res.rules, (f) => lbl(f, current.market)).map((t, i) => <div key={i}>{t}</div>)}
+          </div>
           <div>
             <div className="mcss-h4" style={{ marginTop: 0 }}>Rules in both · {res.rules.shared.length}</div>
             {res.rules.shared.length ? <ul className="mcss-checks">{res.rules.shared.map((f, i) => <li key={i}><span aria-hidden className="ok">=</span><span>{lbl(f, current.market)}</span></li>)}</ul> : <div className="mcss-dim">None.</div>}

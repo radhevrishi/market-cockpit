@@ -970,3 +970,31 @@ export function perfPath(r: Partial<ScreenRow>): Array<{ at: string; v: number }
   pts.push({ at: 'now', v: 1 });
   return pts.length >= 3 ? pts : null;
 }
+
+/** zzz1125 (deep audit §6) — a workflow chip that only repeats a top card (same screen, no list of its own: "Monthly bases") is not shown
+ *  twice; the screen and its card stay. */
+export function uniqueWorkflows(flows: readonly Workflow[] = WORKFLOWS, cards: ReadonlyArray<{ presetId: string }> = SETUP_CARDS): Workflow[] {
+  const onCards = new Set(cards.map((c) => c.presetId));
+  return flows.filter((w) => !!w.scope || !onCards.has(w.presetId));
+}
+
+/** zzz1126 (deep audit S02) — a list ticker written with another class-share separator than the data ("MOG-A" in the book, "MOG.A" in the
+ *  data) is the same instrument: map it to the data's spelling. Only '-' ↔ '.' between letters is tried; nothing else is guessed. Pure. */
+export function aliasListToRows(list: ReadonlySet<string> | null, rows: ReadonlyArray<{ t: string }>): Set<string> | null {
+  if (!list) return null;
+  const have = new Set(rows.map((r) => r.t.toUpperCase()));
+  const out = new Set<string>();
+  for (const raw of list) {
+    const t = raw.toUpperCase();
+    if (have.has(t)) { out.add(t); continue; }
+    const dot = t.replace(/([A-Z])-([A-Z])$/, '$1.$2'), dash = t.replace(/([A-Z])\.([A-Z])$/, '$1-$2');
+    out.add(have.has(dot) ? dot : have.has(dash) ? dash : t);
+  }
+  return out;
+}
+/** Why a list member is not in the screener data, in plain words (the screen cannot evaluate it). */
+export function notInDataReason(t: string, market: 'IN' | 'US'): string {
+  if (market === 'US' && /^[A-Z]+[.-][A-Z]$/i.test(t)) return 'class share — not in the screener data under this name';
+  if (market === 'US') return 'not in the US screener data (it covers US-listed common stock; ADRs / ADS, funds and very small listings are left out)';
+  return 'not in the India screener data (a BSE-only, suspended or newly listed company may be missing)';
+}

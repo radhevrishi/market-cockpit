@@ -318,7 +318,7 @@ test('zzz1011 page (JSDOM): Breakouts → W → W+M keeps the stage; Restore pre
     assert.equal(Array.from(document.querySelectorAll('button')).some((b) => b.textContent === 'Restore preset stages'), false, 'gone once they match');
     // workflows: one click each, with their counts
     const flow = (id: string) => document.querySelector(`[data-flow="${id}"]`) as HTMLButtonElement;
-    assert.equal(document.querySelectorAll('[data-flow]').length, 14);   // zzz1047: + Stage 2 weakening in my portfolio   // zzz1046a: + accumulation / distribution in my portfolio
+    assert.equal(document.querySelectorAll('[data-flow]').length, 12);   // zzz1125: the two chips that repeated a top card (Monthly bases, W+M+strong result) are not shown twice   // zzz1047: + Stage 2 weakening in my portfolio   // zzz1046a: + accumulation / distribution in my portfolio
     assert.equal(flow('bo-back').querySelector('[data-flow-count]')!.textContent, '1');
     await click((b) => b.getAttribute('data-flow') === 'bo-back');
     assert.deepEqual(listed(), ['NOW']);

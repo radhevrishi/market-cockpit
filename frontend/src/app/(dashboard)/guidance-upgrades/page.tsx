@@ -4,7 +4,7 @@
 // compared with expectations, valued, and ended with ONE decision (or UNVERIFIED). One fetch, no AI on load.
 // My Book is read in this browser only (same sources as the Radar) and overlaid here; the server never sees it.
 // ═══════════════════════════════════════════════════════════════════════════
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { GuWindow, GuidanceUpgradesResponse } from '@/lib/guidance-upgrades-types';
 import { applyFilters, splitToday, zeroEventWording, unresolvedCount, type MetricFilter, type ScopeFilter } from '@/lib/guidance-upgrades-format';
 import { overlayBook, countInBook } from '@/lib/guidance-upgrades-book';
@@ -29,6 +29,7 @@ import { GuPanel } from '@/components/guidance-upgrades/GuPanel';
 import { GuUpgradeAudit } from '@/components/guidance-upgrades/GuIntegrityAudit';
 import { GuNameCheck } from '@/components/guidance-upgrades/GuNameCheck';
 import { readCacheAsync, writeCache, FRESH_MS, ageText } from '@/lib/gu-client-cache';
+import { GU_WORKSPACES, GU_WS_KEY, parseWorkspace, sectionShown, type GuWorkspace } from '@/lib/gu-workspace';
 
 export default function GuidanceUpgradesPage() {
   const [window_, setWindow] = useState<GuWindow>('7D');
@@ -45,6 +46,20 @@ export default function GuidanceUpgradesPage() {
   const [openId, setOpenId] = useState<string | null>(null);
   const [ggOpen, setGgOpen] = useState<GgCompany | null>(null);
   const now = useMemo(() => new Date(), [data]);
+  // zzz1123 — four workspaces (URL ?ws= first, then this browser's last choice, then Focus)
+  const [ws, setWs0] = useState<GuWorkspace>('focus');
+  useEffect(() => {
+    let w: GuWorkspace | null = null;
+    try { w = parseWorkspace(new URLSearchParams(window.location.search).get('ws')); } catch { /* none */ }
+    if (!w) try { w = parseWorkspace(localStorage.getItem(GU_WS_KEY)); } catch { /* blocked */ }
+    if (w) setWs0(w);
+  }, []);
+  const setWs = useCallback((w: GuWorkspace) => {
+    setWs0(w);
+    try { localStorage.setItem(GU_WS_KEY, w); } catch { /* blocked */ }
+    try { const u = new URL(window.location.href); u.searchParams.set('ws', w); window.history.replaceState(null, '', u.toString()); } catch { /* cosmetic */ }
+  }, []);
+  const vis = (sec: Parameters<typeof sectionShown>[1]): CSSProperties | undefined => (sectionShown(ws, sec) ? undefined : { display: 'none' });
 
   const acRef = useRef<AbortController | null>(null);
   const load = useCallback(async (w: GuWindow, force = false) => {
@@ -169,11 +184,21 @@ export default function GuidanceUpgradesPage() {
       )}
       {refreshing && data && <div className="gu-noprint" style={{ fontSize: 11.5, color: R.dim }}>Showing the saved copy from {ageText(Date.now() - new Date((data as any).savedAt || Date.now()).getTime())}. Fresh data is loading in the background.</div>}
       <GuStatusStrip />
+      <div role="tablist" aria-label="Guidance workspaces" className="gu-noprint" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', borderBottom: `1px solid ${R.border}`, paddingBottom: 6 }}>
+        {GU_WORKSPACES.map((w) => (
+          <button key={w.id} type="button" role="tab" aria-selected={ws === w.id} title={w.hint} onClick={() => setWs(w.id)}
+            style={{ fontSize: 13.5, fontWeight: ws === w.id ? 800 : 600, padding: '6px 14px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${ws === w.id ? R.cyan : R.border}`, background: 'transparent', color: ws === w.id ? R.cyan : R.text }}>
+            {w.label}{w.id === 'changes' && data ? ` (${shown.length})` : ''}
+          </button>
+        ))}
+      </div>
+      {ws !== 'all' && <div className="gu-noprint" style={{ fontSize: 12, color: R.dim, marginTop: -8 }}>{GU_WORKSPACES.find((w) => w.id === ws)?.hint}</div>}
       {/* zzz880 — the companies to look at first, before any detail */}
-      <GuFocusList events={events} window={window_} onOpen={select} caps={(data as any)?.caps ?? null} />
-      <GuUniverseSummary onFull={setGgOpen} />
-      <GuUniverseBrowser held={held} onFull={setGgOpen} />
-      <GuNameCheck />
+      <div style={vis('focus')}><GuFocusList events={events} window={window_} onOpen={select} caps={(data as any)?.caps ?? null} /></div>
+      <div style={vis('summary')}><GuUniverseSummary onFull={setGgOpen} /></div>
+      <div style={vis('browser')}><GuUniverseBrowser held={held} onFull={setGgOpen} /></div>
+      <div style={vis('namecheck')}><GuNameCheck /></div>
+      <div style={vis('events')}>
       <GuPanel id="gu-events" icon="📈" title="Guidance raises in this window" accent={R.violet} count={state === 'ok' || data ? shown.length : null}
         hint="New guidance raises announced in the chosen time window. Click a card for the full check.">
       <GuTopBar summary={data?.summary || null} window={window_} onWindow={setWindow} scope={scope} onScope={setScope} metric={metric} onMetric={setMetric}
@@ -219,8 +244,10 @@ export default function GuidanceUpgradesPage() {
         {!(todayFirst && todayList.length > 0) && <CappedList key={`all-${window_}-${scope}-${metric}`} items={shown} render={card} color={R.dim} />}
       </div>
       </GuPanel>
+      </div>
       {/* zzz859: audit, review queue, AI verification and coverage together, collapsed until opened */}
-      <GuPanel id="gu-checks" icon="🔎" title="Checks, review queue and coverage" accent={R.grey} count={auditList.length + (data?.reviewQueueCount ?? 0)} defaultOpen={false}
+      <div style={vis('checks')}>
+      <GuPanel key={`checks-${ws === 'review'}`} id="gu-checks" icon="🔎" title="Checks, review queue and coverage" accent={R.grey} count={auditList.length + (data?.reviewQueueCount ?? 0)} defaultOpen={ws === 'review'}
         hint="What was found but not shown as a raise, why, and how much of the market was read.">
       <GuUpgradeAudit audit={(data as any)?.upgradeAudit} />
       <GuAuditArea events={auditList} onOpen={select} now={now} />
@@ -230,6 +257,7 @@ export default function GuidanceUpgradesPage() {
       <GuCoverage coverage={data?.coverage} queue={data?.queue} invariantViolations={data?.invariantViolations} unresolved={unresolvedCount(data?.unresolved)} scan={data?.scan} now={now} window={window_} byMarket={data?.freshness.byMarket} eventCounts={eventCounts} />
       {!data?.scan && data?.freshness.note && <div style={{ fontSize: 12, color: R.dim }}>{data.freshness.note}</div>}
       </GuPanel>
+      </div>
       <div style={{ fontSize: 11, color: R.faint }}>Company data only. Not investment advice. Prices are context here, never the reason.</div>
       {ggOpen && <GgDetail c={ggOpen} onClose={() => setGgOpen(null)} unverified={ggOpen.verification === 'SECONDARY_ONLY' || ggOpen.verification === 'UNVERIFIED'} />}
       {openLean && <GuDetailShell lean={openLean} load={openLoad} onClose={() => select(null)} onRetry={() => setRetryTick((n) => n + 1)} now={now} />}
