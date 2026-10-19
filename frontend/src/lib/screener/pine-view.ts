@@ -973,8 +973,8 @@ export function perfPath(r: Partial<ScreenRow>): Array<{ at: string; v: number }
 
 /** zzz1125 (deep audit §6) — a workflow chip that only repeats a top card (same screen, no list of its own: "Monthly bases") is not shown
  *  twice; the screen and its card stay. */
-export function uniqueWorkflows(flows: readonly Workflow[] = WORKFLOWS, cards: ReadonlyArray<{ presetId: string }> = SETUP_CARDS): Workflow[] {
-  const onCards = new Set(cards.map((c) => c.presetId));
+export function uniqueWorkflows(flows: readonly Workflow[] = WORKFLOWS, cards: ReadonlyArray<{ presetId: string | null }> = SETUP_CARDS): Workflow[] {
+  const onCards = new Set(cards.map((c) => c.presetId).filter((x): x is string => !!x));
   return flows.filter((w) => !!w.scope || !onCards.has(w.presetId));
 }
 
