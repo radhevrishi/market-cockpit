@@ -48,3 +48,25 @@ export function nasdaqQuoteFields(summary: any, info: any): { price: number | nu
   const txt = (v: unknown) => { const t = typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : ''; return t && t !== 'N/A' ? t : null; };
   return { price, sector: txt(sd?.Sector?.value), industry: txt(sd?.Industry?.value) };
 }
+
+/** zzz1141 — fill a US quote (market cap $M, price, sector, industry) from the app's own US screener snapshot where the Nasdaq read gave
+ *  nothing. Nasdaq's own values win; the snapshot only fills gaps. Class shares: "MOG-A" / "MOG.A" match. Pure. */
+export function fillUsQuoteFromSnapshot(
+  q: { cap: number | null; price: number | null; sector: string | null; industry: string | null; at: string } | null,
+  ticker: string, rows: ReadonlyArray<{ t: string; mc?: number | null; px?: number | null; sec?: string | null; ind?: string | null }>, builtAt: string | null,
+): { cap: number | null; price: number | null; sector: string | null; industry: string | null; at: string } | null {
+  const norm = (x: string) => String(x || '').toUpperCase().replace(/[.\-/]/g, '');
+  const want = norm(ticker);
+  const r = rows.find((x) => norm(x.t) === want);
+  if (!r) return q;
+  const ok = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0;
+  const base = q || { cap: null, price: null, sector: null, industry: null, at: '' };
+  const usedPrice = base.price == null && ok(r.px);
+  return {
+    cap: base.cap ?? (ok(r.mc) ? Math.round(r.mc * 10) / 10 : null),
+    price: base.price ?? (ok(r.px) ? r.px : null),
+    sector: base.sector ?? (r.sec || null),
+    industry: base.industry ?? (r.ind || null),
+    at: usedPrice ? String(builtAt || '').slice(0, 10) || base.at : base.at || String(builtAt || '').slice(0, 10),
+  };
+}

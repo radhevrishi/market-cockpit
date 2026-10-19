@@ -17,7 +17,8 @@ import { inFactsFromHtml, usFactsFromRow, type SkyFacts } from '@/lib/gu-skygold
 import { usFactsBatch } from '@/lib/us-thesis/facts-server';
 import { yahooEstimateTrend, pooled, type EstimateTrendRow } from '@/lib/us-prices';
 import { proxiedFetch } from '@/lib/proxy-fetch';
-import { nasdaqMarketCapMusd, nasdaqQuoteFields, pickScreenerSlug } from '@/lib/gu-skygold-lookup';
+import { nasdaqMarketCapMusd, nasdaqQuoteFields, pickScreenerSlug, fillUsQuoteFromSnapshot } from '@/lib/gu-skygold-lookup';
+import { getSnapshot } from '@/lib/screener/snapshot-cache';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -177,6 +178,13 @@ export async function GET(req: NextRequest) {
         return out;
       })().catch(() => ({} as Record<string, UsQuote>)),
     ]);
+    // zzz1141 — Nasdaq often answers nothing from the server (owner's page, 19 Oct: Bloom Energy, Celestica, Aehr, MaxCyte "size not
+    // known" / "price not read yet"). The app's own US screener snapshot (built nightly from Nasdaq's list + Yahoo prices) fills the
+    // market cap, last price, sector and industry Nasdaq did not give; the price date is the snapshot's build day.
+    if (US.some((t) => !usCaps[t] || usCaps[t].cap == null || usCaps[t].price == null)) {
+      const snap = await getSnapshot('US').catch(() => null);
+      if (snap) for (const t of US) { const q = fillUsQuoteFromSnapshot(usCaps[t] || null, t, snap.rows, snap.builtAt); if (q) usCaps[t] = q; }
+    }
     for (const [t, q] of Object.entries(usCaps)) if (q.cap != null) caps.US[t] = q.cap;
     for (const t of US) {
       const row = batch?.rows?.[t];

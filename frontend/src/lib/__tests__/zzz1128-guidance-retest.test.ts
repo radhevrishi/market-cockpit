@@ -177,3 +177,15 @@ describe('zzz1139 — smaller lean universe list', async () => {
     assert.deepEqual(bad, []);
   });
 });
+
+describe('zzz1141 — US size and price from the app\'s own screener when Nasdaq gives nothing', async () => {
+  const { fillUsQuoteFromSnapshot } = await import('../gu-skygold-lookup');
+  const rows = [{ t: 'BE', mc: 52000.4, px: 221.31, sec: 'Industrials', ind: 'Electrical' }, { t: 'MOG.A', mc: 7000, px: 210, sec: null, ind: null }];
+  test('fills the gaps, Nasdaq values win, class shares match, unknown ticker unchanged', () => {
+    assert.deepEqual(fillUsQuoteFromSnapshot(null, 'BE', rows, '2026-10-18T13:45:17Z'), { cap: 52000.4, price: 221.31, sector: 'Industrials', industry: 'Electrical', at: '2026-10-18' });
+    const nq = { cap: 51000, price: null, sector: 'Utilities', industry: null, at: '2026-10-19' };
+    assert.deepEqual(fillUsQuoteFromSnapshot(nq, 'BE', rows, '2026-10-18'), { cap: 51000, price: 221.31, sector: 'Utilities', industry: 'Electrical', at: '2026-10-18' });
+    assert.equal(fillUsQuoteFromSnapshot(null, 'MOG-A', rows, '2026-10-18')!.cap, 7000);
+    assert.equal(fillUsQuoteFromSnapshot(null, 'ZZZZ', rows, '2026-10-18'), null);
+  });
+});
