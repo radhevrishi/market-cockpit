@@ -29,7 +29,7 @@ import { hiddenNote } from '@/lib/earnings-search';
 // getItemSync is race-aware: if a write is still queued within the 250ms idle
 // window, the read returns the pending value instead of the stale LS string.
 import { debouncedSetItem, getItemSync } from '@/lib/debounced-storage';
-import { CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, marginQualityDelta, decideTier, marketReactionDelta, thinFloatGate, quadrantForIndiaRow, QUADRANT_META, profitTrajectory, MARKET_REACTION_CAVEATS } from '@/lib/earnings-grade-shared';
+import { CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, marginQualityDelta, decideTier, marketReactionDelta, thinFloatGate, quadrantForIndiaRow, QUADRANT_META, profitTrajectory, MARKET_REACTION_CAVEATS, priceContextWords } from '@/lib/earnings-grade-shared';
 // PATCH 0557 — BUG-AUDIT-2: backend-degraded banner.
 import DegradedBanner from '@/components/DegradedBanner';
 import { useCardBadges, CardBadgesToggle } from '@/components/card-badges';
@@ -1027,6 +1027,8 @@ export default function EarningsOpportunitiesPage() {
   // Local UI state for partial-refresh button
   const [refreshing, setRefreshing] = useState(false);
   const [refreshFeedback, setRefreshFeedback] = useState<string | null>(null);
+  // zzz1152 — a refresh message belongs to the day it was for: moving to another day clears it (the 18:53 ELEVATE note stayed on 18 Oct)
+  useEffect(() => { setRefreshFeedback(null); }, [resolvedDateForGrading]);
   // PATCH 0360 — 90-day backfill state. Runs in batches via the
   // /api/v1/earnings/backfill endpoint, chaining cursor_next until done.
   const [backfilling, setBackfilling] = useState(false);
@@ -3524,7 +3526,10 @@ Source label: ${coverageStats.source}`}
           const shownElsewhere = new Set<string>(((view as any)?._dropped || []).filter((d: any) => /^already shown on /.test(String(d?.reason || ''))).map((d: any) => String(d.ticker || '').toUpperCase()));
           const pending = scheduled.filter((it) => !gradedTickers.has((it.symbol || '').toUpperCase()) && !shownElsewhere.has((it.symbol || '').toUpperCase()));
           if (pending.length === 0) return null;
-          const whyOf = pendingReasonMap(view);   // zzz879 — a short reason per name
+          // zzz1152 — until this day's graded answer has arrived, nothing is known about a name: say "checking", never "not out yet"
+          const dayLoaded = !!gradedData && String((gradedData as any).filing_date || '') === String(filterDate || resolvedDateForGrading || '');
+          const whyOf0 = pendingReasonMap(view);   // zzz879 — a short reason per name
+          const whyOf = dayLoaded ? whyOf0 : { get: () => ({ word: 'checking the filings…', color: 'var(--mc-text-3)', full: 'this day is still being built; the reason appears when it is ready' }) } as unknown as typeof whyOf0;
           const copyPending = async (txt: string) => {
             try { await navigator.clipboard.writeText(txt); } catch {
               try {
@@ -3861,17 +3866,20 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
         </div>
       )}
 
-      {/* ── Price line (US "Reaction · Since · RS · Stage") — context only ── */}
-      {(stock.gap_pct != null || stock.d1_pct != null || stock.move_pct != null || stock.rs_rating != null || stock.stage != null) && (
-        <div style={{ display: 'flex', gap: '6px 14px', flexWrap: 'wrap', margin: '10px 0 0', fontSize: 12.5, color: 'var(--mc-text-2)', alignItems: 'baseline', lineHeight: 1.4 }}>
+      {/* ── Price line — context only. zzz1150 (owner): ONE line, plain words: the day-1 move, gap, RS, stage and what the price did,
+          then a quiet "share price — not part of the grade" (was a second row titled "Price context — not part of the grade:"
+          with engine words such as "sold off post-results"). ── */}
+      {(stock.gap_pct != null || stock.d1_pct != null || stock.move_pct != null || stock.rs_rating != null || stock.stage != null || _ctx.length > 0) && (
+        <div style={{ display: 'flex', gap: '6px 14px', flexWrap: 'wrap', margin: '10px 0 0', fontSize: 12.5, color: 'var(--mc-text-2)', alignItems: 'baseline', lineHeight: 1.4 }}
+          title="Share-price facts shown for context. The tier is decided from the reported numbers only; none of these raises or lowers it.">
           {stock.d1_pct != null && (
-            <span>D1 <b style={{ color: stock.d1_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(stock.d1_pct)}</b></span>
+            <span>Day 1 <b style={{ color: stock.d1_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(stock.d1_pct)}</b></span>
           )}
           {stock.gap_pct != null && (
             <span>Gap <b style={{ color: stock.gap_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(stock.gap_pct)}</b></span>
           )}
-          {stock.move_pct != null && (
-            <span>Move <b style={{ color: stock.move_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(stock.move_pct)}</b></span>
+          {stock.move_pct != null && stock.move_pct !== stock.d1_pct && (
+            <span>Since results <b style={{ color: stock.move_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(stock.move_pct)}</b></span>
           )}
           {stock.rs_rating != null && (
             <span>RS <b style={{ color: stock.rs_rating >= 80 ? 'var(--mc-bullish)' : stock.rs_rating >= 50 ? 'var(--mc-warn)' : 'var(--mc-bearish)' }}>{stock.rs_rating}</b></span>
@@ -3879,20 +3887,10 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
           {stock.stage != null && (
             <span>Stage <b style={{ color: stock.stage === 2 ? 'var(--mc-bullish)' : stock.stage === 4 ? 'var(--mc-bearish)' : 'var(--mc-text-0)' }}>{stock.stage}</b></span>
           )}
-          <span style={{ color: 'var(--mc-text-4)', fontStyle: 'italic' }} title="Move, gap, Day-1 reaction, RS and stage are market context. None of them raises or lowers the grade.">
-            price context · not graded
-          </span>
-        </div>
-      )}
-
-      {/* zzz820b — price facts beside the grade, never inside it (engine v24). */}
-      {_ctx.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center', marginTop: 7 }}
-          title="Share-price facts shown for context. The tier is decided from the reported numbers only.">
-          <span style={{ fontSize: 11.5, color: 'var(--mc-text-4)', fontWeight: 700 }}>Price context — not part of the grade:</span>
-          {_ctx.map((t) => (
-            <span key={t} style={chipStyle()}>{t}</span>
+          {_ctx.filter((t) => t !== 'stage 4 downtrend' || stock.stage == null).map((t) => (
+            <span key={t} data-price-fact style={chipStyle()}>{priceContextWords(t, MARKET_REACTION_CAVEATS.has(t) ? stock.d1_pct : null)}</span>
           ))}
+          <span style={{ color: 'var(--mc-text-4)', fontSize: 11.5 }}>share price — not part of the grade</span>
         </div>
       )}
 
@@ -3932,6 +3930,7 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
             // zzz800 — a Day-1 price reaction is not a fault in the filing:
             // rendered as a neutral, explicitly labelled market-reaction pill.
             const _reaction = MARKET_REACTION_CAVEATS.has(t);
+            if (_reaction) return null;   // zzz1150 — the price line above already says what the price did
             const _c = _info ? 'var(--mc-cyan)' : _reaction ? 'var(--mc-text-3)' : 'var(--mc-warn)';
             return (
               <span key={t} title={_reaction ? 'Price reaction after the print, not a judgement on the reported numbers' : undefined} style={chipStyle(_c)}>{_info ? 'ℹ' : _reaction ? '📉 market reaction:' : '⚠'} {t === 'newly listed' ? 'new listing — no YoY history' : t}</span>

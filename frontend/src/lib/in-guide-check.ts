@@ -20,6 +20,7 @@ import { kvGet, kvMGet, kvSet } from './kv';
 import { applyInGuideLines, extractsForFiling, IN_OVERLAY_VERSION, type InExtractDocLike, type InAiGuidanceLike, type InGuideStored } from './in-guide-line';
 import { haikuFgKey, haikuPeriodOf } from './haiku-fg-key';
 import { checkQuarterLabel } from './india-eo-card-data';
+import { IN_NEED_CALL_KEY } from './need-call';   // zzz1151
 
 const DOCS_INDEX_KEY = 'guidance-docs:v1:index';
 const INTIMATIONS_KEY = 'guidance-docs:v1:intimations';
@@ -204,6 +205,20 @@ async function notePriority(payload: any): Promise<void> {
   }
   // rows moved to MIXED by an earlier line keep their place too (their call is still the thing to read)
   for (const r of (payload?.by_tier?.MIXED || [])) if (r?.tier_before_guide_check && r?.ticker) want[String(r.ticker).toUpperCase()] = filingOf(r);
+  // zzz1151 — every graded company (any tier) with nothing on record goes on the collector's "read its last call" list
+  const need: Record<string, string> = {};
+  for (const t of ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID']) for (const r of (payload?.by_tier?.[t] || [])) {
+    if (r?.ticker && r?.guide_line?.direction === 'unknown') need[String(r.ticker).toUpperCase()] = filingOf(r);
+  }
+  const nsig = Object.keys(need).sort().join(',');
+  if (nsig && !_prioWritten.includes(`N:${nsig}`)) {
+    const prevN = (await kvGet<Record<string, string>>(IN_NEED_CALL_KEY).catch(() => null)) || {};
+    const cutN = new Date(Date.now() - 30 * DAY).toISOString().slice(0, 10);
+    const mergedN: Record<string, string> = {};
+    for (const [k, v] of Object.entries({ ...prevN, ...need })) if (typeof v === 'string' && v >= cutN && Object.keys(mergedN).length < 600) mergedN[k] = v;
+    await kvSet(IN_NEED_CALL_KEY, mergedN, 30 * 24 * 3600);
+    _prioWritten = `${_prioWritten.slice(-4000)}|N:${nsig}`;
+  }
   const sig = Object.keys(want).sort().join(',');
   if (!sig || _prioWritten.includes(sig)) return;
   const prev = (await kvGet<Record<string, string>>(IN_PRIORITY_KEY).catch(() => null)) || {};

@@ -28,7 +28,7 @@ import {
   caveatPenaltyFor, countingCaveats, marginQualityDelta, decideTier,
   marketReactionDelta, typicalDailyMovePct, quadrantForIndiaRow,
   fundamentalComposite, setupGrade,
-  profitTrajectory, MARKET_REACTION_CAVEATS,
+  profitTrajectory, MARKET_REACTION_CAVEATS, priceContextWords,
   type EarningsTier,
 } from '@/lib/earnings-grade-shared';
 import { peadScore } from '@/lib/pead-score';
@@ -1627,14 +1627,15 @@ function _gradeIndiaRow(rowIn: any, drop: (reason: string) => null): IndiaGraded
     // zzz819 — the price no longer changes the tier, so nothing is ever
     // demoted by it. Kept (always null) so older readers of the field work.
     demoted_from: null,
-    note: `Market reaction: ${_d1 != null ? `D1 ${_d1 >= 0 ? '+' : ''}${Math.round(_d1 * 10) / 10}% after the print` : 'sold after the print'} — a price move, not a verdict on the filing; it does not change the grade.`,
+    // zzz1150 — plain words: what the share price did, and that it does not change the grade
+    note: `${_d1 != null ? `The share price ${_d1 >= 0 ? 'rose' : 'fell'} ${Math.abs(Math.round(_d1 * 10) / 10)}% the day after the results` : 'The share price fell after the results'}; that does not change the grade.`,
   } : null;
   for (const t of _reactionTags) if (!market_context.includes(t)) market_context.push(t);
   // Chart / liquidity facts other than the Day-1 reaction, stated AFTER the
   // verdict and labelled as not part of it.
   const _ctxOther = market_context.filter((t) => !MARKET_REACTION_CAVEATS.has(t));
-  const _ctxNote = (_ctxOther.length ? ` Price context (not part of the grade): ${_ctxOther.join(', ')}.` : '')
-    + (size_flags.length ? ` Size context (not part of the grade): ${size_flags.join(', ')}.` : '');
+  const _ctxNote = (_ctxOther.length ? ` Share price (not part of the grade): ${_ctxOther.map((t) => priceContextWords(t)).join(', ')}.` : '')
+    + (size_flags.length ? ` Size (not part of the grade): ${size_flags.join(', ')}.` : '');
   const _basisNote = growth_basis_note ? ` Growth ${growth_basis_note}.` : '';
   const narrative = `${head} (${metrics})${flavor}${_basisNote}${market_reaction ? ' ' + market_reaction.note : ''}${_ctxNote}`;
 

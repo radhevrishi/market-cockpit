@@ -30,6 +30,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { SITE_COOKIE, expectedToken, safeEqual, hasServiceKey } from '@/lib/site-auth';
 import { validateIngestBody, ingestDocs, knownDocIds, readCollectorStatus, readCoverage, storageStats, realDocsKv, pendingIntimations, DocsIndexUnreadableError } from '@/lib/guidance-docs-store';
 import { readQueue, collectorQueueTickers } from '@/lib/guidance-upgrades-queue';
+import { IN_NEED_CALL_KEY, needCallSlice } from '@/lib/need-call';   // zzz1151
+import { kvGet } from '@/lib/kv';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -63,7 +65,9 @@ export async function GET(req: NextRequest) {
     wantQueue ? readQueue().catch(() => null) : Promise.resolve(null),
   ]);
   const queueTickers = wantQueue ? collectorQueueTickers(queue) : undefined;
-  return NextResponse.json({ ok: true, known, count: known.length, storage, coverage, status, ...(intimations ? { intimations } : {}), ...(queueTickers ? { queueTickers } : {}) }, { headers: NO_STORE });
+  // zzz1151 — graded companies with no guidance document at all: a rotating slice for the collector to read their last calls
+  const needCall = extras ? needCallSlice(await kvGet<Record<string, string>>(IN_NEED_CALL_KEY).catch(() => null), new Date()) : undefined;
+  return NextResponse.json({ ok: true, known, count: known.length, storage, coverage, status, ...(intimations ? { intimations } : {}), ...(queueTickers ? { queueTickers } : {}), ...(needCall ? { needCall } : {}) }, { headers: NO_STORE });
 }
 
 export async function POST(req: NextRequest) {

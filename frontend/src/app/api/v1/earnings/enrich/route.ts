@@ -1810,8 +1810,12 @@ async function enrichOneInner(symbol: string, filedHint?: string, bypassCache = 
   // the source of the annual-CFO ÷ quarterly-PAT ratios), they are replaced
   // by the label-matched pair from the direct Screener read, or cleared.
   {
+    // zzz1148 — an OLD cash year is not this company's cash today: AksharChem showed "FY16 full year" (screener.in's cash-flow table
+    // stopped in Mar 2016). A cash year more than two years before the newest reported quarter (or before today, when no quarter
+    // date is known) is treated as unknown.
     const src = [screener, cfoOnly].find((x: any) => x && typeof x.cash_fy === 'string'
-      && typeof x.ocf_annual_cr === 'number' && typeof x.pat_annual_cr === 'number') as any;
+      && typeof x.ocf_annual_cr === 'number' && typeof x.pat_annual_cr === 'number'
+      && cashYearRecent(x.cash_fy, (out as any).latest_quarter_end_iso || null, new Date())) as any;
     out.ocf_annual_cr = src ? src.ocf_annual_cr : null;
     out.pat_annual_cr = src ? src.pat_annual_cr : null;
     out.ocf_to_pat_ratio = src ? src.ocf_to_pat_ratio : null;
@@ -2164,6 +2168,14 @@ async function enrichOneInner(symbol: string, filedHint?: string, bypassCache = 
     try { await kvSet(cacheKey, out, ttl); } catch {}
   }
   return out;
+}
+
+/** zzz1148 — 'Mar 2016' is recent enough only within two years of the newest quarter (or of today). Pure. */
+function cashYearRecent(label: string, latestQuarterIso: string | null, now: Date): boolean {
+  const y = Number(/(\d{4})\s*$/.exec(String(label || ''))?.[1]);
+  if (!Number.isFinite(y)) return false;
+  const ref = latestQuarterIso && /^\d{4}/.test(latestQuarterIso) ? Number(latestQuarterIso.slice(0, 4)) : now.getUTCFullYear();
+  return ref - y <= 2;
 }
 
 export async function GET(req: Request) {

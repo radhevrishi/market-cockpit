@@ -279,7 +279,7 @@ describe('6 · size and trading caps leave the tier', () => {
     assert.deepEqual(tiny.size_flags, ['very small company']);
     assert.ok(!tiny.caveat_tags.includes('below investable size'));
     assert.ok(!tiny.market_context.includes('very small company'));
-    assert.match(tiny.narrative, /Size context \(not part of the grade\): very small company\./);
+    assert.match(tiny.narrative, /Size \(not part of the grade\): very small company\./);   // zzz1150
     assert.equal(big.size_flags, null);
   });
   test('"barely trades" needs a small cap AND a real thin average', () => {

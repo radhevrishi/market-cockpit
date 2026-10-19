@@ -658,6 +658,7 @@ async function gradedLegacyGET(req: Request) {
         // accurate error messages instead of relying on its potentially stale
         // local view.
         const failedTickers = needTickers.filter((t) => !replacedTickers.has(t));
+        await fillCompanyNames(by_tier);   // zzz1149
         const payload = {
           ...existing,
           by_tier,
@@ -1494,6 +1495,7 @@ async function gradedLegacyGET(req: Request) {
     .map((m: any) => m.ticker);
 
   if (_rpQueue.length) void import('@/lib/india-results-pdf-run').then(async (mod) => { const k = await import('@/lib/kv'); await mod.enqueueResultsPdf({ get: (x) => k.kvGet(x), set: (x, v, t) => k.kvSet(x, v, t) }, _rpQueue as any); }).catch(() => {});   // zzz879
+  await fillCompanyNames(by_tier);   // zzz1149
   const payload = {
     filing_date: date,
     candidates_total: graded.length,
@@ -1642,6 +1644,21 @@ async function gradedOverlayGET(req: Request): Promise<Response> {
 // revalidate, one rebuild at a time) for up to 30 minutes / 5 minutes (lib/graded-cache-key.ts gradedMemoTtl). Only 200 answers that are not no-store are kept (a hub
 // failure, an empty or pending day passes straight through). force / refreshMissing / cache_only / wipe / refetch, and any other
 // parameter, bypass it. The ETag lets an unchanged revisit be a 304. Server-Timing shows memo state and time.
+/** zzz1149 — a card whose company name is only its ticker (MDRNSTL, MODAIRY on 19 Oct) takes the name from the app's own India
+ *  screener list (NSE's equity master + screener.in). Best effort: a missing snapshot leaves the card as it was. */
+async function fillCompanyNames(byTier: Record<string, any[]>): Promise<void> {
+  const need = Object.values(byTier || {}).flat().filter((c: any) => c && (!c.company || String(c.company).toUpperCase() === String(c.ticker || '').toUpperCase()));
+  if (!need.length) return;
+  try {
+    const { getSnapshot } = await import('@/lib/screener/snapshot-cache');
+    const snap = await Promise.race([getSnapshot('IN'), new Promise<null>((r) => setTimeout(() => r(null), 3_000))]);
+    if (!snap) return;
+    const names = new Map<string, string>();
+    for (const r of snap.rows) if (r?.t && r?.n) names.set(String(r.t).toUpperCase(), String(r.n));
+    for (const c of need) { const n = names.get(String(c.ticker || '').toUpperCase()); if (n && n.toUpperCase() !== String(c.ticker).toUpperCase()) c.company = n; }
+  } catch { /* names are cosmetic */ }
+}
+
 export async function GET(req: Request) {
   const sp = new URL(req.url).searchParams;
   const date = sp.get('date') || '';

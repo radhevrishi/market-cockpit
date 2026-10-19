@@ -103,6 +103,21 @@ export const MARKET_REACTION_CAVEATS: ReadonlySet<string> = new Set([
   'intraday reversal · distribution',
 ]);
 
+/**
+ * zzz1150 — the price facts in plain words (owner, 19 Oct: "price context · not graded" and "sold off post-results" read as jargon).
+ * The tags stay the engine's keys; only the words shown change. `d1` (the Day-1 move %) is added when known. Pure.
+ */
+export function priceContextWords(tag: string, d1?: number | null): string {
+  const pct = typeof d1 === 'number' && Number.isFinite(d1) ? ` (${d1 > 0 ? '+' : ''}${Math.round(d1 * 10) / 10}% on day 1)` : '';
+  const t = String(tag || '').trim();
+  if (t === 'sold off post-results') return `fell sharply after the results${pct}`;
+  if (t === 'market rejected print') return `fell after the results${pct}`;
+  if (t === 'intraday reversal · distribution') return 'opened higher, then closed lower';
+  if (t === 'stage 4 downtrend') return 'chart in a downtrend (stage 4)';
+  if (t === 'thin float') return 'few shares trade freely';
+  return t;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // PROFIT TRAJECTORY — A GROWTH RATE OFF A LOSS IS NOT A NUMBER.     (zzz800)
 //

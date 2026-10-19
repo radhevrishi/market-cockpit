@@ -205,8 +205,8 @@ describe('price is context, never a grade input', () => {
       assert.ok(ugly.market_context.includes(t), `${t} missing from ${ugly.market_context}`);
       assert.ok(!ugly.caveat_tags.includes(t), `${t} leaked into caveats`);
     }
-    assert.match(ugly.narrative, /Price context \(not part of the grade\): stage 4 downtrend, thin float\./);
-    assert.match(ugly.market_reaction.note, /it does not change the grade/);
+    assert.match(ugly.narrative, /Share price \(not part of the grade\): chart in a downtrend \(stage 4\), few shares trade freely\./);   // zzz1150
+    assert.match(ugly.market_reaction.note, /does not change the grade/);
     assert.ok(!/cost the top tier/.test(ugly.narrative));
   });
 });

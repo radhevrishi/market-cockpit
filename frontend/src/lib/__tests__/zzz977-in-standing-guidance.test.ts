@@ -37,7 +37,7 @@ test('zzz977 the new call filed or announced but not read: said, with the standi
   const both = inGuideLine(row(), { standing: [julCall], pending: [{ kind: 'PRESENTATION', filedAt: '2026-10-11' }] });
   assert.equal(both.direction, 'standing');
   assert.match(both.text, /new: investor presentation filed 11 Oct/);
-  assert.match(inGuideLine(row(), {}).text, /No guidance on record/);
+  assert.match(inGuideLine(row(), {}).text, /No guidance yet — no call or presentation on record/);   // zzz1151
 });
 
 test('zzz977 a new cut this season still wins over the standing guidance', () => {

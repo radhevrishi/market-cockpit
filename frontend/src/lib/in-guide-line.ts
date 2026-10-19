@@ -383,7 +383,8 @@ export function inGuideLine(row: any, stored?: InGuideStored | null): InGuideLin
   }
   if (st) return { direction: 'standing', text: `${st.text}${pend ? ` · new: ${pend}` : ' · new call not read yet'}`, title: st.title, source: st.source, url: st.url, lowered: false, pace: st.pace };
   if (pend) return { direction: 'pending', text: `New guidance not read yet — ${pend}`, title: 'The call transcript or investor deck of this results season has been collected or announced but not read yet. It is read in order by the hourly guidance reader (this season’s top-tier companies first), within its daily allowance.', source: '', url: (stored?.pending?.[0]?.url || stored?.announced?.[0]?.url) || null, lowered: false };
-  return { direction: 'unknown', text: 'No guidance on record — no earlier call read and no call / deck filed yet for this quarter', title: 'No guidance document of this results season has been collected yet, and no earlier call of this company has been read. The call transcript usually follows the results by one to three weeks.', source: '', url: null, lowered: false };
+  // zzz1151 (owner, 19 Oct): plain words, and the gap is now acted on — the documents collector reads this company's last calls
+  return { direction: 'unknown', text: 'No guidance yet — no call or presentation on record for this company; its earlier calls are being looked up', title: "This quarter's call transcript or investor presentation has not been filed yet (it usually follows the results by one to three weeks), and no earlier call of this company is stored. The documents collector now reads its last calls from screener.in's concall list, a few companies every two hours; the line updates once one is read.", source: '', url: null, lowered: false };
 }
 
 const TOP = new Set(['BLOCKBUSTER', 'STRONG']);

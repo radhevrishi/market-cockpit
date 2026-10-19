@@ -288,13 +288,17 @@ async function kvMGetFromStore<T = any>(keys: string[]): Promise<{ values: Array
  * the cross-instance KV cache is skipped for over-sized blobs.
  */
 const KV_REMOTE_MAX_BYTES = 8 * 1024 * 1024;  // 8 MB safety cap (Upstash hard limit is 10 MB)
+/** zzz1147 — above this size ON THE WIRE a value is stored compressed (readers outside the app read the smaller keys as plain JSON) */
+const KV_PACK_ABOVE_BYTES = KV_REMOTE_MAX_BYTES;
+/** zzz1147 — bytes the value takes inside the request body (JSON-escaped once more by the client). Pure. */
+export function requestBytesOf(serialized: string): number { return Buffer.byteLength(JSON.stringify(serialized), 'utf8'); }
 
 /** Personal data must receive a durable acknowledgement before reporting success. Never skipped, never cached. */
 export async function kvSetVersioned<T extends VersionedValue>(key: string, value: T, baseVersion: number | null | undefined) {
   const base = baseVersion ?? 0;
   if (!Number.isSafeInteger(base) || base < 0 || base >= Number.MAX_SAFE_INTEGER) throw new Error('Invalid base version');
   const serialized = JSON.stringify({ ...value, version: base + 1 });
-  if (Buffer.byteLength(serialized, 'utf8') > KV_REMOTE_MAX_BYTES) throw new Error('Durable KV value exceeds the storage limit');
+  if (requestBytesOf(serialized) > KV_REMOTE_MAX_BYTES) throw new Error('Durable KV value exceeds the storage limit');
   const r = getRedis();
   if (!r) throw new Error('Durable storage is unavailable; save was not confirmed');
   READ_CACHE.invalidate(key); LAST_WRITE.delete(key);
@@ -307,7 +311,7 @@ export async function kvSetVersioned<T extends VersionedValue>(key: string, valu
 /** Durable write: always sent and acknowledged (never skipped, never cached). */
 export async function kvSetDurable(key: string, value: any, ttlSeconds?: number): Promise<void> {
   const serialized = typeof value === 'string' ? value : JSON.stringify(value);
-  if (typeof serialized !== 'string' || Buffer.byteLength(serialized, 'utf8') > KV_REMOTE_MAX_BYTES) {
+  if (typeof serialized !== 'string' || requestBytesOf(serialized) > KV_REMOTE_MAX_BYTES) {   // zzz1147: the size as sent
     throw new Error('Durable KV value exceeds the storage limit or is not serializable');
   }
   const r = getRedis();
@@ -338,13 +342,18 @@ export async function kvSet(key: string, value: any, ttlSeconds?: number): Promi
 
   // PATCH 1018 — skip oversized remote writes (Upstash 10 MB limit)
   const serializedBytes = Buffer.byteLength(serialized, 'utf8');
-  if (serializedBytes > KV_REMOTE_MAX_BYTES) {
+  // zzz1147 — Upstash limits the REQUEST, and the client sends the value as a JSON string inside the command, so every quote and
+  // backslash in the value is escaped once more: a 7.9 MB JSON value became a request over 10 MB (Upstash "Max Request Size" email,
+  // 19 Oct). The size checked is now the value as it is actually sent; anything over 8 MB on the wire is stored compressed (base64 of
+  // gzip has no quotes to escape, and is several times smaller).
+  const wireBytes = requestBytesOf(serialized);
+  if (wireBytes > KV_PACK_ABOVE_BYTES) {
     // zzz985: store it compressed instead of not at all
     let packed: { __mc_gz: 1; d: string } | null = null;
     try { packed = packLarge(serialized); } catch { packed = null; }
     const packedBytes = packed ? packed.d.length + 20 : Infinity;
     if (!packed || packedBytes > KV_REMOTE_MAX_BYTES) {
-      console.warn(`[KV] Skipping remote SET for ${key} — payload ${(serializedBytes / 1048576).toFixed(1)} MB > ${(KV_REMOTE_MAX_BYTES / 1048576).toFixed(0)} MB safety cap even compressed. (Memory cache still populated.)`);
+      console.warn(`[KV] Skipping remote SET for ${key} — payload ${(wireBytes / 1048576).toFixed(1)} MB on the wire > ${(KV_REMOTE_MAX_BYTES / 1048576).toFixed(0)} MB safety cap even compressed. (Memory cache still populated.)`);
       READ_CACHE.invalidate(key); LAST_WRITE.delete(key);
       return;
     }

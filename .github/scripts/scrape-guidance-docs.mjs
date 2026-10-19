@@ -285,7 +285,7 @@ async function postIngest(deps, body) {
 
 /** Known docIds plus (zzz916) the server's pending intimations and, when asked, the India tickers waiting in the events queue. */
 async function knownIds(deps, o = {}) {
-  const empty = { known: new Set(), intimations: [], queueTickers: [] };
+  const empty = { known: new Set(), intimations: [], queueTickers: [], needCall: [] };
   if (!deps.env.CRON_SECRET) return empty;
   try {
     const q = `market=IN&extras=1${o.queue ? '&queueTickers=1' : ''}`;
@@ -296,6 +296,8 @@ async function knownIds(deps, o = {}) {
       known: new Set(Array.isArray(j?.known) ? j.known : []),
       intimations: Array.isArray(j?.intimations) ? j.intimations.filter((x) => x && typeof x.url === 'string' && /^[0-9a-f]{20}$/.test(String(x.docId || ''))) : [],
       queueTickers: Array.isArray(j?.queueTickers) ? parseTickerList(j.queueTickers.join(',')) : [],
+      // zzz1151: graded companies with no guidance document at all — read their last calls (screener.in concall list)
+      needCall: Array.isArray(j?.needCall) ? parseTickerList(j.needCall.join(',')).slice(0, 12) : [],
     };
   } catch { deps.log('known-ids unavailable (continuing without)'); return empty; }
 }
@@ -403,7 +405,7 @@ export async function run(d) {
     deps.log('recollect: RECOLLECT_TICKERS held no valid NSE symbol / BSE code; nothing to do');
     return { counts: c, statusDays: [], stoppedBy: 'bad_recollect_input' };
   }
-  const server = recollectRequested ? { known: new Set(), intimations: [], queueTickers: [] } : await knownIds(deps, { queue: env.SCREENER_QUEUE === '1' });
+  const server = recollectRequested ? { known: new Set(), intimations: [], queueTickers: [], needCall: [] } : await knownIds(deps, { queue: env.SCREENER_QUEUE === '1' });
   const known = server.known;
   // zzz921: in re-collect mode the known memory is ignored (only a per-run set stops the same url being read twice)
   const reDone = new Set();
@@ -537,7 +539,7 @@ export async function run(d) {
     if (!page) return 0;
     const ticker = tg.ticker || page.nseSymbol || null;
     const bseCode = tg.bseCode || page.bseCode || null;
-    for (const call of concallsSince(page.concalls, windowStart)) {
+    for (const call of concallsSince(page.concalls, ctx.since || windowStart)) {
       if (Date.now() > deadline) break;
       if (ctx.cap != null && stored >= ctx.cap) break;
       const raw = call.transcript || call.ppt;
@@ -739,6 +741,14 @@ export async function run(d) {
       if (screenerStop()) { c.screenerStopped = sweep.length; break; }
       await sweepToken(token);
     }
+    // zzz1151: companies on the results page with NO guidance document on record — their last two calls, up to ~4 months back
+    const needSince = new Date(now.getTime() - 125 * 86_400_000).toISOString().slice(0, 10);
+    c.needCall = 0;
+    for (const token of server.needCall || []) {
+      if (screenerStop()) break;
+      c.needCall += await sweepToken(token, { since: needSince, cap: 2 });
+    }
+    if ((server.needCall || []).length) deps.log(`need-call: ${server.needCall.length} companies with no guidance on record, ${c.needCall} documents read`);
   }
   c.screenerPages = deps.screenerPages;
 

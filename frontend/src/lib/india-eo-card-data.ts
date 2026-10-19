@@ -1,6 +1,7 @@
 import { resolveFyYear } from '@/lib/calendar-dates';
 import { CASH_RATIO_HIGH, CASH_RULE_V } from './india-cash';  // zzz826
 import { finSubKind, FIN_KIND_WORD } from './fin-kind';   // zzz1089
+import { priceContextWords } from './earnings-grade-shared';   // zzz1150
 // ═══════════════════════════════════════════════════════════════════════════
 // INDIA EARNINGS OPPORTUNITIES — WHAT A CARD MAY HONESTLY SHOW  (zzz820)
 //
@@ -378,6 +379,17 @@ export function recheckableDrops(dropped: any): number {
 
 /** The stored one-line narrative, minus its growth percentages when those
  *  were withheld on the card (so the text never contradicts the tiles). */
+/** zzz1150 — the stored "Market reaction: D1 -8.6% after the print — a price move, not a verdict…" and "Price context (not part of the
+ *  grade): stage 4 downtrend." sentences in plain words. Pure. */
+export function plainPriceSentences(text: string): string {
+  return String(text || '')
+    .replace(/Market reaction: D1 ([+-]?\d+(?:\.\d+)?)% after the print — a price move, not a verdict on the filing; it does not change the grade\./g,
+      (_m, v) => { const x = Number(v); return `The share price ${x >= 0 ? 'rose' : 'fell'} ${Math.abs(x)}% the day after the results; that does not change the grade.`; })
+    .replace(/Market reaction: sold after the print — a price move, not a verdict on the filing; it does not change the grade\./g, 'The share price fell after the results; that does not change the grade.')
+    .replace(/Price context \(not part of the grade\): ([^.]+)\./g, (_m, list: string) => `Share price (not part of the grade): ${list.split(/,\s*/).map((t) => priceContextWords(t)).join(', ')}.`)
+    .replace(/Size context \(not part of the grade\):/g, 'Size (not part of the grade):');
+}
+
 export function narrativeForDisplay(r: any): string {
   // zzz822 — entities decoded; the cap reason is shown once, under the badge.
   let n = stripCapReasonFromText(decodeEntities(String(r?.narrative || '')), capReasonOf(r));
@@ -385,6 +397,7 @@ export function narrativeForDisplay(r: any): string {
   const q = checkQuarterLabel(r?._quarter_stored || r?.quarter, r?._window_date || r?.filing_date);
   if (q.corrected && q.stored && q.label) n = n.split(q.stored).join(q.label);
   if (r?._quarter_stored && r?.quarter && r._quarter_stored !== r.quarter) n = n.split(r._quarter_stored).join(r.quarter);
+  n = plainPriceSentences(n);   // zzz1150 — days stored before the plain wording read the same as new ones
   if (!yearAgoUnverified(r)) return n;
   return n
     .replace(/\s*\((?:[^()]*\bYoY\b[^()]*)\)/gi, '')
@@ -729,7 +742,20 @@ export interface CashFallback { cfo: number | null; pat: number | null; fy: stri
 const ratioNote = (v: number) => (v < 0 ? 'operations burned cash' : v < 0.6 ? 'below the divergence line' : v < 1 ? 'partly cash-backed'
   : v >= CASH_RATIO_HIGH ? 'profit small vs cash' : 'earnings are cash-backed');
 
+/** zzz1148 — a cash year more than two years before the filing is not today's cash (AksharChem "FY16 full year"). Pure. */
+export function cashYearTooOld(cashFy: unknown, filingDate: unknown): boolean {
+  const y = Number(/(\d{4})\s*$/.exec(String(cashFy || ''))?.[1]);
+  const f = Number(String(filingDate || '').slice(0, 4));
+  return Number.isFinite(y) && y > 1990 && Number.isFinite(f) && f > 1990 && f - y > 2;
+}
+
 export function cashTileView(r: any, fb?: CashFallback | null): CashTileView {
+  if (cashYearTooOld(r?.cash_fy, r?.filing_date)) {
+    if (!(fb && fb.fy && !cashYearTooOld(fb.fy, r?.filing_date))) return { text: '—', note: `newest cash-flow year in the source is ${String(r.cash_fy)} — too old to use`, color: 'none', basis: null };
+    r = { ...r, ocf_to_pat_ratio: null, cfo_to_pat_ratio: null, cash_fy: null, cash_basis: null, ocf_annual_cr: null, pat_annual_cr: null,
+      grade_input: { ...(r?.grade_input || {}), cash_fy: null, ocf_annual_cr: null, pat_annual_cr: null } };
+  }
+  if (fb && fb.fy && cashYearTooOld(fb.fy, r?.filing_date)) fb = null;
   const basis = typeof r?.cash_basis === 'string' && r.cash_basis.trim() ? r.cash_basis.trim()
     : (typeof r?.cash_fy === 'string' && r.cash_fy.trim() ? `${r.cash_fy.trim()} full year` : null);
   const fbYear = fb && fin(fb.cfo) && fin(fb.pat) && fb.fy ? { ocf: fb.cfo, pat: fb.pat, fy: fb.fy } : null;

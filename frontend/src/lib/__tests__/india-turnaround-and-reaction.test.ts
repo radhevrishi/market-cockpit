@@ -92,7 +92,7 @@ describe('KABRAEXTRU — a loss-narrowing operating turnaround', () => {
     assert.ok(g.market_context.includes('market rejected print'));
     assert.ok(g.market_reaction);
     assert.equal(g.market_reaction.demoted_from, null);
-    assert.match(g.market_reaction.note, /^Market reaction: D1 -6% after the print — a price move, not a verdict on the filing; it does not change the grade\./);
+    assert.match(g.market_reaction.note, /^The share price fell 6% the day after the results; that does not change the grade\./);   // zzz1150 plain words
     assert.ok(!/is a mixed print/.test(g.narrative));
     assert.match(g.narrative, /strong operating turnaround/);
     // "with caveat(s): …" must list only fundamental caveats
@@ -160,7 +160,7 @@ describe('a Day-1 sell-off does not change the grade at all (zzz819 — price-fr
     assert.equal(sold.tier, calm.tier, `sold-off print was ${sold.tier}, calm was ${calm.tier}`);
     assert.ok(!sold.caveat_tags.includes('sold off post-results'));
     assert.ok(sold.market_context.includes('sold off post-results'));
-    assert.ok(sold.market_reaction && /D1 -9%/.test(sold.market_reaction.note));
+    assert.ok(sold.market_reaction && /fell 9% the day after the results/.test(sold.market_reaction.note));   // zzz1150
     assert.ok(!/cost the top tier/.test(sold.narrative), sold.narrative);
   });
   // The shared helper is kept for older callers; the India grader no longer uses it.
