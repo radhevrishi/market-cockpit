@@ -143,3 +143,37 @@ describe('R5 / R7 / R8 — document facts reach the event; dates; units', () => 
     assert.equal(measureLabel('OTHER', 'expects as a percentage net sales growth of 9%', 'other measure'), 'Percentage net sales growth');
   });
 });
+
+describe('zzz1139 — smaller lean universe list', async () => {
+  const { leanUniverseRow, dropNullFalse } = await import('../gu-lean');
+  const { readFileSync, readdirSync } = await import('node:fs');
+  test('nulls and false leave the list row; zero, text, arrays and primarySourceRead=false stay; record keeps one source', () => {
+    const row: any = { entityKey: 'X', mediaOnly: false, primarySourceRead: false, n: 0, t: '', a: [], history: [1], sources: [1],
+      points: [{ high: null, low: 5, needsReview: false, priors: [1], notes: [] }],
+      record: { history: [1, 2], nextProof: 'x', verification: 'VERIFIED', sources: [{ name: 'B', date: '2026-01-01', url: 'u2' }, { name: 'A', date: null, url: 'u', primary: true }] } };
+    const l: any = leanUniverseRow(row);
+    assert.equal('mediaOnly' in l, false); assert.equal(l.primarySourceRead, false); assert.equal(l.n, 0); assert.equal(l.t, ''); assert.deepEqual(l.a, []);
+    assert.deepEqual(l.points[0], { low: 5, notes: [] });
+    assert.deepEqual(l.record.history, []); assert.equal(l.record.nextProof, undefined);
+    const h: any = leanUniverseRow({ record: { history: [{ date: '2026-01-01', old: '10%', next: '12%', period: 'FY26', revision: 'RAISED', text: 'long' }, { date: '2026-03-01', old: '', next: '15%' }, { date: '2025-06-01', old: '5%', next: '6%', revision: 'RAISED' }] } } as any);
+    assert.deepEqual(h.record.history, [{ date: '2026-01-01', old: '10%', next: '12%', period: 'FY26', revision: 'RAISED' }]);
+    assert.deepEqual(l.record.sources, [{ name: 'A', primary: true }]);
+    assert.equal(l.lean, true);
+    assert.deepEqual(dropNullFalse([{ a: null, b: [null, { c: false, d: 1 }] }]), [{ b: [null, { d: 1 }] }]);
+  });
+  test('fields left out of the list are read by no page', () => {
+    const walk = (d: URL): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e: any) => e.isDirectory() ? walk(new URL(`${e.name}/`, d)) : /\.tsx$/.test(e.name) ? [readFileSync(new URL(e.name, d), 'utf8')] : []);
+    const all = [...walk(new URL('../../components/', import.meta.url)), ...walk(new URL('../../app/', import.meta.url))].join('\n');
+    for (const k of ['periodNote', 'verificationReason', 'activeNote', 'sourceMetricLabel']) assert.doesNotMatch(all, new RegExp(`\\b${k}\\b`), k);
+  });
+  test('the list code never tells a missing value from null / false with === (so dropping them is safe)', () => {
+    const dir = new URL('../../components/guidance-upgrades/', import.meta.url);
+    const bad: string[] = [];
+    for (const f of readdirSync(dir)) {
+      if (!/\.tsx?$/.test(f)) continue;
+      const src = readFileSync(new URL(f, dir), 'utf8');
+      for (const line of src.split('\n')) if (/(===|!==)\s*(null|undefined)\b/.test(line) && !/(available|holds)\s*(===|!==)/.test(line)) bad.push(`${f}: ${line.trim().slice(0, 120)}`);
+    }
+    assert.deepEqual(bad, []);
+  });
+});
