@@ -172,12 +172,14 @@ export interface GuHighGrowthGroups {
   /** zzz1115 (G02): growth figures kept out of the ranking because they are most likely one business, not the company (still shown) */
   scopeHeld?: Array<{ entityKey: string; company: string; ticker: string | null; market: string; metric: string; text: string; reason: string }>;
   /** zzz1116 (G04): guidance points kept out of every ranking because a data check failed for them (one snapshot) */
-  quarantined?: Array<{ entityKey: string; company: string | null; metric: string | null; checks: string[] }>;
+  quarantined?: Array<{ entityKey: string; company: string | null; metric: string | null; period?: string | null; checks: string[] }>;
+  /** zzz1130 (R3): ranked rows before the checks / holds, and how many left (so the equation on the page adds up) */
+  rawRows?: number; heldOut?: number;
 }
 export interface GuStateCounts { activeRecords: number; verified: number; partial: number; derived: number; unverified: number; periodUnclear: number }
 export interface GuExpirySummary { expired: number; superseded: number; withdrawn: number; total: number; reasons: Array<{ reason: string; count: number }> }
 export interface GuViewCounts { default: number; review: number; expired: number; superseded: number; withdrawn: number; excluded: number; /** zzz854: unverified claims, never in Active */ claimsAwaiting?: number }
-export interface GuInvariantViolation { code: string; entityKey: string | null; company: string | null; metric: string | null; message: string }
+export interface GuInvariantViolation { code: string; entityKey: string | null; company: string | null; metric: string | null; /** zzz1131: the point's period */ period?: string | null; message: string }
 export type GuServedFrom = 'live' | 'last_good' | 'seed';
 
 // ── zzz854 (additive): cross-tab reconciliation with the EVENTS layer, list buckets, count equations ──────────────

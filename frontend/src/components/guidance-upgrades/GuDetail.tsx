@@ -64,7 +64,7 @@ export function GuDetail({ e, onClose, now }: { e: GuidanceEvent; onClose: () =>
         {e.history.length === 0 ? <span style={{ color: R.faint }}>No earlier guidance stored for this company yet. History builds up as events are seen.</span> : (
           <div style={{ overflowX: 'auto' }}><table style={{ borderCollapse: 'collapse', fontSize: 12, width: '100%' }}>
             <thead><tr style={{ textAlign: 'left', color: R.dim }}><th>Date</th><th>Metric</th><th>Period</th><th>Guidance</th><th>Change</th><th>Result</th></tr></thead>
-            <tbody>{e.history.map((h, i) => <tr key={i} style={{ borderTop: `1px solid ${R.border}` }}><td>{h.date.slice(0, 10)}</td><td>{METRIC_LABEL[h.metric]}</td><td>{h.period}</td><td>{h.text}</td><td>{h.change.replace('_', ' ')}</td><td>{h.result || 'UNKNOWN'}</td></tr>)}</tbody>
+            <tbody>{e.history.map((h, i) => <tr key={i} style={{ borderTop: `1px solid ${R.border}` }}><td>{h.date.slice(0, 10)}</td><td>{h.label || METRIC_LABEL[h.metric]}</td><td>{h.period}</td><td>{h.text}</td><td>{h.change.replace('_', ' ')}</td><td>{h.result || 'UNKNOWN'}</td></tr>)}</tbody>
           </table></div>)}
         <div style={{ marginTop: 6, fontSize: 12 }}>
           {st ? <>Raises {st.upgrades} · cuts {st.downgrades} · repeated {st.reiterations} · average revision {st.avgRevisionPct == null ? UNAVAILABLE : `${st.avgRevisionPct.toFixed(1)}%`} · results beat after a raise {st.beatRateAfterUpgrades == null ? `${UNAVAILABLE} (fewer than 2 results known)` : `${Math.round(st.beatRateAfterUpgrades * 100)}% of ${st.resolved}`}</> : `Accuracy record: ${UNAVAILABLE}`}

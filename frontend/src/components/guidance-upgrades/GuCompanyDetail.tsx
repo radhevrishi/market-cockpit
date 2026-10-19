@@ -85,6 +85,7 @@ function GuCompanyDetailBody({ r, onFull }: { r: GuUniverseRecord; onFull?: (c: 
         <div key={i}>
           <b>{metricShort(p.metric)} {fmtGrowthDisplay(p)}</b> <span style={{ color: R.dim }}>{p.period || ''}</span>
           {!backed(r, p) && <span style={{ color: R.amber, fontWeight: 700 }}> · Not independently verified</span>}
+          {(() => { const h = ((r as any).points || []).find((q: any) => q?.scopeHeldReason && q.metric === p.metric && (q.period === p.period || q.periodNormalized === p.period)); return h ? <div data-gu-scope-held style={{ color: R.amber, fontSize: 12 }}>⚠ Not used as company growth: {h.scopeHeldReason}.</div> : null; })()}
           {p.growthOrigin === 'IMPLIED' && (
             <div style={{ color: R.dim, fontSize: 12 }}>
               Implied growth, worked out from an absolute target. Not a % the company stated.

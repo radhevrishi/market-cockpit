@@ -12,7 +12,8 @@ import { R, box, tint } from './gu-tokens';
 import { btn } from './GuBits';
 import { VIEW_HINT, VIEW_ORDER, expiryLine, excludedWhy, reasonCountsLine, sourceDisplayName, viewCountsLine, viewLabel, type GuView } from './gu-ui';
 import { GuUniverseList } from './GuUniverseList';
-import { useGuUniverse } from './useGuUniverse';
+import { ageText } from '@/lib/gu-client-cache';
+import { universeStatusLine, useGuUniverse } from './useGuUniverse';
 import { CappedList } from './GuMore';
 import { GuPanel, pillStyle } from './GuPanel';
 
@@ -28,7 +29,9 @@ export function GuUniverseBrowser({ held, onFull }: { held: string[]; onFull?: (
   const [scope, setScope] = useState<UniverseScope>('ALL');
   const [metric, setMetric] = useState<UniverseMetric>('ALL');
   const [view, setView] = useState<GuView>('active');
-  const { data, state, retry, error } = useGuUniverse({ market: universeApiMarket(scope), metric: universeApiMetric(metric), view });
+  const uh = useGuUniverse({ market: universeApiMarket(scope), metric: universeApiMetric(metric), view });
+  const { data, state, retry, error } = uh;
+  const uLine = universeStatusLine(uh, ageText);   // zzz1129 (R2): refresh failures shown here too
   // zzz863: choosing India (or USA) while its Active list is empty opens the first list that has rows for that market, and says so
   const autoFor = useRef<string>('');
   const mk = scope === 'INDIA' ? 'IN' : scope === 'USA' ? 'US' : null;
@@ -67,6 +70,7 @@ export function GuUniverseBrowser({ held, onFull }: { held: string[]; onFull?: (
       </div>
       {scope === 'MY_BOOK' && held.length === 0 && <div style={{ fontSize: 12, color: R.dim }}>No holdings found. Add them on the Portfolio page and this view fills in.</div>}
       {state === 'loading' && !data && <div style={box({ padding: 12, fontSize: 13, color: R.dim })}>Reading the guidance universe.</div>}
+      {uLine && uLine.tone === 'warn' && <div role="alert" style={{ fontSize: 12, color: R.amber, display: 'flex', gap: 8, alignItems: 'center' }}><span>{uLine.text}</span><button type="button" style={btn()} onClick={retry}>Retry</button></div>}
       {state === 'error' && (
         <div style={box({ padding: 12, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' })} role="alert">
           <span style={{ fontSize: 13 }}><b>{UNIVERSE_UNAVAILABLE}.</b> {error || 'Unknown error'}</span>

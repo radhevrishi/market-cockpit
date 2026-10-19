@@ -5,6 +5,7 @@
 import { useSyncExternalStore } from 'react';
 import type { GuHighGrowthGroups, GuHgGroupRow } from './guidance-universe-types';
 import { keyOf } from './gu-focus';
+import { recountGroups } from './gu-quarantine';
 
 const EV = 'gu-held-updated';
 let held: ReadonlySet<string> = new Set();
@@ -27,9 +28,10 @@ export function withoutHeld(groups: GuHighGrowthGroups | null | undefined, keys:
     const metrics = (r.metrics || []).filter((x) => x.metric !== 'REVENUE');
     return metrics.length ? [{ ...r, metrics }] : [];
   }).map((r, i) => ({ ...r, rank: i + 1 }));
-  return {
+  return recountGroups({
     ...groups,
     cohorts: Object.fromEntries(Object.entries(groups.cohorts).map(([c, l]) => [c, clean(l)])) as GuHighGrowthGroups['cohorts'],
     trust: Object.fromEntries(Object.entries(groups.trust || {}).map(([t, byC]) => [t, Object.fromEntries(Object.entries(byC).map(([c, l]) => [c, clean(l)]))])) as GuHighGrowthGroups['trust'],
-  };
+    heldOut: (groups.heldOut ?? 0) + Object.values(groups.cohorts).flat().filter((r) => keys.has(keyOf(r.market, r.ticker, r.company)) && r.headline?.metric === 'REVENUE').length,
+  });
 }

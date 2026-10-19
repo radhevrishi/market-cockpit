@@ -53,7 +53,8 @@ export interface GuInvariantBundle {
 
 export function checkUniverseInvariants(bundle: GuInvariantBundle): GuInvariantViolation[] {
   const out: GuInvariantViolation[] = [];
-  const v = (code: string, r: GuUniverseRecordX | null, p: GuPoint | null, message: string) => out.push({ code, entityKey: r?.entityKey ?? null, company: r?.record?.company ?? null, metric: p?.metric ?? null, message });
+  // zzz1131 (retest R4) — each violation names its POINT (metric + period), so one failed period never removes another
+  const v = (code: string, r: GuUniverseRecordX | null, p: GuPoint | null, message: string) => out.push({ code, entityKey: r?.entityKey ?? null, company: r?.record?.company ?? null, metric: p?.metric ?? null, period: p ? (p.periodNormalized || p.period || null) : null, message });
   const active = bundle.defaultRecords ?? bundle.records ?? [];
   const queue = bundle.reviewQueue ?? [];
 
@@ -81,7 +82,10 @@ export function checkUniverseInvariants(bundle: GuInvariantBundle): GuInvariantV
         if (p.needsReview) v('VERIFIED_NEEDS_REVIEW', r, p, 'A VERIFIED point is flagged needs review.');
         if (p.claimType !== 'MANAGEMENT_GUIDANCE') v('VERIFIED_NOT_MANAGEMENT', r, p, `A VERIFIED point has claimType ${p.claimType}.`);
       }
-      if (p.verificationState === 'DERIVED' && (p.sourceTier > 2 || !p.growthDerivation)) v('DERIVED_WITHOUT_PRIMARY_NUMBERS', r, p, 'A DERIVED point has no primary source or no derivation numbers.');
+      // zzz1131 (R4) — a multi-year rate worked out from a stated target and base (or the company's own total) keeps its numbers in the
+      // basis text / implied figure, not in growthDerivation: that is a supported form, not missing evidence
+      const cagrNumbers = (p.periodKind === 'MULTI_YEAR_CAGR' || p.cohort === 'MULTI_YEAR_CAGR') && /worked out from (?:company numbers|the company's total)/.test(`${p.basisLabel || ''} ${p.display || ''}`);
+      if (p.verificationState === 'DERIVED' && (p.sourceTier > 2 || (!p.growthDerivation && !cagrNumbers))) v('DERIVED_WITHOUT_PRIMARY_NUMBERS', r, p, 'A DERIVED point has no primary source or no derivation numbers.');
       if (p.sourceTier >= 3 && (p.verificationState === 'VERIFIED' || p.verificationState === 'DERIVED')) v('TIER3_VERIFIED', r, p, 'A TIER3/TIER4 source cannot verify.');
       // lifecycle: superseded / expired never current
       p.history.forEach((h, i) => { if (i < p.history.length - 1 && h.status !== 'SUPERSEDED') v('HISTORY_OLD_STEP_NOT_SUPERSEDED', r, p, `History step ${h.step} is ${h.status} but a later revision exists.`); });

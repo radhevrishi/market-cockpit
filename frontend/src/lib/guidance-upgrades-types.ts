@@ -163,6 +163,8 @@ export interface GuLedgerRow {
   metric: GuMetric;
   period: string;
   text: string;                    // '+5–7%' etc
+  /** zzz1134 (retest R5): the measure's own name ("Core revenue"), when the phrase gives one */
+  label?: string;
   change: 'INITIAL' | 'RAISED' | 'CUT' | 'REITERATED' | 'NARROWED_UP' | 'NARROWED_DOWN';
   result?: 'BEAT' | 'INLINE' | 'MISS' | 'PENDING' | 'UNKNOWN';
   revisionPct?: number | null;     // additive: size of this revision in % (or pp for growth/margin metrics); null/absent = unknown

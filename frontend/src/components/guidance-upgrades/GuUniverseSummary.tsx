@@ -10,7 +10,8 @@ import type { GuUniverseRecord } from '@/lib/guidance-universe-types';
 import { R, box, tint } from './gu-tokens';
 import { QualityStrip, btn } from './GuBits';
 import { GuGroupList, GuHighGrowthList } from './GuHighGrowthList';
-import { useGuUniverse, type GuUniverseExt } from './useGuUniverse';
+import { ageText } from '@/lib/gu-client-cache';
+import { universeStatusLine, useGuUniverse, type GuUniverseExt } from './useGuUniverse';
 import { useHeldKeys, withoutHeld } from '@/lib/gu-held-store';
 import { quarantineCounts } from '@/lib/gu-quarantine';
 import { GuFold, GuPanel, pillStyle } from './GuPanel';
@@ -20,7 +21,7 @@ import { GuClaimsTable } from './GuClaimsTable';
 import { GuDerivedAudit } from './GuIntegrityAudit';
 import { GuAtAGlance } from './GuAtAGlance';
 import { SCOPE_NOTE, scopedTitle } from '@/lib/guidance-semantics';
-import { BADGE_LEGEND, SECTIONS, SECTION_ACTIVE, cohortCountsLine, cohortTotal, freshnessLines, highestActiveHeading, rowCohortLine, rowTrustLine, sectionRows } from './gu-ui';
+import { BADGE_LEGEND, SECTIONS, SECTION_ACTIVE, cohortCountsLine, cohortTotal, freshnessLines, highestActiveFinal, rowCohortLine, rowTrustLine, sectionRows } from './gu-ui';
 
 type Mk = 'IN' | 'US' | 'ALL';
 const TOGGLE: Array<[Mk, string]> = [['ALL', 'All markets'], ['IN', 'India'], ['US', 'USA']];
@@ -34,7 +35,9 @@ export function recordFinder(data: GuUniverseExt | null): (entityKey: string) =>
 
 export function GuUniverseSummary({ onFull }: { onFull?: (c: GgCompany) => void }) {
   const [mk, setMk] = useState<Mk>('ALL');
-  const { data, state, retry, error } = useGuUniverse({ market: 'ALL', view: 'active' });
+  const uh = useGuUniverse({ market: 'ALL', view: 'active' });
+  const { data, state, retry, error } = uh;
+  const uLine = universeStatusLine(uh, ageText);   // zzz1129 (R2): refresh failures shown here too
   const heldKeys = useHeldKeys();   // zzz1116 (G04): the Focus list's held-back growths leave these rankings too
   const groups = useMemo(() => withoutHeld(data?.summary?.highGrowthGroups, heldKeys), [data, heldKeys]);
   const hasGroups = !!groups && !!groups.cohorts;
@@ -49,6 +52,7 @@ export function GuUniverseSummary({ onFull }: { onFull?: (c: GgCompany) => void 
       hint={`Companies that have guided ${thr}% or more growth and whose guidance is still in force.`}
       right={<div role="group" aria-label="Market" style={{ display: 'flex', gap: 6 }}>{TOGGLE.map(([k, l]) => <button key={k} type="button" style={pillStyle(mk === k, R.green)} aria-pressed={mk === k} onClick={() => setMk(k)}>{l}</button>)}</div>}>
       {state === 'loading' && !data && <div style={box({ padding: 12, fontSize: 13, color: R.dim })}>Reading the guidance universe.</div>}
+      {uLine && uLine.tone === 'warn' && <div role="alert" style={{ fontSize: 12, color: R.amber, display: 'flex', gap: 8, alignItems: 'center' }}><span>{uLine.text}</span><button type="button" style={btn()} onClick={retry}>Retry</button></div>}
       {state === 'error' && (
         <div style={box({ padding: 12, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' })} role="alert">
           <span style={{ fontSize: 13 }}><b>{UNIVERSE_UNAVAILABLE}.</b> {error || 'Unknown error'}. An empty list here does not mean nothing is active.</span>
@@ -87,14 +91,14 @@ export function GuUniverseSummary({ onFull }: { onFull?: (c: GgCompany) => void 
                 const rows = sectionRows(groups, sec.key, mk);
                 const total = cohortTotal(rows);
                 // zzz854: the Active heading carries its threshold and the backend equation, so 'Active N' vs 'Highest active M' is explained
-                const ha = sec.key === 'active' && mk === 'ALL' ? highestActiveHeading(data.countEquations, total, thr) : null;
+                const ha = sec.key === 'active' && mk === 'ALL' ? highestActiveFinal(groups, data.countEquations?.active?.value ?? null, thr) : null;   // zzz1130 (R3)
                 // zzz859: each list folds; the ranked lists open when they have rows, claims awaiting verification stay closed
                 const accent = SECTION_ACCENT[sec.key] || R.cyan;
                 return (
                   <div key={sec.key} role="group" aria-label={sec.title}>
                   <GuFold title={scopedTitle(ha ? ha.title.replace(/\s*\(\d+\)\s*$/, '') : sec.title.replace(/\s*\(\d+\)\s*$/, ''), mk)} count={total} accent={accent} defaultOpen={sec.key === 'active' && total > 0}>
                     {ha?.note && <div data-gu-highest-note style={{ fontSize: 12, color: R.dim }}>{ha.note}</div>}
-                    {ha && data.countEquations?.highestActive && data.countEquations.highestActive.value !== total && <div style={{ fontSize: 12, color: R.amber }}>{total} rows are in this list; the count above says {data.countEquations.highestActive.value}.</div>}
+                    {ha && groups && groups.counts.rows !== total && <div style={{ fontSize: 12, color: R.amber }}>{total} rows are in this list; the count above says {groups.counts.rows}.</div>}
                     <div style={{ fontSize: 12, color: R.dim }}>{sec.hint}</div>
                     {sec.key === 'active' && groups && (
                       <div style={{ fontSize: 12.5, color: R.dim }}>

@@ -22,6 +22,10 @@ export const PRINT_CSS = `
 .gu-focus-table td{font-size:14px !important;line-height:1.45}
 .gu-focus-table td div,.gu-focus-table td span{font-size:12.5px}
 .gu-focus-table td.gu-co{min-width:230px}
+/* zzz1137 — Compact columns: table A hides Price (5) and EPS estimate (8); table B hides Source (4), Price (6) and EPS estimate (9).
+   Expanded detail rows (one cell with colSpan) have no such child, so they are untouched. */
+.gu-cols-compact table[data-t="A"] tr > :nth-child(5):not([data-keep]),.gu-cols-compact table[data-t="A"] tr > :nth-child(8):not([data-keep]),
+.gu-cols-compact table[data-t="B"] tr > :nth-child(4):not([data-keep]),.gu-cols-compact table[data-t="B"] tr > :nth-child(6):not([data-keep]),.gu-cols-compact table[data-t="B"] tr > :nth-child(9):not([data-keep]){display:none}
 @media (max-width:760px){.gu-page{padding:12px}.gu-focus-table td.gu-co{min-width:160px}}
 @media print{
   .gu-noprint{display:none !important}

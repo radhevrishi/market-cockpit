@@ -15,7 +15,8 @@ import { GuTitle, GuTopBar } from '@/components/guidance-upgrades/GuTopBar';
 import { GuCard, GuAuditArea } from '@/components/guidance-upgrades/GuCard';
 import { GuCoverage } from '@/components/guidance-upgrades/GuCoverage';
 import { GuReviewQueue, GuVerificationBlock } from '@/components/guidance-upgrades/GuQueue';
-import { GuDetailShell, normalizeFullEvent, type DetailLoad } from '@/components/guidance-upgrades/GuDetailShell';
+import { GuDetailShell } from '@/components/guidance-upgrades/GuDetailShell';
+import { DetailLoader } from '@/components/guidance-upgrades/detail-loader';
 import { GuUniverseSummary } from '@/components/guidance-upgrades/GuUniverseSummary';
 import { GuFocusList } from '@/components/guidance-upgrades/GuFocusList';
 import { GuStatusStrip } from '@/components/guidance-upgrades/GuStatusStrip';
@@ -40,6 +41,7 @@ export default function GuidanceUpgradesPage() {
   const [refreshing, setRefreshing] = useState(false);
   // zzz882: when the fresh load fails, the saved copy stays on screen — and the page now SAYS so, with its age and a retry (Rishi saw a 3-hour-old copy as if live)
   const [savedOnly, setSavedOnly] = useState<number | null>(null);
+  const [bgError, setBgError] = useState<string | null>(null);
   const [held, setHeld] = useState<string[]>([]);
   const [bookLoaded, setBookLoaded] = useState(false);
   const [todayFirst, setTodayFirst] = useState(true);
@@ -74,7 +76,9 @@ export default function GuidanceUpgradesPage() {
       if (hit.ageMs < FRESH_MS) return;
     } else setState('loading');
     const get = async (url: string) => {
-      const r = await fetch(url, { cache: 'no-store', signal: ac.signal });
+      // zzz1129 (R2) — a deadline here too: a hung feed request ends as an error with Retry, never an endless "Looking for…"
+      const sig = typeof (AbortSignal as any).any === 'function' ? (AbortSignal as any).any([ac.signal, AbortSignal.timeout(60_000)]) : ac.signal;
+      const r = await fetch(url, { cache: 'no-store', signal: sig });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const j = await r.json();
       if (!j || !Array.isArray(j.events)) throw new Error('bad answer');
@@ -90,8 +94,8 @@ export default function GuidanceUpgradesPage() {
         setRefreshing(true);
         try {
           const j2 = await get(`${key}&force=1`);
-          if (!ac.signal.aborted) { writeCache(key, j2); setData(j2); }
-        } catch { /* the saved copy stays on screen */ }
+          if (!ac.signal.aborted) { writeCache(key, j2); setData(j2); setBgError(null); }
+        } catch (e: any) { if (!ac.signal.aborted) setBgError(String(e?.message || e)); /* the saved copy stays on screen — and the page says so */ }
         if (!ac.signal.aborted) setRefreshing(false);
       }
     } catch {
@@ -133,41 +137,25 @@ export default function GuidanceUpgradesPage() {
   const { today: todayList, rest: restList } = useMemo(() => splitToday(shown, now), [shown, now]);
   const openLean = useMemo(() => (openId ? events.find((e) => e.guidance_event_id === openId) || null : null), [openId, events]);
   // zzz886: the opened card's full event (why this decision, chain, impacts …), fetched once; the lean row shows meanwhile
-  // zzz1112 (G01) — per-event load state; the full panel renders only from a validated full record (GuDetailShell)
-  const [fullEv, setFullEv] = useState<Record<string, DetailLoad>>({});
-  const [retryTick, setRetryTick] = useState(0);
+  // zzz1112 (G01) / zzz1128 (retest R1) — the opened event's full record: a request controller (detail-loader.ts) keeps completed
+  // records, cancels on close / switch (no stale "Loading" left behind) and ignores late answers from older attempts
+  const [, setDetailTick] = useState(0);
+  const win = useRef(window_); win.current = window_;
+  const loader = useMemo(() => new DetailLoader({
+    fetcher: (url, signal) => fetch(url, { cache: 'no-store', signal }),
+    urlFor: (id) => `/api/v1/guidance-upgrades?window=${win.current}&market=ALL&id=${encodeURIComponent(id)}`,
+    onChange: () => setDetailTick((n) => n + 1),
+  }), []);
   const openId0 = openLean?.guidance_event_id ?? null;
   const openIsLean = !!(openLean as any)?.lean;
   useEffect(() => {
-    if (!openId0) return;
-    if (!openIsLean) { const ev = normalizeFullEvent(openLean, openId0); setFullEv((m) => ({ ...m, [openId0]: ev ? { status: 'ok', event: ev } : { status: 'error', text: 'the record is incomplete' } })); return; }
-    const cur = fullEv[openId0];
-    if (cur && cur.status !== 'error') return;
-    if (cur?.status === 'error' && retryTick === 0) return;
-    const id = openId0;
-    const ctrl = new AbortController();
-    let timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, 20_000);
-    setFullEv((m) => ({ ...m, [id]: { status: 'loading' } }));
-    fetch(`/api/v1/guidance-upgrades?window=${window_}&market=ALL&id=${encodeURIComponent(id)}`, { cache: 'no-store', signal: ctrl.signal })
-      .then(async (r) => {
-        if (r.status === 404) throw new Error('this event is no longer in the feed');
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const j = await r.json().catch(() => null);
-        const ev = normalizeFullEvent(j?.event ? { ...openLean, ...j.event, lean: false } : null, id);
-        if (!ev) throw new Error('the answer did not contain this event');
-        setFullEv((m) => ({ ...m, [id]: { status: 'ok', event: ev } }));
-      })
-      .catch((e: any) => {
-        if (ctrl.signal.aborted && !timedOut) return;   // closed / another company opened: drop this answer
-        setFullEv((m) => ({ ...m, [id]: { status: 'error', text: timedOut ? 'no answer within 20 seconds' : String(e?.message || e) } }));
-      })
-      .finally(() => clearTimeout(timer));
-    return () => { clearTimeout(timer); ctrl.abort(); };
-    // fullEv is read once per open / retry (not a trigger): re-running on every state write would loop
+    if (!openId0) { loader.cancel(); return; }
+    loader.open(openId0, openLean, openIsLean);
+    // openLean changes identity on every list refresh; the id decides
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openId0, openIsLean, window_, retryTick]);
-  const openLoad = openId0 ? fullEv[openId0] : undefined;
+  }, [openId0, openIsLean, loader]);
+  useEffect(() => () => loader.cancel(), [loader]);
+  const openLoad = loader.state(openId0);
   const eventCounts = useMemo(() => ({ IN: events.filter((e) => e.market === 'IN').length, US: events.filter((e) => e.market === 'US').length }), [events]);
   // zzz855: a window can hold hundreds of events. Each list renders 30 cards, then "Show N more"; every count above comes from the full list.
   const card = useCallback((e: (typeof events)[number]) => <GuCard key={e.guidance_event_id} e={e} onOpen={select} now={now} />, [select, now]);
@@ -182,6 +170,7 @@ export default function GuidanceUpgradesPage() {
           <button type="button" onClick={() => void load(window_, true)} style={{ textDecoration: 'underline', background: 'none', border: 0, color: 'inherit', cursor: 'pointer', padding: 0 }}>Retry now</button>
         </div>
       )}
+      {bgError && data && !refreshing && <div role="alert" className="gu-noprint" style={{ fontSize: 12, color: R.amber }}>The fresh guidance feed did not load ({bgError}); the events shown come from the server's saved copy. <button type="button" onClick={() => void load(window_, true)} style={{ textDecoration: 'underline', background: 'none', border: 0, color: 'inherit', cursor: 'pointer', padding: 0 }}>Retry</button></div>}
       {refreshing && data && <div className="gu-noprint" style={{ fontSize: 11.5, color: R.dim }}>Showing the saved copy from {ageText(Date.now() - new Date((data as any).savedAt || Date.now()).getTime())}. Fresh data is loading in the background.</div>}
       <GuStatusStrip />
       <div role="tablist" aria-label="Guidance workspaces" className="gu-noprint" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', borderBottom: `1px solid ${R.border}`, paddingBottom: 6 }}>
@@ -260,7 +249,7 @@ export default function GuidanceUpgradesPage() {
       </div>
       <div style={{ fontSize: 11, color: R.faint }}>Company data only. Not investment advice. Prices are context here, never the reason.</div>
       {ggOpen && <GgDetail c={ggOpen} onClose={() => setGgOpen(null)} unverified={ggOpen.verification === 'SECONDARY_ONLY' || ggOpen.verification === 'UNVERIFIED'} />}
-      {openLean && <GuDetailShell lean={openLean} load={openLoad} onClose={() => select(null)} onRetry={() => setRetryTick((n) => n + 1)} now={now} />}
+      {openLean && <GuDetailShell lean={openLean} load={openLoad} onClose={() => select(null)} onRetry={() => { if (openId0) loader.retry(openId0, openLean); }} now={now} />}
     </div>
   );
 }

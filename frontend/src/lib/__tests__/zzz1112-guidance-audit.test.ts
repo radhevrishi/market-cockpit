@@ -40,7 +40,9 @@ describe('G01 — the detail panel renders only a full, matching record', () => 
     const page = readFileSync(new URL('../../app/(dashboard)/guidance-upgrades/page.tsx', import.meta.url), 'utf8');
     assert.match(page, /<GuDetailShell lean=\{openLean\}/);
     assert.doesNotMatch(page, /<GuDetail e=\{open\}/);
-    assert.match(page, /no answer within 20 seconds/);
+    // zzz1128: the request life (deadline, abort, retry) lives in detail-loader.ts, used by the page
+    assert.match(page, /DetailLoader/);
+    assert.match(readFileSync(new URL('../../components/guidance-upgrades/detail-loader.ts', import.meta.url), 'utf8'), /no answer within 20 seconds/);
     const shell = readFileSync(new URL('../../components/guidance-upgrades/GuDetailShell.tsx', import.meta.url), 'utf8');
     assert.match(shell, /getDerivedStateFromError/); assert.match(shell, /Retry/);
   });

@@ -64,47 +64,70 @@ export interface UniverseHook {
   data: GuUniverseExt | null; state: UniverseState; retry: () => void; error: string | null;
   refreshing: boolean; refreshError: string | null; savedAgeMs: number | null; fetchedAt: number | null;
 }
-export function useGuUniverse(o: { market?: 'IN' | 'US' | 'ALL'; metric?: string; view?: GuView }): UniverseHook {
-  const [data, setData] = useState<GuUniverseExt | null>(null);
-  const [state, setState] = useState<UniverseState>('loading');
-  const [tick, setTick] = useState(0);
-  const [error, setError] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
-  const [refreshError, setRefreshError] = useState<string | null>(null);
-  const [savedAgeMs, setSavedAgeMs] = useState<number | null>(null);
-  const [fetchedAt, setFetchedAt] = useState<number | null>(null);
-  const url = guUniverseUrl({ market: o.market, metric: o.metric, view: o.view });
-  useEffect(() => { const h = () => setTick((t) => t + 1); window.addEventListener('gu-refresh', h); return () => window.removeEventListener('gu-refresh', h); }, []);
-  useEffect(() => {
-    let alive = true;
-    // zzz863: show the saved copy at once, fetch fresh data in the background (skipped when the copy is under 90 seconds old)
-    // zzz886: the saved copy may be in IndexedDB (too big for localStorage), so it is read asynchronously
-    (async () => {
-      const hit = tick === 0 ? await readCacheAsync<GuUniverseExt>(url) : null;
-      if (!alive) return;
-      const shown = hit && isUniverseUsable(hit.data) ? hit : null;
-      if (shown) {
-        setData(shown.data); setState('ok'); setError(null); setSavedAgeMs(shown.ageMs);
-        if (shown.ageMs < FRESH_MS) return;
-      } else if (tick === 0 || !data) { setState('loading'); }
-      setRefreshing(true); setRefreshError(null); setError(null);
+
+/**
+ * zzz1129 (guidance retest R2 + "not the same data again and again") — ONE copy per request address, shared by every section of the
+ * page. Before, each of the five sections that use the universe read and parsed the same ~8 MB saved copy from IndexedDB on its own,
+ * and a failed view change kept showing the PREVIOUS view's rows under the new label. Now:
+ *  • every state belongs to its own address (market / view / metric): a new address never shows another address's rows;
+ *  • the saved copy is read once per address, the network is asked once per address while fresh (90 s), concurrent askers share it;
+ *  • a refresh failure on the same address keeps that address's rows and says so (`refreshError`).
+ */
+export interface UniverseEntry { data: GuUniverseExt | null; at: number | null; saved: boolean; error: string | null; refreshError: string | null; busy: boolean; fetchedAt: number | null }
+export class UniverseStore {
+  private m = new Map<string, UniverseEntry>();
+  private subs = new Map<string, Set<() => void>>();
+  private work = new Map<string, Promise<void>>();
+  networkCalls = 0; cacheReads = 0;
+  constructor(private io: { fetch: (url: string, force: boolean) => Promise<GuUniverseExt>; readCache: (url: string) => Promise<{ data: GuUniverseExt; ageMs: number } | null>; writeCache: (url: string, d: GuUniverseExt) => void; now?: () => number }) {}
+  private now() { return this.io.now ? this.io.now() : Date.now(); }
+  get(url: string): UniverseEntry { return this.m.get(url) || { data: null, at: null, saved: false, error: null, refreshError: null, busy: false, fetchedAt: null }; }
+  private set(url: string, e: Partial<UniverseEntry>) { this.m.set(url, { ...this.get(url), ...e }); for (const f of this.subs.get(url) || []) f(); }
+  subscribe(url: string, f: () => void): () => void { const s = this.subs.get(url) || new Set(); s.add(f); this.subs.set(url, s); return () => { s.delete(f); }; }
+  /** Make sure `url` has data: memory first, then the saved copy (once), then the network when not fresh. `force` = Retry / refresh. */
+  ensure(url: string, force = false): Promise<void> {
+    const running = this.work.get(url);
+    if (running && !force) return running;
+    const p = (async () => {
+      let e = this.get(url);
+      if (!e.data && !force) {
+        this.cacheReads++;
+        const hit = await this.io.readCache(url).catch(() => null);
+        if (hit && isUniverseUsable(hit.data)) { this.set(url, { data: hit.data, at: this.now() - hit.ageMs, saved: true, error: null }); e = this.get(url); }
+      }
+      if (!force && e.data && e.at != null && this.now() - e.at < FRESH_MS) return;
+      this.set(url, { busy: true, refreshError: null, error: null });
       try {
-        const j = await fetchUniverse(url, tick > 0);
-        if (!alive) return;
-        writeCache(url, j);
-        setData(j); setState('ok'); setSavedAgeMs(null); setFetchedAt(Date.now());
-      } catch (e) {
-        if (!alive) return;
-        const msg = (e as Error)?.message || 'Unknown error';
-        if (shown || data) { setRefreshError(msg); setState('ok'); return; }   // keep the saved copy, but SAY the refresh failed
-        setData(null); setError(msg); setState('error');
-      } finally { if (alive) setRefreshing(false); }
+        this.networkCalls++;
+        const j = await this.io.fetch(url, force);
+        this.io.writeCache(url, j);
+        this.set(url, { data: j, at: this.now(), saved: false, error: null, refreshError: null, busy: false, fetchedAt: this.now() });
+      } catch (err) {
+        const msg = (err as Error)?.message || 'Unknown error';
+        if (this.get(url).data) this.set(url, { refreshError: msg, busy: false });   // this address's own rows stay, labelled
+        else this.set(url, { error: msg, busy: false });
+      }
     })();
-    return () => { alive = false; };
-    // `data` is read only as "is something on screen" for a retry; it is not a trigger
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [url, tick]);
-  return { data, state, retry: () => setTick((t) => t + 1), error, refreshing, refreshError, savedAgeMs, fetchedAt };
+    this.work.set(url, p);
+    p.finally(() => { if (this.work.get(url) === p) this.work.delete(url); });
+    return p;
+  }
+  /** The hook's view of one address. */
+  view(url: string): Omit<UniverseHook, 'retry'> {
+    const e = this.get(url);
+    const state: UniverseState = e.data ? 'ok' : e.error ? 'error' : 'loading';
+    return { data: e.data, state, error: e.data ? null : e.error, refreshing: e.busy && !!e.data, refreshError: e.refreshError, savedAgeMs: e.saved && e.at != null ? this.now() - e.at : null, fetchedAt: e.fetchedAt };
+  }
+}
+const store = new UniverseStore({ fetch: fetchUniverse, readCache: (u) => readCacheAsync<GuUniverseExt>(u), writeCache: (u, d) => writeCache(u, d) });
+
+export function useGuUniverse(o: { market?: 'IN' | 'US' | 'ALL'; metric?: string; view?: GuView }): UniverseHook {
+  const url = guUniverseUrl({ market: o.market, metric: o.metric, view: o.view });
+  const [, bump] = useState(0);
+  useEffect(() => store.subscribe(url, () => bump((n) => n + 1)), [url]);
+  useEffect(() => { void store.ensure(url); }, [url]);
+  useEffect(() => { const h = () => void store.ensure(url, true); window.addEventListener('gu-refresh', h); return () => window.removeEventListener('gu-refresh', h); }, [url]);
+  return { ...store.view(url), retry: () => void store.ensure(url, true) };
 }
 
 /** One plain line for the universe's load status (null = nothing to say). */

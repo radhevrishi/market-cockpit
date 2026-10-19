@@ -159,7 +159,16 @@ export function buildUniverseResponse(b: GuBundle, p: GuResponseParams = {}) {
     ...checkUniverseCountEquations(summary.countEquations),
   ];
   // zzz1116 (G04) — the failed points leave EVERY ranking (Highest Active / Verified / Derived and the Focus list read these groups)
-  if (summary.highGrowthGroups) summary.highGrowthGroups = applyQuarantine(summary.highGrowthGroups, invariantViolations);
+  if (summary.highGrowthGroups) {
+    summary.highGrowthGroups = applyQuarantine(summary.highGrowthGroups, invariantViolations);
+    // zzz1130 (R3) — the header equation follows the rows that are really listed
+    const g = summary.highGrowthGroups, h = summary.countEquations?.highestActive;
+    if (h && g.rawRows != null && g.counts.rows !== h.value) {
+      const left = g.rawRows - g.counts.rows;
+      summary.countEquations.highestActive = { ...h, value: g.counts.rows, companies: g.counts.companies ?? h.companies,
+        text: `Highest active guidance ${g.counts.rows} = ${g.rawRows} ranked rows − ${left} that failed a data check (one row per company per period type: ${g.counts.ANNUAL} annual, ${g.counts.MULTI_YEAR_CAGR} multi-year CAGR, ${g.counts.QUARTERLY} quarterly)` };
+    }
+  }
   return {
     summary, records, pendingPrimary: summary.all.pendingPrimary,
     ...(view === 'review' ? { reviewQueue: records } : {}),

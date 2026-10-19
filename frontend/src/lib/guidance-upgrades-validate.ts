@@ -9,6 +9,7 @@
 // Thresholds are in GU_VALIDATION (documented below). Nothing names a company or a ticker.
 
 import type { GuChange, GuGuidancePoint, GuMarket, GuMetric, GuValidationIssue } from './guidance-upgrades-types';
+import { measureLabel } from './guidance-metric-label';
 
 export const GU_VALIDATION = {
   /** an in-year raise of an ANNUAL revenue / volume / order guide above this (relative %, same period) needs review */
@@ -223,7 +224,7 @@ export function splitByBasis(changes: readonly GuChange[]): { headline: GuChange
       headline.push(...adj); secondary.push(...other);
       const a = adj[0]; const o = other[0];
       const pa = pctOf(a); const po = pctOf(o);
-      const label = PER_SHARE.has(a.metric) ? 'EPS' : metricName(a.metric);
+      const label = PER_SHARE.has(a.metric) ? 'EPS' : a.metric === 'OTHER' ? measureLabel('OTHER', (a.after as any).raw, metricName(a.metric)) : metricName(a.metric);
       const sz = (c: GuChange, p: number | null) => (p == null ? '' : ` ${p >= 0 ? '+' : ''}${p.toFixed(1)}${c.after.isGrowthRate ? ' points' : '%'}`);
       const differ = pa != null && po != null && Math.abs(pa - po) >= 2;
       notes.push(`Headline uses adjusted ${label}${sz(a, pa)} (the basis the company emphasises); GAAP ${label}${sz(o, po)} is shown separately${differ ? ' — the gap between the two usually comes from one-off items' : ''}.`);

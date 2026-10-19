@@ -44,6 +44,10 @@ export function GuUniverseList({ records, showMarket, limit = MOBILE_LIMIT, onFu
                 {eventTags(r).map((t) => <Chip key={t.label} color={TONE[t.tone]} title={t.tip}>{t.label}</Chip>)}
                 <span aria-hidden style={{ marginLeft: 'auto', color: R.dim, fontSize: 12 }}>{isOpen ? 'Hide' : 'Details'}</span>
               </button>
+              {/* zzz1136 (R6) — a figure that is most likely one business says so beside the row (the verified badge is about the source) */}
+              {((x as any).points || []).filter((p: any) => p?.scopeHeldReason).map((p: any, k: number) => (
+                <div key={`sh-${k}`} data-gu-scope-held style={{ fontSize: 12, color: R.amber, paddingLeft: 30 }}>⚠ {p.display}: {p.scopeHeldReason}.</div>
+              ))}
               {(basis?.line || reasons.length > 0 || recon.length > 0 || x.lastVerified || x.lastVerifiedDaysAgo != null) && (
                 <div style={{ display: 'grid', gap: 1, paddingLeft: 30, marginTop: 2 }}>
                   <BasisLine t={basis} />

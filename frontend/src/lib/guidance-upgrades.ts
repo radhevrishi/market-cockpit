@@ -11,6 +11,7 @@
 //  - no visible 0-100 scores (rankKey is internal only)
 
 import { earlierPriorMismatch } from './guidance-prior-match';
+import { measureLabel } from './guidance-metric-label';   // zzz1134 (pure, no imports)
 import type {
   GuCandidate, GuChange, GuChain, GuContext, GuDecision, GuDuration, GuEvidence, GuFlag, GuGap,
   GuGuidancePoint, GuHistoryStats, GuLedgerRow, GuMarket, GuMateriality, GuMetric, GuNumber,
@@ -836,7 +837,7 @@ export interface GuSkeleton {
   flags: GuFlag[];                 // SECOND_UPGRADE_IN_WINDOW when applicable
   text: string;                    // combined title + body of all merged candidates
   /** zzz857: set when the skeleton was built from AI-extracted, quote-checked rows of the company's own document (the candidate-level text verdicts are not used: the document's own status is) */
-  extracted?: { docId: string; raisedNoPrior: boolean; metrics: string[] };
+  extracted?: { docId: string; raisedNoPrior: boolean; metrics: string[]; /** zzz1132 */ facts?: { nextResultsDate: string | null; timing: string[] | null } | null };
 }
 
 const METRIC_PRIORITY: GuMetric[] = ['REVENUE', 'EPS', 'ADJ_EPS', 'EBITDA', 'EBIT', 'NET_PROFIT', 'OTHER', 'OP_MARGIN', 'REVENUE_GROWTH', 'ORGANIC_GROWTH', 'FCF', 'FCF_CONVERSION', 'ORDER_INTAKE', 'BACKLOG', 'VOLUME', 'PRODUCTION', 'CAPACITY_UTIL'];
@@ -849,7 +850,7 @@ function rowsFromChanges(changes: GuChange[], date: string): GuLedgerRow[] {
     if (c.direction === 'UP') change = narrowed ? 'NARROWED_UP' : 'RAISED';
     else if (c.direction === 'DOWN') change = narrowed ? 'NARROWED_DOWN' : 'CUT';
     return {
-      date, metric: c.metric, period: c.after.period, text: fmtPoint(c.after), change,
+      date, metric: c.metric, period: c.after.period, text: fmtPoint(c.after), change, label: measureLabel(c.metric, c.after.raw, METRIC_LABEL[c.metric]),
       revisionPct: c.direction === 'UNKNOWN' ? null : (c.after.isGrowthRate ? c.percentagePointChange : c.percentageChange),
     };
   });
@@ -1122,7 +1123,10 @@ export function materiality(changes: GuChange[]): { level: GuMateriality; basis:
     if (f === 'REVENUE') {
       const p = c.after.isGrowthRate ? round(((100 + a) / (100 + b) - 1) * 100, 1) : (c.percentageChange ?? 0);
       revPct = Math.max(revPct ?? -Infinity, p);
-      parts.push(`${metricLabel(c)} guidance up ${fmtNum(round(p, 1))}% (${fmtPoint(c.before)} to ${fmtPoint(c.after)})`);
+      // zzz1135 (retest R8) — a growth RATE moved in percentage points; the % is its effect on the implied revenue (JNJ 6.5% → 6.6%)
+      parts.push(c.after.isGrowthRate
+        ? `${metricLabel(c)} guidance up ${fmtNum(round(a - b, 1))} points (${fmtPoint(c.before)} to ${fmtPoint(c.after)}; about ${p >= 0 ? '+' : ''}${fmtNum(round(p, 2))}% on implied revenue)`
+        : `${metricLabel(c)} guidance up ${fmtNum(round(p, 1))}% (${fmtPoint(c.before)} to ${fmtPoint(c.after)})`);
     } else if (f === 'PROFIT' || f === 'CASH') {
       const p = c.after.isGrowthRate ? (c.percentagePointChange ?? 0) : (c.percentageChange ?? 0);
       profitMax = Math.max(profitMax ?? -Infinity, p);
@@ -1295,7 +1299,8 @@ const nrMonthNo = (s: string) => { const t = s.toLowerCase().replace(/\.$/, '');
 
 /** An explicit date for the company's NEXT results / earnings call, after `after` (YYYY-MM-DD), or null. */
 export function nextResultsDateIn(text: string | null | undefined, after: string | null | undefined): string | null {
-  const t = String(text || '').replace(/\s+/g, ' ');
+  // zzz1133 (retest R7) — "Nov. 10, 2026": the dot after a month abbreviation is not a sentence end
+  const t = String(text || '').replace(/\s+/g, ' ').replace(/\b(Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept?|Oct|Nov|Dec)\.(?=\s+\d)/gi, '$1');
   if (!t) return null;
   const ctx = /\b(?:will (?:report|announce|release|host)|to (?:report|announce|release|host)|plans? to (?:report|announce|release)|scheduled (?:to|for)|expects? to (?:report|announce|release))\b[^.]{0,140}?\b(?:results|earnings|conference call|call)\b/i;
   const dates: string[] = [];
@@ -1420,8 +1425,18 @@ export function buildWhyNow(e: GuidanceEvent): string {
 export function whatItMeans(e: GuidanceEvent): string {
   const rev = pctOfFamily(e.changes, 'REVENUE'); const prof = pctOfFamily(e.changes, 'PROFIT');
   const parts: string[] = [];
-  if (rev != null) parts.push(`Revenue guidance is up ${fmtNum(round(rev, 1))}%.`);
-  if (prof != null) parts.push(`Profit guidance is up ${fmtNum(round(prof, 1))}%.`);
+  // zzz1135 (R8) — points for a guided growth RATE, percent for an amount; never the two mixed
+  const famText = (fam: Family, word: string, pct: number | null) => {
+    if (pct == null) return null;
+    const c = e.changes.find((x) => x.direction === 'UP' && x.before && familyOf(x) === fam && x.after.midpoint != null && x.before.midpoint != null);
+    if (c && c.after.isGrowthRate) {
+      const pp = c.after.midpoint! - c.before!.midpoint!;
+      return fam === 'REVENUE' ? `${word} growth guidance is up ${fmtNum(round(pp, 1))} points (about ${fmtNum(round(pct, 2))}% more revenue implied).` : `${word} growth guidance is up ${fmtNum(round(pp, 1))} points.`;
+    }
+    return `${word} guidance is up ${fmtNum(round(pct, 1))}%.`;
+  };
+  { const t = famText('REVENUE', 'Revenue', rev); if (t) parts.push(t); }
+  { const t = famText('PROFIT', 'Profit', prof); if (t) parts.push(t); }
   if (!parts.length) {
     const c = upChanges(e)[0];
     if (!c) {
@@ -2306,18 +2321,18 @@ export function buildGuidanceEvent(input: GuCandidate[] | GuSkeleton, ctx: GuCon
   if (driver.quality === 'UNKNOWN' && why.variable) base.guidance_driver = `Stated operating drivers: ${why.variable}`;
   // zzz1117 (G05) — timing / one-time effects named in the release (MaxCyte: instrument orders pulled forward from Q4, a milestone
   // payment) are part of the driver, and such a raise is not assumed to last several quarters; an explicit next-results date is kept
-  const timing = timingEffectsOf(text);
+  const timing = timingEffectsOf(text) ?? sk.extracted?.facts?.timing ?? null;   // zzz1132: the document's own text when the event holds only quotes
   if (timing) {
     const note = `${timing.join('; ')}`;
     base.guidance_driver = driver.quality === 'UNKNOWN' || /not stated|unresolved/i.test(base.guidance_driver)
       ? `Stated in the release: ${note} — part of the raise may be timing or one-time` : `${base.guidance_driver} Also stated: ${note} (timing / one-time).`;
-    if (duration0 === 'UNKNOWN' && (base.duration === 'MULTI_QUARTER' || base.duration === 'MULTI_YEAR')) {
+    if (base.duration === 'MULTI_QUARTER' || base.duration === 'MULTI_YEAR') {   // zzz1132: a timing / one-time effect is stated — no durability claim
       base.duration = 'UNKNOWN';
       base.v2.durabilityLevel = 'UNKNOWN_INSUFFICIENT_EVIDENCE';
       base.v2.durabilityWhy = `Unknown — the release names timing or one-time effects (${note}), so the raise is not assumed to last several quarters.`;
     }
   }
-  const nrd = nextResultsDateIn(text, sk.announcement_date);
+  const nrd = nextResultsDateIn(text, sk.announcement_date) ?? (sk.extracted?.facts?.nextResultsDate && sk.extracted.facts.nextResultsDate > sk.announcement_date ? sk.extracted.facts.nextResultsDate : null);
   if (nrd) base.nextResultsDate = nrd;
   if (unitWarnings.length) for (const w of unitWarnings) if (!base.evidenceGaps.includes(w)) base.evidenceGaps.push(w);
   // primary source (link + date) before the narrative, so WHY NOW can name the document and its date
@@ -2399,6 +2414,8 @@ export interface GuidanceExtractResult {
   docId: string; market: 'IN' | 'US'; ticker: string | null; company: string; docUrl: string; docKind: string; filedAt: string; extractedAt?: string; status: string;
   rows: Array<{ metric: string; period: string; periodKind: 'ANNUAL' | 'QUARTER' | 'MULTI_YEAR'; basis: string; currency: string | null; unit: string | null; low: number | null; high: number | null;
     status: string; prior?: { low: number | null; high: number | null; statedIn: string | null } | null; quote: string }>;
+  /** zzz1132: facts read from the document text (next results date, timing effects) */
+  docFacts?: { nextResultsDate: string | null; timing: string[] | null } | null;
 }
 const X_EV_METRIC: Record<string, GuMetric> = { REVENUE: 'REVENUE', REVENUE_GROWTH: 'REVENUE_GROWTH', EBITDA: 'EBITDA', EBITDA_MARGIN: 'OP_MARGIN', PAT: 'NET_PROFIT', EPS: 'EPS', ADJ_EPS: 'ADJ_EPS', FCF: 'FCF', ORDER_INFLOW: 'ORDER_INTAKE', VOLUME: 'VOLUME', OTHER: 'OTHER' };
 const X_EV_DOC: Record<string, { name: string; kind: GuCandidate['kind']; type: string }> = {
@@ -2481,7 +2498,7 @@ export function skeletonsFromExtracted(results: readonly GuidanceExtractResult[]
     const key = canonicalKey(ticker, changes[0].metric, changes[0].after.period, date);
     out.push({ canonical_key: key, guidance_event_id: stableId(key), ticker, company: r.company || ticker, market: r.market, announcement_date: date,
       sources: [{ url: r.docUrl || undefined, name: sourceName, tier: 'PRIMARY', type: dn.type, date }], candidates: [cand], changes, history: rowsFromChanges(changes, date), flags: [],
-      text: `${cand.title}. ${cand.text}`, extracted: { docId: r.docId, raisedNoPrior, metrics } });
+      text: `${cand.title}. ${cand.text}`, extracted: { docId: r.docId, raisedNoPrior, metrics, facts: r.docFacts ?? null } });
   }
   return out;
 }

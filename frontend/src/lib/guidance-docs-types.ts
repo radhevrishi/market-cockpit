@@ -115,4 +115,6 @@ export interface GuidanceExtractResult {
   escalation?: { reason: string; model: string | null; used: 'cheap' | 'strong'; refused?: string };
   /** zzz1050: re-read under this prompt version and the old result kept (the re-read found less) — not re-read again for it */
   refreshedUnder?: string;
+  /** zzz1132: facts read from the document text without AI (next results date, timing / one-time effects) — see gu-doc-facts */
+  docFacts?: { nextResultsDate: string | null; timing: string[] | null; v: number };
 }

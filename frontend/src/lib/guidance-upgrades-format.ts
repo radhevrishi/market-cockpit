@@ -1,6 +1,7 @@
 // zzz843 — Guidance Upgrades: plain-English formatters. Client-safe, pure, no imports beyond types.
 // Rule: a relative change is "+x%", a change between two rates (growth, margin) is "+x pp".
 // The two are never mixed. A missing number prints DATA UNAVAILABLE, never zero.
+import { measureLabel } from './guidance-metric-label';
 import type { GuWindow, GuChange, GuGuidancePoint, GuNumber, GuDecision, GuMetric, GuThesis, GuGap, GuDuration, GuMateriality, GuPortfolioImpact, GuFlag, GuidanceEvent, GuRangeClass, GuDurabilityLevel, GuStage, GuScoreItem, GuMetricBasis, GuScanStatus, GuScanSource, GuSummary, GuRangeMath, GuTaxonomy, GuReviewStatus, GuPrimarySourceState, GuReviewItem, GuPipelineCounts } from './guidance-upgrades-types';
 
 export const UNAVAILABLE = 'DATA UNAVAILABLE';
@@ -59,22 +60,7 @@ export const METRIC_LABEL: Record<GuMetric, string> = {
  * revenue AND core revenue; Oscar's "other" was an operating-income measure. A qualifier (total / core / product / service / SPL /
  * segment) comes from the phrase the figure was read from; an OTHER measure takes its name from that phrase when one is there. Pure.
  */
-export function metricLabelOf(p: Pick<GuGuidancePoint, 'metric' | 'raw'>): string {
-  const base = METRIC_LABEL[p.metric] || 'Other';
-  const raw = String(p.raw || '').replace(/\s+/g, ' ').trim();
-  if (!raw) return base;
-  if (p.metric === 'REVENUE' || p.metric === 'REVENUE_GROWTH') {
-    const q = /\b(total|core|product|services?|subscription|recurring|platform|SPL|program-related|license|organic|net)\s+(?:[a-z]+\s+)?revenues?\b/i.exec(raw);
-    if (q && !/^net$/i.test(q[1])) return `${q[1].charAt(0).toUpperCase()}${q[1].slice(1).toLowerCase().replace(/^spl$/, 'SPL')} ${base.toLowerCase()}`;
-    return base;
-  }
-  if (p.metric === 'OTHER') {
-    const head = raw.split(/[\d$₹€£(]/)[0].replace(/\b(?:of|to|is|at|be|between|from|range|guidance|expected|expects?|we|our|the|now|raised?|raising|approximately|about|around)\b/gi, ' ').replace(/[^A-Za-z\- ]+/g, ' ').replace(/\s+/g, ' ').trim();
-    const w = head.split(' ').filter(Boolean).slice(-4).join(' ');
-    return w.length >= 4 ? w.charAt(0).toUpperCase() + w.slice(1) : base;
-  }
-  return base;
-}
+export function metricLabelOf(p: Pick<GuGuidancePoint, 'metric' | 'raw'>): string { return measureLabel(String(p.metric), p.raw, METRIC_LABEL[p.metric] || 'Other'); }
 
 export const DECISION_LABEL: Record<GuDecision, string> = {
   IMMEDIATE_BUY: 'IMMEDIATE BUY', WATCHLIST: 'WATCHLIST', DELAYED_EP: 'DELAYED EP', REJECT: 'REJECT', UNVERIFIED: 'UNVERIFIED',

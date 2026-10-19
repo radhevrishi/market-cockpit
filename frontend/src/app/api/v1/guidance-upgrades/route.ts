@@ -25,6 +25,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { leanEventsBody } from '@/lib/gu-lean';
 import { kvGet, kvMGet, kvSet } from '@/lib/kv';
+import { withDocFacts } from '@/lib/gu-doc-facts';
 import { auditUpgrades } from '@/lib/guidance-upgrade-audit';
 import { lastGoodKey, slimForStore, isUsableLastGood, lastGoodAgeMs, LASTGOOD_TTL_S, LASTGOOD_SERVE_MS } from '@/lib/guidance-lastgood';
 import { docFromQueueRead, storeQueueDocs } from '@/lib/guidance-queue-bridge';
@@ -395,7 +396,12 @@ async function getFull(req: NextRequest) {
     unmatchedSubjects = subjectOnly.filter((f) => !matchedSet.has(`IN|${(f.ticker || '').toUpperCase()}|${f.nameKey}`) && !recIn.events.some((e) => e.primaryState === 'PRIMARY_SOURCE_FOUND' && ((f.ticker && f.ticker.toUpperCase() === (e.ticker || '').toUpperCase()) || (!!f.nameKey && f.nameKey === normCompanyName(e.company)))));
     // zzz857: company-document events (AI-read, quote-checked) through the same engine; each replaces a text-derived event of the same company and announcement
     const xList = await extractP;
-    const xEvents = xList ? buildExtractedEvents(xList.results.filter((r) => (r.market === 'US' ? wantUS : wantIN)), (t, m) => ctxMaker(m === 'US' ? 'US' : 'IN', m === 'US' ? ledUS : ledIN)(t), now, window) : [];
+    // zzz1132 (R5): the next-results date and timing effects from each in-window document's own text (read once per document, cached)
+    const xAll = xList ? xList.results.filter((r) => (r.market === 'US' ? wantUS : wantIN)) : [];
+    const xFacts = xList ? await withDocFacts(xAll.filter((r) => withinWindow(String(r.filedAt || '').slice(0, 10), window, now))).catch(() => null) : null;
+    const factsById = new Map((xFacts || []).filter((r) => r.docFacts).map((r) => [r.docId, r.docFacts]));
+    const xIn = xAll.map((r) => (factsById.has(r.docId) ? { ...r, docFacts: factsById.get(r.docId) } : r));   // earlier documents stay (they are the prior guidance)
+    const xEvents = xList ? buildExtractedEvents(xIn, (t, m) => ctxMaker(m === 'US' ? 'US' : 'IN', m === 'US' ? ledUS : ledIN)(t), now, window) : [];
     const mIN = mergeExtractedEvents(recIn.events, xEvents.filter((e) => e.market !== 'US'));
     const mUS = mergeExtractedEvents(recUs.events, xEvents.filter((e) => e.market === 'US'));
     extractInfo = { documents: xList?.results.length ?? 0, events: xEvents.length, replaced: mIN.replaced.length + mUS.replaced.length, ...(xList ? {} : { error: 'extract results could not be read in time' }), ...(xList?.error ? { error: xList.error } : {}) };

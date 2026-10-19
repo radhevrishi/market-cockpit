@@ -18,7 +18,7 @@ import { FvCells, FV_HEAD, FV_COLS } from './GuFairValue';
 import { opportunityScore, type Opportunity } from '@/lib/gu-opportunity';
 import { OppCells, OppHead, OppBreakdownRow, OPP_COLS } from './GuOpportunity';
 
-function FocusTable({ title, sub, head, empty, children }: { title: string; sub: string; head: React.ReactNode[]; empty: string; children: React.ReactNode }) {
+function FocusTable({ title, sub, head, empty, children, tableId }: { title: string; sub: string; head: React.ReactNode[]; empty: string; children: React.ReactNode; tableId?: 'A' | 'B' }) {
   const th: React.CSSProperties = { textAlign: 'left', padding: '6px 8px', fontSize: 11, fontWeight: 800, color: R.dim, borderBottom: `1px solid ${tint(R.grey, 40)}`, whiteSpace: 'nowrap' };
   const has = React.Children.toArray(children).length > 0;   // zzz906: toArray drops false / null
   return (
@@ -27,7 +27,7 @@ function FocusTable({ title, sub, head, empty, children }: { title: string; sub:
       <span style={{ fontSize: 12, color: R.dim }}>{sub}</span>
       {has ? (
         <div className="gu-scroll" role="region" aria-label={`${title} — scroll sideways for more columns`} tabIndex={0}>
-          <table className="gu-focus-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <table className="gu-focus-table" data-t={tableId} style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr>{head.map((h, i) => <th key={i} style={th}>{h}</th>)}</tr></thead>
             <tbody>{children}</tbody>
           </table>
@@ -107,6 +107,11 @@ function MoreRow({ shown, total, open, onToggle, cols }: { shown: number; total:
 }
 
 export function GuFocusList({ events, window, onOpen, caps }: { events: readonly GuidanceEvent[]; window: string; onOpen: (id: string) => void; caps?: { IN?: Record<string, number>; US?: Record<string, number> } | null }) {
+  // zzz1137 (retest layout) — Compact columns by default (Price, EPS estimate and the long Source title move out; all still on hover /
+  // in the detail); "All columns" brings them back. Remembered in this browser.
+  const [cols, setCols0] = useState<'compact' | 'all'>('compact');
+  useEffect(() => { try { const v = localStorage.getItem('mc:gu-focus-cols:v1'); if (v === 'all' || v === 'compact') setCols0(v); } catch { /* blocked */ } }, []);
+  const setCols = (v: 'compact' | 'all') => { setCols0(v); try { localStorage.setItem('mc:gu-focus-cols:v1', v); } catch { /* blocked */ } };
   const uni = useGuUniverse({ market: 'ALL', view: 'active' });
   const { data } = uni;
   const uniLine = universeStatusLine(uni, ageText);   // zzz1113 (G07)
@@ -202,7 +207,7 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
     const none = !k || (k in facts && facts[k] == null) || (skyFailed && !(k in facts));
     if (waiting || none) {
       return (
-        <td colSpan={FV_COLS + OPP_COLS + 1} data-figures={waiting ? 'reading' : 'none'} style={{ ...td, color: R.dim, fontSize: 12, fontStyle: 'italic' }}>
+        <td colSpan={FV_COLS + OPP_COLS + 1} data-keep data-figures={waiting ? 'reading' : 'none'} style={{ ...td, color: R.dim, fontSize: 12, fontStyle: 'italic' }}>
           {waiting ? 'Reading company figures…' : r.market === 'IN' ? 'Company figures not on screener.in yet — the guidance above still counts' : 'Company figures not in the SEC filings yet — the guidance above still counts'}
         </td>
       );
@@ -218,7 +223,7 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
   const top = inMk.filter((r) => r.verdict === 'TOP FOCUS').length;
   const td: React.CSSProperties = { textAlign: 'left', padding: '8px', fontSize: 13, borderBottom: `1px solid ${tint(R.grey, 18)}`, verticalAlign: 'top' };
   return (
-    <section data-gu-focus aria-label="Focus list" style={{ border: `2px solid ${tint(R.green, 55)}`, borderRadius: 10, padding: '12px 14px', display: 'grid', gap: 8 }}>
+    <section data-gu-focus aria-label="Focus list" className={cols === 'compact' ? 'gu-cols-compact' : undefined} style={{ border: `2px solid ${tint(R.green, 55)}`, borderRadius: 10, padding: '12px 14px', display: 'grid', gap: 8 }}>
       <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
         <b style={{ fontSize: 16 }}>🎯 Focus list — the companies to look at first</b>
         <span style={{ fontSize: 12.5, color: R.dim }}>
@@ -240,6 +245,10 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
         <span style={{ fontSize: 12, color: R.dim }}>Growth horizon:</span>
         {(['ALL', 'ANNUAL', 'MULTI_YEAR_CAGR'] as const).map((h) => <button key={h} type="button" aria-pressed={horizon === h} style={pillStyle(horizon === h, R.cyan)} onClick={() => setHorizon(h)}>{h === 'ALL' ? 'All horizons' : h === 'ANNUAL' ? 'Annual' : 'Multi-year CAGR'}</button>)}
         <span style={{ fontSize: 11.5, color: R.dim }}>Filters growth targets; guidance raises remain visible.</span>
+        <span role="group" aria-label="Columns" style={{ display: 'inline-flex', gap: 4, alignItems: 'center', marginLeft: 'auto' }}>
+          <span style={{ fontSize: 11.5, color: R.dim }}>Columns:</span>
+          {(['compact', 'all'] as const).map((v) => <button key={v} type="button" aria-pressed={cols === v} onClick={() => setCols(v)} style={{ fontSize: 12, padding: '2px 10px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${cols === v ? R.green : R.border}`, background: 'transparent', color: cols === v ? R.green : R.text }}>{v === 'compact' ? 'Compact' : 'All columns'}</button>)}
+        </span>
       </div>
       {/* zzz930: owner asked for the explanations to stay collapsed until opened */}
       <details style={{ fontSize: 12, color: R.dim }}>
@@ -269,7 +278,7 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
       {raisedAll.length + growthAll.length === 0 ? (
         <div style={{ fontSize: 13, color: R.dim }}>{uni.state === 'loading' ? 'Reading the guidance data…' : uni.state === 'error' && !events.length ? 'Nothing to show until the guidance data loads (see above).' : 'No names for this market in the current data.'}</div>
       ) : (<>
-        <FocusTable title={`A. Raised their guidance (${raisedAll.length})`} sub={`Old and new figures both read from the company's own filing, ${window} window.${smallRaises ? ` ${smallRaises} small raise${smallRaises === 1 ? '' : 's'} (under 5%, or only EPS from a small base) left out.` : ''}`}
+        <FocusTable tableId="A" title={`A. Raised their guidance (${raisedAll.length})`} sub={`Old and new figures both read from the company's own filing, ${window} window.${smallRaises ? ` ${smallRaises} small raise${smallRaises === 1 ? '' : 's'} (under 5%, or only EPS from a small base) left out.` : ''}`}
           head={[<RankHead key="n" sort={sortA} onReset={() => setSortA('rank')} />, 'Company', 'What was raised (old → new)', <DateHead key="d" sort={sortA} onSort={() => setSortA((v) => (v === 'new' ? 'old' : 'new'))} />, ...FV_HEAD, 'EPS estimate (fixed shares)', <OppHead key="o" sort={sortA} onSort={() => setSortA((v) => (v === 'opp' ? 'rank' : 'opp'))} />, <ScoreHead key="s" sort={sortA} onSort={() => setSortA((v) => (v === 'score' ? 'rank' : 'score'))} />, 'Verdict']} empty="No raise of 5% or more in this window for this market.">
           {raisedRows.map((r, i) => (<React.Fragment key={r.key}>
             <tr>
@@ -290,7 +299,7 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
           </React.Fragment>))}
           {raisedAll.length > FOCUS_STEP && <MoreRow shown={raisedRows.length} total={raisedAll.length} open={allA} onToggle={() => setAllA((v) => !v)} cols={5 + 1 + FV_COLS + OPP_COLS} />}
         </FocusTable>
-        <FocusTable title={`B. Guiding 30%+ growth — no qualifying raise in this window (${growthAll.length})`} sub="Active guidance with 30%+ growth and no raise qualifying for table A in the selected window. This can include first guidance, repeats, older raises, or a small raise."
+        <FocusTable tableId="B" title={`B. Guiding 30%+ growth — no qualifying raise in this window (${growthAll.length})`} sub="Active guidance with 30%+ growth and no raise qualifying for table A in the selected window. This can include first guidance, repeats, older raises, or a small raise."
           head={[<RankHead key="n" sort={sortB} onReset={() => setSortB('rank')} />, 'Company', 'Growth guided', 'Source', <DateHead key="d" sort={sortB} onSort={() => setSortB((v) => (v === 'new' ? 'old' : 'new'))} />, ...FV_HEAD, 'EPS estimate (fixed shares)', <OppHead key="o" sort={sortB} onSort={() => setSortB((v) => (v === 'opp' ? 'rank' : 'opp'))} />, <ScoreHead key="s" sort={sortB} onSort={() => setSortB((v) => (v === 'score' ? 'rank' : 'score'))} />, 'Verdict']} empty="No 30%+ growth guidance for this market.">
           {growthRows.map((r, i) => (<React.Fragment key={r.key}>
             <tr>

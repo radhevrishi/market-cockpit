@@ -18,6 +18,11 @@ export function verificationBlockLine(v: any, now: Date = new Date()): string | 
 export function GuStatusStrip() {
   const u = useGuUniverse({ market: 'ALL', view: 'active' });
   const d: any = u.data;
+  // zzz1138 — a "paused" state read from this browser's SAVED copy can be out of date (the owner raised the cap on Railway and still saw
+  // "$40.13 of $40"): when the shown copy is a saved one and says paused, ask the server once for the current state. One request, not a loop.
+  const savedPaused = !!d && u.savedAgeMs != null && d.verification?.available === false;
+  const asked = React.useRef(false);
+  React.useEffect(() => { if (savedPaused && !asked.current) { asked.current = true; u.retry(); } }, [savedPaused, u]);
   if (!d) return null;
   const built = d.builtAt ? new Date(d.builtAt) : null;
   const block = verificationBlockLine(d.verification);
@@ -30,7 +35,7 @@ export function GuStatusStrip() {
   return (
     <div className="gu-noprint" role="status" style={{ display: 'grid', gap: 2, fontSize: 12, color: R.dim }}>
       {parts.length > 0 && <span>{parts.join(' · ')}</span>}
-      {block && <span style={{ color: R.amber }}>⚠ {block}</span>}
+      {block && <span style={{ color: R.amber }}>⚠ {block}{u.savedAgeMs != null ? ` (state saved ${ageText(u.savedAgeMs)} — checking the server now)` : ''}</span>}
     </div>
   );
 }

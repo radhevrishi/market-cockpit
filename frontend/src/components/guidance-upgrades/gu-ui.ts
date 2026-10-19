@@ -404,6 +404,17 @@ export function eventCountsStrip(c: { upgrade?: number; reiteration?: number; mi
 // ═══ zzz854 ═══════════════════════════════════════════════════════════════════════════════════════════════════════
 // ── universe: Highest active heading, per-record event reconciliation ───────────────────────────────────────────
 /** 'HIGHEST ACTIVE GUIDANCE (29)' plus a note so 'Active 45' vs 'Highest active 29' is explained. Uses the backend equation when sent. */
+/** zzz1130 (retest R3) — the Highest Active heading from the rows actually listed, with the chain from the ranked population to them:
+ *  "N rows = R ranked − Q failed a data check − H held back in the Focus list". One snapshot, one chain; nothing from an earlier count. */
+export function highestActiveFinal(groups: { counts: { rows: number; ANNUAL?: number; MULTI_YEAR_CAGR?: number; QUARTERLY?: number; companies?: number }; rawRows?: number; heldOut?: number; threshold?: number } | null | undefined, activeCompanies: number | null | undefined, threshold: number): { title: string; note: string } {
+  const n = groups?.counts?.rows ?? 0, held = groups?.heldOut ?? 0, raw = groups?.rawRows ?? n + held, failed = Math.max(0, raw - n - held);
+  const c = groups?.counts;
+  const chain = failed || held ? ` ${n} rows = ${raw} ranked${failed ? ` − ${failed} that failed a data check` : ''}${held ? ` − ${held} held back for review in the Focus list` : ''}.` : '';
+  return {
+    title: `${SECTION_ACTIVE} (${n})`,
+    note: `${threshold}% or more guided growth (Revenue, PAT or EBITDA) · ${c?.companies ?? UNKNOWN} companies${isNum(activeCompanies) ? ` out of ${activeCompanies} active` : ''}; one row per company per period type: ${c?.ANNUAL ?? 0} annual, ${c?.MULTI_YEAR_CAGR ?? 0} multi-year CAGR, ${c?.QUARTERLY ?? 0} quarterly.${chain}`,
+  };
+}
 export function highestActiveHeading(eq: Partial<GuCountEquations> | null | undefined, shownTotal: number, threshold: number): { title: string; note: string | null } {
   const h = eq?.highestActive;
   if (h && isNum(h.value)) {

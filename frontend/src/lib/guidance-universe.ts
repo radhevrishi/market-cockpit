@@ -671,6 +671,8 @@ function resolveEntities(items: Item[]): Map<Item, string> {
 
 // ═══ record shapes ═════════════════════════════════════════════════════════════════════════════
 export interface GuPoint {
+  /** zzz1136 (retest R6): why this figure is not used as company growth (most likely one business / segment) — shown beside it */
+  scopeHeldReason?: string | null;
   metric: GgMetric; period: string; periodKind: GgPeriodKind; display: string; low: number | null; high: number | null; open: boolean; implied: boolean; compareValue: number | null; counted: boolean;
   verification: GgVerification; origin: GuUniverseRecordOrigin; sourceName: string; sourceType: string; sourceUrl: string | null; sourceDate: string | null; sourceRank: number; primarySource: boolean;
   revision: GuUniverseRecord['revision']; proxy: string | null; statement: string; notes: string | null;
@@ -1402,7 +1404,7 @@ export function selectHighGrowthGroups(records: GuUniverseRecordX[], thr = HIGH_
     if (!base(p, r.record.company) || p.periodStatus !== 'CONFIRMED' || !p.inDefaultView || (p.listBucket && p.listBucket !== 'ACTIVE')) continue;
     // zzz1115 (G02) — a segment-sized figure next to a smaller company-wide one from the same document is not ranked as company growth
     const sc = scopeConflictOf(p, byEntity.get(r.entityKey) || r.points);
-    if (sc) { scopeHeld.push({ entityKey: r.entityKey, company: r.record.company, ticker: r.tickers?.[0] || r.record.ticker || null, market: r.record.market, metric: p.metric, text: p.display, reason: sc }); continue; }
+    if (sc) { (p as GuPoint).scopeHeldReason = sc; scopeHeld.push({ entityKey: r.entityKey, company: r.record.company, ticker: r.tickers?.[0] || r.record.ticker || null, market: r.record.market, metric: p.metric, text: p.display, reason: sc }); continue; }
     const trust = trustOf(p.verificationState); if (!trust || trust === 'claimsAwaiting') continue;   // zzz854: an unverified claim is never in the ranked Active list
     // zzz862: a verification older than the freshness limit (60 days) is not "strictly verified" any more: it stays in Active (with its re-check tag) but leaves the strict list
     if (!(trust === 'verified' && p.freshness === 'STALE')) add(byTrust, `${r.entityKey}|${p.cohort}|${trust}`, r, p.cohort!, trust, p);
