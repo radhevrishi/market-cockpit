@@ -67,6 +67,11 @@ test('split: day budget first, rest to the allowance', () => {
 test('hourly job: $2 a run only while an allowance is active', () => {
   assert.equal(extractRunUsd({ allowance: { active: true, leftUsd: 5 } }), 2);
   assert.equal(extractRunUsd({ allowance: { active: false, leftUsd: 0 } }), 0.25);
+  // zzz1140: the run cap follows the daily ceiling ($10 a day → $0.83 a run; $0.25 a day keeps $0.25; never above $2)
+  assert.ok(Math.abs(extractRunUsd({ dailyCapUsd: 10 }) - 10 / 12) < 1e-9);
+  assert.equal(extractRunUsd({ dailyCapUsd: 0.25 }), 0.25);
+  assert.equal(extractRunUsd({ dailyCapUsd: 20 }), 5 / 3);
+  assert.equal(extractRunUsd({ dailyCapUsd: 10, allowance: { active: true, leftUsd: 3 } }), 2);
   assert.equal(extractRunUsd(null), 0.25);
 });
 
