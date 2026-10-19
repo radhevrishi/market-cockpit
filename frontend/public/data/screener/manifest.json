@@ -1,21 +1,21 @@
 {
-  "lastSync": "2026-10-18T15:54:23Z",
+  "lastSync": "2026-10-19T09:59:19Z",
   "ok": 19,
   "fail": 0,
   "files": [
     {
       "name": "100-baggers-sales-and-eps-growth.csv",
-      "size": 11187,
+      "size": 11639,
       "displayName": "100 baggers sales and eps growth"
     },
     {
       "name": "capex.csv",
-      "size": 9057,
+      "size": 9478,
       "displayName": "CAPEX"
     },
     {
       "name": "debt-reduction.csv",
-      "size": 10097,
+      "size": 10096,
       "displayName": "Debt Reduction"
     },
     {
@@ -30,12 +30,12 @@
     },
     {
       "name": "great-results-and-pullback.csv",
-      "size": 1125,
+      "size": 1547,
       "displayName": "Great Results and Pullback"
     },
     {
       "name": "ipobases.csv",
-      "size": 4959,
+      "size": 3468,
       "displayName": "IPOBASES"
     },
     {
@@ -45,7 +45,7 @@
     },
     {
       "name": "monthly-volume-pockets.csv",
-      "size": 9045,
+      "size": 9532,
       "displayName": "Monthly Volume Pockets"
     },
     {
@@ -55,7 +55,7 @@
     },
     {
       "name": "multibagger2-ignoring-trend.csv",
-      "size": 3704,
+      "size": 3703,
       "displayName": "Multibagger2 Ignoring trend"
     },
     {
@@ -65,7 +65,7 @@
     },
     {
       "name": "rajeev-thakkar-ppfas-screener.csv",
-      "size": 1565,
+      "size": 1142,
       "displayName": "Rajeev Thakkar PPFAS Screener"
     },
     {
@@ -80,22 +80,22 @@
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 23124,
+      "size": 23122,
       "displayName": "Latest Portfolio"
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63335,
+      "size": 63328,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65587,
+      "size": 65577,
       "displayName": "Working watchlist"
     },
     {
       "name": "weekly-volume-pockets.csv",
-      "size": 6017,
+      "size": 5983,
       "displayName": "Weekly Volume Pockets"
     }
   ]
