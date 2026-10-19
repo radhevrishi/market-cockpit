@@ -106,7 +106,7 @@ describe('G03 — "more than double by FY31" is a multi-year total, not +100% in
     const [it] = itemsFromExtracted([xres('ADANIPORTS', 'Adani Ports and Special Economic Zone Ltd', [row({ quote: ADANI, growthPctLow: 100, growthPctHigh: 100, period: 'FY31' })], 'IN', '2026-08-03T00:00:00.000Z')], null, NOW);
     assert.equal(it.pkind, 'MULTI_YEAR_CAGR'); assert.equal(it.period, 'FY26-31');
     assert.equal(it.low, 14.9); assert.equal(it.open, true);
-    assert.ok(!(it.low === 100), 'never +100% for one year');
+    assert.notEqual(it.high, 100, 'never +100% for one year');
   });
   test('a doubling NEXT year stays a one-year figure; generic "cash flows" is not free cash flow', () => {
     const [it] = itemsFromExtracted([xres('XYZ', 'Xyz Ltd', [row({ quote: 'We expect FY28 revenue to double.', growthPctLow: 100, growthPctHigh: 100, period: 'FY28' })], 'IN', '2026-08-03T00:00:00.000Z')], null, NOW);
