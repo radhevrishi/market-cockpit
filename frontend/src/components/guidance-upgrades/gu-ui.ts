@@ -282,7 +282,8 @@ export function freshnessLines(f: FreshnessIn): FreshnessLine[] {
 
 // ── source display names ──────────────────────────────────────────────────────────────────────────────────────────
 export function sourceDisplayName(name: string | null | undefined): string {
-  const n = (name || '').trim();
+  // zzz1122 — BSE scrip names carry a group marker ("Cupid Ltd-$", "…-#"): not part of the company's name
+  const n = (name || '').trim().replace(/\s*-\s*[$#*]+(?=\)|$)/g, '');
   if (!n) return UNKNOWN;
   if (/sec edgar|edgar|8-?k/i.test(n)) return 'SEC filings (8-K)';
   if (/\bnse\b.*(filing|announce)|nse filings?/i.test(n)) return 'NSE filings';

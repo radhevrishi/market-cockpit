@@ -29,18 +29,30 @@ export function GuCompanyDetail({ r, onFull }: { r: GuUniverseRecord; onFull?: (
   const isLean = !!(r as unknown as { lean?: boolean }).lean;
   const [full, setFull] = useState<GuUniverseRecord | null>(key ? fullRows.get(key) ?? null : null);
   const [loadNote, setLoadNote] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  // zzz1113 (G07) — a deadline and a Retry: a hung request ends as a visible note, never an endless "Loading"
   useEffect(() => {
     if (!isLean || !key || full) return;
     let alive = true;
-    fetch(`/api/v1/guidance-universe?entity=${encodeURIComponent(key)}`, { cache: 'no-store' })
-      .then((x) => (x.ok ? x.json() : null))
-      .then((j) => { if (!alive) return; if (j?.row) { fullRows.set(key, j.row); setFull(j.row); } else setLoadNote('The full record could not be loaded; showing the summary.'); })
-      .catch(() => { if (alive) setLoadNote('The full record could not be loaded; showing the summary.'); });
+    setLoadNote(null);
+    fetch(`/api/v1/guidance-universe?entity=${encodeURIComponent(key)}`, { cache: 'no-store', signal: AbortSignal.timeout(20_000) })
+      .then((x) => (x.status === 404 ? { gone: true } : x.ok ? x.json() : null))
+      .then((j) => {
+        if (!alive) return;
+        if (j?.row) { fullRows.set(key, j.row); setFull(j.row); }
+        else setLoadNote(j?.gone ? 'This company is no longer in the guidance universe; showing the saved summary.' : 'The full record could not be loaded; showing the summary.');
+      })
+      .catch((e) => { if (alive) setLoadNote(e?.name === 'TimeoutError' ? 'The full record did not arrive within 20 seconds; showing the summary.' : 'The full record could not be loaded; showing the summary.'); });
     return () => { alive = false; };
-  }, [isLean, key, full]);
+  }, [isLean, key, full, tick]);
   return (
     <>
-      {isLean && !full && <div style={{ fontSize: 11.5, color: R.dim }}>{loadNote || 'Loading the full record…'}</div>}
+      {isLean && !full && (
+        <div style={{ fontSize: 11.5, color: R.dim, display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span>{loadNote || 'Loading the full record…'}</span>
+          {loadNote && <button type="button" onClick={() => setTick((t) => t + 1)} style={{ fontSize: 11, padding: '1px 8px', borderRadius: 6, border: `1px solid ${R.border}`, background: 'transparent', color: R.text, cursor: 'pointer' }}>Retry</button>}
+        </div>
+      )}
       <GuCompanyDetailBody r={full || r} onFull={full || !isLean ? onFull : undefined} />
     </>
   );

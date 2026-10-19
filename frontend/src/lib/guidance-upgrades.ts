@@ -1287,15 +1287,52 @@ const comparedChanges = (e: Pick<GuidanceEvent, 'changes'>) => e.changes.filter(
 
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 /** zzz854: when the next check lands: the guided quarter's own results, else the next quarterly results (~announcement + 3 months). */
-export function nextResultsWindow(e: Pick<GuidanceEvent, 'announcement_date'>, c: GuChange): string {
+// ── zzz1117 (guidance audit G05): the next results date and timing / one-time effects stated in a release (kept in this pure module) ──
+const NR_MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+const NR_MON_RE = '(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec)\\.?';
+const nrIso = (y: number, m: number, d: number) => (m >= 1 && m <= 12 && d >= 1 && d <= 31 ? `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}` : null);
+const nrMonthNo = (s: string) => { const t = s.toLowerCase().replace(/\.$/, ''); const i = NR_MONTHS.findIndex((m) => m.startsWith(t.slice(0, 3))); return i >= 0 ? i + 1 : 0; };
+
+/** An explicit date for the company's NEXT results / earnings call, after `after` (YYYY-MM-DD), or null. */
+export function nextResultsDateIn(text: string | null | undefined, after: string | null | undefined): string | null {
+  const t = String(text || '').replace(/\s+/g, ' ');
+  if (!t) return null;
+  const ctx = /\b(?:will (?:report|announce|release|host)|to (?:report|announce|release|host)|plans? to (?:report|announce|release)|scheduled (?:to|for)|expects? to (?:report|announce|release))\b[^.]{0,140}?\b(?:results|earnings|conference call|call)\b/i;
+  const dates: string[] = [];
+  const sentences = t.split(/(?<=[.!?])\s+/);
+  for (const s of sentences) {
+    if (!ctx.test(s) && !/\b(?:results|earnings)\b[^.]{0,60}\bon\b/i.test(s)) continue;
+    if (!/\b(?:results|earnings|conference call)\b/i.test(s)) continue;
+    // "November 10, 2026" / "Nov. 10, 2026"
+    for (const m of s.matchAll(new RegExp(`\\b${NR_MON_RE}\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(20\\d{2})\\b`, 'gi'))) { const d = nrIso(+m[3], nrMonthNo(m[1]), +m[2]); if (d) dates.push(d); }
+    // "10 November 2026"
+    for (const m of s.matchAll(new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+${NR_MON_RE},?\\s+(20\\d{2})\\b`, 'gi'))) { const d = nrIso(+m[3], nrMonthNo(m[2]), +m[1]); if (d) dates.push(d); }
+  }
+  const a = String(after || '').slice(0, 10);
+  const later = dates.filter((d) => !a || d > a).sort();
+  return later[0] || null;
+}
+
+/** Timing / one-time effects named in the release (short phrases, at most 3), or null. */
+export function timingEffectsOf(text: string | null | undefined): string[] | null {
+  const t = String(text || '').replace(/\s+/g, ' ');
+  const re = /[^.]{0,80}\b(?:pull(?:ed|ing)?[- ](?:forward|in(?:to)?)|pulled ahead|accelerated (?:from|out of) (?:the )?(?:fourth|third|second|first|next|following) quarter|timing of (?:orders|shipments|revenue)|milestone payments?|one[- ]time|one[- ]off|non[- ]recurring|upfront payment|catch[- ]up (?:orders|revenue))\b[^.]{0,80}/gi;
+  const out: string[] = [];
+  for (const m of t.matchAll(re)) { const p = m[0].trim().replace(/^[,;:\s]+/, ''); if (p && !out.some((x) => x === p)) out.push(p.length > 160 ? `${p.slice(0, 157)}…` : p); if (out.length >= 3) break; }
+  return out.length ? out : null;
+}
+
+export function nextResultsWindow(e: Pick<GuidanceEvent, 'announcement_date'> & { nextResultsDate?: string | null }, c: GuChange): string {
+  // zzz1117 (G05) — a date the company itself gives wins; the "about three months later" estimate is labelled as an estimate
+  if (e.nextResultsDate && /^\d{4}-\d{2}-\d{2}$/.test(e.nextResultsDate)) { const d = new Date(`${e.nextResultsDate}T00:00:00Z`); return `Next results (${d.getUTCDate()} ${MON[d.getUTCMonth()]} ${d.getUTCFullYear()}, date given by the company)`; }
   if (periodGrain(c.after.period) === 'QUARTER') return `${c.after.period} results`;
   const t0 = Date.parse(`${String(e.announcement_date || '').slice(0, 10)}T00:00:00Z`);
   if (!Number.isFinite(t0)) return 'Next quarterly results';
   const t = new Date(t0 + 91 * 86_400_000);
-  return `Next quarterly results (~${MON[t.getUTCMonth()]} ${t.getUTCFullYear()})`;
+  return `Next quarterly results (~${MON[t.getUTCMonth()]} ${t.getUTCFullYear()})`;   // "~" = estimated (no date in the release)
 }
 /** zzz854: metric + direction + window + source. A run-rate is the guided low end / 4 (simple average, labelled), never a forecast. */
-export function trackingLine(e: Pick<GuidanceEvent, 'announcement_date'>, c: GuChange): string {
+export function trackingLine(e: Pick<GuidanceEvent, 'announcement_date'> & { nextResultsDate?: string | null }, c: GuChange): string {
   const win = nextResultsWindow(e, c); const p = c.after.period === 'UNSTATED' ? 'the guided period' : periodWords(c.after);
   const g = fmtPoint(c.after); const name = metricLabel(c);
   const src = "source: the company's next results release";
@@ -2267,6 +2304,21 @@ export function buildGuidanceEvent(input: GuCandidate[] | GuSkeleton, ctx: GuCon
     if (names.length) base.v2.statedMetrics = names;
   }
   if (driver.quality === 'UNKNOWN' && why.variable) base.guidance_driver = `Stated operating drivers: ${why.variable}`;
+  // zzz1117 (G05) — timing / one-time effects named in the release (MaxCyte: instrument orders pulled forward from Q4, a milestone
+  // payment) are part of the driver, and such a raise is not assumed to last several quarters; an explicit next-results date is kept
+  const timing = timingEffectsOf(text);
+  if (timing) {
+    const note = `${timing.join('; ')}`;
+    base.guidance_driver = driver.quality === 'UNKNOWN' || /not stated|unresolved/i.test(base.guidance_driver)
+      ? `Stated in the release: ${note} — part of the raise may be timing or one-time` : `${base.guidance_driver} Also stated: ${note} (timing / one-time).`;
+    if (duration0 === 'UNKNOWN' && (base.duration === 'MULTI_QUARTER' || base.duration === 'MULTI_YEAR')) {
+      base.duration = 'UNKNOWN';
+      base.v2.durabilityLevel = 'UNKNOWN_INSUFFICIENT_EVIDENCE';
+      base.v2.durabilityWhy = `Unknown — the release names timing or one-time effects (${note}), so the raise is not assumed to last several quarters.`;
+    }
+  }
+  const nrd = nextResultsDateIn(text, sk.announcement_date);
+  if (nrd) base.nextResultsDate = nrd;
   if (unitWarnings.length) for (const w of unitWarnings) if (!base.evidenceGaps.includes(w)) base.evidenceGaps.push(w);
   // primary source (link + date) before the narrative, so WHY NOW can name the document and its date
   const prim0 = base.sources.find(x => x.tier === 'PRIMARY' && !!x.url) ?? base.sources.find(x => x.tier === 'PRIMARY');

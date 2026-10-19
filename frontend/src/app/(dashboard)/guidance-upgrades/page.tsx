@@ -9,14 +9,16 @@ import type { GuWindow, GuidanceUpgradesResponse } from '@/lib/guidance-upgrades
 import { applyFilters, splitToday, zeroEventWording, unresolvedCount, type MetricFilter, type ScopeFilter } from '@/lib/guidance-upgrades-format';
 import { overlayBook, countInBook } from '@/lib/guidance-upgrades-book';
 import { readLocalBookInput, fetchSavedHoldings } from '@/lib/thesis/book-sources';
+import { readBook } from '@/components/charts/useBookWatchlistSync';
 import type { GgCompany } from '@/lib/growth-guidance-types';
 import { GuTitle, GuTopBar } from '@/components/guidance-upgrades/GuTopBar';
 import { GuCard, GuAuditArea } from '@/components/guidance-upgrades/GuCard';
 import { GuCoverage } from '@/components/guidance-upgrades/GuCoverage';
 import { GuReviewQueue, GuVerificationBlock } from '@/components/guidance-upgrades/GuQueue';
-import { GuDetail } from '@/components/guidance-upgrades/GuDetail';
+import { GuDetailShell, normalizeFullEvent, type DetailLoad } from '@/components/guidance-upgrades/GuDetailShell';
 import { GuUniverseSummary } from '@/components/guidance-upgrades/GuUniverseSummary';
 import { GuFocusList } from '@/components/guidance-upgrades/GuFocusList';
+import { GuStatusStrip } from '@/components/guidance-upgrades/GuStatusStrip';
 import { GuUniverseBrowser } from '@/components/guidance-upgrades/GuUniverseBrowser';
 import { GgDetail } from '@/components/growth-guidance/GgDetail';
 import { PRINT_CSS, R, box } from '@/components/guidance-upgrades/gu-tokens';
@@ -100,9 +102,11 @@ export default function GuidanceUpgradesPage() {
   useEffect(() => {
     let alive = true;
     (async () => {
+      // zzz1119 (G08) — each holding carries its market: the India book (browser + Portfolio page) as IN:, the US book as US:
       const acc: string[] = [];
-      try { acc.push(...(readLocalBookInput().browser || [])); } catch { /* ignore */ }
-      try { const s = await fetchSavedHoldings(); if (s.ok) acc.push(...s.symbols); } catch { /* ignore */ }
+      try { acc.push(...(readLocalBookInput().browser || []).map((t) => `IN:${t}`)); } catch { /* ignore */ }
+      try { const s = await fetchSavedHoldings(); if (s.ok) acc.push(...s.symbols.map((t) => `IN:${t}`)); } catch { /* ignore */ }
+      try { const u = await readBook('US'); if (u.ok) acc.push(...u.items.map((x) => `US:${x.t}`)); } catch { /* the US book needs sign-in; India still works */ }
       if (alive) { setHeld(Array.from(new Set(acc))); setBookLoaded(true); }
     })();
     return () => { alive = false; };
@@ -114,15 +118,41 @@ export default function GuidanceUpgradesPage() {
   const { today: todayList, rest: restList } = useMemo(() => splitToday(shown, now), [shown, now]);
   const openLean = useMemo(() => (openId ? events.find((e) => e.guidance_event_id === openId) || null : null), [openId, events]);
   // zzz886: the opened card's full event (why this decision, chain, impacts …), fetched once; the lean row shows meanwhile
-  const [fullEv, setFullEv] = useState<Record<string, any>>({});
+  // zzz1112 (G01) — per-event load state; the full panel renders only from a validated full record (GuDetailShell)
+  const [fullEv, setFullEv] = useState<Record<string, DetailLoad>>({});
+  const [retryTick, setRetryTick] = useState(0);
+  const openId0 = openLean?.guidance_event_id ?? null;
+  const openIsLean = !!(openLean as any)?.lean;
   useEffect(() => {
-    if (!openLean || !(openLean as any).lean || fullEv[openLean.guidance_event_id]) return;
-    let alive = true; const id = openLean.guidance_event_id;
-    fetch(`/api/v1/guidance-upgrades?window=${window_}&market=ALL&id=${encodeURIComponent(id)}`, { cache: 'no-store' })
-      .then((r) => (r.ok ? r.json() : null)).then((j) => { if (alive && j?.event) setFullEv((m) => ({ ...m, [id]: j.event })); }).catch(() => {});
-    return () => { alive = false; };
-  }, [openLean, window_, fullEv]);
-  const open = useMemo(() => (openLean ? (fullEv[openLean.guidance_event_id] ? { ...openLean, ...fullEv[openLean.guidance_event_id], lean: false } : openLean) : null), [openLean, fullEv]);
+    if (!openId0) return;
+    if (!openIsLean) { const ev = normalizeFullEvent(openLean, openId0); setFullEv((m) => ({ ...m, [openId0]: ev ? { status: 'ok', event: ev } : { status: 'error', text: 'the record is incomplete' } })); return; }
+    const cur = fullEv[openId0];
+    if (cur && cur.status !== 'error') return;
+    if (cur?.status === 'error' && retryTick === 0) return;
+    const id = openId0;
+    const ctrl = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, 20_000);
+    setFullEv((m) => ({ ...m, [id]: { status: 'loading' } }));
+    fetch(`/api/v1/guidance-upgrades?window=${window_}&market=ALL&id=${encodeURIComponent(id)}`, { cache: 'no-store', signal: ctrl.signal })
+      .then(async (r) => {
+        if (r.status === 404) throw new Error('this event is no longer in the feed');
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const j = await r.json().catch(() => null);
+        const ev = normalizeFullEvent(j?.event ? { ...openLean, ...j.event, lean: false } : null, id);
+        if (!ev) throw new Error('the answer did not contain this event');
+        setFullEv((m) => ({ ...m, [id]: { status: 'ok', event: ev } }));
+      })
+      .catch((e: any) => {
+        if (ctrl.signal.aborted && !timedOut) return;   // closed / another company opened: drop this answer
+        setFullEv((m) => ({ ...m, [id]: { status: 'error', text: timedOut ? 'no answer within 20 seconds' : String(e?.message || e) } }));
+      })
+      .finally(() => clearTimeout(timer));
+    return () => { clearTimeout(timer); ctrl.abort(); };
+    // fullEv is read once per open / retry (not a trigger): re-running on every state write would loop
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openId0, openIsLean, window_, retryTick]);
+  const openLoad = openId0 ? fullEv[openId0] : undefined;
   const eventCounts = useMemo(() => ({ IN: events.filter((e) => e.market === 'IN').length, US: events.filter((e) => e.market === 'US').length }), [events]);
   // zzz855: a window can hold hundreds of events. Each list renders 30 cards, then "Show N more"; every count above comes from the full list.
   const card = useCallback((e: (typeof events)[number]) => <GuCard key={e.guidance_event_id} e={e} onOpen={select} now={now} />, [select, now]);
@@ -138,6 +168,7 @@ export default function GuidanceUpgradesPage() {
         </div>
       )}
       {refreshing && data && <div className="gu-noprint" style={{ fontSize: 11.5, color: R.dim }}>Showing the saved copy from {ageText(Date.now() - new Date((data as any).savedAt || Date.now()).getTime())}. Fresh data is loading in the background.</div>}
+      <GuStatusStrip />
       {/* zzz880 — the companies to look at first, before any detail */}
       <GuFocusList events={events} window={window_} onOpen={select} caps={(data as any)?.caps ?? null} />
       <GuUniverseSummary onFull={setGgOpen} />
@@ -201,7 +232,7 @@ export default function GuidanceUpgradesPage() {
       </GuPanel>
       <div style={{ fontSize: 11, color: R.faint }}>Company data only. Not investment advice. Prices are context here, never the reason.</div>
       {ggOpen && <GgDetail c={ggOpen} onClose={() => setGgOpen(null)} unverified={ggOpen.verification === 'SECONDARY_ONLY' || ggOpen.verification === 'UNVERIFIED'} />}
-      {open && <GuDetail e={open} onClose={() => select(null)} now={now} />}
+      {openLean && <GuDetailShell lean={openLean} load={openLoad} onClose={() => select(null)} onRetry={() => setRetryTick((n) => n + 1)} now={now} />}
     </div>
   );
 }

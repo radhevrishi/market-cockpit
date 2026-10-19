@@ -2,6 +2,7 @@
 // zzz853 PERSISTENCE: the universe is independent of the news cache. A failing / empty live source never empties it: stored + seed rows are still built.
 // After every successful non-empty build a LAST-GOOD copy is written to KV (`guidance-universe:v1:lastgood`); if the build throws or returns nothing,
 // the last-good copy is served (servedFrom 'last_good'), else the bare seed (servedFrom 'seed'). Public data, never holdings.
+import { applyQuarantine } from './gu-quarantine';   // zzz1116
 import seedFile from '../data/growth-guidance-seed.json';
 import { kvGet, kvSet } from './kv';
 import { UNIVERSE_LASTGOOD_KEY, UNIVERSE_TTL_S } from './guidance-config';
@@ -157,6 +158,8 @@ export function buildUniverseResponse(b: GuBundle, p: GuResponseParams = {}) {
     ...checkUniverseInvariants({ defaultRecords: bd.defaultRecords, reviewQueue: bd.reviewQueue, claimsAwaiting: claims, inactive: bd.inactive, excluded: bd.excluded }),
     ...checkUniverseCountEquations(summary.countEquations),
   ];
+  // zzz1116 (G04) — the failed points leave EVERY ranking (Highest Active / Verified / Derived and the Focus list read these groups)
+  if (summary.highGrowthGroups) summary.highGrowthGroups = applyQuarantine(summary.highGrowthGroups, invariantViolations);
   return {
     summary, records, pendingPrimary: summary.all.pendingPrimary,
     ...(view === 'review' ? { reviewQueue: records } : {}),

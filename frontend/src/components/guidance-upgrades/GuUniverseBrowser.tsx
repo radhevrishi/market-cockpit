@@ -2,7 +2,7 @@
 // zzz848 — 📊 GUIDANCE UNIVERSE: scope chips (All | India | USA | My Book), metric chips and the Active / All active view.
 // It never reads the event window. My Book is a client-side overlay using the holdings the page already loaded.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { normSymbol } from '@/lib/portfolio-symbols';
+import { bookKey, heldKeySet } from '@/lib/guidance-upgrades-book';
 import {
   UNIVERSE_METRICS, UNIVERSE_SCOPES, UNIVERSE_UNAVAILABLE, ZERO_RECORDS_TEXT, universeNoticeLine, filterUniverse, sortUniverse, universeApiMarket, universeApiMetric,
   type UniverseMetric, type UniverseScope,
@@ -17,6 +17,12 @@ import { CappedList } from './GuMore';
 import { GuPanel, pillStyle } from './GuPanel';
 
 const pill = (on: boolean): React.CSSProperties => pillStyle(on, R.cyan);
+
+const UNIVERSE_FIRST = 25;
+/** "25 of 978 matching companies displayed" — never "978 shown" above 25 rows. */
+export function universeShownLine(matching: number, displayed: number): string {
+  return matching === 0 ? 'No matching companies' : displayed >= matching ? `All ${matching} matching ${matching === 1 ? 'company' : 'companies'} displayed` : `${displayed} of ${matching} matching companies displayed`;
+}
 
 export function GuUniverseBrowser({ held, onFull }: { held: string[]; onFull?: (c: GgCompany) => void }) {
   const [scope, setScope] = useState<UniverseScope>('ALL');
@@ -33,11 +39,16 @@ export function GuUniverseBrowser({ held, onFull }: { held: string[]; onFull?: (
     if (mv.active === 0) { const next: GuView | null = mv.claims > 0 ? 'claims' : mv.review > 0 ? 'review' : null; if (next) setView(next); }
   }, [scope, mk, mv, view]);
   useEffect(() => { if (scope === 'ALL') autoFor.current = ''; }, [scope]);
-  const heldSet = useMemo(() => new Set(held.map(normSymbol)), [held]);
-  const list = useMemo(
-    () => sortUniverse(filterUniverse(data?.records || [], scope, metric, (t) => heldSet.has(normSymbol(t)))),
-    [data, scope, metric, heldSet],
-  );
+  const heldSet = useMemo(() => heldKeySet(held), [held]);   // zzz1119 (G08): market-qualified
+  // zzz1120 (G09) — a company search over the full universe (name or ticker); the count line says exactly how many are displayed
+  const [q, setQ] = useState('');
+  const [shownAll, setShownAll] = useState<number | null>(null);
+  const list = useMemo(() => {
+    const all = sortUniverse(filterUniverse(data?.records || [], scope, metric, (t, m) => heldSet.has(bookKey(m, t))));
+    const s = q.trim().toLowerCase();
+    return s ? all.filter((r) => `${r.record?.company || ''} ${r.record?.ticker || ''}`.toLowerCase().includes(s)) : all;
+  }, [data, scope, metric, heldSet, q]);
+  useEffect(() => { setShownAll(null); }, [scope, metric, view, q]);
   return (
     <GuPanel id="gu-universe" icon="📊" title="Guidance universe (full browser)" accent={R.cyan} count={data ? list.length : null} defaultOpen={false}
       hint="Every guidance still in force, whenever it was announced. The time window in the next section only filters events; it does not change this universe.">
@@ -75,9 +86,13 @@ export function GuUniverseBrowser({ held, onFull }: { held: string[]; onFull?: (
               {mv.active === 0 && ` No ${mk === 'IN' ? 'India' : 'USA'} guidance has been confirmed from a company document yet, so the Active list is empty. ${mv.claims + mv.review > 0 ? 'The rows below are what was found and is still being checked.' : 'Nothing has been found for this market yet.'}`}
             </div>
           )}
-          <div style={{ fontSize: 12, color: R.dim }}>{list.length} shown</div>
+          <div className="gu-noprint" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search company or ticker" aria-label="Search the guidance universe"
+              style={{ fontSize: 13, padding: '5px 10px', borderRadius: 6, border: `1px solid ${R.border}`, background: R.bg, color: R.text, minWidth: 220 }} />
+            <span role="status" style={{ fontSize: 12, color: R.dim }}>{universeShownLine(list.length, shownAll ?? Math.min(list.length, UNIVERSE_FIRST))}{q.trim() ? ` for “${q.trim()}”` : ''}</span>
+          </div>
           <div style={{ opacity: state === 'loading' ? 0.6 : 1 }}>
-            <GuUniverseList records={list} showMarket={scope === 'ALL' || scope === 'MY_BOOK'} onFull={onFull} emptyText={data.records.length === 0 ? (view === 'review' ? 'Nothing is waiting for review.' : view === 'claims' ? 'No claims are waiting for verification.' : ZERO_RECORDS_TEXT) : "Nothing matches these filters. Clear a filter to see more."} />
+            <GuUniverseList key={`${scope}-${metric}-${view}-${q}`} records={list} limit={UNIVERSE_FIRST} onShownChange={setShownAll} showMarket={scope === 'ALL' || scope === 'MY_BOOK'} onFull={onFull} emptyText={data.records.length === 0 ? (view === 'review' ? 'Nothing is waiting for review.' : view === 'claims' ? 'No claims are waiting for verification.' : ZERO_RECORDS_TEXT) : "Nothing matches these filters. Clear a filter to see more."} />
           </div>
           {view === 'history' && (
             <div style={{ display: 'grid', gap: 4 }}>

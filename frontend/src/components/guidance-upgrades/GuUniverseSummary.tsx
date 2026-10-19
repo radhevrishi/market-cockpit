@@ -11,6 +11,8 @@ import { R, box, tint } from './gu-tokens';
 import { QualityStrip, btn } from './GuBits';
 import { GuGroupList, GuHighGrowthList } from './GuHighGrowthList';
 import { useGuUniverse, type GuUniverseExt } from './useGuUniverse';
+import { useHeldKeys, withoutHeld } from '@/lib/gu-held-store';
+import { quarantineCounts } from '@/lib/gu-quarantine';
 import { GuFold, GuPanel, pillStyle } from './GuPanel';
 import { GuVerifyButton } from './GuVerifyButton';
 import { GuDataQuality } from './GuDataQuality';
@@ -33,7 +35,8 @@ export function recordFinder(data: GuUniverseExt | null): (entityKey: string) =>
 export function GuUniverseSummary({ onFull }: { onFull?: (c: GgCompany) => void }) {
   const [mk, setMk] = useState<Mk>('ALL');
   const { data, state, retry, error } = useGuUniverse({ market: 'ALL', view: 'active' });
-  const groups = data?.summary?.highGrowthGroups;
+  const heldKeys = useHeldKeys();   // zzz1116 (G04): the Focus list's held-back growths leave these rankings too
+  const groups = useMemo(() => withoutHeld(data?.summary?.highGrowthGroups, heldKeys), [data, heldKeys]);
   const hasGroups = !!groups && !!groups.cohorts;
   const legacy = useMemo(() => (data && !hasGroups ? buildHighGrowth(data, mk) : null), [data, mk, hasGroups]);
   const lines = legacy ? highGrowthLines(legacy, mk, data?.summary?.threshold ?? 30) : [];
@@ -56,9 +59,12 @@ export function GuUniverseSummary({ onFull }: { onFull?: (c: GgCompany) => void 
         <>
           {/* zzz880 — the plain summary first; the technical checks are folded below it */}
           <GuAtAGlance data={data} threshold={thr} />
-          {(data.invariantViolations?.length ?? 0) > 0 && (
-            <div role="alert" style={{ fontSize: 12.5, color: R.red }}>A data check failed for {data.invariantViolations!.length} row{data.invariantViolations!.length === 1 ? '' : 's'} — those rows are kept out of the ranked list. Details under "Data quality and checks".</div>
-          )}
+          {(data.invariantViolations?.length ?? 0) > 0 && (() => {
+            // zzz1116 (G04) — counted three ways from the same snapshot; the points really are out of every ranking now
+            const q = quarantineCounts(data.invariantViolations);
+            const pl = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+            return <div role="alert" style={{ fontSize: 12.5, color: R.red }}>Data checks failed: {pl(q.checks, 'failed check', 'failed checks')}{q.points ? ` on ${pl(q.points, 'guidance point', 'guidance points')} of ${pl(q.companies, 'company', 'companies')}` : ''} — those points are kept out of every ranked list on this page (they stay under Review). Details under "Data quality and checks".</div>;
+          })()}
           <GuFold title="Data quality and checks" accent={R.grey} hint="Sources, scan coverage, verification, claims and how each growth figure was calculated">
           <GuDataQuality quality={data.extractCoverage?.quality} />
           <GuVerifyButton pending={data.viewCounts?.claimsAwaiting ?? null} />

@@ -40,7 +40,8 @@ async function fetchUniverse(url: string, force: boolean): Promise<GuUniverseExt
   const hit = inflight.get(url);
   if (hit && !force && Date.now() - hit.at < SHARE_MS) return hit.p;
   const p = (async () => {
-    const r = await fetch(url, { cache: 'no-store' });
+    // zzz1113 (G07) — a deadline: a hung request ends as an error the page can show, not an endless "reading"
+    const r = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(60_000) }).catch((e: any) => { throw new Error(e?.name === 'TimeoutError' ? 'No answer within 60 seconds' : 'The network request failed'); });
     let j: unknown = null;
     try { j = await r.json(); } catch { /* body is not JSON */ }
     const own = (j as { error?: unknown } | null)?.error;
@@ -55,11 +56,23 @@ async function fetchUniverse(url: string, force: boolean): Promise<GuUniverseExt
   return p;
 }
 
-export function useGuUniverse(o: { market?: 'IN' | 'US' | 'ALL'; metric?: string; view?: GuView }): { data: GuUniverseExt | null; state: UniverseState; retry: () => void; error: string | null } {
+/** zzz1113 (guidance audit G07) — the states a viewer must be able to tell apart:
+ *  loading (nothing yet) · ok (fresh, or a saved copy still within its fresh time) · refreshing (saved copy shown, fresh data on its
+ *  way) · stale (saved copy shown because the refresh FAILED — `refreshError` says why) · error (nothing to show). `savedAgeMs` =
+ *  how old the shown saved copy is (null = freshly fetched); `fetchedAt` = when this browser last got a fresh answer. */
+export interface UniverseHook {
+  data: GuUniverseExt | null; state: UniverseState; retry: () => void; error: string | null;
+  refreshing: boolean; refreshError: string | null; savedAgeMs: number | null; fetchedAt: number | null;
+}
+export function useGuUniverse(o: { market?: 'IN' | 'US' | 'ALL'; metric?: string; view?: GuView }): UniverseHook {
   const [data, setData] = useState<GuUniverseExt | null>(null);
   const [state, setState] = useState<UniverseState>('loading');
   const [tick, setTick] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [savedAgeMs, setSavedAgeMs] = useState<number | null>(null);
+  const [fetchedAt, setFetchedAt] = useState<number | null>(null);
   const url = guUniverseUrl({ market: o.market, metric: o.metric, view: o.view });
   useEffect(() => { const h = () => setTick((t) => t + 1); window.addEventListener('gu-refresh', h); return () => window.removeEventListener('gu-refresh', h); }, []);
   useEffect(() => {
@@ -69,23 +82,36 @@ export function useGuUniverse(o: { market?: 'IN' | 'US' | 'ALL'; metric?: string
     (async () => {
       const hit = tick === 0 ? await readCacheAsync<GuUniverseExt>(url) : null;
       if (!alive) return;
-      if (hit && isUniverseUsable(hit.data)) {
-        setData(hit.data); setState('ok'); setError(null);
-        if (hit.ageMs < FRESH_MS) return;
-      } else { setState('loading'); }
-      setError(null);
+      const shown = hit && isUniverseUsable(hit.data) ? hit : null;
+      if (shown) {
+        setData(shown.data); setState('ok'); setError(null); setSavedAgeMs(shown.ageMs);
+        if (shown.ageMs < FRESH_MS) return;
+      } else if (tick === 0 || !data) { setState('loading'); }
+      setRefreshing(true); setRefreshError(null); setError(null);
       try {
         const j = await fetchUniverse(url, tick > 0);
         if (!alive) return;
         writeCache(url, j);
-        setData(j); setState('ok');
+        setData(j); setState('ok'); setSavedAgeMs(null); setFetchedAt(Date.now());
       } catch (e) {
         if (!alive) return;
-        if (hit) return;   // keep showing the saved copy when the refresh fails
-        setData(null); setError((e as Error)?.message || 'Unknown error'); setState('error');
-      }
+        const msg = (e as Error)?.message || 'Unknown error';
+        if (shown || data) { setRefreshError(msg); setState('ok'); return; }   // keep the saved copy, but SAY the refresh failed
+        setData(null); setError(msg); setState('error');
+      } finally { if (alive) setRefreshing(false); }
     })();
     return () => { alive = false; };
+    // `data` is read only as "is something on screen" for a retry; it is not a trigger
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url, tick]);
-  return { data, state, retry: () => setTick((t) => t + 1), error };
+  return { data, state, retry: () => setTick((t) => t + 1), error, refreshing, refreshError, savedAgeMs, fetchedAt };
+}
+
+/** One plain line for the universe's load status (null = nothing to say). */
+export function universeStatusLine(h: Pick<UniverseHook, 'state' | 'error' | 'refreshing' | 'refreshError' | 'savedAgeMs' | 'data'>, ageText: (ms: number) => string): { text: string; tone: 'info' | 'warn' | 'error' } | null {
+  if (h.state === 'error') return { text: `The guidance data could not be loaded: ${h.error || 'unknown error'}.`, tone: 'error' };
+  if (h.state === 'loading') return { text: 'Loading the guidance data…', tone: 'info' };
+  if (h.refreshError) return { text: `Showing a saved copy${h.savedAgeMs != null ? ` from ${ageText(h.savedAgeMs)}` : ''} — the refresh failed (${h.refreshError}).`, tone: 'warn' };
+  if (h.refreshing && h.savedAgeMs != null) return { text: `Showing a saved copy from ${ageText(h.savedAgeMs)} — fresh data is loading.`, tone: 'info' };
+  return null;
 }

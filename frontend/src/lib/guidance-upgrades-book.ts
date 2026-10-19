@@ -18,12 +18,32 @@ export function portfolioImpactOf(e: GuidanceEvent, bookThesis: GuThesis): GuPor
   return 'NEUTRAL';
 }
 
+/**
+ * zzz1119 (guidance audit G08) — a holding is its MARKET + ticker: India HAL (Hindustan Aeronautics) is not US HAL (Halliburton).
+ * Held entries are "IN:HAL" / "US:HAL"; a bare entry (the India book stores bare NSE symbols, sometimes with .NS / .BO) counts as
+ * India only — it is never assigned to both markets. US tickers compare with '.' and '-' as the same (BRK-B = BRK.B).
+ */
+export function bookKey(market: string | null | undefined, ticker: unknown): string {
+  const m = /\.(NS|BO|NSE|BSE)$/i.test(String(ticker ?? '').trim()) ? 'IN' : market === 'US' ? 'US' : 'IN';   // an exchange suffix names the market
+  const t = m === 'US' ? String(ticker ?? '').trim().toUpperCase().replace(/-/g, '.') : normSymbol(ticker);
+  return t ? `${m}:${t}` : '';
+}
+export function heldKeySet(held: ReadonlyArray<string>): Set<string> {
+  const out = new Set<string>();
+  for (const h of held) {
+    const m = /^(IN|US|NSE|BSE):(.+)$/i.exec(String(h || '').trim());
+    const k = m ? bookKey(/^US$/i.test(m[1]) ? 'US' : 'IN', m[2]) : bookKey('IN', h);
+    if (k) out.add(k);
+  }
+  return out;
+}
+
 export function overlayBook(events: GuidanceEvent[], held: ReadonlyArray<string>, thesisByTicker: Record<string, GuThesis> = {}): GuidanceEvent[] {
-  const set = new Set(held.map(normSymbol));
+  const set = heldKeySet(held);
   return events.map((e) => {
-    const k = normSymbol(e.ticker);
+    const k = bookKey(e.market, e.ticker);
     if (!k || !set.has(k)) return { ...e, links: { ...e.links, inBook: false } };
-    const thesis = thesisByTicker[k] ?? null;
+    const thesis = thesisByTicker[normSymbol(e.ticker)] ?? null;
     return { ...e, links: { ...e.links, inBook: true, bookThesisLabel: thesis, portfolioImpact: portfolioImpactOf(e, thesis) } };
   });
 }

@@ -2,7 +2,7 @@
 // zzz843 — one compact guidance-upgrade card. No score is ever shown; order comes from the engine.
 import React from 'react';
 import type { GuidanceEvent } from '@/lib/guidance-upgrades-types';
-import { DURATION_LABEL, FLAG_LABEL, IMPACT_LABEL, MATERIALITY_LABEL, METRIC_LABEL, THESIS_LABEL, UNAVAILABLE, agoText, changeMarker, fmtBeforeAfter, fmtNumber, isHeadlineOnly, secondUpgradeText, showsDecision, tickerText, hasRealRaise, isReiteration, raiseVsPreviousText, sourceConflictLine } from '@/lib/guidance-upgrades-format';
+import { DURATION_LABEL, FLAG_LABEL, IMPACT_LABEL, MATERIALITY_LABEL, METRIC_LABEL, metricLabelOf, THESIS_LABEL, UNAVAILABLE, agoText, changeMarker, fmtBeforeAfter, fmtNumber, isHeadlineOnly, secondUpgradeText, showsDecision, tickerText, hasRealRaise, isReiteration, raiseVsPreviousText, sourceConflictLine } from '@/lib/guidance-upgrades-format';
 import { IMPACT_COLOR, R, TONE_COLOR, box } from './gu-tokens';
 import { CappedList } from './GuMore';
 import { primarySourceView, safeEventLabel, sourceDisplayName, taxonomyText } from './gu-ui';
@@ -51,7 +51,7 @@ function GuCardBody({ e, onOpen, now }: { e: GuidanceEvent; onOpen: (id: string)
           const unknownBefore = !c.before;
           return (
             <div key={i} style={{ fontSize: 13, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'baseline' }}>
-              <b style={{ minWidth: 120 }}>{METRIC_LABEL[c.after.metric]} {c.after.period}</b>
+              <b style={{ minWidth: 120 }}>{metricLabelOf(c.after)} {c.after.period}</b>
               <span style={{ color: R.dim }}>{b.before}</span><span aria-hidden>→</span><b>{b.after}</b>
               {unknownBefore || !b.delta
                 ? <span style={{ color: R.faint }}>change {UNAVAILABLE}</span>

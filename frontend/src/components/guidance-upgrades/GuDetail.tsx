@@ -2,7 +2,7 @@
 // zzz843 — the detail view: 15 sections, first screen concise, detail below.
 import React from 'react';
 import type { GuidanceEvent } from '@/lib/guidance-upgrades-types';
-import { DURATION_LABEL, FLAG_LABEL, IMPACT_LABEL, MATERIALITY_LABEL, METRIC_LABEL, THESIS_LABEL, UNAVAILABLE, agoText, changeMarker, fmtBeforeAfter, fmtNumber, isHeadlineOnly, showsDecision, tickerText } from '@/lib/guidance-upgrades-format';
+import { DURATION_LABEL, FLAG_LABEL, IMPACT_LABEL, MATERIALITY_LABEL, METRIC_LABEL, metricLabelOf, THESIS_LABEL, UNAVAILABLE, agoText, changeMarker, fmtBeforeAfter, fmtNumber, isHeadlineOnly, showsDecision, tickerText } from '@/lib/guidance-upgrades-format';
 import { IMPACT_COLOR, R, box } from './gu-tokens';
 import { AiCheckBadge, BasisNote, OtherChanges, ValidationNotes, Chip, ConsensusLine, CrossLinks, DecisionChip, HeadlineOnlyBanner, DetectedVia, DurabilityRow, GapBadge, InflectionBadge, List, MetricBasisChip, NumRow, RangeBlock, Scorecard, Section, SourceChip, StageChip, TopEndCutNote, UnitWarnings, UnverifiedBanner, WhyDecision, WhyNow, btn } from './GuBits';
 
@@ -47,7 +47,7 @@ export function GuDetail({ e, onClose, now }: { e: GuidanceEvent; onClose: () =>
       <Section n={1} title="What changed">
         {isHeadlineOnly(e) && <div style={{ color: R.dim }}>Raise stated by the source. Before {UNAVAILABLE} · After {UNAVAILABLE}. No percentage is shown.</div>}
         {!isHeadlineOnly(e) && e.changes.map((c, i) => { const b = fmtBeforeAfter(c); const mk = changeMarker(e, i); return (
-          <div key={i}><b>{METRIC_LABEL[c.after.metric]} {c.after.period}:</b> {b.before} → <b>{b.after}</b> {b.delta && c.before ? <b style={{ color: mk.kind === 'UP' ? R.green : mk.kind === 'DOWN' ? R.red : R.amber }}>{mk.glyph ? `${mk.glyph} ` : ''}{mk.kind === 'NEUTRAL' ? `midpoint ${b.delta}` : b.delta}</b> : <span style={{ color: R.faint }}>(change {UNAVAILABLE})</span>}
+          <div key={i}><b>{metricLabelOf(c.after)} {c.after.period}:</b> {b.before} → <b>{b.after}</b> {b.delta && c.before ? <b style={{ color: mk.kind === 'UP' ? R.green : mk.kind === 'DOWN' ? R.red : R.amber }}>{mk.glyph ? `${mk.glyph} ` : ''}{mk.kind === 'NEUTRAL' ? `midpoint ${b.delta}` : b.delta}</b> : <span style={{ color: R.faint }}>(change {UNAVAILABLE})</span>}
             {c.after.basis && c.after.basis !== 'UNSTATED' ? ` · ${c.after.basis.replace('_', '-')}` : ''}</div>); })}
         <BasisNote e={e} />
         <OtherChanges e={e} />

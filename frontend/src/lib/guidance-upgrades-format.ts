@@ -54,6 +54,28 @@ export const METRIC_LABEL: Record<GuMetric, string> = {
   ORDER_INTAKE: 'Order intake', BACKLOG: 'Order backlog', VOLUME: 'Volume', PRODUCTION: 'Production', CAPACITY_UTIL: 'Capacity use', NET_PROFIT: 'Net profit', OTHER: 'Other',
 };
 
+/**
+ * zzz1117 (guidance audit G05) — the measure's own words, so two lines of one release are not both "Revenue FY26": MaxCyte guides total
+ * revenue AND core revenue; Oscar's "other" was an operating-income measure. A qualifier (total / core / product / service / SPL /
+ * segment) comes from the phrase the figure was read from; an OTHER measure takes its name from that phrase when one is there. Pure.
+ */
+export function metricLabelOf(p: Pick<GuGuidancePoint, 'metric' | 'raw'>): string {
+  const base = METRIC_LABEL[p.metric] || 'Other';
+  const raw = String(p.raw || '').replace(/\s+/g, ' ').trim();
+  if (!raw) return base;
+  if (p.metric === 'REVENUE' || p.metric === 'REVENUE_GROWTH') {
+    const q = /\b(total|core|product|services?|subscription|recurring|platform|SPL|program-related|license|organic|net)\s+(?:[a-z]+\s+)?revenues?\b/i.exec(raw);
+    if (q && !/^net$/i.test(q[1])) return `${q[1].charAt(0).toUpperCase()}${q[1].slice(1).toLowerCase().replace(/^spl$/, 'SPL')} ${base.toLowerCase()}`;
+    return base;
+  }
+  if (p.metric === 'OTHER') {
+    const head = raw.split(/[\d$₹€£(]/)[0].replace(/\b(?:of|to|is|at|be|between|from|range|guidance|expected|expects?|we|our|the|now|raised?|raising|approximately|about|around)\b/gi, ' ').replace(/[^A-Za-z\- ]+/g, ' ').replace(/\s+/g, ' ').trim();
+    const w = head.split(' ').filter(Boolean).slice(-4).join(' ');
+    return w.length >= 4 ? w.charAt(0).toUpperCase() + w.slice(1) : base;
+  }
+  return base;
+}
+
 export const DECISION_LABEL: Record<GuDecision, string> = {
   IMMEDIATE_BUY: 'IMMEDIATE BUY', WATCHLIST: 'WATCHLIST', DELAYED_EP: 'DELAYED EP', REJECT: 'REJECT', UNVERIFIED: 'UNVERIFIED',
 };
@@ -245,7 +267,14 @@ export function fmtRangeBound(n: number | null | undefined, unit = ''): string {
 /** 'low 10 / mid 11 / high 12' for one side of a range. */
 export function fmtRangeSide(low: number | null, mid: number | null, high: number | null, unit = ''): string {
   if (low == null && mid == null && high == null) return UNAVAILABLE;
-  return `low ${fmtRangeBound(low, unit)} / mid ${fmtRangeBound(mid, unit)} / high ${fmtRangeBound(high, unit)}`;
+  // zzz1122 — enough digits that different values never print the same: Rubrik $1.638–1.648B showed "low 1.64 / mid 1.64 / high 1.65"
+  const vals = [low, mid, high];
+  const at = (d: number) => vals.map((v) => (v == null ? UNAVAILABLE : `${v.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: d })}${unit}`));
+  const base = vals.map((v) => fmtRangeBound(v, unit));
+  const clash = (t: string[]) => vals.some((a, i) => vals.some((b, j) => j > i && a != null && b != null && a !== b && t[i] === t[j]));
+  let out = base;
+  for (let d = 2; d <= 4 && clash(out); d++) out = at(d);
+  return `low ${out[0]} / mid ${out[1]} / high ${out[2]}`;
 }
 export function fmtRangeLine(r: GuRangeMath, unit = ''): string {
   return `${fmtRangeSide(r.beforeLow, r.beforeMid, r.beforeHigh, unit)} → ${fmtRangeSide(r.afterLow, r.afterMid, r.afterHigh, unit)}`;
@@ -471,12 +500,12 @@ export function universeMatchesMetric(r: GuUniverseRecord, m: UniverseMetric): b
   if (m === 'MULTI_YEAR') return [c.primary, ...(c.others || [])].some((p) => p && (p.periodKind === 'MULTI_YEAR_CAGR' || (p.cumulativeYears ?? 0) > 1));
   return metrics.has(API_METRIC[m]);
 }
-export function filterUniverse(list: GuUniverseRecord[], scope: UniverseScope, metric: UniverseMetric, heldNorm?: (t: string) => boolean): GuUniverseRecord[] {
+export function filterUniverse(list: GuUniverseRecord[], scope: UniverseScope, metric: UniverseMetric, heldNorm?: (t: string, market?: string) => boolean): GuUniverseRecord[] {
   return list.filter((r) => {
     const mk = r.record?.market;
     if (scope === 'INDIA' && mk !== 'IN') return false;
     if (scope === 'USA' && mk !== 'US') return false;
-    if (scope === 'MY_BOOK' && !(heldNorm && r.record?.ticker && heldNorm(r.record.ticker))) return false;
+    if (scope === 'MY_BOOK' && !(heldNorm && r.record?.ticker && heldNorm(r.record.ticker, mk))) return false;   // zzz1119: market + ticker
     return universeMatchesMetric(r, metric);
   });
 }

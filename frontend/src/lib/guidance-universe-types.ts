@@ -169,6 +169,10 @@ export interface GuHighGrowthGroups {
   /** the same rows split by trust, then by cohort. verified = strict: VERIFIED + CONFIRMED period + active. */
   trust: Record<GuTrust, Record<GuCohort, GuHgGroupRow[]>>;
   counts: { rows: number; verified: number; derived: number; partial: number; claimsAwaiting: number; ANNUAL: number; MULTI_YEAR_CAGR: number; QUARTERLY: number; /** zzz854: distinct companies in the ranked Active rows */ companies?: number };
+  /** zzz1115 (G02): growth figures kept out of the ranking because they are most likely one business, not the company (still shown) */
+  scopeHeld?: Array<{ entityKey: string; company: string; ticker: string | null; market: string; metric: string; text: string; reason: string }>;
+  /** zzz1116 (G04): guidance points kept out of every ranking because a data check failed for them (one snapshot) */
+  quarantined?: Array<{ entityKey: string; company: string | null; metric: string | null; checks: string[] }>;
 }
 export interface GuStateCounts { activeRecords: number; verified: number; partial: number; derived: number; unverified: number; periodUnclear: number }
 export interface GuExpirySummary { expired: number; superseded: number; withdrawn: number; total: number; reasons: Array<{ reason: string; count: number }> }

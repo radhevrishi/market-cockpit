@@ -12,9 +12,10 @@ import { GuCompanyDetail } from './GuCompanyDetail';
 const TONE = { green: R.green, red: R.red, amber: R.amber } as const;
 const MOBILE_LIMIT = 25;
 
-export function GuUniverseList({ records, showMarket, limit = MOBILE_LIMIT, onFull, emptyText }: { records: GuUniverseRecord[]; showMarket?: boolean; limit?: number; onFull?: (c: GgCompany) => void; emptyText?: string }) {
+export function GuUniverseList({ records, showMarket, limit = MOBILE_LIMIT, onFull, emptyText, onShownChange }: { records: GuUniverseRecord[]; showMarket?: boolean; limit?: number; onFull?: (c: GgCompany) => void; emptyText?: string; /** zzz1120: how many rows are on screen */ onShownChange?: (n: number) => void }) {
   const [open, setOpen] = useState<string | null>(null);
-  const [all, setAll] = useState(false);
+  const [all, setAll0] = useState(false);
+  const setAll = (v: boolean) => { setAll0(v); onShownChange?.(v || !limit ? records.length : Math.min(limit, records.length)); };
   if (!records.length) return <div style={{ fontSize: 12.5, color: R.dim }}>{emptyText || 'Nothing matches this view.'}</div>;
   const list = limit && !all ? records.slice(0, limit) : records;
   return (
@@ -57,7 +58,7 @@ export function GuUniverseList({ records, showMarket, limit = MOBILE_LIMIT, onFu
         })}
       </ol>
       {limit && records.length > limit && (
-        <div className="gu-noprint"><button type="button" style={btn()} onClick={() => setAll((v) => !v)}>{all ? 'Show fewer' : `Show all ${records.length}`}</button></div>
+        <div className="gu-noprint"><button type="button" style={btn()} onClick={() => setAll(!all)}>{all ? 'Show fewer' : `Show all ${records.length}`}</button></div>
       )}
     </div>
   );

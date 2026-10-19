@@ -12,7 +12,9 @@ const COLOR: Record<CoverageStatus, string> = { ACTIVE: R.green, CLAIM_WAITING: 
 const LABEL: Record<CoverageStatus, string> = { ACTIVE: 'IN THE UNIVERSE', CLAIM_WAITING: 'CLAIM WAITING FOR DOCUMENT', NOT_SEEN: 'NOT READ YET' };
 
 export function GuNameCheck() {
-  const { data } = useGuUniverse({ market: 'ALL', view: 'active' });
+  const { data, state: uniState } = useGuUniverse({ market: 'ALL', view: 'active' });
+  // zzz1113 (G07) — without the universe nothing can be checked: never report every name as "not read yet"
+  const ready = !!data;
   const [text, setText] = useState('');
   const [names, setNames] = useState<string[]>([]);
   const [note, setNote] = useState<string | null>(null);
@@ -24,7 +26,7 @@ export function GuNameCheck() {
   const claims = useMemo<CoverageClaim[]>(() => (data?.pipeline?.claims || []).map((c) => ({
     company: c.company, ticker: c.ticker, market: c.market, claim: `${c.claimed_metric} ${c.claimed_growth} · ${c.claimed_period}`, status: c.verification_status, nextAction: c.next_action,
   })), [data]);
-  const rows = useMemo(() => checkCoverage(names, active, claims), [names, active, claims]);
+  const rows = useMemo(() => (ready ? checkCoverage(names, active, claims) : []), [ready, names, active, claims]);
   const sum = coverageSummary(rows);
   const unseen = rows.filter((r) => r.status === 'NOT_SEEN').map((r) => r.input);
 
@@ -47,7 +49,8 @@ export function GuNameCheck() {
           style={{ width: '100%', boxSizing: 'border-box', fontSize: 13, padding: 8, borderRadius: 8, border: `1px solid ${R.border}`, background: R.bg, color: R.text, fontFamily: 'inherit' }} aria-label="Company names to check" />
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <button type="button" style={btn(R.cyan, true)} onClick={run} disabled={!text.trim()}>Check these names</button>
-          {names.length > 0 && <span style={{ fontSize: 12, color: R.dim }}>{sum.total} checked · {sum.active} in the universe · {sum.waiting} claim waiting · {sum.notSeen} not read yet</span>}
+          {names.length > 0 && !ready && <span role="status" style={{ fontSize: 12, color: uniState === 'error' ? R.red : R.dim }}>{uniState === 'error' ? 'The guidance data could not be loaded, so these names cannot be checked yet.' : 'Waiting for the guidance data before checking…'}</span>}
+          {names.length > 0 && ready && <span style={{ fontSize: 12, color: R.dim }}>{sum.total} checked · {sum.active} in the universe · {sum.waiting} claim waiting · {sum.notSeen} not read yet</span>}
         </div>
         {rows.length > 0 && (
           <div style={{ overflowX: 'auto' }}>

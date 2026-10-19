@@ -13,7 +13,16 @@ export const GAP_COLOR: Record<GuGap, string> = {
 export const IMPACT_COLOR: Record<GuPortfolioImpact, string> = { SUPPORTS: R.green, NEUTRAL: R.grey, WEAKENS: R.amber, BROKEN: R.red };
 
 export const PRINT_CSS = `
-.gu-page{max-width:1180px;margin:0 auto;padding:16px}
+/* zzz1120 (guidance audit G09) — use the dashboard width (the 1,180px cap left side space empty while the tables scrolled); a cap only
+   for very wide screens. Long paragraphs keep a readable width; tables get a visible scroll cue and a sticky first columns. */
+.gu-page{max-width:2200px;margin:0 auto;padding:16px 20px;min-width:0;box-sizing:border-box}
+.gu-page p,.gu-page .gu-prose{max-width:110ch}
+.gu-scroll{overflow-x:auto;position:relative;background:linear-gradient(to right,var(--mc-bg-1,#fff) 30%,rgba(255,255,255,0)),linear-gradient(to left,var(--mc-bg-1,#fff) 30%,rgba(255,255,255,0)) 100% 0,radial-gradient(farthest-side at 0 50%,rgba(0,0,0,.16),rgba(0,0,0,0)),radial-gradient(farthest-side at 100% 50%,rgba(0,0,0,.16),rgba(0,0,0,0)) 100% 0;background-repeat:no-repeat;background-size:40px 100%,40px 100%,14px 100%,14px 100%;background-attachment:local,local,scroll,scroll}
+.gu-scroll table td,.gu-scroll table th{font-variant-numeric:tabular-nums}
+.gu-focus-table td{font-size:14px !important;line-height:1.45}
+.gu-focus-table td div,.gu-focus-table td span{font-size:12.5px}
+.gu-focus-table td.gu-co{min-width:230px}
+@media (max-width:760px){.gu-page{padding:12px}.gu-focus-table td.gu-co{min-width:160px}}
 @media print{
   .gu-noprint{display:none !important}
   .gu-page, .gu-page *{background:#fff !important;color:#111 !important;box-shadow:none !important}

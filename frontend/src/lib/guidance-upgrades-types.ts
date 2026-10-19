@@ -200,6 +200,8 @@ export interface GuLinks {
 
 /** One canonical event: company + metric + period + announcement date. */
 export interface GuidanceEvent {
+  /** zzz1117 (G05): the next results date the company states in the release (YYYY-MM-DD), when it gives one */
+  nextResultsDate?: string | null;
   guidance_event_id: string;       // stable hash of canonical key
   canonical_key: string;
   ticker: string;

@@ -1,0 +1,36 @@
+'use client';
+// zzz1121 (guidance audit, operational blocker) — one compact line under the page title: when the guidance data was built, whether the
+// last refresh worked, and whether new documents are waiting because the monthly AI verification cap is reached. It never raises the
+// cap and never marks anything verified; it only says why new guidance may be missing.
+import React from 'react';
+import { R } from './gu-tokens';
+import { useGuUniverse } from './useGuUniverse';
+import { ageText } from '@/lib/gu-client-cache';
+
+export function verificationBlockLine(v: any, now: Date = new Date()): string | null {
+  if (!v || v.available !== false) return null;
+  const reason = String(v.unavailableReason || 'the AI check is not available').replace(/\s*—\s*raise [^.]*$/i, '');
+  const reset = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString().slice(0, 10);
+  const queue = typeof v.queueSize === 'number' && v.queueSize > 0 ? ` ${v.queueSize} documents are waiting to be checked.` : '';
+  return `Verification paused: ${reason}.${queue}${/cap/i.test(reason) ? ` The monthly cap resets on ${reset}.` : ''} Nothing is marked verified without the check, so new guidance may be missing until then.`;
+}
+
+export function GuStatusStrip() {
+  const u = useGuUniverse({ market: 'ALL', view: 'active' });
+  const d: any = u.data;
+  if (!d) return null;
+  const built = d.builtAt ? new Date(d.builtAt) : null;
+  const block = verificationBlockLine(d.verification);
+  const parts: string[] = [];
+  if (built && Number.isFinite(built.getTime())) parts.push(`Guidance data built ${ageText(Date.now() - built.getTime())}`);
+  if (d.servedFrom && d.servedFrom !== 'live') parts.push(d.servedFrom === 'last_good' ? 'served from the last good build (the live build failed)' : 'served from the stored seed');
+  if (u.refreshError) parts.push(`last refresh failed (${u.refreshError})`);
+  else if (u.savedAgeMs != null) parts.push(`saved copy from ${ageText(u.savedAgeMs)}`);
+  if (!parts.length && !block) return null;
+  return (
+    <div className="gu-noprint" role="status" style={{ display: 'grid', gap: 2, fontSize: 12, color: R.dim }}>
+      {parts.length > 0 && <span>{parts.join(' · ')}</span>}
+      {block && <span style={{ color: R.amber }}>⚠ {block}</span>}
+    </div>
+  );
+}

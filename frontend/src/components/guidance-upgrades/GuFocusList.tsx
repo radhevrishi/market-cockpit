@@ -1,9 +1,11 @@
 'use client';
 // zzz880 — FOCUS LIST at the top of the guidance page: the companies to look at first, ranked, one plain line each.
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { R, tint } from './gu-tokens';
 import { pillStyle } from './GuPanel';
-import { useGuUniverse } from './useGuUniverse';
+import { useGuUniverse, universeStatusLine } from './useGuUniverse';
+import { setHeldKeys } from '@/lib/gu-held-store';
+import { ageText } from '@/lib/gu-client-cache';
 import { buildFocusList, holdInconsistentGrowth, focusGrowthHorizon, type FocusVerdict } from '@/lib/gu-focus';
 import { INDIA_LARGE_CAPS } from '@/lib/india-large-caps';
 import type { GuidanceEvent } from '@/lib/guidance-upgrades-types';
@@ -24,8 +26,8 @@ function FocusTable({ title, sub, head, empty, children }: { title: string; sub:
       <b style={{ fontSize: 14 }}>{title}</b>
       <span style={{ fontSize: 12, color: R.dim }}>{sub}</span>
       {has ? (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <div className="gu-scroll" role="region" aria-label={`${title} — scroll sideways for more columns`} tabIndex={0}>
+          <table className="gu-focus-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr>{head.map((h, i) => <th key={i} style={th}>{h}</th>)}</tr></thead>
             <tbody>{children}</tbody>
           </table>
@@ -36,7 +38,7 @@ function FocusTable({ title, sub, head, empty, children }: { title: string; sub:
 }
 function CompanyCell({ r, td }: { r: FocusRow; td: React.CSSProperties }) {
   return (
-    <td style={td}>
+    <td style={td} className="gu-co">
       <b>{r.company}</b>
       <div style={{ fontSize: 11.5, color: R.dim }}>{FLAG[r.market]} {r.ticker || ''}{r.capText ? ` · ${r.capText}` : ' · size not known'}</div>
     </td>
@@ -105,7 +107,9 @@ function MoreRow({ shown, total, open, onToggle, cols }: { shown: number; total:
 }
 
 export function GuFocusList({ events, window, onOpen, caps }: { events: readonly GuidanceEvent[]; window: string; onOpen: (id: string) => void; caps?: { IN?: Record<string, number>; US?: Record<string, number> } | null }) {
-  const { data } = useGuUniverse({ market: 'ALL', view: 'active' });
+  const uni = useGuUniverse({ market: 'ALL', view: 'active' });
+  const { data } = uni;
+  const uniLine = universeStatusLine(uni, ageText);   // zzz1113 (G07)
   const [mk, setMk] = useState<Mk>('ALL');
   const [horizon, setHorizon] = useState<'ALL' | 'ANNUAL' | 'MULTI_YEAR_CAGR'>('ALL');
   // zzz880: small & mid caps by default (India under ₹30,000 Cr, US under $30B); a name whose size is not known stays, labelled
@@ -136,6 +140,8 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
   const all = useMemo(() => (smid ? everyone.filter((r) => r.size !== 'LARGE') : everyone), [everyone, smid]);
   const largeHidden = everyone.length - all.length;
   const heldShown = held.filter((h) => (mk === 'ALL' || h.market === mk));
+  // zzz1116 (G04) — the same held decision applies to the other rankings on the page
+  useEffect(() => { setHeldKeys(held.map((h) => h.key)); }, [held]);
   const inMk = useMemo(() => all.filter((r) => mk === 'ALL' || r.market === mk), [all, mk]);
   // zzz881: two lists, no empty columns — (A) companies that RAISED guidance, (B) companies guiding 30%+ growth with no raise yet.
   // A small raise (under 5%, or only EPS from a small base) is kept out of (A) and counted, never shown as a strong signal.
@@ -254,8 +260,14 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
         </div>
       </details>
       {skyFailed && <div style={{ fontSize: 12, color: R.amber }}>The company figures could not be read just now — scores use the guidance checks only.</div>}
+      {uniLine && (
+        <div role={uniLine.tone === 'info' ? 'status' : 'alert'} style={{ fontSize: 12.5, color: uniLine.tone === 'error' ? R.red : uniLine.tone === 'warn' ? R.amber : R.dim, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span>{uniLine.text}{uniLine.tone !== 'info' ? ' The raises below come from the event feed and are not affected.' : ''}</span>
+          {uniLine.tone !== 'info' && <button type="button" onClick={uni.retry} style={{ fontSize: 12, padding: '2px 10px', borderRadius: 6, border: `1px solid ${R.border}`, background: 'transparent', color: R.text, cursor: 'pointer' }}>Retry</button>}
+        </div>
+      )}
       {raisedAll.length + growthAll.length === 0 ? (
-        <div style={{ fontSize: 13, color: R.dim }}>{all.length ? 'No names for this market in the current data.' : 'Reading the guidance data…'}</div>
+        <div style={{ fontSize: 13, color: R.dim }}>{uni.state === 'loading' ? 'Reading the guidance data…' : uni.state === 'error' && !events.length ? 'Nothing to show until the guidance data loads (see above).' : 'No names for this market in the current data.'}</div>
       ) : (<>
         <FocusTable title={`A. Raised their guidance (${raisedAll.length})`} sub={`Old and new figures both read from the company's own filing, ${window} window.${smallRaises ? ` ${smallRaises} small raise${smallRaises === 1 ? '' : 's'} (under 5%, or only EPS from a small base) left out.` : ''}`}
           head={[<RankHead key="n" sort={sortA} onReset={() => setSortA('rank')} />, 'Company', 'What was raised (old → new)', <DateHead key="d" sort={sortA} onSort={() => setSortA((v) => (v === 'new' ? 'old' : 'new'))} />, ...FV_HEAD, 'EPS estimate (fixed shares)', <OppHead key="o" sort={sortA} onSort={() => setSortA((v) => (v === 'opp' ? 'rank' : 'opp'))} />, <ScoreHead key="s" sort={sortA} onSort={() => setSortA((v) => (v === 'score' ? 'rank' : 'score'))} />, 'Verdict']} empty="No raise of 5% or more in this window for this market.">
@@ -306,6 +318,16 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
             {heldShown.map((h) => <span key={h.key}>{FLAG[h.market]} <b>{h.company}</b> ({h.growth}): {h.reason}.</span>)}
           </div>
         )}
+        {(() => {
+          // zzz1115 (G02) — growths that are most likely one business, kept out of these tables (still in the universe browser)
+          const sh = (data?.summary?.highGrowthGroups?.scopeHeld || []).filter((h) => mk === 'ALL' || h.market === mk);
+          return sh.length > 0 && (
+            <div style={{ fontSize: 12.5, color: R.dim, display: 'grid', gap: 3 }}>
+              <b style={{ color: R.amber }}>Not used as company growth ({sh.length}) — most likely one business or segment:</b>
+              {sh.map((h, i) => <span key={`${h.entityKey}-${i}`}>{FLAG[h.market as 'IN' | 'US'] || ''} <b>{h.company}</b> ({h.text}): {h.reason}.</span>)}
+            </div>
+          );
+        })()}
       </>)}
     </section>
   );

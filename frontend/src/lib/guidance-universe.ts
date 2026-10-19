@@ -33,7 +33,7 @@ import { NSE_TICKER_NAMES } from './nse-ticker-names';
 import { endOfPeriodLabel, qualityOf, revisionOf, type GgStoredEntry } from './growth-guidance';
 import type { ExtractedGuidance, GuidanceExtractResult, GuidanceMetricX } from './guidance-docs-types';
 import { actualKey, priorPeriodOf, universeUnitOf, baseFyFor, type PriorActual } from './guidance-extract-reader';
-import { cagrPct, isLowBoundOnly, isOpenHorizonLabel, multipleOf, nextYearsOf, perYearStated, scopeIssueOf, metricFromQuote, fcfIssueOf, LONG_TERM_LABEL, totalToAnnual, lastCompletedFy, spacIssueOf, fiscalYearNamedIn } from './guidance-horizon';   // zzz916 · zzz931
+import { cagrPct, isLowBoundOnly, isOpenHorizonLabel, multipleOf, nextYearsOf, perYearStated, scopeIssueOf, scopeConflictOf, metricFromQuote, fcfIssueOf, LONG_TERM_LABEL, totalToAnnual, lastCompletedFy, spacIssueOf, fiscalYearNamedIn } from './guidance-horizon';   // zzz916 · zzz931
 
 export const GU_VERSION = 'zzz849-gu-v2';
 const DAY = 86_400_000;
@@ -138,7 +138,23 @@ const SHORT_END: Record<'IN' | 'US', { Q: Array<[number, number]>; H: Array<[num
  *  - India FY ends 31 March. A US 'FY2026' could end anywhere from mid-2026 to early 2027, so it is treated as running until 1 March of the next year (+lag) and noted.
  *  - anything that cannot be placed in time -> UNKNOWN (kept in the universe, never in the high-growth list).
  */
-export function periodStatusOf(period: string, pkind: GgPeriodKind, market: 'IN' | 'US', issued: string | null | undefined, now: Date): GuPeriodInfo {
+/** zzz1118 (guidance audit G06) — a fiscal-year end the company states in the sentence ("For the fiscal year ending June 25, 2027") for a
+ *  fiscal year labelled FYyy: the date, when its year is yy or the year after (a FY27 that ends in 2027, or a "fiscal 2027" ending early
+ *  2028). Null when none is stated. Pure. */
+const FYE_MON = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+export function statedFiscalYearEnd(statement: string | null | undefined, fyLabel: string): Date | null {
+  const t = String(statement || '').replace(/\s+/g, ' ');
+  const yy = /^FY(\d{2})$/.exec(fyLabel.trim()); if (!yy || !t) return null;
+  const want = 2000 + parseInt(yy[1], 10);
+  const m = /\bfiscal (?:year|20\d{2})\s+(?:ending|ended|ends|which ends)\s+(?:on\s+)?(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec)\.?\s+(\d{1,2}),?\s+(20\d{2})\b/i.exec(t)
+    || /\bfiscal (?:year|20\d{2})\s+(?:ending|ended|ends)\s+(?:on\s+)?(\d{1,2})\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+(20\d{2})\b/i.exec(t);
+  if (!m) return null;
+  const [mo, d] = /^\d/.test(m[1]) ? [m[2], m[1]] : [m[1], m[2]];
+  const mi = FYE_MON.indexOf(mo.toLowerCase().slice(0, 3)); const y = parseInt(m[3], 10); const day = parseInt(d, 10);
+  if (mi < 0 || !(day >= 1 && day <= 31) || (y !== want && y !== want + 1)) return null;
+  return new Date(Date.UTC(y, mi, day));
+}
+export function periodStatusOf(period: string, pkind: GgPeriodKind, market: 'IN' | 'US', issued: string | null | undefined, now: Date, statement?: string | null): GuPeriodInfo {
   const p = normPeriod(period); const t = now.getTime();
   const unknown = (reason: string, note = 'Period year not stated: the period end is not known, so it is kept in the universe but out of the high-growth list.'): GuPeriodInfo => ({ status: 'UNKNOWN', end: null, inferred: false, note, reason });
   const issuedMs = issued ? Date.parse(issued) : NaN;
@@ -160,15 +176,27 @@ export function periodStatusOf(period: string, pkind: GgPeriodKind, market: 'IN'
   if (!end) return unknown(`Period "${period}" could not be placed in time.`);
   const isShort = pkind === 'QUARTER' || pkind === 'HALF' || /^[QH][1-4] /.test(p);
   let lag = isShort ? REPORTING_LAG_DAYS : 0; let note: string | null = null; let endAdj = end;
-  if (market === 'US' && /^FY\d{2}/.test(p)) {
-    endAdj = utcD(end.getUTCFullYear() + 1, 2, 1); lag = REPORTING_LAG_DAYS; note = 'US fiscal year end not known; treated as running until March of the following year.';
+  const fye = market === 'US' ? statedFiscalYearEnd(statement, p) : null;
+  if (fye) {
+    // zzz1118 (G06) — the company's own year end wins over the conservative "until March of the following year"
+    endAdj = fye; lag = REPORTING_LAG_DAYS; note = `Fiscal year end stated by the company: ${fye.toISOString().slice(0, 10)}.`;
+  } else if (market === 'US' && /^FY\d{2}/.test(p)) {
+    endAdj = utcD(end.getUTCFullYear() + 1, 2, 1); lag = REPORTING_LAG_DAYS; note = 'US fiscal year end not known; treated as running until March of the following year (an estimate, not a confirmed date).';
   } else if (market === 'US' && /^[QH][1-4] FY/.test(p)) { lag += /^H/.test(p) ? 183 : 92; note = 'US fiscal quarter end not known; calendar quarters assumed with a quarter of tolerance.'; }
   if (endAdj.getTime() + lag * DAY < t) return { status: 'EXPIRED', end: endAdj, inferred: false, note, reason: `The guided period (${p}) has ended.` };
   return { status: 'ACTIVE', end: endAdj, inferred: false, note, reason: '' };
 }
-const multiYears = (period: string, cumulativeYears?: number | null): number | null => {
+/** zzz1122 — a BSE scrip name's group marker ("Cupid Ltd-$") is not part of the company name. */
+export const cleanCoName = (n: string | null | undefined): string => String(n || '').trim().replace(/\s*-\s*[$#*]+$/, '');
+const multiYears = (period: string, cumulativeYears?: number | null, asOf?: string | null): number | null => {
   const nx = nextYearsOf(period); if (nx && nx > 1) return nx;   // zzz916: "Next 3 years"
-  const m = /^FY(\d{2})-(\d{2})$/.exec(normPeriod(period)); if (m) { const n = parseInt(m[2], 10) - parseInt(m[1], 10) + 1; if (n > 1) return n; }
+  // zzz1114 — "FY27-29" said in 2026 counts the growth years FY27, FY28, FY29 (3). But when the first year had already ended when the
+  // company spoke ("CAGR over FY25 to FY28", said in Aug 2026), it is the BASE year: FY25 → FY28 is three years of growth, not four.
+  const m = /^FY(\d{2})-(\d{2})$/.exec(normPeriod(period));
+  if (m) {
+    const a = parseInt(m[1], 10), b = parseInt(m[2], 10); const lc = asOf ? lastCompletedFy(asOf) : null;
+    const n = lc != null && a <= lc ? b - a : b - a + 1; if (n > 1) return n;
+  }
   return cumulativeYears && cumulativeYears > 1 ? cumulativeYears : null;
 };
 
@@ -183,7 +211,7 @@ export function isOpenEnded(low: number | null, high: number | null, statement: 
   return new RegExp(`(?:at least|over|more than|above|in excess of|minimum of|upwards of)\\s+(?:about\\s+|around\\s+|roughly\\s+|~)?${n}\\s*%`, 'i').test(statement)
     || new RegExp(`\\b${n}\\s*%\\s*(?:\\+|plus(?! or minus)\\b|or more|and above)`, 'i').test(statement);
 }
-export interface GuDisplayIn { metric: GgMetric; low: number | null; high: number | null; open: boolean; origin: GgGrowthOrigin; periodKind: GgPeriodKind; period: string; abs: { value: number; unit: string; valueLow?: number } | null; cumulativeYears?: number | null; proxy?: string | null }
+export interface GuDisplayIn { metric: GgMetric; low: number | null; high: number | null; open: boolean; origin: GgGrowthOrigin; periodKind: GgPeriodKind; period: string; abs: { value: number; unit: string; valueLow?: number } | null; cumulativeYears?: number | null; proxy?: string | null; /** zzz1114: the statement date (base-year aware year count) */ asOf?: string | null }
 export function displayOf(i: GuDisplayIn): string {
   let core: string;
   if (i.low == null) {
@@ -195,7 +223,7 @@ export function displayOf(i: GuDisplayIn): string {
     // zzz916: a standing rate with no year: "Long-term revenue growth +30%+ a year (no fixed year)"
     core = `${i.period === LONG_TERM_LABEL ? 'Long-term' : 'Medium-term'} ${METRIC_WORD[i.metric]} growth ${pct} a year (no fixed year)`;
   } else if (i.periodKind === 'MULTI_YEAR_CAGR') {
-    const y = multiYears(i.period, i.cumulativeYears);
+    const y = multiYears(i.period, i.cumulativeYears, i.asOf);
     core = `${y ? `${y}-yr` : 'Multi-year'} ${METRIC_WORD[i.metric]} CAGR ${pct}`;
   } else core = pct;
   if (i.proxy) core += ` (${i.proxy})`;
@@ -421,7 +449,7 @@ export function itemsFromExtracted(results: GuidanceExtractResult[] | null | und
           const where = ca.valueLow == null ? '' : single && abs.value === lo ? ' (lower end)' : single && abs.value === ca.value ? ' (upper end)' : single ? ' (within the range)' : abs.value === ca.value && (abs.valueLow ?? abs.value) === lo ? '' : ' (within the range)';
           notes.push(`reiterated ${single ? '~' : ''}${single ? crText(abs.value, abs.unit) : (abs.unit === '₹ Cr' ? `₹${(abs.valueLow as number).toLocaleString('en-US')}–${abs.value.toLocaleString('en-US')} crore` : amountText(abs))}${where} on ${c.date}`);
         } else notes.push(`reiterated on ${c.date}`);
-        const dn = DOC_NAME[c.r.docKind] || DOC_NAME.OTHER_COMPANY_DOC; confirmed.push({ name: `${dn.name} (${c.r.company})`, type: dn.type, url: c.r.docUrl || null, date: c.date });
+        const dn = DOC_NAME[c.r.docKind] || DOC_NAME.OTHER_COMPANY_DOC; confirmed.push({ name: `${dn.name} (${cleanCoName(c.r.company)})`, type: dn.type, url: c.r.docUrl || null, date: c.date });
         continue;
       }
       // zzz880: a SEGMENT / geography figure is not the company's guide. A later figure below the current company guide (under 95% of its
@@ -456,7 +484,7 @@ export function itemsFromExtracted(results: GuidanceExtractResult[] | null | und
     const gq = String((g && g !== row ? g.quote : null) || row.quote || '');
     const statementQuote = String((sLo != null && g && g !== row && g.quote ? g.quote : row.quote) || '');
     let needsReview: string | null = null;
-    let cagrFromBase: Item['cagrFromBase'] = null; let baseStatedByCompany = false;
+    let cagrFromBase: Item['cagrFromBase'] = null; let baseStatedByCompany = false; let multipleTotal = false;   // zzz1114
     let open = false;
     if (sLo != null) {
       low = sLo; high = sHi ?? sLo;
@@ -506,12 +534,22 @@ export function itemsFromExtracted(results: GuidanceExtractResult[] | null | und
       const yT = /^FY(\d{2})$/.exec(period); const lc = lastCompletedFy(c.date);
       if (yT && lc != null && parseInt(yT[1], 10) - lc >= 2) { pkind = 'MULTI_YEAR_CAGR'; period = `FY${String(lc + 1).padStart(2, '0')}-${yT[1]}`; }   // the page's convention: FY27-32 = six growth years FY27…FY32
     }
+    // zzz1114 (guidance audit G03) — "more than double revenue by FY31" (Adani Ports) was filed as +100% for the single year FY31. A
+    // multiple ("double / triple / 2x") to a year two or more years after the last completed year is a TOTAL over those years: it becomes
+    // a multi-year target FY(last completed)-target and the yearly rate is worked out below (2x over 5 years ≈ 14.9% a year). "More than"
+    // keeps the figure open-ended. India fiscal years only (the base year needs the April–March convention).
+    if (sLo != null && (pkind === 'FY' || pkind === 'CY') && r.market === 'IN') {
+      const yT = /^FY(\d{2})$/.exec(period); const lc = lastCompletedFy(c.date); const k = multipleOf(gq);
+      if (yT && lc != null && k != null && k > 1 && Math.abs(sLo - (k - 1) * 100) < 1e-6 && parseInt(yT[1], 10) - lc >= 2 && !perYearStated(gq)) {
+        pkind = 'MULTI_YEAR_CAGR'; period = `FY${String(lc).padStart(2, '0')}-${yT[1]}`; multipleTotal = true;
+      }
+    }
     // zzz931: a TOTAL change over several years ("double in next 3 years", "doubling over the next four to five years", "grow 50% over 3
     // years") was shown as that total a year (+100% a year). It becomes the yearly rate, labelled as worked out from the company's words.
     if (sLo != null && pkind === 'MULTI_YEAR_CAGR') {
       const t = totalToAnnual(gq, sLo, sHi ?? sLo, period);
       if (t) {
-        gOrigin = 'IMPLIED'; low = t.low; high = t.high; open = false;
+        gOrigin = 'IMPLIED'; low = t.low; high = t.high; open = multipleTotal && /\b(?:more than|over|at least|in excess of)\s+(?:\w+\s+){0,2}?(?:doubl|tripl)/i.test(gq);
         cagrFromBase = { years: t.years, yearsMin: t.yearsMin, targetPeriod: period, how: 'total', baseText: t.phrase };
         notes.unshift(`worked out from the company's words: "${t.phrase}" is ${t.kind === 'multiple' ? `${t.factor}x` : `+${fnum(sLo)}${sHi != null && sHi !== sLo ? `–${fnum(sHi)}` : ''}%`} in total over ${t.yearsMin !== t.years ? `${t.yearsMin}–${t.years}` : t.years} years, about ${fnum(t.low)}${t.low !== t.high ? `–${fnum(t.high)}` : ''}% a year`);
       }
@@ -544,7 +582,7 @@ export function itemsFromExtracted(results: GuidanceExtractResult[] | null | und
       origin: 'COMPANY_DOC', market: r.market, ticker, company: r.company || ticker || 'Unknown company', metric: c.metric, low, high, open, gOrigin, abs, base, needsReview,
       cumulativeYears: pkind === 'MULTI_YEAR_CAGR' && sLo == null && !cagrFromBase ? years : cagrFromBase ? cagrFromBase.years : null,
       period, pkind, kind: 'MANAGEMENT_GUIDANCE', organic: 'UNKNOWN', statement, driver: null, mechanisms: [],
-      src: { name: `${dn.name} (${r.company})`, type: dn.type, url: r.docUrl || null, date: c.date, rank: 4 }, verification: 'VERIFIED', priors,
+      src: { name: `${dn.name} (${cleanCoName(r.company)})`, type: dn.type, url: r.docUrl || null, date: c.date, rank: 4 }, verification: 'VERIFIED', priors,
       notes: [...c.notes, ...notes].join('; ') || null, withdrawn, forced: withdrawn ? 'WITHDRAWN' : undefined,
       primarySourceRead: true, sourceMetricLabel: row.metric === 'REVENUE_GROWTH' ? null : row.metricLabel || null, lastVerified, extRevision: rev, growthNote, confirmedBy: confirmed,
       periodContext: null, cagrFromBase, baseStatedByCompany,
@@ -890,14 +928,14 @@ export function eventOverrideFor(i: { period: string; revision: GuUniverseRecord
   return { override: null, latest };
 }
 const versionOfItem = (it: Item): GuVersionIn => ({ date: it.src.date, low: it.low, high: it.high, absLow: it.abs ? (it.abs.valueLow ?? it.abs.value) : null, absHigh: it.abs ? it.abs.value : null, unit: it.abs?.unit ?? null, source: it.src.name,
-  display: displayOf({ metric: it.metric, low: it.low, high: it.high, open: it.open, origin: 'STATED', periodKind: it.pkind, period: it.period, abs: it.abs, cumulativeYears: it.cumulativeYears }) });
+  display: displayOf({ metric: it.metric, low: it.low, high: it.high, open: it.open, origin: 'STATED', periodKind: it.pkind, period: it.period, abs: it.abs, cumulativeYears: it.cumulativeYears, asOf: it.src?.date ?? null }) });
 const versionOfPrior = (p: Prior, unit: string | null): GuVersionIn => ({ date: p.date, low: p.low, high: p.high, absLow: p.abs ? (p.abs.valueLow ?? p.abs.value) : null, absHigh: p.abs ? p.abs.value : null, unit: p.abs?.unit ?? unit, source: p.note || 'Earlier guidance',
   display: p.abs ? amountText(p.abs) : p.low == null ? 'no %' : pctText(p.low, p.high === p.low ? null : p.high, false) });
 const toVersionIn = (s: GuHistoryStep['to']): GuVersionIn => ({ date: s.date, low: s.low, high: s.high, absLow: s.absoluteLow, absHigh: s.absoluteHigh, unit: s.unit, source: s.source, display: s.display });
 const srcEntry = (it: Item, role: GuSourceEntry['role']): GuSourceEntry => {
   const t = it.tier ?? classifySourceTier({ rank: it.src.rank, type: it.src.type, name: it.src.name, url: it.src.url }).tier;
   return { name: it.src.name, type: it.src.type, url: it.src.url, date: it.src.date, tier: t, tierLabel: TIER_LABEL[t], low: it.low, high: it.high, absolute: it.abs,
-    value: displayOf({ metric: it.metric, low: it.low, high: it.high, open: it.open, origin: 'STATED', periodKind: it.pkind, period: it.period, abs: it.abs, cumulativeYears: it.cumulativeYears }), role };
+    value: displayOf({ metric: it.metric, low: it.low, high: it.high, open: it.open, origin: 'STATED', periodKind: it.pkind, period: it.period, abs: it.abs, cumulativeYears: it.cumulativeYears, asOf: it.src?.date ?? null }), role };
 };
 
 function pointOf(it: Item, history: Prior[], ps: GuPeriodInfo, x: PointCtx): GuPoint {
@@ -945,7 +983,7 @@ function pointOf(it: Item, history: Prior[], ps: GuPeriodInfo, x: PointCtx): GuP
   } else if (growthType === 'IMPLIED') basisLabel = tgtText ? `implied from the ${tgtText} target; base not sourced` : 'implied; no stated % and no sourced base';
   else basisLabel = notComparable ? `GROWTH NOT COMPARABLE: ${notComparable}` : it.growthNote || 'no % stated';
   let core: string;
-  if (growthType === 'EXPLICIT') core = displayOf({ metric: it.metric, low, high, open, origin: 'STATED', periodKind: it.pkind, period: it.period, abs: it.abs, cumulativeYears: it.cumulativeYears, proxy });
+  if (growthType === 'EXPLICIT') core = displayOf({ metric: it.metric, low, high, open, origin: 'STATED', periodKind: it.pkind, period: it.period, abs: it.abs, cumulativeYears: it.cumulativeYears, proxy, asOf: it.src?.date ?? null });
   else if (growthType === 'DERIVED' && it.cagrFromBase) core = `${it.cagrFromBase.years}-yr ${METRIC_WORD[it.metric]} CAGR ${pctShown}${proxy ? ` (${proxy})` : ''} (${basisLabel})`;
   else if (growthType === 'DERIVED' || growthType === 'IMPLIED') core = `${pctShown}${proxy ? ` (${proxy})` : ''} ${growthType === 'DERIVED' ? basisLabel : `(${basisLabel})`}`;
   else core = tgtText ? `${tgtText} target (${notComparable ? basisLabel : it.growthNote || 'no % stated'})` : '—';
@@ -1152,7 +1190,7 @@ export function buildUniverse(live: GgCompany[], ledgerRows: Array<{ market: 'IN
     for (const l of eligible.filter((x) => x !== win && x !== comp && !losers.includes(x))) pushInactive(e, l, 'SUPERSEDED', `A later or higher-ranked record for the same company, metric and period (${win.src.date || 'undated'}, ${win.src.name}) replaces this one.`, { supersededBy });
     if (win.withdrawn) { pushInactive(e, win, 'WITHDRAWN', 'Management withdrew this guidance.'); continue; }
     const pf = periodFacts(win.period, win.pkind, { context: win.periodContext, statement: win.statement, cumulativeYears: win.cumulativeYears });
-    const ps = periodStatusOf(pf.contextApplied ? pf.effectivePeriod : win.period, win.pkind, win.market, win.src.date || (win.gc?.announcedAt ?? null), now);
+    const ps = periodStatusOf(pf.contextApplied ? pf.effectivePeriod : win.period, win.pkind, win.market, win.src.date || (win.gc?.announcedAt ?? null), now, win.statement);   // zzz1118
     if (ps.status === 'EXPIRED') { pushInactive(e, win, 'EXPIRED', ps.reason, { periodEnd: ps.end ? ps.end.toISOString().slice(0, 10) : null }); continue; }
     const history: Prior[] = [...win.priors, ...rest.map((l) => ({ date: l.src.date || '', low: l.low, high: l.high, note: l.src.name, abs: l.abs })).filter((p) => p.date)].filter((p) => p.date);
     const versions: GuVersionIn[] = [...win.priors.map((p) => versionOfPrior(p, win.abs?.unit ?? null)), ...rest.map(versionOfItem), versionOfItem(win)];
@@ -1356,8 +1394,15 @@ export function selectHighGrowthGroups(records: GuUniverseRecordX[], thr = HIGH_
   type Acc = { r: GuUniverseRecordX; cohort: GuCohort; trust: GuTrust; pts: GuPoint[] };
   const byTrust = new Map<string, Acc>(); const byCohort = new Map<string, Acc>();
   const add = (m: Map<string, Acc>, k: string, r: GuUniverseRecordX, cohort: GuCohort, trust: GuTrust, p: GuPoint) => { const cur = m.get(k) || { r, cohort, trust, pts: [] }; cur.pts.push(p); m.set(k, cur); };
+  const scopeHeld: NonNullable<GuHighGrowthGroups['scopeHeld']> = [];
+  // a company's points can sit in several records (one per metric / period): compare against all of them
+  const byEntity = new Map<string, GuPoint[]>();
+  for (const r of records) byEntity.set(r.entityKey, [...(byEntity.get(r.entityKey) || []), ...r.points]);
   for (const r of records) for (const p of r.points) {
     if (!base(p, r.record.company) || p.periodStatus !== 'CONFIRMED' || !p.inDefaultView || (p.listBucket && p.listBucket !== 'ACTIVE')) continue;
+    // zzz1115 (G02) — a segment-sized figure next to a smaller company-wide one from the same document is not ranked as company growth
+    const sc = scopeConflictOf(p, byEntity.get(r.entityKey) || r.points);
+    if (sc) { scopeHeld.push({ entityKey: r.entityKey, company: r.record.company, ticker: r.tickers?.[0] || r.record.ticker || null, market: r.record.market, metric: p.metric, text: p.display, reason: sc }); continue; }
     const trust = trustOf(p.verificationState); if (!trust || trust === 'claimsAwaiting') continue;   // zzz854: an unverified claim is never in the ranked Active list
     // zzz862: a verification older than the freshness limit (60 days) is not "strictly verified" any more: it stays in Active (with its re-check tag) but leaves the strict list
     if (!(trust === 'verified' && p.freshness === 'STALE')) add(byTrust, `${r.entityKey}|${p.cohort}|${trust}`, r, p.cohort!, trust, p);
@@ -1388,7 +1433,7 @@ export function selectHighGrowthGroups(records: GuUniverseRecordX[], thr = HIGH_
   for (const c of COHORTS) cohorts[c] = rank(activeRows.filter((r) => r.cohort === c).sort(cmp));
   for (const t of TRUST_ORDER) { trust[t] = {} as Record<GuCohort, GuHgGroupRow[]>; for (const c of COHORTS) trust[t][c] = rank(trustRows.filter((r) => r.trust === t && r.cohort === c).sort(cmp)); }
   const n = (l: Array<Omit<GuHgGroupRow, 'rank'>>, f: (r: Omit<GuHgGroupRow, 'rank'>) => boolean) => l.filter(f).length;
-  return { threshold: thr, label: HIGH_GROWTH_LABEL, rule: HIGH_GROWTH_GROUPS_RULE, cohorts, trust,
+  return { threshold: thr, label: HIGH_GROWTH_LABEL, rule: HIGH_GROWTH_GROUPS_RULE, cohorts, trust, scopeHeld,
     counts: { rows: activeRows.length, verified: n(trustRows, (r) => r.trust === 'verified'), derived: n(trustRows, (r) => r.trust === 'derived'), partial: n(trustRows, (r) => r.trust === 'partial'), claimsAwaiting: n(trustRows, (r) => r.trust === 'claimsAwaiting'),
       ANNUAL: n(activeRows, (r) => r.cohort === 'ANNUAL'), MULTI_YEAR_CAGR: n(activeRows, (r) => r.cohort === 'MULTI_YEAR_CAGR'), QUARTERLY: n(activeRows, (r) => r.cohort === 'QUARTERLY'),
       companies: new Set(activeRows.map((r) => r.entityKey)).size } };

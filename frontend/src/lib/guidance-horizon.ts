@@ -296,7 +296,10 @@ export function metricFromQuote(metric: string, quote: string | null | undefined
 export function fcfIssueOf(quote: string | null | undefined, label?: string | null): string | null {
   const t = `${String(label || '')} ${String(quote || '')}`;
   if (!t.trim()) return null;
-  if (/\bfree[- ]cash|\bfcf\b|\bcash flows?\b|\bcash generation\b/i.test(t)) return null;
+  if (/\bfree[- ]cash|\bfcf\b/i.test(t)) return null;
+  // zzz1114 (guidance audit G03) — "double revenue, EBITDA and cash flows" names no free cash flow: a generic "cash flow(s)" or "cash
+  // generation" is not filed as FCF unless the company says free cash flow
+  if (/\bcash flows?\b|\bcash generation\b/i.test(t)) return 'the company says "cash flow", not free cash flow';
   return 'not free cash flow (the sentence is about capex, debt, working capital or another outflow)';
 }
 
@@ -339,4 +342,27 @@ export function fiscalYearNamedIn(quote: string | null | undefined): string | nu
     found.add(`FY${m[1].slice(-2)}`);
   }
   return found.size === 1 ? [...found][0] : null;
+}
+
+/**
+ * zzz1115 (guidance audit G02) — a high growth that is most likely ONE BUSINESS, not the company. Bikaji's call says "15% plus growth
+ * overall this year" and, about its THF retail business, "business can grow at 50-60% year-on-year for next 3-4 years"; the second was
+ * ranked and modelled as company growth. A growth point is held out of company rankings and company models when, in the same document,
+ * the company also gives a company-wide figure ("overall / consolidated / company / total") for the same metric that is less than half of
+ * it, and the higher figure's own sentence never says it is the company's (no "overall / consolidated / company / group / total / top
+ * line"). Both statements stay visible. Null = no conflict. Pure.
+ */
+export interface ScopePoint { metricFamily?: string | null; statement?: string | null; low?: number | null; high?: number | null; sourceDate?: string | null; sourceName?: string | null; cohort?: string | null }
+const COMPANY_WIDE = /\b(?:overall|consolidated|company[- ]wide|for the company|as a company|group|total (?:revenue|income|sales|business)|top[- ]?line|whole (?:company|business))\b/i;
+export function scopeConflictOf(p: ScopePoint, siblings: readonly ScopePoint[]): string | null {
+  const v = p.low ?? p.high;
+  if (v == null || !Number.isFinite(v) || v <= 0 || COMPANY_WIDE.test(String(p.statement || ''))) return null;
+  for (const q of siblings) {
+    if (q === p || q.metricFamily !== p.metricFamily) continue;
+    const sameDoc = (q.sourceDate && q.sourceDate === p.sourceDate) || (q.sourceName && q.sourceName === p.sourceName);
+    if (!sameDoc || !COMPANY_WIDE.test(String(q.statement || ''))) continue;
+    const qv = Math.max(q.low ?? -Infinity, q.high ?? -Infinity);
+    if (Number.isFinite(qv) && qv > 0 && v >= 2 * qv) return `the same document gives ${qv}% for the company as a whole; ${v}% is most likely one business or segment, so it is not used as company growth`;
+  }
+  return null;
 }

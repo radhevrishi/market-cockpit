@@ -3,6 +3,8 @@
 //   • RAISED   — a verified formal guidance upgrade in the chosen window (old and new figures from the company's own document);
 //   • GROWTH   — active guidance of 30% or more growth (verified or derived from the company's own numbers).
 // A company with both comes first. Every row says in plain words what happened and why it is on the list. Pure: no fetch, no React.
+import { metricLabelOf, METRIC_LABEL } from './guidance-upgrades-format';   // zzz1117
+import type { GuMetric } from './guidance-upgrades-types';
 import type { GuidanceEvent } from './guidance-upgrades-types';
 import type { GuHighGrowthGroups, GuHgGroupRow } from './guidance-universe-types';
 
@@ -10,7 +12,7 @@ export type FocusVerdict = 'TOP FOCUS' | 'STRONG RAISE' | 'HIGH GROWTH' | 'RAISE
 export interface FocusRow {
   key: string; company: string; ticker: string | null; market: 'IN' | 'US';
   raised: string | null; raisePct: number | null; raiseDate: string | null; eventId: string | null;
-  growth: string | null; growthPct: number | null; growthPeriod: string | null; growthTrust: string | null;
+  growth: string | null; growthPct: number | null; growthPeriod: string | null; growthTrust: string | null; /** zzz1122: "-5 pp" when this guidance is lower than the earlier one */ growthCutText?: string | null;
   verdict: FocusVerdict; why: string; score: number;
   /** zzz881: date of the growth guidance document (growth-only rows) */ growthDate?: string | null; growthSource?: string | null; growthSourceUrl?: string | null; growthFreshness?: string | null; growthVerifiedDaysAgo?: number | null;
   /** zzz881: the raise is real but small (under 5%) or only a small-base EPS */ smallRaise?: boolean;
@@ -41,7 +43,7 @@ export function sizeOf(market: 'IN' | 'US', ticker: string | null, s: FocusSizeI
 
 const DAY = 86_400_000;
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
-const keyOf = (market: string, ticker: string | null | undefined, company: string) =>
+export const keyOf = (market: string, ticker: string | null | undefined, company: string) =>
   `${market === 'US' ? 'US' : 'IN'}|${(ticker || '').toUpperCase() || company.toLowerCase().replace(/[^a-z0-9]+/g, '')}`;
 const METRIC_WORD: Record<string, string> = {
   REVENUE: 'revenue', REVENUE_GROWTH: 'revenue growth', EBITDA: 'EBITDA', EBIT: 'operating profit', OP_MARGIN: 'operating margin',
@@ -91,10 +93,12 @@ export function raiseLine(e: GuidanceEvent): { text: string; pct: number | null;
   const others = ups.filter((u: any) => u !== c);
   const smallOther = others.find((u: any) => isSmallEpsBase(u));
   const more = others.length ? ` + ${others.length} more${smallOther ? ` (incl. EPS +${Math.round(pctOf(smallOther) ?? 0)}% from a small base)` : ''}` : '';
+  const mWord = (() => { const l = metricLabelOf({ metric: c.metric, raw: c.after?.raw }); const base = METRIC_WORD[c.metric] || String(c.metric).toLowerCase(); return l === 'Other' || l === METRIC_LABEL[c.metric as GuMetric] ? base : l.charAt(0).toLowerCase() + l.slice(1); })();
   const smallNote = !small ? '' : isSmallEpsBase(c) ? ` — from a small base of ${c.before?.currency || ''}${num(c.before?.midpoint) ?? '?'} a share` : ' — only the low end moved, or it started from zero';
   return {
     // zzz895: a % figure for a money metric is a growth rate — say so ('net profit growth', not 'net profit')
-    text: `${c.after.period || ''} ${METRIC_WORD[c.metric] || String(c.metric).toLowerCase()}${isPp && !/growth|margin/i.test(METRIC_WORD[c.metric] || String(c.metric)) ? ' growth' : ''}: ${rangeText(c.before)} → ${rangeText(c.after)}${sign}${smallNote}${more}`.trim(),
+    // zzz1117 (G05) — the measure's own words ("core revenue", an "other" measure's name) instead of a bare "other"
+    text: `${c.after.period || ''} ${mWord}${isPp && !/growth|margin/i.test(mWord) ? ' growth' : ''}: ${rangeText(c.before)} → ${rangeText(c.after)}${sign}${smallNote}${more}`.trim(),
     // zzz882: a growth-rate raise (25–30% → 40–50%, +17.5 pp) is sized by how much the guided growth itself rose (27.5 → 45 = +64%),
     // so India raises given as growth rates rank next to US raises given in dollars instead of sinking to the bottom
     pct: small ? null : isPp ? relMid(c) : pct, smallBaseOnly: small, pp: isPp, ppDelta: isPp ? pct : null,
@@ -129,6 +133,7 @@ export function buildFocusList(groups: GuHighGrowthGroups | null | undefined, ev
     r.growth = g.cohort === 'MULTI_YEAR_CAGR' && !/CAGR/i.test(g.text) ? `${g.text} a year (multi-year)` : g.text; r.growthPct = v; r.growthPeriod = g.headline?.period || null; r.growthTrust = g.trust; r.growthDate = g.sourceDate || null; r.growthSource = g.sourceName || null; r.growthSourceUrl = g.sourceUrl || null; r.growthFreshness = g.headline.freshness ?? null; r.growthVerifiedDaysAgo = g.headline.lastVerifiedDaysAgo ?? null;
     r.growthMetric = (g.headline as any)?.metric ?? null; r.growthCohort = g.cohort ?? null;
     r.growthType = (g.headline as any)?.growthType ?? null; r.growthDerivation = (g.headline as any)?.derivation ?? null;
+    { const rv = String((g.headline as any)?.revisionVsPriorGuidance || ''); r.growthCutText = /^\s*-|\b(?:lower|cut|reduced)\b/i.test(rv) ? rv.replace(/\s*vs prior guidance\s*/i, '').trim() || 'cut' : null; }
     r.growthMetrics = Array.from(new Set([...(g.metrics || []).map((m: any) => String(m?.metric || '')), String((g.headline as any)?.metric || '')].filter(Boolean)));
   }
   // zzz923: a verified guidance cut in the same window is a red flag on a row already listed (it never adds a row)
@@ -148,11 +153,20 @@ export function buildFocusList(groups: GuHighGrowthGroups | null | undefined, ev
     // zzz895: a growth-rate raise is STRONG only when the guided growth moved 5+ points (Kfin 10% → 12–15%, +3.5 pp, is a raise, not a strong one)
     else if (r.raised && (r.raisePct ?? 0) >= 15 && (!r.raisePp || (r.raisePpDelta ?? 0) >= 5)) { r.verdict = 'STRONG RAISE'; r.why = r.raisePp ? `Guided growth rate raised a lot (about ${Math.round(r.raisePct!)}% higher than before) — checked in the company's own filing` : `Guidance raised by ${Math.round(r.raisePct!)}% — a large upgrade, checked in the company's own filing`; }
     else if (r.raised && r.growth) { r.verdict = 'HIGH GROWTH'; r.why = `Guides ${r.growthPct}% growth; also a small guidance raise (${Math.round((r.raisePct ?? 0) * 10) / 10}%)`; }
-    else if (r.growth && (r.growthPct ?? 0) >= 50) { r.verdict = 'HIGH GROWTH'; r.why = `Guides ${r.growthPct}% growth${r.growthTrust === 'derived' ? ' (worked out from the company’s own numbers)' : ''}`; }
+    else if (r.growth && (r.growthPct ?? 0) >= 50) { r.verdict = 'HIGH GROWTH'; r.why = growthWhy(r); }
     else if (r.raised) { r.verdict = r.smallRaise ? 'WATCH' : 'RAISED'; r.why = r.smallRaise ? 'Small raise (under 5%, or only EPS from a small base) — real, but not a strong signal' : 'Guidance raised, checked in the company’s own filing'; }
-    else { r.verdict = 'WATCH'; r.why = `Guides ${r.growthPct}% growth`; }
+    else { r.verdict = 'WATCH'; r.why = growthWhy(r); }
+    // zzz1122 — a guidance that is LOWER than the company's earlier guidance says so (Piccadily: +60%, 5 points below its earlier guide)
+    if (r.growthCutText && r.growth) r.why = `${r.why} — lower than its earlier guidance (${r.growthCutText})`;
   }
   return out.sort((a, b) => b.score - a.score || a.company.localeCompare(b.company)).slice(0, limit);
+}
+
+/** zzz1122 — "Guides 134.1% growth" for a growth WE worked out read as a company target: a derived growth says "implied". */
+function growthWhy(r: FocusRow): string {
+  return r.growthTrust === 'derived' || r.growthType === 'DERIVED'
+    ? `Implied ${r.growthPct}% growth — worked out from the company’s own numbers, not a stated target`
+    : `Guides ${r.growthPct}% growth`;
 }
 
 // ── zzz925: a worked-out revenue growth must agree with the revenue the company actually reports ─────────────────────────
