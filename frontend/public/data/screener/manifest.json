@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-10-19T09:59:19Z",
+  "lastSync": "2026-10-19T18:45:04Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -10,12 +10,12 @@
     },
     {
       "name": "capex.csv",
-      "size": 9478,
+      "size": 9036,
       "displayName": "CAPEX"
     },
     {
       "name": "debt-reduction.csv",
-      "size": 10096,
+      "size": 10095,
       "displayName": "Debt Reduction"
     },
     {
@@ -30,7 +30,7 @@
     },
     {
       "name": "great-results-and-pullback.csv",
-      "size": 1547,
+      "size": 1125,
       "displayName": "Great Results and Pullback"
     },
     {
@@ -45,7 +45,7 @@
     },
     {
       "name": "monthly-volume-pockets.csv",
-      "size": 9532,
+      "size": 6422,
       "displayName": "Monthly Volume Pockets"
     },
     {
@@ -75,27 +75,27 @@
     },
     {
       "name": "turnarounds.csv",
-      "size": 2394,
+      "size": 2395,
       "displayName": "Turnarounds"
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 23122,
+      "size": 23127,
       "displayName": "Latest Portfolio"
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63328,
+      "size": 63340,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65577,
+      "size": 65594,
       "displayName": "Working watchlist"
     },
     {
       "name": "weekly-volume-pockets.csv",
-      "size": 5983,
+      "size": 4187,
       "displayName": "Weekly Volume Pockets"
     }
   ]
