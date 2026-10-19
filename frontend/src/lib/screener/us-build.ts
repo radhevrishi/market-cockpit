@@ -196,7 +196,7 @@ export async function loadCashFlowQuarters(cos: Array<{ t: string; cik: number; 
 export function sma(closes: readonly number[], n: number): number | null {
   if (closes.length < n) return null;
   const s = closes.slice(-n);
-  return Math.round((s.reduce((a, b) => a + b, 0) / n) * 100) / 100;
+  return Number((s.reduce((a, b) => a + b, 0) / n).toPrecision(12));   // zzz1106 (N02) — full precision, not 2 decimals
 }
 /** Why the last daily-price read failed (shown in the build notes), e.g. 'query1 HTTP 429'. */
 export let sparkLastError: string | null = null;

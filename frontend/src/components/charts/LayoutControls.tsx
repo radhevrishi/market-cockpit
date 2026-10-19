@@ -336,10 +336,10 @@ export function IndicatorsPanel({ L, onClose, triggerRef }: { L: ReturnType<type
 const SR_ONLY: React.CSSProperties = { position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0 };
 const LEGEND_BTN: React.CSSProperties = { display: 'inline-grid', placeItems: 'center', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', color: 'var(--mc-text-3)', lineHeight: 1, pointerEvents: 'auto' };
 
-export function IndicatorLegend({ rows, valueOf, onToggle, onRemove, decimals, colorOf = (c: string) => c, textOf = (c: string) => c, top = 28, compact = false, onCompact, neededOf, has, stale = false }: {
+export function IndicatorLegend({ rows, valueOf, onToggle, onRemove, decimals, decimalsOf, colorOf = (c: string) => c, textOf = (c: string) => c, top = 28, compact = false, onCompact, neededOf, has, stale = false }: {
   /** zzz1022 — px from the top of the chart (lower when a second status line sits above it) */
   top?: number;
-  rows: LegendRow[]; valueOf: (row: LegendRow) => (number | null)[]; onToggle: (id: string) => void; decimals: number; colorOf?: (c: string) => string;
+  rows: LegendRow[]; valueOf: (row: LegendRow) => (number | null)[]; onToggle: (id: string) => void; decimals: number; decimalsOf?: (row: LegendRow) => number; colorOf?: (c: string) => string;
   /** zzz1019 — the × on a row: remove the line / indicator from the chart (as TradingView's legend "Remove") */
   onRemove?: (id: string) => void;
   /** zzz967 (UI-01) — readable text colour for a line colour (the swatch keeps the line colour itself) */
@@ -382,13 +382,13 @@ export function IndicatorLegend({ rows, valueOf, onToggle, onRemove, decimals, c
   }, [compact]);
   if (!rows.length) return null;
   const shownRows = showHidden ? rows : rows.filter((r) => r.on);
-  const textOfValue = (r: LegendRow, v: number | null, i: number) => (v != null ? fmtPrice(v, decimals) : missingValueText(neededOf?.(r)?.[i] ?? null, has ?? Number.POSITIVE_INFINITY));
+  const textOfValue = (r: LegendRow, v: number | null, i: number) => (v != null ? fmtPrice(v, decimalsOf ? decimalsOf(r) : decimals) : missingValueText(neededOf?.(r)?.[i] ?? null, has ?? Number.POSITIVE_INFINITY));
   const valueChips = (r: LegendRow, vals: (number | null)[]) => vals.map((v, i) => {
     const lineC = colorOf(r.series[i]?.color || (r.label.startsWith('MACD') && i === 1 ? '#FF6D00' : r.color));
     return (
       <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: textOf(lineC), fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
         <span aria-hidden style={{ width: 8, height: 8, borderRadius: 2, background: lineC, display: 'inline-block' }} />
-        {v != null ? fmtPrice(v, decimals) : <span style={{ fontWeight: 500, color: 'var(--mc-text-3)' }}>{textOfValue(r, v, i)}</span>}
+        {v != null ? fmtPrice(v, decimalsOf ? decimalsOf(r) : decimals) : <span style={{ fontWeight: 500, color: 'var(--mc-text-3)' }}>{textOfValue(r, v, i)}</span>}
       </span>
     );
   });

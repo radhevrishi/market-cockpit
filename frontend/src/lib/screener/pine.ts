@@ -15,7 +15,7 @@
 // The rest of this file is pure: the filters the page applies (bias / sub-pattern / stage / likelihood / distance to the
 // pivot / liquidity), counts per pattern for the chips, and the cleaning of saved Pine screens.
 import { analyzePatterns, analyzeDailyAs, toTags, PATTERN_META, PATTERN_IDS, PATTERN_MIN_HISTORY, LONG_BASE_MONTHS, type PatternId, type PatternTag, type PatternAnalysis, type PBar } from '../chart-patterns';
-import { techFigures, closedFigures, usSessionOpen, liveSessionBar, recentBars, TECH_FIGURE_DAYS, type DailyBars } from './tech';
+import { techFigures, closedFigures, usSessionOpen, liveSessionBar, recentBars, TECH_FIGURE_DAYS, PRICE_LEVEL_KEYS, pxFull, type DailyBars } from './tech';
 import { fcfmSourceText, passes, cleanScreens, fieldOf, filterKeys, filterLabel, evalPattern, patMissingWhy, tagDirDist, shapeWord, PATTERN_TFS, FIELDS, type Filter, type NumKey, type PatTf, type PatternEval } from './filters';
 import type { ScreenMarket, ScreenRow } from './types';
 import type { TechStored } from './tech-fetch';
@@ -783,13 +783,15 @@ export const LEAN_KEYS = [
 ] as const satisfies ReadonlyArray<keyof ScreenRow>;
 /** zzz993 — numbers sent to the page are rounded: 2 decimals from 1 up, 4 significant digits below 1 (penny prices keep their
  *  meaning); whole numbers unchanged. Pattern tags and scan objects are left as stored. */
+const PRICE_LEVEL_SET = new Set<string>(PRICE_LEVEL_KEYS);
 export function leanNum(v: number): number {
   if (!Number.isFinite(v) || Number.isInteger(v)) return v;
   return Math.abs(v) >= 1 ? Math.round(v * 100) / 100 : Number(v.toPrecision(4));
 }
 export function leanRow(r: ScreenRow): Partial<ScreenRow> & { live?: 1 } {
   const o: Record<string, unknown> = {};
-  for (const k of LEAN_KEYS) { const v = (r as any)[k]; if (v != null) o[k] = typeof v === 'number' ? leanNum(v) : v; }
+  // zzz1106 (N02) — price levels travel at full precision so the page's comparisons match the server's
+  for (const k of LEAN_KEYS) { const v = (r as any)[k]; if (v != null) o[k] = typeof v === 'number' ? (PRICE_LEVEL_SET.has(k) && Number.isFinite(v) ? pxFull(v) : leanNum(v)) : v; }
   if (r.cc) o.live = 1;   // read during a session: the latest bar (and its patterns) is the live, unfinished day
   return o as Partial<ScreenRow> & { live?: 1 };
 }
@@ -1005,8 +1007,12 @@ export const PINE_GROUPS: ReadonlyArray<{ id: PineGroup; label: string }> = [
  *  company). Opening a screen that has one switches the list to it; a screen without one leaves the current list as it is. */
 export interface PineScreen { id: string; name: string; note?: string; market?: ScreenMarket; q: PineQuery; builtIn?: boolean; group?: PineGroup; scope?: string }
 /** zzz1004 — a company-list value that may be saved with a screen ('hand' — a one-off hand-off — never is). */
+/** zzz1101 (deep audit N04) — the ONE list of fixed "Companies" choices a saved screen may keep. The page's select offers these
+ *  (+ "hand", a one-off hand-over from the Stock Screener that is never saved); 'tech' (the Technicals list) was offered but
+ *  dropped on save, so a saved Technicals screen reopened on another list. A test keeps this list and the page's options together. */
+export const SAVED_SCOPES: readonly string[] = ['', 'pf', 'cb', 'tech'];
 export const cleanScopeValue = (v: unknown): string | undefined =>
-  typeof v === 'string' && (v === '' || v === 'pf' || v === 'cb' || /^(wl|ss):[\w.:\-]{1,80}$/.test(v)) ? v : undefined;
+  typeof v === 'string' && (SAVED_SCOPES.includes(v) || /^(wl|ss):[\w.:\-]{1,80}$/.test(v)) ? v : undefined;
 
 const numOrNull = (v: unknown, lo = -1e15, hi = 1e15) => (fin(v) && v >= lo && v <= hi ? v : null);
 /** Pure clean-up of a stored / pasted query: anything unknown falls back to the default. */

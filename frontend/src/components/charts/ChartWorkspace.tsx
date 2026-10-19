@@ -10,7 +10,7 @@ import {
   type Bar, type DrawingName, type HeaderStats, type Market, type RangeKey, type SavedDrawing, type Timeframe,
 } from '@/lib/chart-math';
 import { CHART_DRAWINGS_KEY, loadDrawings, loadDrawingsWithLegacy, saveDrawings } from '@/lib/chart-storage';
-import { EXTRA_INFO, legendRowsWithVolume, priceSeriesOf, removeRow, seriesValues, toggleRow, type ChartLayout, type LegendRow } from '@/lib/chart-layouts';
+import { EXTRA_INFO, legendRowsWithVolume, priceSeriesOf, removeRow, seriesValues, studyDecimals, toggleRow, type ChartLayout, type LegendRow } from '@/lib/chart-layouts';
 import WatchlistPanel, { AddToWatchlist, useWatchlistStore, type WatchlistNavOverride } from './WatchlistPanel';
 import { marketOfExchange, reviewFromUrl, reviewPosition, reviewWords, stepQueue, type ReviewQueue } from '@/lib/chart-review-queue';
 import { NO_BARS, barsForIdentity, chartIdentityKey, chartLoadError, type LoadedBars } from '@/lib/chart-loaded-identity';
@@ -1218,7 +1218,7 @@ export default function ChartWorkspace() {
             <button type="button" className={`mc-scale-btn${basis === 'tr' ? ' on' : ''}`} aria-label="Total return" aria-pressed={basis === 'tr'} onClick={toggleBasis}
               title={basis === 'tr' ? `${TOTAL_RETURN_LABEL}. On: history adjusted for ${live?.dividends ?? 0} cash dividends; the latest price is unchanged. Drawings are one set for both views and stay at the price values they were drawn on. Click for prices as printed.` : `Show: ${TOTAL_RETURN_LABEL}`}>TR</button>
           </div>
-          <IndicatorLegend top={legendTop} rows={rows} valueOf={valueOf} onToggle={(id) => L.setWorking((w) => toggleRow(w, id))} onRemove={(id) => L.setWorking((w) => removeRow(w, id))} decimals={pxDecimals} colorOf={(c) => (!chartLight && (luminance(c) ?? 1) < 0.18 ? '#B2B5BE' : c)} textOf={(c) => readableOn(c, chartLight ? '#FFFFFF' : '#0C1018')}
+          <IndicatorLegend top={legendTop} rows={rows} valueOf={valueOf} onToggle={(id) => L.setWorking((w) => toggleRow(w, id))} onRemove={(id) => L.setWorking((w) => removeRow(w, id))} decimals={pxDecimals} decimalsOf={(r) => studyDecimals(r.source === 'volume' ? 'OBV' : L.working.extras.find((e) => e.id === r.id)?.type, pxDecimals)} colorOf={(c) => (!chartLight && (luminance(c) ?? 1) < 0.18 ? '#B2B5BE' : c)} textOf={(c) => readableOn(c, chartLight ? '#FFFFFF' : '#0C1018')}
             compact={compactLegend} onCompact={setLegendCompact} neededOf={neededOf} has={bars.length ? idx + 1 : undefined} stale={analysisOld} />
           <OverlaySummary patterns={patterns} stage={stageInd} setups={setupsInd} alines={alines} acc={accInd} cur={cur} tf={tf} light={chartLight} display={display} onDisplay={setDisplay} onTurnOff={turnOffOverlay} onHeight={setOverlayRowH} stale={analysisOld} />
           {/* zzz1045c — switching symbol / timeframe: say what is loading; the analysis above is from the chart before (dimmed) */}

@@ -5,7 +5,7 @@
 //  • colours per theme
 // The detection is lib/auto-lines (≥ 3 touches, owner rule).
 import { newExtra, type ChartLayout } from '@/lib/chart-layouts';
-import { distWords, levelName, linePriceAt, trendLineName, type AutoLinesResult, type AutoLinesTf, type Level, type TrendLine } from '@/lib/auto-lines';
+import { analysedBars, distWords, levelName, linePriceAt, trendLineName, type AutoLinesResult, type AutoLinesTf, type Level, type TrendLine } from '@/lib/auto-lines';
 
 export const ALN_INDICATOR = 'MC_ALINES';
 export const ALN_PREFS_KEY = 'mc:chart-autolines:v1';
@@ -66,9 +66,10 @@ export interface AlnPayload { lines: AlnLine[]; levels: AlnLevel[]; light: boole
 export const lineId = (l: TrendLine) => `t:${l.kind}:${l.firstTouch}:${l.lastTouch}`;
 export const levelId = (l: Level) => `l:${l.kind}:${l.price.toPrecision(6)}`;
 
-export function alnPayload(bars: ReadonlyArray<{ t: number }>, r: AutoLinesResult | null, prefs: AutoLinesPrefs, light: boolean, decimals: number, ref: AlnRef | null = null): AlnPayload {
+export function alnPayload(barsIn: ReadonlyArray<{ t: number }>, r: AutoLinesResult | null, prefs: AutoLinesPrefs, light: boolean, decimals: number, ref: AlnRef | null = null): AlnPayload {
   const out: AlnPayload = { lines: [], levels: [], light, decimals };
   if (!r) return out;
+  const bars = analysedBars(barsIn, r);   // zzz1109 (N09) — indices point into the valid bars
   const L = bars.length - 1;
   if (prefs.trend) {
     for (const l of r.trend) {
@@ -230,6 +231,7 @@ export function autoLinesHeadline(r: AutoLinesResult | null, tf: AutoLinesTf, st
   if (!parts.length) return `${head} · hidden`;
   if (!r.trend.length && !r.levels.length) return `${head} · no line with 3+ touches near price`;
   if (provisional > 0) parts.push(`${provisional} provisional ${provisional === 1 ? 'breach' : 'breaches'} (${BAR_WORD[tf]} not closed)`);
+  if (r.rejected) parts.push(`${r.rejected} bad ${r.rejected === 1 ? 'bar' : 'bars'} left out`);   // zzz1109 (N09)
   return `${head} · ${parts.join(' · ')}`;
 }
 
@@ -250,8 +252,9 @@ export function fmtAlnPrice(n: number, decimals = 2): string {
 const signed = (x: number, d = 2) => `${x >= 0 ? '+' : '−'}${Math.abs(x).toFixed(d)}%`;
 /** Rows for the list (trendlines first, then levels from the top down) and the hover tooltip text. `bars` = the completed
  *  candles the lines were found on; `ref` = which prices the distances use (alnRef); `cur` = "$" / "₹". */
-export function autoLinesRows(bars: ReadonlyArray<{ t: number }>, r: AutoLinesResult | null, tf: AutoLinesTf, decimals = 2, ref: AlnRef | null = null, cur = ''): AlnRow[] {
+export function autoLinesRows(barsIn: ReadonlyArray<{ t: number }>, r: AutoLinesResult | null, tf: AutoLinesTf, decimals = 2, ref: AlnRef | null = null, cur = ''): AlnRow[] {
   if (!r) return [];
+  const bars = analysedBars(barsIn, r);   // zzz1109 (N09)
   const rows: AlnRow[] = [];
   const L = bars.length - 1;
   const two = alnTwoPrices(ref);

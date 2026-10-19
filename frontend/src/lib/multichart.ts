@@ -72,3 +72,18 @@ export const fullChartHref = (c: Pick<GridCell, 't' | 'm' | 'x' | 'tf'>) =>
   `/charts?t=${encodeURIComponent(c.t)}&m=${c.m}&tf=${isIntraday(c.tf) ? 'D' : c.tf}${c.m === 'IN' && c.x ? `&x=${c.x}` : ''}`;
 
 export const EXCHANGE_TZ: Record<Market, string> = { IN: 'Asia/Kolkata', US: 'America/New_York' };
+
+/** zzz1110 (deep audit N10) — what a poll of the SAME request may do with the chart. `tail`: every earlier candle is unchanged
+ *  (timestamp AND open / high / low / close / volume), so only the last old candle and the new ones are pushed and the view keeps its
+ *  zoom; `reload`: an earlier candle was corrected (a provider revision, a split / rebase) or the window moved — the whole set is
+ *  redrawn (the page restores the zoom and scroll position). */
+export type PollPlan = { kind: 'tail'; from: number } | { kind: 'reload' };
+type PollBar = { timestamp: number; open: number; high: number; low: number; close: number; volume?: number };
+const sameBar = (a: PollBar, b: PollBar | undefined) => !!b && a.timestamp === b.timestamp && a.open === b.open && a.high === b.high
+  && a.low === b.low && a.close === b.close && (a.volume ?? 0) === (b.volume ?? 0);
+export function pollPlan(prior: readonly PollBar[], next: readonly PollBar[]): PollPlan {
+  if (!prior.length || !next.length || next.length < prior.length - 1) return { kind: 'reload' };
+  for (let i = 0; i < prior.length - 1; i++) if (!sameBar(prior[i], next[i])) return { kind: 'reload' };
+  if (next[prior.length - 1] && next[prior.length - 1].timestamp !== prior[prior.length - 1].timestamp) return { kind: 'reload' };
+  return { kind: 'tail', from: prior.length - 1 };
+}

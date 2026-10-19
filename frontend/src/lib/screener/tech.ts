@@ -14,6 +14,7 @@
 //   • average volume n days = mean of the last n daily volumes (today included); volume 1W = this calendar week's volume so far.
 
 import { atrLast } from '../atr';
+import { marketDate, phaseAt, sessionCloseUtc } from '../exchange-calendar';
 
 export interface DailyBars { d: string[]; o: number[]; h: number[]; l: number[]; c: number[]; v: number[] }
 
@@ -41,23 +42,25 @@ export interface TechFigures {
 /** zzz969 / zzz998 — the US regular session (Mon–Fri 9:30–16:00 New York time; holidays not checked — a holiday build simply has no
  *  live price). Pure; lives here (not in us-build) so the client-safe pine.ts can use it. */
 export function usSessionOpen(now = new Date()): boolean {
-  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(now).map((x) => [x.type, x.value]));
-  if (p.weekday === 'Sat' || p.weekday === 'Sun') return false;
-  const m = (Number(p.hour) % 24) * 60 + Number(p.minute);
-  return m >= 570 && m < 960;
+  // zzz1107 (deep audit N05) — the exchange calendar: holidays, the 13:00 early closes and New York summer time
+  return phaseAt('US', now) === 'regular';
 }
 
 /** zzz1003 (PS-03) — is a daily bar dated `lastDate` today's UNFINISHED session at `now`? True when `lastDate` is the market's
- *  local date of `now`, a weekday, and the regular session has not closed yet: US 16:00 New York time, India (NSE) 15:30 IST.
- *  A bar for today seen before the open (pre-market) is unfinished as well. Holidays need no calendar (no bar exists for them).
+ *  local date of `now` and that session's regular close has not happened yet. zzz1107 (deep audit N05): the close comes from the
+ *  exchange calendar (lib/exchange-calendar sessionCloseUtc) — 16:00 New York, 13:00 on an early close (27 Nov 2026), 15:30 IST —
+ *  so a completed early-close day is no longer held back as "live". A bar dated a day the calendar has no session for keeps the
+ *  ordinary close time. This is the exchange clock only; a provider's own "partial" flag is checked separately (pine techEntry).
  *  Pure; client-safe. */
 export function liveSessionBar(lastDate: string | null | undefined, market: 'US' | 'IN', now = new Date()): boolean {
   if (!lastDate) return false;
+  if (marketDate(market, now) !== lastDate) return false;
+  const close = sessionCloseUtc(market, lastDate);
+  if (close != null) return now.getTime() < close;
   const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
-    timeZone: market === 'US' ? 'America/New_York' : 'Asia/Kolkata', weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+    timeZone: market === 'US' ? 'America/New_York' : 'Asia/Kolkata', weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
   }).formatToParts(now).map((x) => [x.type, x.value]));
   if (p.weekday === 'Sat' || p.weekday === 'Sun') return false;
-  if (`${p.year}-${p.month}-${p.day}` !== lastDate) return false;
   const m = (Number(p.hour) % 24) * 60 + Number(p.minute);
   return m < (market === 'US' ? 960 : 930);
 }
@@ -156,6 +159,14 @@ export function periodCloses(d: readonly string[], c: readonly number[], by: 'W'
   return out;
 }
 
+/** zzz1106 (deep audit N02) — price-LEVEL figures (moving averages, 52-week high, close) are kept at full precision (12 significant
+ *  digits, only float noise removed): rounding them to 2 decimals made SMA 50 100.0002 and SMA 200 100.00005 both "100.00", so
+ *  "SMA 50 above SMA 200" turned false. Percentages keep 2 decimals. TECH_FIGURES_VERSION marks entries read with this rule; an
+ *  older entry keeps being used until its company is read again (tech-fetch re-reads them after the due ones). */
+export const TECH_FIGURES_VERSION = 2;
+export const PRICE_LEVEL_KEYS: readonly string[] = ['sma21', 'sma50', 'sma100', 'sma150', 'sma200', 'ema10', 'ema21', 'ema50', 'ema200', 'hi52', 'close', 'px', 'prevClose', 'prev2Close'];
+export const pxFull = (v: number) => Number(v.toPrecision(12));
+
 const pct = (a: number, b: number | null | undefined) => (fin(b) && b > 0 ? r2((a / b - 1) * 100) : null);
 
 export function techFigures(b: DailyBars): TechFigures {
@@ -169,8 +180,9 @@ export function techFigures(b: DailyBars): TechFigures {
   if (!n) return out;
   const c = b.c, last = c[n - 1], today = b.d[n - 1];
   const rr = (v: number | null) => (v == null ? null : r2(v));
-  out.sma21 = rr(smaOf(c, 21)); out.sma50 = rr(smaOf(c, 50)); out.sma100 = rr(smaOf(c, 100)); out.sma150 = rr(smaOf(c, 150)); out.sma200 = rr(smaOf(c, 200));
-  out.ema10 = rr(emaOf(c, 10)); out.ema21 = rr(emaOf(c, 21)); out.ema50 = rr(emaOf(c, 50)); out.ema200 = c.length >= 200 ? rr(emaOf(c, 200)) : null;
+  const pf = (v: number | null) => (v == null || !Number.isFinite(v) ? null : pxFull(v));   // zzz1106 — price levels: full precision
+  out.sma21 = pf(smaOf(c, 21)); out.sma50 = pf(smaOf(c, 50)); out.sma100 = pf(smaOf(c, 100)); out.sma150 = pf(smaOf(c, 150)); out.sma200 = pf(smaOf(c, 200));
+  out.ema10 = pf(emaOf(c, 10)); out.ema21 = pf(emaOf(c, 21)); out.ema50 = pf(emaOf(c, 50)); out.ema200 = c.length >= 200 ? pf(emaOf(c, 200)) : null;
   out.rsi = rr(rsiOf(c)); out.rsiW = rr(rsiOf(periodCloses(b.d, c, 'W'))); out.rsiM = rr(rsiOf(periodCloses(b.d, c, 'M')));
   out.atrP = rr(atrPctOf(b.h, b.l, c)); out.adrP = rr(adrPctOf(b.h, b.l));
   out.chgOpen = b.o[n - 1] > 0 ? r2((last / b.o[n - 1] - 1) * 100) : null;
@@ -197,8 +209,8 @@ export function techFigures(b: DailyBars): TechFigures {
   const from = isoShift(today, 0, 0, 1);
   let hi = -Infinity;
   for (let i = n - 1; i >= 0 && b.d[i] > from; i--) hi = Math.max(hi, b.h[i]);
-  out.hi52 = Number.isFinite(hi) ? r2(hi) : null;
-  out.close = r2(last);
+  out.hi52 = Number.isFinite(hi) ? pxFull(hi) : null;
+  out.close = pxFull(last);
   const p6 = (v: number) => (fin(v) ? Number(v.toPrecision(6)) : null);
   out.prevClose = n > 1 ? p6(c[n - 2]) : null;
   out.prev2Close = n > 2 ? p6(c[n - 3]) : null;

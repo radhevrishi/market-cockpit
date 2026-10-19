@@ -332,3 +332,11 @@ export function toggleRow(l: ChartLayout, id: string): ChartLayout {
     extras: l.extras.map((x) => (x.id === id ? { ...x, on: !x.on } : x)),
   };
 }
+
+/** zzz1101 (deep audit N03) — decimals for a legend value: price-unit studies (lines, Bollinger, Supertrend, ATR, MACD) use the
+ *  instrument's price decimals (4 under 1), RSI 2, OBV whole shares. */
+export function studyDecimals(type: string | null | undefined, priceDecimals: number): number {
+  if (type === 'OBV') return 0;
+  if (type === 'RSI') return 2;
+  return priceDecimals;
+}

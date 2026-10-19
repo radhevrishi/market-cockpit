@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Chart, DeepPartial, KLineData, Styles } from 'klinecharts';
 import NavLink from '@/components/NavLink';
 import { pollWhenVisible } from '@/lib/client-fetch';
-import { cellUrl, cellLabel, fullChartHref, cleanGrid, gridFromParams, EXCHANGE_TZ, GRID_TFS, GRID_TF_LABEL, MULTICHART_KEY, validFor, type GridCell, type GridCount, type GridState, type GridTf } from '@/lib/multichart';
+import { cellUrl, cellLabel, pollPlan, fullChartHref, cleanGrid, gridFromParams, EXCHANGE_TZ, GRID_TFS, GRID_TF_LABEL, MULTICHART_KEY, validFor, type GridCell, type GridCount, type GridState, type GridTf } from '@/lib/multichart';
 import { INTRADAY_META, isIntraday, sessionVwap, intradayStatus, type IntradayTf } from '@/lib/intraday';
 import { useWorkspaceLight, workspaceThemeClass } from '@/lib/workspace-theme';
 import WorkspaceThemeToggle from '@/components/WorkspaceThemeToggle';
@@ -144,11 +144,24 @@ function ChartCell({ cell, index, onChange, light }: { cell: GridCell; index: nu
         const prior = barsRef.current;
         if (shownUrlRef.current === forUrl && prior.length && barUpdateRef.current) {
           // same request (a poll): only the changed tail is pushed — the view keeps its zoom / scroll
-          const from = prior.findIndex((x) => x.timestamp === bars[0]?.timestamp);
-          const sameHead = from === 0 && prior.slice(0, -1).every((x, i) => bars[i] && x.timestamp === bars[i].timestamp);
+          // zzz1110 (N10) — a corrected EARLIER candle (not only the tail) redraws the set, keeping the zoom / scroll position
+          const plan = pollPlan(prior, bars);
           barsRef.current = bars;
-          if (sameHead) { for (const x of bars.slice(Math.max(0, prior.length - 1))) barUpdateRef.current(x); }
-          else chart.resetData();
+          if (plan.kind === 'tail') { for (const x of bars.slice(plan.from)) barUpdateRef.current(x); }
+          else {
+            let space: number | null = null, offset: number | null = null, anchorT: number | null = null;
+            try {
+              space = chart.getBarSpace().bar; offset = chart.getOffsetRightDistance();
+              const vr = chart.getVisibleRange();
+              if (vr.to < prior.length) anchorT = prior[Math.max(0, vr.to - 1)]?.timestamp ?? null;   // scrolled back from the newest candle
+            } catch { /* older engine */ }
+            chart.resetData();
+            try {
+              if (space != null) chart.setBarSpace(space);
+              if (anchorT != null) chart.scrollToTimestamp(anchorT, 0);
+              else if (offset != null) chart.setOffsetRightDistance(offset);
+            } catch { /* keep the default view */ }
+          }
         } else {
           barsRef.current = bars;
           const per = isIntra ? { type: c.tf === '60m' ? 'hour' : 'minute', span: c.tf === '60m' ? 1 : INTRADAY_META[c.tf as '5m'].minutes } : { type: c.tf === 'D' ? 'day' : c.tf === 'W' ? 'week' : 'month', span: 1 };

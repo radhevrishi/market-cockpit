@@ -135,8 +135,8 @@ export const BUILT_IN_PINE_SCREENS: readonly PineScreen[] = [
   // ── zzz984: momentum & trend (his favourite indicators) ───────────────────────────────────────────────────────────────
   rules('rs-80', 'RS Rating ≥ 80', [ge('rsR', 80)], ['rsR', 'stage'], 'momentum',
     'IBD-style RS Rating (Fred6724): 0.4 × 3-month + 0.2 × 6, 9 and 12-month performance, ranked 1–99 against every company of this market.'),
-  rules('stage-2', 'Stage 2 uptrend', [eq('stage', 2)], ['stage', 'rsR'], 'momentum', 'Weinstein stage 2: price above a rising 30-week average.'),
-  rules('stage-1-2', 'Stage 1 → 2 transition', [ge('st12', 1)], ['stage', 'rsR'], 'momentum', 'Weinstein stage 2 now, stage 1 within the previous 6 weeks — a fresh advance out of a base.'),
+  rules('stage-2', 'Stage 2 uptrend (fast, unfinished week)', [eq('stage', 2)], ['stage', 'rsR'], 'momentum', 'Weinstein stage 2, FAST method: price above a rising 30-week average, read with the current unfinished week (can change before Friday\'s close). For completed weeks use the confirmed Stage Analysis screens.'),
+  rules('stage-1-2', 'Stage 1 → 2 transition (fast, unfinished week)', [ge('st12', 1)], ['stage', 'rsR'], 'momentum', 'Weinstein stage 2 now, stage 1 within the previous 6 weeks — a fresh advance out of a base. FAST method: includes the current unfinished week.'),
   rules('pocket-pivot', 'Pocket pivot (last 5 days)', [le('ppD', 4)], ['ppD', 'rvol'], 'momentum',
     'Volume pocket pivot (TAPLOT): an up day with more volume than any down day of the previous 10 sessions, closing above its 10 and 50-day averages.'),
   rules('ripster-bull', 'Ripster clouds bullish', [ge('ripB', 1)], ['ripB'], 'momentum', 'Ripster EMA clouds: close above EMA 34 / 50 with EMA 5 and 12 above both.'),
@@ -157,8 +157,8 @@ export const BUILT_IN_PINE_SCREENS: readonly PineScreen[] = [
 
   // ── zzz1020: trader setups (lib/setups.ts) — our own version of each trader's published rules, from the completed daily sessions.
   //    Rules only: any chart pattern is still shown beside the company. ──────────────────────────────────────────────────
-  rules('ts-3wt-stage2', '3 weeks tight in Stage 2', [ge('wt3', 3), eq('stage', 2)], ['wt3', 'wt3P', 'stage', 'rsR'], 'setups',
-    `${TS} William O'Neil: 3 or more weekly closes in a row, each within 1.5% of the week before, price above SMA 50, in a Weinstein stage 2 uptrend. The pivot is the highest weekly high of the tight weeks.`),
+  rules('ts-3wt-stage2', '3 weeks tight in Stage 2 (fast stage)', [ge('wt3', 3), eq('stage', 2)], ['wt3', 'wt3P', 'stage', 'rsR'], 'setups',
+    `${TS} William O'Neil: 3 or more weekly closes in a row, each within 1.5% of the week before, price above SMA 50, in a Weinstein stage 2 uptrend (the FAST stage, which includes the unfinished week; the tight weeks are completed weeks). The pivot is the highest weekly high of the tight weeks.`),
   rules('ts-darvas-breakout', 'Darvas box breakout', [eq('dvx', 2)], ['dvx', 'dvT', 'dvB', 'rvol'], 'setups',
     `${TS} Nicolas Darvas: a box from a 52-week high (top confirmed by 3 lower highs, bottom by 3 bars that held), and a close above the top in the last 5 sessions.`),
   rules('ts-donchian-20', 'Donchian 20-day breakout', [le('dc20D', 4)], ['dc20D', 'dc55D', 'rvol'], 'setups',

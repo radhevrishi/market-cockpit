@@ -30,7 +30,7 @@ test('R5: the header / VWAP / candles show only the answer for the current reque
   assert.doesNotMatch(MC, /data\?\.name|data\.last != null/, 'nothing reads the raw (possibly old) answer');
   assert.match(MC, /if \(wantUrlRef\.current !== forUrl\) return;/, 'a late answer for an older selection is dropped');
   assert.match(MC, /barsRef\.current = \[\]; shownUrlRef\.current = '';\s*chart\.resetData\(\);/, 'old candles leave at once');
-  assert.match(MC, /for \(const x of bars\.slice\(Math\.max\(0, prior\.length - 1\)\)\) barUpdateRef\.current\(x\);/, 'a poll appends — zoom kept');
+  assert.match(MC, /if \(plan\.kind === 'tail'\) \{ for \(const x of bars\.slice\(plan\.from\)\) barUpdateRef\.current\(x\); \}/, 'a poll appends — zoom kept (zzz1110: pollPlan)');
 });
 
 test('R6: a final short bar ends at the close; open / closed / delayed are separate facts', () => {

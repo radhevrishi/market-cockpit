@@ -37,6 +37,8 @@ const R40_BLANK = '. Rule of 40 is left blank when revenue growth is above +300%
 const FCFM_IN = 'India: a cash-flow proxy for the latest full fiscal year — (cash from operations + ALL cash from investing) ÷ sales. screener.in prints no capex line, and investing cash can include buying / selling investments or acquisitions; "Exact figures only" leaves these out';
 import { STAGE_HEALTH_NOTE } from '../stage-analysis';
 import { accGradeRuleText } from '../accumulation';   // zzz1080 (B05)
+/** zzz1111 (S01) — what the fast stage reads */
+const STAGE_FAST_NOTE = 'fast / provisional 30-week trend: weekly closes INCLUDING the current unfinished week, 4-week slope of the 30-week average — it can change before the week closes. For a confirmed stage use "Stage Analysis (TheWrap method): confirmed stage".';
 const TW_NOTE = 'Our own version that follows the published rules of TheWrap Stage Analysis (weekly 10 / 30 / 40-week averages, 13-week closing range, 10-point SATA score) — not the original script; readings can differ from TradingView';
 /** zzz1020 — a trader-setup field: both markets, group 'Trader setups', the rule as its approx note, optional sparse note. */
 const SETUP_NOTE = 'our own version of the published rules';
@@ -99,14 +101,16 @@ export const FIELDS: readonly FieldDef[] = [
   { key: 'dcD', label: 'Sessions since death cross (SMA 50 under 200)', unit: 'num', markets: BOTH, group: 'Moving averages', sparse: { US: 'only crosses in the last 20 sessions', IN: 'only crosses in the last 20 sessions' } },
   { key: 'emaXU', label: 'Sessions since EMA 10 crossed above EMA 21', unit: 'num', markets: BOTH, group: 'Moving averages', sparse: { US: 'only crosses in the last 20 sessions', IN: 'only crosses in the last 20 sessions' } },
   { key: 'emaXD', label: 'Sessions since EMA 10 crossed below EMA 21', unit: 'num', markets: BOTH, group: 'Moving averages', sparse: { US: 'only crosses in the last 20 sessions', IN: 'only crosses in the last 20 sessions' } },
-  { key: 'stage', label: 'Weinstein stage (1–4)', unit: 'num', markets: BOTH, group: 'Momentum' },
-  { key: 'st12', label: 'Stage 1 → 2 transition (1 = yes)', unit: 'num', markets: BOTH, group: 'Momentum' },
+  // zzz1111 (deep audit S01) — two stage methods, named apart: this FAST one reads the current, unfinished week (4-week slope of the
+  // 30-week average) and can change mid-week; the confirmed method is "Stage Analysis (TheWrap method)" below (completed weeks only)
+  { key: 'stage', label: 'Weinstein stage, fast (1–4) — includes the unfinished week', unit: 'num', markets: BOTH, group: 'Momentum', approxNote: { US: STAGE_FAST_NOTE, IN: STAGE_FAST_NOTE } },
+  { key: 'st12', label: 'Stage 1 → 2 transition, fast method (1 = yes)', unit: 'num', markets: BOTH, group: 'Momentum', approxNote: { US: STAGE_FAST_NOTE, IN: STAGE_FAST_NOTE } },
   { key: 'ppD', label: 'Sessions since volume pocket pivot', unit: 'num', markets: BOTH, group: 'Price & volume', sparse: { US: 'only pocket pivots in the last 10 sessions', IN: 'only pocket pivots in the last 10 sessions' } },
   { key: 'rvol', label: 'Relative volume (vs 50 sessions)', unit: 'x', markets: BOTH, group: 'Price & volume' },
   { key: 'adv$', label: 'Average daily traded value, 20 sessions', unit: 'money', markets: BOTH, group: 'Price & volume' },
   { key: 'ripB', label: 'Ripster EMA clouds bullish (1 = yes)', unit: 'num', markets: BOTH, group: 'Momentum' },
   // zzz987 — Stage Analysis (TheWrap method): our own version that follows the published rules (lib/stage-analysis.ts), not the original script
-  { key: 'twSt', label: 'Stage Analysis (TheWrap method): stage 1–4', unit: 'num', markets: BOTH, group: 'Momentum', approxNote: { US: TW_NOTE, IN: TW_NOTE } },
+  { key: 'twSt', label: 'Stage Analysis (TheWrap method): confirmed stage 1–4 (completed weeks)', unit: 'num', markets: BOTH, group: 'Momentum', approxNote: { US: TW_NOTE, IN: TW_NOTE } },
   { key: 'sata', label: 'Stage Analysis (TheWrap method): SATA score 0–10', unit: 'num', markets: BOTH, group: 'Momentum', approxNote: { US: TW_NOTE, IN: TW_NOTE } },
   { key: 'mrs', label: 'Mansfield RS (weekly, vs index)', unit: 'num', markets: BOTH, group: 'Momentum', approxNote: { US: '((close ÷ S&P 500) ÷ its 52-week average − 1) × 100, weekly closes', IN: '((close ÷ Nifty 50) ÷ its 52-week average − 1) × 100, weekly closes' } },
   { key: 'twWk', label: 'Stage Analysis (TheWrap method): weeks in stage (from the confirmed week)', unit: 'num', markets: BOTH, group: 'Momentum', approxNote: { US: TW_NOTE, IN: TW_NOTE } },
@@ -342,7 +346,9 @@ export function evalPattern(row: unknown, rule: Pick<PatternRule, 'bias' | 'ids'
   for (const tf of tfs) {
     const list = patTagsOf(row, tf);
     if (!list) { missingTfs.push(tf); continue; }
-    const hit = list.filter((t) => tagPasses(t, rule, idSet)).map((t) => (t.tf ? t : { ...t, tf }));
+    // zzz1105 (deep audit H01) — a stored tag of a type the engine does not read on this timeframe (corrupt / imported / migrated
+    // data: a bull flag on M) never counts as a match
+    const hit = list.filter((t) => patternApplies(t.id as PatternId, tf) && tagPasses(t, rule, idSet)).map((t) => (t.tf ? t : { ...t, tf }));
     if (hit.length) { matchedTfs.push(tf); tags.push(...hit); } else failed++;
   }
   let status: PatternEval['status'];
@@ -351,13 +357,15 @@ export function evalPattern(row: unknown, rule: Pick<PatternRule, 'bias' | 'ids'
   return { status, tags: status === 'pass' || rule.tfMode !== 'all' ? tags : [], missingTfs, matchedTfs };
 }
 const STAGE_WORD: Record<PatStage, string> = { f: 'forming', b: 'breakout', x: 'failed' };
-export function patternRuleLabel(r: Pick<PatternRule, 'bias' | 'ids' | 'stages' | 'minScore' | 'dist' | 'tfs' | 'tfMode'>): string {
+export function patternRuleLabel(r: Pick<PatternRule, 'bias' | 'ids' | 'stages' | 'minScore' | 'dist' | 'tfs' | 'tfMode'> & { returned?: boolean }): string {
   const bias = r.bias === 'U' ? '▲ bullish' : r.bias === 'D' ? '▼ bearish' : 'bullish or bearish';
   const types = !r.ids.length ? 'any type' : r.ids.length <= 2 ? r.ids.map((id) => PATTERN_META[id]?.label || id).join(' or ') : `${r.ids.length} types`;
   const tfs = (r.tfs?.length ? r.tfs : ['D']).join(r.tfMode === 'all' ? ' + ' : '/');
   const st = !r.stages.length ? 'no stage selected' : r.stages.length === 3 ? 'all stages' : r.stages.map((s) => STAGE_WORD[s]).join('/');
   const dist = r.dist.on ? ` · ${r.dist.lo}…${r.dist.hi}% to pivot` : '';
-  return `Pattern ${bias}: ${types} · ${tfs} · ${st} · score ≥ ${r.minScore}${dist}`;
+  // zzz1103 (N07) — say when a breakout must still be holding beyond its pivot
+  const held = r.returned === false && r.stages.includes('b') ? ' · breakouts holding only' : '';
+  return `Pattern ${bias}: ${types} · ${tfs} · ${st} · score ≥ ${r.minScore}${dist}${held}`;
 }
 /** zzz1004 (PS-06) — a ticked pattern type the engine does not read on a selected timeframe (PATTERN_TIMEFRAMES): which timeframes,
  *  why (PATTERN_NA_REASON) and the nearest timeframe it is read on. `blocked` = it can never match under this choice (not applicable
@@ -394,6 +402,9 @@ export function cleanPatternRule(x: any): PatternRule {
     stages: Array.isArray(x?.stages) ? cleanStageList(x.stages) : d.stages.slice(),
     minScore: fin(x?.minScore) ? Math.min(100, Math.max(35, x.minScore)) : d.minScore,
     dist: x?.dist && typeof x.dist === 'object' && fin(x.dist.lo) && fin(x.dist.hi) ? { on: x.dist.on !== false, lo: x.dist.lo, hi: x.dist.hi } : { ...d.dist },
+    // zzz1103 (deep audit N07) — keep "breakouts back below the pivot do not count" through save / import / vault; absent = true
+    // (the old default, unchanged for every existing screen)
+    ...(x?.returned === false ? { returned: false } : {}),
   };
 }
 

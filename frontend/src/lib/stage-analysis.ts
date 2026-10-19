@@ -192,13 +192,18 @@ function sma(x: ReadonlyArray<number | null>, n: number): Array<number | null> {
 }
 
 /** Mansfield RS per week (null where the benchmark or 52 weeks of ratios are missing). */
+/** Longest gap (days) between a stock week and the index week used for it: the same week, or the one before. */
+export const MRS_MAX_CARRY_DAYS = 7;
 export function mansfieldRs(weeks: readonly WeekBar[], bench: ReadonlyMap<string, number> | null | undefined): Array<number | null> {
   if (!bench || !bench.size) return weeks.map(() => null);
   const keys = Array.from(bench.keys()).sort();
   let j = -1;
   const ratio: Array<number | null> = weeks.map((w) => {
     while (j + 1 < keys.length && keys[j + 1] <= w.wk) j++;   // the benchmark's close for this week, else its previous one
-    const b = j >= 0 ? bench.get(keys[j]) : undefined;
+    // zzz1108 (deep audit N06) — at most ONE week carried forward (a single missing index week); an older index close is stale:
+    // no ratio, so a long index outage leaves Mansfield RS (and its SATA points) empty instead of comparing with old data
+    if (j < 0 || (Date.parse(`${w.wk}T00:00:00Z`) - Date.parse(`${keys[j]}T00:00:00Z`)) / 86_400_000 > MRS_MAX_CARRY_DAYS) return null;
+    const b = bench.get(keys[j]);
     return fin(b) && b > 0 ? w.c / b : null;
   });
   const avg = sma(ratio, 52);

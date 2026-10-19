@@ -8,7 +8,7 @@
 // 6.5-minute fetch budget (the reads are network-bound at 8 at a time).
 // Only the worked-out figures are kept (lib/screener/tech.ts); the bars themselves are not stored.
 import { dbQuery } from '@/lib/db';
-import { barsFromYahoo, overlayNse, type NseDay, type TechFigures } from './tech';
+import { barsFromYahoo, overlayNse, TECH_FIGURES_VERSION, type NseDay, type TechFigures } from './tech';
 import { techEntry, PATTERN_SCAN_VERSION, isScanned, MONTHLY_HISTORY_REQ, PATTERN_SCAN_DAILY_COMPAT, type ScreenPatternTag, type ScanMeta, type LiveScanMeta } from './pine';
 import type { TvFigures } from './tv-screens';
 import { SETUP_VERSION, setupCoverageNote } from './pine';
@@ -34,6 +34,8 @@ export type TechStored = TechFigures & {
   patLive?: ScreenPatternTag[]; scanLive?: LiveScanMeta;
   /** zzz1020 — the trader-setup version the setup figures were read with (pine.ts SETUP_VERSION) */
   setV?: number;
+  /** zzz1106 — the price-figure precision version (tech.ts TECH_FIGURES_VERSION) */
+  figV?: number;
 } & Partial<TvFigures> & Partial<SetupFigures> & Partial<AccStored>;
 
 let route = 0;
@@ -80,7 +82,7 @@ export async function refreshTech(opts: {
   // zzz1046a: the same for an entry without the current volume & accumulation reading (ACC_VERSION)
   const firstDue = (s: TechStored | undefined) => opts.due(s) || (!!s && s.patV !== PATTERN_SCAN_VERSION);
   const rank = (t: string) => (firstDue(store.get(t)) ? 0 : 1);
-  const due = opts.tickers.filter((t) => { const s = store.get(t); return firstDue(s) || (!!s && (s.setV !== SETUP_VERSION || s.accV !== ACC_VERSION)); })
+  const due = opts.tickers.filter((t) => { const s = store.get(t); return firstDue(s) || (!!s && (s.setV !== SETUP_VERSION || s.accV !== ACC_VERSION || s.figV !== TECH_FIGURES_VERSION)); })
     .sort((a, b) => rank(a) - rank(b) || (store.get(a)?.d || '').localeCompare(store.get(b)?.d || ''));
   if (!due.length) return store;
   const nseOf = opts.nse ? await opts.nse() : null;
@@ -105,7 +107,7 @@ export async function refreshTech(opts: {
         if (got) {
           const bars = nseOf ? overlayNse(got.bars, nseOf(t)) : got.bars;
           // zzz1003 — `market` + `now`: the daily scan reads completed sessions (the market clock confirms Yahoo's own `partial`)
-          store.set(t, techEntry(bars, got.firstTrade, got.partial, bench, { src: nseOf ? 'yahoo+nse-bhav' : 'yahoo', ex: got.exchange, market: opts.market, now: new Date() }));   // price figures + chart patterns from the same bars
+          store.set(t, { ...techEntry(bars, got.firstTrade, got.partial, bench, { src: nseOf ? 'yahoo+nse-bhav' : 'yahoo', ex: got.exchange, market: opts.market, now: new Date() }), figV: TECH_FIGURES_VERSION });   // price figures + chart patterns from the same bars
           ok++;
         } else miss++;
       } else if (r.status === 404) miss++;

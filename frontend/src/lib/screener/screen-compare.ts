@@ -40,7 +40,8 @@ export function ruleSignature(f: Filter): string {
     case 'exch': return `exch:${sortedStr(f.ex)}`;
     case 'pattern': {
       const { bias, ids, tfs, tfMode, stages, minScore, dist } = f;
-      return `pattern:${bias}:${sortedStr(ids)}:${sortedStr(tfs)}:${tfMode}:${sortedStr(stages)}:${minScore}:${dist?.on ? `${dist.lo}:${dist.hi}` : 'off'}`;
+      // zzz1103 (N07) — "breakouts holding only" is a different rule from the default
+      return `pattern:${bias}:${sortedStr(ids)}:${sortedStr(tfs)}:${tfMode}:${sortedStr(stages)}:${minScore}:${dist?.on ? `${dist.lo}:${dist.hi}` : 'off'}${f.returned === false ? ':holding' : ''}`;
     }
   }
 }
@@ -107,15 +108,18 @@ export function compareScreens(a: ScreenSide, b: ScreenSide, rowsA: readonly Scr
   opts: { now?: Date; exactOnly?: boolean; limit?: number } = {}): CompareResult {
   const now = opts.now ?? new Date(), exact = !!opts.exactOnly, limit = opts.limit ?? 10;
   const mA = runScreen(rowsA, a.filters, now, exact), mB = runScreen(rowsB, b.filters, now, exact);
-  const setA = new Set(mA.map((r) => r.t)), setB = new Set(mB.map((r) => r.t));
-  const onlyA = mA.filter((r) => !setB.has(r.t)).sort(byCapDesc), onlyB = mB.filter((r) => !setA.has(r.t)).sort(byCapDesc);
+  // zzz1104 (deep audit N08) — a company is its market + ticker: India HAL (Hindustan Aeronautics) and US HAL (Halliburton) are
+  // two companies, so screens for different markets share no company
+  const idA = (r: ScreenRow) => `${a.market}:${r.t}`, idB = (r: ScreenRow) => `${b.market}:${r.t}`;
+  const setA = new Set(mA.map(idA)), setB = new Set(mB.map(idB));
+  const onlyA = mA.filter((r) => !setB.has(idA(r))).sort(byCapDesc), onlyB = mB.filter((r) => !setA.has(idB(r))).sort(byCapDesc);
   const pick = (r: ScreenRow) => ({ t: r.t, n: r.n });
   return {
     rules: compareRules(a.filters, b.filters),
     marketsDiffer: a.market !== b.market,
     a: { matches: mA.length, universe: rowsA.length, missing: missingLoss(rowsA, a.filters) },
     b: { matches: mB.length, universe: rowsB.length, missing: missingLoss(rowsB, b.filters) },
-    both: mA.filter((r) => setB.has(r.t)).length,
+    both: mA.filter((r) => setB.has(idA(r))).length,
     onlyInA: onlyA.slice(0, limit).map(pick),
     onlyInB: onlyB.slice(0, limit).map(pick),
     onlyInACount: onlyA.length,

@@ -42,7 +42,17 @@ export interface Level {
   distPct: number;
   strength: number;
 }
-export interface AutoLinesResult { trend: TrendLine[]; levels: Level[]; log: boolean; tolPct: number }
+/** `n` (zzz1109) — how many bars were analysed; `rejected` — bars left out as invalid (non-finite, low ≤ 0, high < low). Every index
+ *  in the result points into the VALID bars (validLineBars), never into the input when bars were rejected. */
+export interface AutoLinesResult { trend: TrendLine[]; levels: Level[]; log: boolean; tolPct: number; n?: number; rejected?: number }
+/** zzz1109 (deep audit N09) — the bars the line finder can use. */
+export const isValidLineBar = (b: any): boolean => !!b && Number.isFinite(b.h) && Number.isFinite(b.l) && Number.isFinite(b.c) && b.l > 0 && b.h >= b.l;
+export function validLineBars<T>(bars: readonly T[]): T[] { return bars.filter(isValidLineBar); }
+/** The bars a result's indices refer to: the input itself when nothing was rejected, else its valid bars (so a touch's date and
+ *  price are the same candle). */
+export function analysedBars<T>(bars: readonly T[], r: Pick<AutoLinesResult, 'n'> | null | undefined): readonly T[] {
+  return r && r.n != null && r.n !== bars.length ? validLineBars(bars) : bars;
+}
 
 interface TfCfg { kAnchor: number; kTouch: number; kLevel: number; gap: number; minSpan: number; atrK: number; pct: number; pierces: number; maxDist: number; barsPerWeek: number; brokenKeep: number }
 export const AUTO_LINES_TF: Record<AutoLinesTf, TfCfg> = {
@@ -88,9 +98,9 @@ const pct = (a: number, b: number) => (b > 0 ? (a / b - 1) * 100 : 0);
 
 export function autoLines(barsIn: readonly Bar[], opts: AutoLinesOpts): AutoLinesResult {
   const cfg = AUTO_LINES_TF[opts.tf] || AUTO_LINES_TF.D;
-  const bars = barsIn.filter((b) => b && Number.isFinite(b.h) && Number.isFinite(b.l) && Number.isFinite(b.c) && b.l > 0 && b.h >= b.l);
+  const bars = validLineBars(barsIn);
   const n = bars.length;
-  const empty: AutoLinesResult = { trend: [], levels: [], log: !!opts.log, tolPct: 0 };
+  const empty: AutoLinesResult = { trend: [], levels: [], log: !!opts.log, tolPct: 0, n, rejected: barsIn.length - n };
   if (n < 2 * cfg.kAnchor + 8) return empty;
   let lo = Infinity, hi = -Infinity;
   for (const b of bars) { if (b.l < lo) lo = b.l; if (b.h > hi) hi = b.h; }
@@ -318,7 +328,7 @@ export function autoLines(barsIn: readonly Bar[], opts: AutoLinesOpts): AutoLine
     keep.sort((a, b) => Math.abs(a.distPct) - Math.abs(b.distPct));
     levels.push(...keep);
   }
-  return { trend, levels, log, tolPct };
+  return { trend, levels, log, tolPct, n, rejected: barsIn.length - n };
 }
 
 /** Two lines are one when they share two touches, run close together over their joint span (a fan of near-identical lines),

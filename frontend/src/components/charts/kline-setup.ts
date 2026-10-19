@@ -7,6 +7,7 @@ import { seriesValues, type PriceSeries } from '@/lib/chart-layouts';
 import { textOnColor } from '@/lib/readable-color';
 import { obvValues } from './acc-view';
 import { stackAxisLabels } from '@/lib/chart-axis-labels';
+import { logBounds, logFwd, logInv } from '@/lib/log-scale';
 
 const toBars = (list: kc.KLineData[]): Bar[] => list.map((d) => ({ t: d.timestamp, o: d.open, h: d.high, l: d.low, c: d.close, v: d.volume ?? 0 }));
 const rows = <T extends Record<string, number>>(n: number, cols: Record<string, (number | null)[]>): T[] => {
@@ -91,7 +92,7 @@ export function registerChartExtras(): typeof kc {
     },
   });
   kc.registerIndicator<Record<string, number>, number>({
-    name: 'MC_MACD', shortName: 'MACD', series: 'normal', precision: 2, calcParams: [12, 26, 9],
+    name: 'MC_MACD', shortName: 'MACD', series: 'price', precision: 2, calcParams: [12, 26, 9],
     figures: [
       { key: 'hist', title: 'Hist: ', type: 'bar', baseValue: 0,
         styles: ({ data }) => { const v = (data.current as any)?.hist; return { color: v == null || v >= 0 ? 'rgba(8,153,129,0.6)' : 'rgba(242,54,69,0.6)' }; } },
@@ -105,14 +106,15 @@ export function registerChartExtras(): typeof kc {
     },
   });
   kc.registerIndicator<Record<string, number>, number>({
-    name: 'MC_ATR', shortName: 'ATR', series: 'normal', precision: 2, calcParams: [14],
+    name: 'MC_ATR', shortName: 'ATR', series: 'price', precision: 2,   // zzz1101 (N03) — price units: precision follows the symbol (4 under $1)
+    calcParams: [14],
     figures: [{ key: 'atr', title: 'ATR: ', type: 'line' }],
     calc: (dataList, indicator) => rows(dataList.length, { atr: atr(toBars(dataList), Number(indicator.calcParams[0]) || 14) }),
   });
   // zzz1046b — On-Balance Volume (running total: + volume on an up close, − on a down close; the same running total as
   // lib/accumulation, via acc-view obvValues), its own pane
   kc.registerIndicator<Record<string, number>, number>({
-    name: 'MC_OBV', shortName: 'OBV', series: 'normal', precision: 0, calcParams: [],
+    name: 'MC_OBV', shortName: 'OBV', series: 'volume', precision: 0, calcParams: [],
     figures: [{ key: 'obv', title: 'OBV: ', type: 'line' }],
     calc: (dataList) => rows(dataList.length, { obv: obvValues(toBars(dataList)) }),
   });
@@ -132,8 +134,9 @@ export function registerChartExtras(): typeof kc {
       return { from: min, to: max, range: max - min, realFrom: min, realTo: max, realRange: max - min, displayFrom: min, displayTo: max, displayRange: max - min };
     },
   });
-  const lg = (v: number) => (v < 0 ? -Math.log10(Math.abs(v)) : Math.log10(v));
-  const ix = (v: number) => (v < 0 ? -(10 ** Math.abs(v)) : 10 ** v);
+  // zzz1101 (N01) — one exact forward / inverse pair for positive prices (lib/log-scale); non-positive bottoms are clamped
+  const lg = logFwd;
+  const ix = logInv;
   const logTemplate = {
     minSpan: (precision: number) => 0.05 * 10 ** -precision,
     valueToRealValue: (v: number) => lg(v),
@@ -141,9 +144,17 @@ export function registerChartExtras(): typeof kc {
     displayValueToRealValue: (v: number) => lg(v),
     realValueToValue: (v: number) => ix(v),
   };
-  const logRange = (min: number, max: number) => ({ from: min, to: max, range: max - min, realFrom: lg(min), realTo: lg(max), realRange: lg(max) - lg(min), displayFrom: min, displayTo: max, displayRange: max - min });
-  kc.registerYAxis({ name: 'mcFitLog', ...logTemplate, createRange: ({ chart, defaultRange }) => { const { min, max } = fitRange(chart, defaultRange); return logRange(min, max); } });
-  kc.registerYAxis({ name: 'mcLog', ...logTemplate, createRange: ({ defaultRange }) => logRange(defaultRange.from, defaultRange.to) });
+  const positiveLow = (chart: kc.Chart): number | null => {
+    let m = Infinity;
+    for (const d of chart.getDataList()) if (d.low > 0 && d.low < m) m = d.low;
+    return Number.isFinite(m) ? m : null;
+  };
+  const logRange = (min0: number, max0: number, pmin: number | null = null) => {
+    const { min, max } = logBounds(min0, max0, pmin);
+    return { from: min, to: max, range: max - min, realFrom: lg(min), realTo: lg(max), realRange: lg(max) - lg(min), displayFrom: min, displayTo: max, displayRange: max - min };
+  };
+  kc.registerYAxis({ name: 'mcFitLog', ...logTemplate, createRange: ({ chart, defaultRange }) => { const { min, max } = fitRange(chart, defaultRange); return logRange(min, max, positiveLow(chart)); } });
+  kc.registerYAxis({ name: 'mcLog', ...logTemplate, createRange: ({ chart, defaultRange }) => logRange(defaultRange.from, defaultRange.to, positiveLow(chart)) });
 
   // N-06 — last-value tags on the price axis for every indicator line / bar in a pane. KLineChart's own indicator
   // lastValueMark uses ONE text colour for all lines (white), so a yellow EMA tag read at 1.41:1. This overlay draws the same
