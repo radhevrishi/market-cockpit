@@ -151,8 +151,15 @@ export async function POST(req: NextRequest) {
   const allow = docId ? null : (await readAllowance()).state;
   const extraLeft = allow?.active ? allow.leftUsd : 0;
   if (!docId && dayLeft + extraLeft < 0.01) {
+    // zzz1156: the day's AI budget is used, but plainly stated guidance is still read by rules (no AI call, no cost)
+    let ruleRun: any = null;
+    try {
+      const d = await realDeps();
+      ruleRun = await runExtraction({ ...d, availability: async () => ({ available: false, reason: `daily reading budget used ($${spentToday.toFixed(2)} of $${dayCap.toFixed(2)}); AI reading resumes tomorrow (UTC)`, provider: 'rules', model: null }) },
+        { limit, maxUsd: 0.0001, budgetMs, concurrency: runConcurrency() });   // no AI is called: the cost check must not stop the run
+    } catch { ruleRun = null; }
     const marketIndex = await syncMarketLists(1_500);   // zzz926: no reading today, but the per-market lists keep catching up (KV reads only)
-    return NextResponse.json({ ok: true, run: { stoppedBy: 'daily_cap', queued: 0, attempted: 0, spentUsd: 0, note: `daily reading budget used ($${spentToday.toFixed(2)} of $${dayCap.toFixed(2)}); resumes tomorrow (UTC)` }, marketIndex }, { headers: NO_STORE });
+    return NextResponse.json({ ok: true, run: { ...(ruleRun || { queued: 0, attempted: 0 }), stoppedBy: 'daily_cap', spentUsd: 0, note: `daily AI reading budget used ($${spentToday.toFixed(2)} of $${dayCap.toFixed(2)}); plain guidance still read by rules; AI reading resumes tomorrow (UTC)` }, marketIndex }, { headers: NO_STORE });
   }
   try {
     const cap = docId ? maxUsd : runCapUsd(maxUsd, dayLeft, allow!);

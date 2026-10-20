@@ -22,6 +22,8 @@
 // silent pass. Logs carry counts only — never a key, never document text.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { ruleVerify } from './rule-verify';   // zzz1155
+const rulesTriedKey = (id: string) => `ai-verify:rules-tried:v1:${id}`;
 import type {
   LocatedDoc, RunStatus, VerificationSummary, VerifyBasis, VerifyClaim, VerifyExtracted, VerifyStatus, VerifyVerdict,
 } from './ai-verify-types';
@@ -352,6 +354,8 @@ export interface VerifyDeps {
   now?: () => Date;
   nonce?: () => string;
   log?: (msg: string) => void;
+  /** zzz1155: confirm by exact text match before any AI call (and keep checking by rules when no AI is available). On in production. */
+  rulesFirst?: boolean;
 }
 
 /** SSRF guard: https, allow-listed primary hosts or a public company PDF; never an IP / localhost / internal name. */
@@ -382,10 +386,23 @@ export async function verifyClaim(claim: VerifyClaim, deps: VerifyDeps, prevAtte
   if (!claim.primaryUrl) return base('no_primary', 'no primary document link');
   if (!isAllowedDocUrl(claim.primaryUrl)) return base('no_primary', 'the linked document is not on an allowed primary host');
   const av = await deps.availability();
-  if (!av.available) return { ...base('verification_unavailable', av.reason || 'AI verification unavailable'), stop: 'unavailable' };
+  if (!deps.rulesFirst && !av.available) return { ...base('verification_unavailable', av.reason || 'AI verification unavailable'), stop: 'unavailable' };
   let doc: FetchedDoc;
   try { doc = await deps.fetchDoc(claim.primaryUrl, claim, fetchTimeout); } catch (e: any) { doc = { text: '', failure: redact(e?.message || 'fetch failed') }; }
-  if (doc.failure || !doc.text || doc.text.trim().length < 80) return base('unreadable', doc.failure || 'no readable text in the document', { provider: av.provider, model: av.model });
+  if (doc.failure || !doc.text || doc.text.trim().length < 80) return base('unreadable', doc.failure || 'no readable text in the document', { provider: av.available ? av.provider : 'rules', model: av.available ? av.model : null });
+  // zzz1155 — first, without any AI call: the figures, the measure and the period together in one passage of the company's own
+  // document confirm the claim (cost 0). Only what the rules cannot confirm goes to the model; nothing is ever contradicted by rules.
+  if (deps.rulesFirst && claim.kind === 'guidance') {
+    const rv = ruleVerify({ metric: claim.metric, numbers: claim.numbers, period: claim.period, kind: claim.kind }, doc.text);
+    if (rv.ok) {
+      return base('confirmed', `confirmed by exact text match: ${rv.why}`, {
+        modelVerdict: 'confirmed', provider: 'rules', model: 'exact-text-match', costUsd: 0,
+        extracted: { oldValues: claim.numbers.old, newValues: claim.numbers.new, period: claim.period || '', basis: (claim.basis || 'unknown') as any, quote: (rv.quote || '').slice(0, QUOTE_MAX), confidence: 'high' as any },
+      });
+    }
+  }
+  // no AI: the claim waits (not a failure, not a final answer) — stays queued for when a key / credit is there
+  if (!av.available) return { ...base('verification_unavailable', av.reason || 'AI verification unavailable'), stop: 'unavailable', noAi: true } as any;
   const excerpt = selectExcerpt(doc.text, claim);
   const nonce = (deps.nonce || (() => Math.random().toString(36).slice(2, 10)))();
   const modelTimeout = Math.max(3_000, Math.min(45_000, total - (Date.now() - tStart) - 1_000));
@@ -663,7 +680,9 @@ export async function runVerification(deps: VerifyDeps, o: RunOpts = {}): Promis
       }
     }
 
-    if (!av.available) {
+    // zzz1155: with no AI available the run goes on in rules-only mode — claims the exact-text check confirms are settled for free,
+    // the rest stay queued for the AI
+    if (!av.available && !deps.rulesFirst) {
       stat.stoppedBy = 'unavailable';
       const rest = q.items.filter((x) => !done.has(x.claim.claimId));
       stat.queueAfter = rest.length;
@@ -671,6 +690,13 @@ export async function runVerification(deps: VerifyDeps, o: RunOpts = {}): Promis
       stat.elapsedMs = Date.now() - t0;
       await writeStatus(deps.kv, stat);
       return stat;
+    }
+    const rulesOnly = !av.available;
+    const triedByRules = new Set<string>();
+    if (rulesOnly) {
+      const ids = ordered.map((x) => x.claim.claimId);
+      const got = await deps.kv.mget(ids.map(rulesTriedKey)).catch(() => ids.map(() => null));
+      ids.forEach((id, i) => { if (got[i]) triedByRules.add(id); });
     }
 
     // ── 2. AI check, `concurrency` at a time, inside the time budget ──
@@ -689,6 +715,7 @@ export async function runVerification(deps: VerifyDeps, o: RunOpts = {}): Promis
           if (!done.has(c.claimId)) stat.noPrimary++;
           done.add(c.claimId); continue;
         }
+        if (rulesOnly && triedByRules.has(c.claimId)) continue;   // zzz1155: already tried by rules today; waits for the AI
         if (calls >= limit) { stop = stop || 'limit'; return; }
         if (stat.spentUsd >= maxUsd) { stop = stop || 'budget_usd'; return; }
         const remaining = deadline - Date.now();
@@ -696,7 +723,13 @@ export async function runVerification(deps: VerifyDeps, o: RunOpts = {}): Promis
         calls++;
         const v = await verifyClaim(c, deps, prev?.attempts || 0, { timeoutMs: remaining - 1_000 });
         stat.spentUsd += v.costUsd || 0;
+        if ((v as any).noAi) {   // zzz1155: waits for the AI, stays queued; not fetched again by rules for a day
+          stat.available = false; stat.unavailableReason = v.reason; stat.ruleWaiting = (stat.ruleWaiting || 0) + 1;
+          await deps.kv.set(rulesTriedKey(c.claimId), 1, DAY_S).catch(() => undefined);
+          continue;
+        }
         if (v.stop === 'cap' || v.stop === 'unavailable') { stop = v.stop === 'cap' ? 'cap' : 'unavailable'; stat.available = false; stat.unavailableReason = v.reason; return; }
+        if (v.provider === 'rules') stat.ruleConfirmed = (stat.ruleConfirmed || 0) + 1;
         stat.checked++;
         if (v.status === 'confirmed') stat.confirmed++;
         else if (v.status === 'contradicted') stat.contradicted++;
@@ -714,6 +747,7 @@ export async function runVerification(deps: VerifyDeps, o: RunOpts = {}): Promis
     };
     await Promise.all(Array.from({ length: concurrency }, () => worker()));
     if (stop) stat.stoppedBy = stop;
+    else if (rulesOnly) stat.stoppedBy = 'unavailable';
     const rest = q.items.filter((x) => !done.has(x.claim.claimId));
     stat.queueAfter = rest.length;
     await writeQueue(deps.kv, { items: rest, updatedAt: nowFn().toISOString() }, nowFn());
@@ -886,6 +920,7 @@ export async function realFetchDoc(url: string, _claim?: VerifyClaim, timeoutMs 
 
 export function realDeps(): VerifyDeps {
   return {
+    rulesFirst: true,   // zzz1155
     fetchDoc: (u, c, t) => realFetchDoc(u, c, t ?? 15_000),
     callModel: realCallModel,
     locate: async (claims, o) => { const l = await import('./ai-verify-locator'); return l.locateDocs(claims, l.realLocateIo(), o); },

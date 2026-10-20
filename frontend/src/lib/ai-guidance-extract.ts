@@ -41,6 +41,8 @@ import {
   GUIDANCE_TOOL as SCHEMA_GUIDANCE_TOOL, STRUCTURED_OUTPUT_MODE, fingerprint,
 } from './ai-schemas';
 import { buildRunRecord, newRunId, type AiRunRecord, type AiRunOutcome } from './ai-runs';
+import { ruleRowsFor } from './rule-extract';   // zzz1156
+const rulesTriedKey = (docId: string) => `guidance-extract:rules-tried:v1:${docId}`;
 import { decideEscalation, estimateStrongUsd, guidanceWordHits, pickBetter, escalateMaxPerRun, EscalationGate, type EscalationReason } from './ai-guidance-router';
 
 export const EXTRACT_VERSION = 'v1';
@@ -602,6 +604,8 @@ export interface KvIo {
 }
 export interface Availability { available: boolean; reason: string | null; provider: string; model: string | null }
 export interface ExtractDeps {
+  /** zzz1156: read plain India guidance by rules before any AI call (and keep reading by rules when no AI is available). On in production. */
+  rulesFirst?: boolean;
   store: GuidanceDocStore;
   callModel(req: ModelCallRequest): Promise<ModelCallResult>;
   kv: KvIo;
@@ -634,6 +638,8 @@ export type DocOutcome = GuidanceExtractResult & {
   runs?: AiRunRecord[];
   /** zzz1050: what the stronger pass cost (part of costUsd) */
   escalatedUsd?: number;
+  /** zzz1156: no AI available and the rules could not read it — waits in the queue */
+  noAi?: boolean;
 };
 
 const MIN_TEXT = 200;
@@ -693,16 +699,18 @@ export interface ExtractDocOpts {
   gate?: EscalationGate | null;
   /** zzz1050: the extraction run this document belongs to (run records) */
   batchId?: string | null;
+  /** zzz1156: skip the rules-first read (a re-read asked for the AI) */
+  forceAi?: boolean;
 }
 
-export async function extractDoc(doc: GuidanceDoc, deps: Pick<ExtractDeps, 'callModel' | 'availability' | 'now' | 'nonce' | 'selectPassages'>, opts: ExtractDocOpts = {}): Promise<DocOutcome> {
+export async function extractDoc(doc: GuidanceDoc, deps: Pick<ExtractDeps, 'callModel' | 'availability' | 'now' | 'nonce' | 'selectPassages' | 'rulesFirst'>, opts: ExtractDocOpts = {}): Promise<DocOutcome> {
   const now = (deps.now || (() => new Date()))();
   const base = (status: GuidanceExtractResult['status'], extra: Partial<DocOutcome> = {}): DocOutcome => ({
     docId: doc.docId, market: doc.market, ticker: doc.ticker, company: doc.company, docUrl: doc.url, docKind: doc.kind, filedAt: doc.filedAt,
     extractedAt: now.toISOString(), model: null, promptVersion: EXTRACT_PROMPT_VERSION, status, rows: [], dropped: 0, costUsd: 0, ...extra,
   });
   const av = opts.av || await deps.availability();
-  if (!av.available) return base('unavailable', { note: redact(av.reason || 'AI extraction unavailable', 300), stop: 'unavailable' });
+  if (!deps.rulesFirst && !av.available) return base('unavailable', { note: redact(av.reason || 'AI extraction unavailable', 300), stop: 'unavailable' });
   const text = String(doc.text || '');
   if (text.replace(/\s+/g, ' ').trim().length < MIN_TEXT) return base('unreadable', { note: 'no readable text in the document' });
   // zzz916: an exchange INTIMATION ("the transcript is available on our website at …") is not the document. Never "read, no guidance":
@@ -710,6 +718,19 @@ export async function extractDoc(doc: GuidanceDoc, deps: Pick<ExtractDeps, 'call
   if ((doc.kind === 'TRANSCRIPT' || doc.kind === 'PRESENTATION') && isIntimationLetter(text)) return base('unreadable', { model: 'screen', note: 'an exchange intimation letter that points to the transcript / presentation, not the document itself (no AI call); the collector looks for the real document' });
   // zzz870: no forward-looking number anywhere in the document → no model call, no cost (labelled, counted, never hidden)
   if (!hasForwardNumber(text)) return base('no_guidance', { model: 'screen', note: 'screened out for free: no forward-looking number for a future period found in the text (no AI call)' });
+  // zzz1156 — rules first: a plainly stated India guidance is read without an AI call, through the same row checks as an AI row
+  if (deps.rulesFirst && !opts.forceAi) {
+    const rr = ruleRowsFor({ market: doc.market, text, filedAt: doc.filedAt });
+    if (rr) {
+      const chk = checkRows(rr, { kind: doc.kind, text, market: doc.market, filedAt: doc.filedAt });
+      if (chk.rows.length) {
+        const parts = Object.entries(chk.reasons).map(([k, n]) => `${k}=${n}`);
+        return base('ok', { model: 'rules', rows: chk.rows, dropped: chk.dropped, reasons: chk.reasons, adjusted: chk.adjusted, note: `read by rules, no AI call${parts.length ? `; dropped: ${parts.join(', ')}` : ''}` });
+      }
+    }
+  }
+  // no AI: the document waits for one (no result is written, it stays in the queue) — not an error, not a final answer
+  if (!av.available) return base('unavailable', { note: redact(av.reason || 'AI extraction unavailable', 300), noAi: true });
   let excerpt: string;
   try { excerpt = deps.selectPassages ? deps.selectPassages(text, doc.kind) : selectPassages(text, doc.kind); } catch { excerpt = selectPassages(text, doc.kind); }
   if (!excerpt || excerpt.length < MIN_TEXT) excerpt = selectPassages(text, doc.kind);
@@ -934,7 +955,8 @@ export async function buildPlan(rows: GuidanceDocIndexRow[], io: PriorityIo | un
 
 export interface ExtractRunStat {
   at: string; available: boolean; unavailableReason: string | null; provider: string; model: string | null;
-  queued: number; attempted: number; ok: number; noGuidance: number; screened?: number; unreadable: number; errors: number; skippedBackoff: number; alreadyDone: number; missingDoc: number;
+  queued: number; attempted: number; ok: number; noGuidance: number; screened?: number;
+  /** zzz1156: read by rules (no AI call) / left waiting for the AI in a rules-only run */ ruleRead?: number; waitingForAi?: number; unreadable: number; errors: number; skippedBackoff: number; alreadyDone: number; missingDoc: number;
   rowsKept: number; rowsDropped: number; dropReasons: Record<string, number>; spentUsd: number;
   stoppedBy: 'done' | 'limit' | 'budget_usd' | 'time' | 'cap' | 'unavailable' | 'locked' | 'no_store'; elapsedMs: number;
   usMode?: UsMode; plan?: QueuePlan['counts'];
@@ -1070,7 +1092,15 @@ export async function runExtraction(deps: ExtractDeps, o: ExtractRunOpts = {}): 
       }
     }
     stat.queued = rows.length;
-    if (!av.available) { stat.stoppedBy = 'unavailable'; return await finish(); }
+    // zzz1156: with no AI the run goes on in rules-only mode (plain India guidance is read for free; the rest stays queued)
+    if (!av.available && !deps.rulesFirst) { stat.stoppedBy = 'unavailable'; return await finish(); }
+    const rulesOnly = !av.available;
+    if (rulesOnly) {
+      const ids = rows.map((r) => r.docId);
+      const got = await deps.kv.mget(ids.map(rulesTriedKey)).catch(() => ids.map(() => null));
+      const tried = new Set(ids.filter((_, i) => !!got[i]));
+      rows = rows.filter((r) => !tried.has(r.docId));
+    }
     // documents that already have a result (the store missed a markExtracted) and documents backing off after an error
     // read lazily, 100 documents at a time, only as far as the run gets (16k queued docs must not cost hundreds of KV reads a run)
     const have = new Set<string>(); const fails = new Map<string, FailRec>();
@@ -1121,8 +1151,14 @@ export async function runExtraction(deps: ExtractDeps, o: ExtractRunOpts = {}): 
         }
         // zzz870: a document the free screen removed used no AI, so it does not use up this run's document allowance
         if (r.model === 'screen') { started--; stat.attempted--; stat.screened = (stat.screened || 0) + 1; }
+        if (r.model === 'rules') stat.ruleRead = (stat.ruleRead || 0) + 1;
+        if (r.noAi) {   // zzz1156: needs the AI; stays queued, not read by rules again for a day
+          started--; stat.attempted--; stat.waitingForAi = (stat.waitingForAi || 0) + 1; stat.available = false; stat.unavailableReason = r.note || null;
+          await deps.kv.set(rulesTriedKey(row.docId), 1, DAY_S).catch(() => undefined);
+          continue;
+        }
         if (r.stop) { stop = r.stop; stat.available = false; stat.unavailableReason = r.note || null; stat.attempted--; return; }
-        const { costUsd: _c, reasons, adjusted: _a, stop: _s, runs: _r, escalatedUsd: _e, ...result } = r;
+        const { costUsd: _c, reasons, adjusted: _a, stop: _s, runs: _r, escalatedUsd: _e, noAi: _n, ...result } = r;
         if (isRefresh) stat.refreshed = (stat.refreshed || 0) + 1;
         if (reasons) for (const [k, n] of Object.entries(reasons)) stat.dropReasons[k] = (stat.dropReasons[k] || 0) + n;
         stat.rowsKept += result.rows.length; stat.rowsDropped += result.dropped;
@@ -1365,7 +1401,7 @@ export async function realDeps(): Promise<ExtractDeps> {
   try { store = await realStore(); }
   catch { store = { listDocs: async () => { throw new Error('guidance document store not available'); }, getDoc: async () => null, markExtracted: async () => undefined }; }
   return {
-    store, callModel: realCallModel, kv: realKv(), availability: realAvailability, log: (msg) => console.log(redact(msg, 500)), selectPassages: await realSelector(), priority: realPriority(),
+    rulesFirst: true, store, callModel: realCallModel, kv: realKv(), availability: realAvailability, log: (msg) => console.log(redact(msg, 500)), selectPassages: await realSelector(), priority: realPriority(),
     // zzz1050: the run's call records → Postgres ai_run (best-effort, bounded wait)
     recordRuns: async (recs) => (await import('./ai-runs')).writeRunRecords(recs, 6_000),
   };

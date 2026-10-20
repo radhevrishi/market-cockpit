@@ -218,6 +218,10 @@ export interface RunStatus {
     located?: number;
     locateNone?: number;
     locateDeferred?: number;
+    /** zzz1155: confirmed by the exact-text check, no AI call */
+    ruleConfirmed?: number;
+    /** zzz1155: checked by rules only (no AI available) and left waiting for the AI */
+    ruleWaiting?: number;
     elapsedMs?: number;
     stoppedBy: 'done' | 'limit' | 'budget_usd' | 'time' | 'cap' | 'unavailable' | 'locked';
   } | null;
