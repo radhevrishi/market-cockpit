@@ -3090,7 +3090,7 @@ Source label: ${coverageStats.source}`}
                 No earnings filings for {filingDateLabel}
               </div>
               <div style={{ fontSize: 13, color: 'var(--mc-text-4)', marginBottom: 14, lineHeight: 1.5 }}>
-                NSE + BSE corporate-actions pipeline polled. No Q4 results announced for this date.
+                NSE + BSE corporate-actions pipeline polled. No new results were filed on this date (a company graded on another day for the same results is listed below).
                 {lastScraped && <><br/><span style={{ fontSize: 11.5, color: 'var(--mc-text-4)' }}>📡 Calendar last refreshed: <strong style={{ color: 'var(--mc-text-3)' }}>{lastScraped}</strong></span></>}
               </div>
               {rankedDates.length > 0 && (
@@ -3532,7 +3532,10 @@ Source label: ${coverageStats.source}`}
           const shownElsewhere = new Set<string>(otherDay.keys());
           const pending = scheduled.filter((it) => !gradedTickers.has((it.symbol || '').toUpperCase()) && !shownElsewhere.has((it.symbol || '').toUpperCase()));
           // zzz1157 — names graded on another day for the same results: said, with a jump to that day (never silently missing)
+          // zzz1158 — the card itself is shown here too (from the day's payload), not only a link
+          const otherCards: any[] = Array.isArray((view as any)?._other_day_cards) ? (view as any)._other_day_cards : [];
           const elsewhereBlock = otherDay.size > 0 ? (
+            <div data-other-day-wrap style={{ display: 'grid', gap: 8 }}>
             <div data-other-day style={{ fontSize: 12.5, color: 'var(--mc-text-2)', margin: '6px 0', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'baseline' }}>
               <b style={{ color: 'var(--mc-text-1)' }}>Graded on another day (same results):</b>
               {Array.from(otherDay.entries()).map(([t, d]) => (
@@ -3541,6 +3544,17 @@ Source label: ${coverageStats.source}`}
                   {t} → {new Date(`${d}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })}
                 </button>
               ))}
+            </div>
+            {otherCards.length > 0 && (
+              <div data-other-day-cards style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 12 }}>
+                {otherCards.map((c) => (
+                  <div key={`od-${c.ticker}`} style={{ display: 'grid', gap: 4 }}>
+                    <span style={{ fontSize: 11.5, color: 'var(--mc-text-3)' }}>First graded on {String(c._first_shown)} — the same {String(c.quarter || '')} results, shown here too; not counted in this day&apos;s tiers</span>
+                    <EarningsCard stock={c} />
+                  </div>
+                ))}
+              </div>
+            )}
             </div>
           ) : null;
           if (pending.length === 0) return elsewhereBlock;

@@ -264,7 +264,7 @@ describe('page wiring (source checks)', () => {
     assert.ok(page.includes('function TierBadge('));
     for (const t of ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID']) assert.ok(page.includes(`label: '${t}'`));
     // every card render site goes through EarningsCard
-    assert.equal((page.match(/<EarningsCard /g) || []).length, 3);
+    assert.equal((page.match(/<EarningsCard /g) || []).length, 4);   // zzz1158: + the card graded on another day
   });
   test('tier chips are buttons that filter, with an All reset, kept in the URL', () => {
     assert.ok(page.includes('setTierSel((sel) => toggleTier(sel, c.tier))'));

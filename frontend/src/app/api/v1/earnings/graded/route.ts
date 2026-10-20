@@ -1289,6 +1289,7 @@ async function gradedLegacyGET(req: Request) {
     return true;
   };
   const graded: ParsedEarning[] = [];
+  const otherDayCards: any[] = [];   // zzz1158
   // zzz878 — one card per company per quarter: if the same ticker + quarter was already graded on one of the previous 7 days, that
   // earlier day keeps it and this day lists it as "already shown" (MOLBIO 5 & 8 Sep, LUMINO 21 & 22 Sep, HTEL, SKYWAYS … appeared twice:
   // once on the board-meeting day, once on the filing day).
@@ -1465,7 +1466,13 @@ async function gradedLegacyGET(req: Request) {
     if (g) { const _ft = (m as any).filing_iso; if (typeof _ft === 'string' && /\d{2}:\d{2}/.test(_ft)) (g as any).filing_time_iso = _ft; }
     if (g) {
       const _earlier = shownEarlier.get(`${String(g.ticker || m.ticker).toUpperCase()}|${String((g as any).quarter || '').toUpperCase()}`);
-      if (_earlier && _earlier < date) { dropped.push({ ticker: m.ticker, reason: `already shown on ${_earlier} (same ${String((g as any).quarter)} results)`, source: m.__source }); continue; }
+      if (_earlier && _earlier < date) {
+        dropped.push({ ticker: m.ticker, reason: `already shown on ${_earlier} (same ${String((g as any).quarter)} results)`, source: m.__source });
+        // zzz1158 — the card itself is kept beside the tiers (never counted, never in a tier) so the day still SHOWS it, marked with
+        // the day it was first graded (ROSSARI: graded 17 Oct, listed on the 18 Oct calendar, was missing from 18 Oct)
+        otherDayCards.push({ ...(g as any), _first_shown: _earlier });
+        continue;
+      }
       graded.push(g);
     }
     else dropped.push({ ticker: m.ticker, reason: dropReason || 'unknown', source: m.__source });
@@ -1509,6 +1516,8 @@ async function gradedLegacyGET(req: Request) {
     _failed_tickers: failedTickers,
     // zzz800 — candidates that did not become cards, with the reason.
     _dropped: dropped,
+    // zzz1158 — cards first graded on an earlier day (same results), shown on this day too, outside the tiers
+    ...(otherDayCards.length ? { _other_day_cards: otherDayCards.slice(0, 50) } : {}),
     // PATCH 0909 — propagate hub failure flag if applicable (live-NSE saved us)
     ...(hubFailReason ? { _hub_fail: hubFailReason } : {}),
   };

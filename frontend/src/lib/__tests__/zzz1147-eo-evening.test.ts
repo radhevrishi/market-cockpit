@@ -90,3 +90,13 @@ test('zzz1157 — a company graded on another day for the same results is said w
   assert.match(p, /graded on another day ↓/);
   assert.match(p, /if \(pending\.length === 0\) return elsewhereBlock;/);
 });
+
+test('zzz1158 — the other-day card itself is kept outside the tiers and shown on the day', () => {
+  const r = src('app/api/v1/earnings/graded/route.ts');
+  assert.match(r, /otherDayCards\.push\(\{ \.\.\.\(g as any\), _first_shown: _earlier \}\);/);
+  assert.match(r, /_other_day_cards: otherDayCards\.slice\(0, 50\)/);
+  const p = src('app/(dashboard)/earnings-opportunities/page.tsx');
+  assert.match(p, /<EarningsCard stock=\{c\} \/>/);
+  assert.match(p, /First graded on \{String\(c\._first_shown\)\}/);
+  assert.doesNotMatch(p, /No Q4 results announced/);
+});
