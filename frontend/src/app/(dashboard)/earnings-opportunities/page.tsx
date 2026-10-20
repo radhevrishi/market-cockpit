@@ -3083,6 +3083,16 @@ Source label: ${coverageStats.source}`}
             const dow = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dt.getUTCDay()];
             return `${dow} ${dt.getUTCDate()} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][dt.getUTCMonth()]}`;
           };
+          // zzz1159 — a day whose only company was graded on another day (ROSSARI, 18 Oct) is not "no earnings filings": say what it is
+          const otherCards0: any[] = Array.isArray((view as any)?._other_day_cards) ? (view as any)._other_day_cards : [];
+          if (otherCards0.length) {
+            const names = otherCards0.map((c) => `${c.ticker} (graded on ${fmtDate(String(c._first_shown))})`).join(', ');
+            return (
+              <div data-other-day-note style={{ color: 'var(--mc-text-2)', fontSize: 13, padding: '14px 18px', backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 'var(--mc-radius)', lineHeight: 1.5 }}>
+                <b style={{ color: 'var(--mc-text-1)' }}>{filingDateLabel}: {otherCards0.length} {otherCards0.length === 1 ? 'company' : 'companies'} on the calendar, already graded on an earlier day</b> — {names}. The same results are shown below; they count on the day they were first graded.
+              </div>
+            );
+          }
           return (
             <div style={{ color: 'var(--mc-text-3)', fontSize: 13, padding: '36px 28px', textAlign: 'center', backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 'var(--mc-radius)' }}>
               <div style={{ fontSize: 40, marginBottom: 10 }}>📭</div>
@@ -3090,7 +3100,7 @@ Source label: ${coverageStats.source}`}
                 No earnings filings for {filingDateLabel}
               </div>
               <div style={{ fontSize: 13, color: 'var(--mc-text-4)', marginBottom: 14, lineHeight: 1.5 }}>
-                NSE + BSE corporate-actions pipeline polled. No new results were filed on this date (a company graded on another day for the same results is listed below).
+                NSE + BSE corporate-actions pipeline polled. No results were filed on this date.
                 {lastScraped && <><br/><span style={{ fontSize: 11.5, color: 'var(--mc-text-4)' }}>📡 Calendar last refreshed: <strong style={{ color: 'var(--mc-text-3)' }}>{lastScraped}</strong></span></>}
               </div>
               {rankedDates.length > 0 && (

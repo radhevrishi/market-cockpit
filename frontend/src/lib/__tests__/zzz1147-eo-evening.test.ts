@@ -99,4 +99,5 @@ test('zzz1158 — the other-day card itself is kept outside the tiers and shown 
   assert.match(p, /<EarningsCard stock=\{c\} \/>/);
   assert.match(p, /First graded on \{String\(c\._first_shown\)\}/);
   assert.doesNotMatch(p, /No Q4 results announced/);
+  assert.match(p, /already graded on an earlier day<\/b>/);   // zzz1159: not "No earnings filings" when a card is shown
 });
