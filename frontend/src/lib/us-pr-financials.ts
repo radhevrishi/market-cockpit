@@ -92,6 +92,8 @@ export interface ReleaseFinancials {
   cfo?: number | null; cfo_prev?: number | null;
   capex?: number | null; capex_prev?: number | null;
   matched: PrItem[];
+  /** zzz1160: set when revenue was read from the release's total-revenue row without an exact XBRL year-ago match */
+  revenue_basis?: string | null;
   scale: number | null;
   labels: Partial<Record<PrItem, string>>;
 }
@@ -270,6 +272,8 @@ function tokens(rest: string): number[] {
 }
 
 const SCALES = [1e3, 1e6, 1e9, 1];
+/** zzz1160 — the company-wide revenue total, named plainly ("Total net sales and revenue", "Total revenues", "Net sales", "Revenue") */
+const STRICT_TOTAL_REVENUE = /^(?:total\s+)?(?:net\s+)?(?:operating\s+)?(?:revenues?|sales|net\s+sales(?:\s+and\s+(?:operating\s+)?revenues?)?|sales\s+and\s+revenues?|net\s+sales\s+and\s+revenues?)(?:\s*,?\s*net)?$/i;
 const relClose = (a: number, b: number) => {
   if (b === 0) return Math.abs(a) < 1;
   return Math.abs(a - b) / Math.abs(b) <= 0.015;
@@ -930,6 +934,35 @@ export function financialsFromReleaseHtml(html: string, yearAgo: YearAgoRef, opt
         if (better(h, found.revenue)) found.revenue = h;
       }
     }
+  }
+  // zzz1160 — REVENUE IS A CRITICAL FIELD. When no revenue row's year-ago column reproduces the year-ago XBRL figure (GM: XBRL carries
+  // only "revenue from contracts with customers" $44.3B while the release prints "Total net sales and revenue" $48.6B; Hasbro: two
+  // revenue tags that disagree), the release's OWN total-revenue row is still read: only a strictly named total line, only in a
+  // table whose column headers bind a column to the reported quarter, current and year-ago taken from that same row (so the growth is
+  // the company's own like-for-like), and only within a factor of two of the XBRL year-ago figure. Marked `revenue_basis`.
+  if (!found.revenue && yearAgo.revenue != null && yearAgo.revenue > 0) {
+    let loose: Hit | null = null; let looseDev = Infinity;
+    for (let ti = 0; ti < tables.length; ti++) {
+      const b = binds[ti];
+      if (!b) continue;
+      for (const r of tables[ti].rows) {
+        const lbl = cleanLabel(r.label);
+        if (!lbl || !STRICT_TOTAL_REVENUE.test(lbl) || OUTLOOK_ZONE.test(r.rest)) continue;
+        for (const pair of b.pick(r)) {
+          if (!(pair.cur > 0) || !(pair.prev > 0)) continue;
+          for (const sc of SCALES) {
+            const ratio = (pair.prev * sc) / (yearAgo.revenue as number);
+            if (ratio < 0.5 || ratio > 2) continue;
+            const g = pair.cur / pair.prev;
+            if (g < 0.3 || g > 3) continue;
+            const dev = Math.abs(Math.log(ratio));
+            if (dev < looseDev) { looseDev = dev; loose = { cur: pair.cur * sc, prev: pair.prev * sc, scale: sc, label: lbl, tableIdx: ti }; }
+          }
+          break;   // the bound (first) pair only
+        }
+      }
+    }
+    if (loose) { found.revenue = loose; out.revenue_basis = 'release total-revenue row (its year-ago column differs from the XBRL tag)'; }
   }
   const preferScale = found.revenue?.scale ?? null;
   const anchor = found.revenue?.tableIdx ?? null;

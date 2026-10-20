@@ -770,6 +770,14 @@ function TileRow({ r, gaapEpsY, opmD, adjEpsCur, adjEpsPrev, epsEst, surp, hasAd
       // consequence of, so it is never the tile the eye is taught to skip.
       w: Math.max(14, moveWeight(r.sales_yoy_pct)),
     });
+  } else {
+    // zzz1160 (owner: "some fields are critical and should always be there") — revenue is never silently absent: the tile says why
+    const isFin = !!(r as any).is_financial;
+    parts.push({
+      node: (size) => <Tile key="rev" label="REVENUE" size={size} value={isFin ? 'n/a (bank)' : 'Not read yet'} color="var(--mc-text-3)"
+        sub={isFin ? 'a lender reports net interest income, not revenue' : (r as any).prelim ? 'not found in the release; follows with the 10-Q' : 'not in the filing data'} />,
+      w: 10,
+    });
   }
 
   // ── EPS · GAAP ─────────────────────────────────────────────────────────
@@ -842,6 +850,21 @@ function TileRow({ r, gaapEpsY, opmD, adjEpsCur, adjEpsPrev, epsEst, surp, hasAd
         sub={opmD != null ? `${opmD >= 0 ? '+' : ''}${opmD.toFixed(1)}pp YoY`
           : r.opm_prev_pct != null ? `prior ${r.opm_prev_pct.toFixed(1)}%` : 'no prior margin'} />
     ) });
+  }
+
+  // zzz1160 — a margin is a critical field: with no operating line (GM, banks), the NET margin from the same figures, labelled as such
+  if (r.opm_pct == null && r.opm_prev_pct == null) {
+    const ni = num((r as any).net_income_curr_musd), niP = num((r as any).net_income_prev_musd);
+    const nm = ni != null && revNow != null && revNow > 0 ? (ni / revNow) * 100 : null;
+    const nmP = niP != null && revPrev != null && revPrev > 0 ? (niP / revPrev) * 100 : null;
+    if (nm != null) {
+      const d = nmP != null ? nm - nmP : null;
+      parts.push({ w: d == null ? 6 : Math.min(60, Math.abs(d) * 6), node: (size) => (
+        <Tile key="nm" label="NET MARGIN" size={size} value={`${nm.toFixed(1)}%`}
+          color={d == null ? undefined : d >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)'}
+          sub={d != null ? `${d >= 0 ? '+' : ''}${d.toFixed(1)}pp YoY · no operating line` : 'no operating line reported'} />
+      ) });
+    }
   }
 
   // ── CFO / NI ───────────────────────────────────────────────────────────

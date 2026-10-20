@@ -359,6 +359,11 @@ export function conceptSeries(facts: any, concept: string): DurFact[] {
     if (typeof e.val !== 'number' || !Number.isFinite(e.val)) continue;
     const key = e.start + '|' + e.end;
     const prev = best.get(key);
+    // zzz1160 — a QUARTER first reported in its 10-Q keeps that figure when a later 10-K prints the same quarter more than 25% away:
+    // Vicor's 10-K carried $407.7M for the Jul–Sep 2025 quarter (its 10-Q: $110.4M, the release: $110.4M). A real restatement of a
+    // quarter's revenue by more than a quarter is rare; a mis-tagged 10-K line is not.
+    if (prev && prev.form === '10-Q' && /^10-K/.test(String(e.form)) && Math.abs(diffDays(e.end, e.start)) <= 100
+      && Math.abs(prev.val) > 0 && Math.abs(e.val - prev.val) / Math.abs(prev.val) > 0.25) continue;
     if (!prev || String(e.filed || '') > String(prev.filed || '')) best.set(key, e);
   }
   const out: DurFact[] = [];
