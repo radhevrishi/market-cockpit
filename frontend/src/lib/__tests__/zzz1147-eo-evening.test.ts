@@ -62,3 +62,18 @@ test('refresh message and pending reasons belong to their day', () => {
   assert.match(p, /checking the filings…/);
   assert.match(src('app/api/v1/earnings/graded/route.ts'), /await fillCompanyNames\(by_tier\);/);
 });
+
+test('zzz1153 — a provider account with no credit is said on the page; the runs keep trying', async () => {
+  const { providerStopNote, applyCall, mergeLedgers } = await import('../anthropic-meter');
+  const { verificationBlockLine } = await import('../../components/guidance-upgrades/GuStatusStrip');
+  const err = { at: '2026-10-20T05:50:30Z', status: 400, message: 'Your credit balance is too low to access the Anthropic API.', feature: 'guidance-extract' };
+  const note = providerStopNote({ last_error: err, last_ok_at: '2026-10-19T22:00:00Z' }, 'anthropic');
+  assert.match(note!, /no credit left — Anthropic \(console\.anthropic\.com → Plans & Billing\); since 2026-10-20 05:50 UTC/);
+  assert.equal(providerStopNote({ last_error: err, last_ok_at: '2026-10-20T06:00:00Z' }, 'anthropic'), null, 'answered since');
+  assert.equal(providerStopNote({ last_error: { ...err, message: 'overloaded' }, last_ok_at: null }, 'anthropic'), null);
+  const l = applyCall(mergeLedgers('2026-10', []), 'x', 0.01, { input_tokens: 1, output_tokens: 1 } as any, '2026-10-20T07:00:00Z');
+  assert.equal(l.last_ok_at, '2026-10-20T07:00:00Z');
+  const line = verificationBlockLine({ available: true, providerNote: note, queueSize: 410 });
+  assert.match(line!, /paused: the AI provider account has no credit left/); assert.match(line!, /410 documents are waiting/);
+  assert.match(readFileSync(new URL('../ai-verify.ts', import.meta.url), 'utf8'), /return \{ available: true, reason: null, provider, model, providerNote \};/);
+});

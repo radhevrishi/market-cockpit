@@ -142,6 +142,8 @@ export interface SpendLedger {
   updated_at: string | null;
   /** The most recent refusal from the API, whatever the feature. */
   last_error: { at: string; status: number; message: string; feature: string } | null;
+  /** zzz1153: the most recent answered call (any feature) — tells "the provider stopped answering" apart from an old error */
+  last_ok_at?: string | null;
   /** zzz1050: answers without the forced tool / schema, all features. Absent on older ledgers. */
   schema_failures?: number;
 }
@@ -168,6 +170,7 @@ export function applyCall(l: SpendLedger, feature: string, usd: number, u: Usage
     l.last_error = { ...f.last_error, feature };
   } else {
     f.calls += 1; l.calls += 1;
+    l.last_ok_at = at;
     f.input_tokens += Number(u?.input_tokens || 0) + Number(u?.cache_read_input_tokens || 0) + Number(u?.cache_creation_input_tokens || 0);
     f.output_tokens += Number(u?.output_tokens || 0);
     f.usd += usd; l.total_usd += usd;
@@ -196,6 +199,7 @@ export function mergeLedgers(month: string, parts: Array<SpendLedger | null>): S
     if (p.schema_failures) out.schema_failures = (out.schema_failures || 0) + p.schema_failures;
     if (p.updated_at && (!out.updated_at || p.updated_at > out.updated_at)) out.updated_at = p.updated_at;
     if (p.last_error && (!out.last_error || p.last_error.at > out.last_error.at)) out.last_error = p.last_error;
+    if (p.last_ok_at && (!out.last_ok_at || p.last_ok_at > out.last_ok_at)) out.last_ok_at = p.last_ok_at;
     for (const [k, f] of Object.entries(p.by_feature)) {
       const o = out.by_feature[k] || emptyFeature();
       o.calls += f.calls; o.blocked += f.blocked; o.failed += f.failed || 0; o.input_tokens += f.input_tokens; o.output_tokens += f.output_tokens; o.usd += f.usd;
@@ -206,6 +210,19 @@ export function mergeLedgers(month: string, parts: Array<SpendLedger | null>): S
     }
   }
   return out;
+}
+
+/**
+ * zzz1153 — the AI PROVIDER account itself refuses (Anthropic "credit balance is too low", OpenAI enforced spend limit / quota),
+ * newer than the last answered call: a plain sentence for the page. Display only — the runs keep trying, so topping up the account
+ * is picked up by the next run without any change here. Pure.
+ */
+export function providerStopNote(l: Pick<SpendLedger, 'last_error' | 'last_ok_at'> | null, provider: string): string | null {
+  const e = l?.last_error;
+  if (!e || !/credit balance is too low|purchase credits|spend limit|insufficient[_ ]quota|exceeded your current quota|billing/i.test(String(e.message || ''))) return null;
+  if (l?.last_ok_at && l.last_ok_at > e.at) return null;
+  const where = provider === 'openai' ? 'OpenAI (platform.openai.com → Billing / project limits)' : 'Anthropic (console.anthropic.com → Plans & Billing)';
+  return `the AI provider account has no credit left — ${where}; since ${String(e.at).slice(0, 16).replace('T', ' ')} UTC every call is refused`;
 }
 
 export function monthlyCapUsd(): number {

@@ -161,6 +161,8 @@ export interface VerificationSummary {
   /** false when no key is configured or the monthly cap is reached */
   available: boolean;
   unavailableReason: string | null;
+  /** zzz1153: the provider account refuses calls (no credit / spend limit) although our cap allows them */
+  providerNote?: string | null;
   /** 'enforce' (default) hides unverified items; 'report' keeps them but still labels them (owner escape hatch via AI_VERIFY_GATE=report) */
   mode: 'enforce' | 'report';
   primaryVerified: number;

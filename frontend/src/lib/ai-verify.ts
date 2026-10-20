@@ -341,7 +341,7 @@ export interface KvIo {
   setNX?(k: string, v: any, ttlS: number): Promise<boolean>;
   del?(k: string): Promise<void>;
 }
-export interface Availability { available: boolean; reason: string | null; provider: string; model: string | null }
+export interface Availability { available: boolean; reason: string | null; provider: string; model: string | null; /** zzz1153 */ providerNote?: string | null }
 export interface VerifyDeps {
   fetchDoc(url: string, claim: VerifyClaim, timeoutMs?: number): Promise<FetchedDoc>;
   callModel(req: { system: string; user: string; maxTokens: number; timeoutMs?: number }): Promise<ModelCallResult>;
@@ -767,7 +767,10 @@ async function computeAvailability(): Promise<Availability> {
   let gate: { allowed: boolean; message?: string };
   try { gate = await Promise.race([m.spendGate(), new Promise<{ allowed: boolean; message?: string }>((r) => setTimeout(() => r({ allowed: true }), 3_000))]); } catch { gate = { allowed: true }; }
   if (!gate.allowed) return { available: false, reason: gate.message || 'Monthly AI cap reached.', provider, model };
-  return { available: true, reason: null, provider, model };
+  // zzz1153: our cap allows it, but the provider account may be refusing every call — said on the page, the runs keep trying
+  let providerNote: string | null = null;
+  try { providerNote = m.providerStopNote(await Promise.race([m.readSpend(), new Promise<null>((r) => setTimeout(() => r(null), 2_000))]), provider); } catch { /* note only */ }
+  return { available: true, reason: null, provider, model, providerNote };
 }
 
 export async function realCallModel(req: { system: string; user: string; maxTokens: number; timeoutMs?: number }): Promise<ModelCallResult> {
@@ -919,6 +922,7 @@ export async function loadGateContext(claimIds: string[], o: { kv?: KvIo; availa
 export function summaryOf<T>(g: GateResult<T>, ctx: GateContext): VerificationSummary {
   return {
     provider: ctx.availability.provider, model: ctx.availability.model, available: ctx.availability.available, unavailableReason: ctx.availability.reason,
+    providerNote: ctx.availability.providerNote ?? null,
     mode: ctx.mode, lastRunAt: ctx.lastRunAt, ...g.stats,
     nextRunEta: ctx.nextRunEta ?? null, schedule: ctx.schedule ?? AI_VERIFY_SCHEDULE, queueSize: ctx.queueSize ?? null,
   };
@@ -982,7 +986,7 @@ export async function verifyEventsOverlay<E extends Record<string, any>>(events:
   }
   const st = r.stats;
   return { events: r.events, verification: {
-    provider: ctx.availability.provider, model: ctx.availability.model, available: ctx.availability.available, unavailableReason: ctx.availability.reason, mode: ctx.mode, lastRunAt: ctx.lastRunAt,
+    provider: ctx.availability.provider, model: ctx.availability.model, available: ctx.availability.available, unavailableReason: ctx.availability.reason, providerNote: ctx.availability.providerNote ?? null, mode: ctx.mode, lastRunAt: ctx.lastRunAt,
     primaryVerified: st.engineVerified, checked: st.checked, confirmed: st.aiConfirmed, contradicted: st.aiContradicted, awaiting: st.awaiting, awaitingByReason: st.awaitingByReason, overlay: st,
   } };
 }

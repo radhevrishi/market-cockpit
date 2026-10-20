@@ -8,6 +8,11 @@ import { useGuUniverse } from './useGuUniverse';
 import { ageText } from '@/lib/gu-client-cache';
 
 export function verificationBlockLine(v: any, now: Date = new Date()): string | null {
+  // zzz1153 — the provider account refuses every call (Anthropic credit used up, 20 Oct): the AI reading and checking are stalled
+  if (v && v.available !== false && typeof v.providerNote === 'string' && v.providerNote) {
+    const queue = typeof v.queueSize === 'number' && v.queueSize > 0 ? ` ${v.queueSize} documents are waiting to be checked.` : '';
+    return `Verification and guidance reading paused: ${v.providerNote}.${queue} Nothing is marked verified without the check; reading resumes on its own once the account has credit.`;
+  }
   if (!v || v.available !== false) return null;
   const reason = String(v.unavailableReason || 'the AI check is not available').replace(/\s*—\s*raise [^.]*$/i, '');
   const reset = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString().slice(0, 10);
