@@ -65,7 +65,7 @@ export function bankQuarterFromFacts(facts: any, qEnd: string | null): BankQuart
 }
 
 const LINES: Array<{ key: 'nii' | 'nonint' | 'provision'; re: RegExp }> = [
-  { key: 'nii', re: /\bnet interest income\b(?!\s*(?:after|to|margin|\(fte\)|on a fully|-\s*fte|ratio))/i },
+  { key: 'nii', re: /\bnet interest (?:income|revenue)\b(?!\s*(?:after|to|margin|\(fte\)|on a fully|-\s*fte|ratio))/i },
   { key: 'nonint', re: /\b(?:total\s+)?non-?interest income\b/i },
   { key: 'provision', re: /\bprovision for (?:credit|loan)(?: and lease)? losses\b/i },
 ];
@@ -86,7 +86,7 @@ function numsAfter(s: string): number[] {
  * reproduces the year-ago XBRL quarter (±1.5%), and the current figure is the column before it. Nothing else is guessed.
  */
 export function bankFromRelease(html: string, yearAgo: Pick<BankQuarter, 'nii_prev' | 'nonint_prev' | 'provision_prev'>): Partial<BankQuarter> {
-  const text = String(html || '').replace(/<\/(?:td|th)>/gi, ' | ').replace(/<\/tr>/gi, '\n').replace(/<[^>]+>/g, ' ').replace(/&nbsp;|&#160;/g, ' ').replace(/&#\d+;|&\w+;/g, ' ');
+  const text = String(html || '').replace(/\s+/g, ' ').replace(/<\/(?:td|th)>/gi, ' | ').replace(/<\/tr>/gi, '\n').replace(/<[^>]+>/g, ' ').replace(/&nbsp;|&#160;/g, ' ').replace(/&#\d+;|&\w+;/g, ' ');
   const out: Partial<BankQuarter> = {};
   const prevOf = { nii: yearAgo.nii_prev, nonint: yearAgo.nonint_prev, provision: yearAgo.provision_prev };
   for (const line of text.split('\n')) {

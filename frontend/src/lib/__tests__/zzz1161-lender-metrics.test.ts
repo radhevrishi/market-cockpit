@@ -66,3 +66,10 @@ test('release: five-quarter table takes the FIRST column; a stray year is skippe
   const yr = '<tr><td>Net interest income 2026</td><td>121,500</td><td>103,400</td></tr>';
   assert.equal(bankFromRelease(yr, { nii_prev: 103_400_000, nonint_prev: null, provision_prev: null }).nii, 121_500_000);
 });
+
+test('release rows split over source lines and "net interest revenue" (MBWM, UCB shapes)', () => {
+  const mb = '<tr><td style="x">\n Net interest income </td><td>&nbsp;</td><td>60,900</td>\n<td>&nbsp;</td><td>52,002</td></tr>';
+  assert.equal(bankFromRelease(mb, { nii_prev: 52_000_000, nonint_prev: null, provision_prev: null }).nii, 60_900_000);
+  const ucb = '<tr><td>Net interest revenue</td><td>251,206</td><td>240,900</td><td>232,764</td><td>237,926</td><td>233,629</td></tr>';
+  assert.equal(bankFromRelease(ucb, { nii_prev: 233_630_000, nonint_prev: null, provision_prev: null }).nii, 251_206_000);
+});
