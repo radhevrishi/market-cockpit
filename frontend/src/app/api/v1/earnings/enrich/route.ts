@@ -695,6 +695,14 @@ async function fetchScreenerForUrl(url: string): Promise<any | null> {
           effective_tax_rate_prev: taxRatePrev,
           dep_yoy_pct: pct(depCurr, depPrev),
           finance_cost_curr_cr: finCurr,
+          // zzz1161 — a bank / NBFC (Screener shape: Revenue, Interest, Financing Profit): NET INTEREST INCOME = interest earned − interest paid
+          ...(() => {
+            if (get('Financing Profit', latestIdx) == null) return {};
+            const rC = get('Revenue', latestIdx), iC = get('Interest', latestIdx), rP = get('Revenue', priorIdx), iP = get('Interest', priorIdx);
+            const niiC = rC != null && iC != null ? Math.round((rC - iC) * 100) / 100 : null;
+            const niiP = rP != null && iP != null ? Math.round((rP - iP) * 100) / 100 : null;
+            return { nii_curr_cr: niiC, nii_prev_cr: niiP, nii_yoy_pct: niiC != null && niiP != null && niiP > 0 ? pct(niiC, niiP) : null };
+          })(),
           ebit_curr_cr: ebitCurr,
           ebit_yoy_pct: pct(ebitCurr, ebitPrev),
           ebitda_curr_cr: ebitdaCurr,
@@ -1855,6 +1863,7 @@ async function enrichOneInner(symbol: string, filedHint?: string, bypassCache = 
       'other_income_pct_sales_curr', 'other_income_pct_sales_prev',
       'effective_tax_rate_curr', 'effective_tax_rate_prev',
       'dep_yoy_pct', 'finance_cost_curr_cr', 'ebit_curr_cr', 'ebit_yoy_pct',
+      'nii_curr_cr', 'nii_prev_cr', 'nii_yoy_pct',   // zzz1161
       'ebitda_curr_cr', 'ebitda_yoy_pct', 'pat_margin_curr', 'pat_margin_prev',
       // zzz356 quarterly base series + BS deltas (fill only when Worker left them null)
       'quarters_sales', 'quarters_eps', 'quarters_opm',

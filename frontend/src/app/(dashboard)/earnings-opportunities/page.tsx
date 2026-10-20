@@ -3702,6 +3702,7 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
   // 0.0% as unknown; checkQuarterLabel replaces an impossible quarter label.
   const _g = growthView(stock);
   const _margin = marginView(stock, { newlyListed: _isNewCard });
+  const _lender = financialKindOfRow(stock) === 'lender';   // zzz1161
   const _q = checkQuarterLabel(stock.quarter, (stock as any)._window_date || stock.filing_date);
   // zzz820b — a stored top tier built on unverified growth is held, not shown
   // as if it stood (holdUnconfirmed has already moved it out of the top tiers).
@@ -3885,9 +3886,15 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
 
       {/* ── The figure tiles: ONE ROW like the US TileRow — sales leads (zzz981) ── */}
       <div className="mc-grid-2-mobile" style={TILE_ROW}>
-        <MetricTile size="lead" label={_useSalesQoQ ? 'SALES QoQ' : 'SALES YOY'}  pct={_useSalesQoQ ? _salesQoQ : _g.sales}      curr={fmtCr(stock.sales_curr_cr)} prev={_useSalesQoQ ? fmtCr(_salesPrevQ) : fmtCr(_g.salesPrev)} note={!_useSalesQoQ && _g.withheld ? 'year-ago not matched' : undefined} noteTitle={_g.withheld || undefined} />
+        <MetricTile size="lead" label={_lender ? (_useSalesQoQ ? 'INTEREST EARNED QoQ' : 'INTEREST EARNED YOY') : (_useSalesQoQ ? 'SALES QoQ' : 'SALES YOY')}  pct={_useSalesQoQ ? _salesQoQ : _g.sales}      curr={fmtCr(stock.sales_curr_cr)} prev={_useSalesQoQ ? fmtCr(_salesPrevQ) : fmtCr(_g.salesPrev)} note={!_useSalesQoQ && _g.withheld ? 'year-ago not matched' : undefined} noteTitle={_g.withheld || undefined} />
         <MetricTile label={_usePatQoQ ? 'NET PROFIT QoQ' : 'NET PROFIT YOY'} pct={_usePatQoQ ? _patQoQ : (_patTraj && !_g.withheld ? null : _g.pat)} word={!_usePatQoQ && _patTraj && !_g.withheld ? { text: _patTraj.short, good: _patTraj.improving, title: _patTraj.label } : undefined} curr={fmtCr(stock.pat_curr_cr)}   prev={_usePatQoQ ? fmtCr(_patPrevQ) : fmtCr(_g.patPrev)} note={_usePatQoQ ? undefined : (_g.withheld ? 'year-ago not matched' : (_g.patNote || undefined))} noteTitle={_g.withheld || (_g.patNote ? 'This quarter\'s profit is known; the same quarter last year is not in the source, so no growth figure is shown (it is not worked out from EPS).' : undefined)} />
         <MetricTile label={_useEpsQoQ ? 'EPS QoQ' : 'EPS YOY'}    pct={_useEpsQoQ ? _epsQoQ : (_epsTraj && !_g.withheld ? null : _g.eps)}        word={!_useEpsQoQ && _epsTraj && !_g.withheld ? { text: _epsTraj.short, good: _epsTraj.improving, title: _epsTraj.label } : undefined} curr={fmtPx(stock.eps_curr)}     prev={_useEpsQoQ ? fmtPx(_epsPrevQ) : fmtPx(_g.epsPrev)} note={!_useEpsQoQ && _g.withheld ? 'year-ago not matched' : undefined} noteTitle={_g.withheld || undefined} />
+        {/* zzz1161 — a lender is judged on NET INTEREST INCOME (interest earned − interest paid), shown beside its other figures */}
+        {_lender && (
+          <MetricTile label="NET INTEREST INCOME YOY" pct={(stock as any).nii_yoy_pct ?? null}
+            curr={(stock as any).nii_curr_cr != null ? fmtCr((stock as any).nii_curr_cr) : '—'} prev={fmtCr((stock as any).nii_prev_cr ?? null)}
+            note={(stock as any).nii_curr_cr == null ? 'not read yet (fills on the next refresh)' : undefined} />
+        )}
         <MarginTile m={_margin} />
         {/* zzz694 — cash sits in the row, so the figure that decides the tier
             is on the card rather than only in the caveat pills. */}

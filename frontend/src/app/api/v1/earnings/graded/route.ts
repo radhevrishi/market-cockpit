@@ -607,6 +607,7 @@ async function gradedLegacyGET(req: Request) {
       close_30d: e.close_30d ?? null,
             source_url: c.filing_url,
             sales_curr_cr: e.sales_curr_cr, sales_prev_cr: e.sales_prev_cr, sales_yoy_pct: e.sales_yoy_pct,
+            nii_curr_cr: e.nii_curr_cr ?? null, nii_prev_cr: e.nii_prev_cr ?? null, nii_yoy_pct: e.nii_yoy_pct ?? null,   // zzz1161
             pat_curr_cr: e.pat_curr_cr, pat_prev_cr: e.pat_prev_cr, pat_yoy_pct: e.pat_yoy_pct,
             eps_curr: e.eps_curr, eps_prev: e.eps_prev, eps_yoy_pct: e.eps_yoy_pct,
             newly_listed: e.newly_listed ?? undefined, num_quarters: e.num_quarters ?? null,  // zzz503
@@ -1432,6 +1433,7 @@ async function gradedLegacyGET(req: Request) {
       source_url: e.source_url || `https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(m.ticker)}`,
       sales_curr_cr: e.sales_curr_cr ?? null, sales_prev_cr: e.sales_prev_cr ?? null,
       sales_yoy_pct: e.sales_yoy_pct ?? null,
+      nii_curr_cr: e.nii_curr_cr ?? null, nii_prev_cr: e.nii_prev_cr ?? null, nii_yoy_pct: e.nii_yoy_pct ?? null,   // zzz1161
       pat_curr_cr: e.pat_curr_cr ?? null, pat_prev_cr: e.pat_prev_cr ?? null,
       pat_yoy_pct: e.pat_yoy_pct ?? null,
       eps_curr: e.eps_curr ?? null, eps_prev: e.eps_prev ?? null, eps_yoy_pct: e.eps_yoy_pct ?? null,

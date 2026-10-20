@@ -773,11 +773,39 @@ function TileRow({ r, gaapEpsY, opmD, adjEpsCur, adjEpsPrev, epsEst, surp, hasAd
   } else {
     // zzz1160 (owner: "some fields are critical and should always be there") — revenue is never silently absent: the tile says why
     const isFin = !!(r as any).is_financial;
+    const bR = num((r as any).bank_revenue_curr_musd), bRP = num((r as any).bank_revenue_prev_musd), bRY = num((r as any).bank_revenue_yoy_pct);
+    if (isFin && bR != null) {
+      // zzz1161 — a lender's top line: net interest income + non-interest (fee) income
+      parts.push({ w: Math.max(14, moveWeight(bRY)), node: (size) => (
+        <Tile key="rev" label="TOTAL REVENUE (BANK)" size={size} {...swingTile(bRY, null)}
+          sub={`${fmtUsdLevel(bRP)} → ${fmtUsdLevel(bR)} · interest + fee income`} />
+      ) });
+    } else
     parts.push({
       node: (size) => <Tile key="rev" label="REVENUE" size={size} value={isFin ? 'n/a (bank)' : 'Not read yet'} color="var(--mc-text-3)"
         sub={isFin ? 'a lender reports net interest income, not revenue' : (r as any).prelim ? 'not found in the release; follows with the 10-Q' : 'not in the filing data'} />,
       w: 10,
     });
+  }
+
+  // zzz1161 (owner: "lenders report net interest income, not revenue — are you showing the correct metrics?") — a lender is judged
+  // on NET INTEREST INCOME growth and on what its credit risk cost (provision for credit losses). Shown in addition to the rest.
+  if ((r as any).is_financial) {
+    const nii = num((r as any).nii_curr_musd), niiP = num((r as any).nii_prev_musd), niiY = num((r as any).nii_yoy_pct);
+    parts.push({ w: nii != null ? Math.max(14, moveWeight(niiY)) : 10, node: (size) => nii != null
+      ? <Tile key="nii" label="NET INTEREST INCOME" size={size} {...swingTile(niiY, null)} sub={`${fmtUsdLevel(niiP)} → ${fmtUsdLevel(nii)}`} />
+      : <Tile key="nii" label="NET INTEREST INCOME" size={size} value="Not read yet" color="var(--mc-text-3)"
+          sub={(r as any).prelim ? 'not found in the release; follows with the 10-Q' : 'not in the filing data'} /> });
+    const pv = num((r as any).provision_curr_musd), pvP = num((r as any).provision_prev_musd);
+    if (pv != null) {
+      // a LOWER provision is the good direction
+      const up = pvP != null ? pv > pvP : null;
+      parts.push({ w: 8, node: (size) => (
+        <Tile key="prov" label="CREDIT-LOSS PROVISION" size={size} value={fmtUsdLevel(pv)}
+          color={up == null ? undefined : up ? 'var(--mc-bearish)' : 'var(--mc-bullish)'}
+          sub={pvP != null ? `year ago ${fmtUsdLevel(pvP)} · ${up ? 'higher (worse)' : 'lower (better)'}` : 'no year-ago figure'} />
+      ) });
+    }
   }
 
   // ── EPS · GAAP ─────────────────────────────────────────────────────────
