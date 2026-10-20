@@ -71,6 +71,8 @@ test('zzz1153 — a provider account with no credit is said on the page; the run
   assert.match(note!, /no credit left — Anthropic \(console\.anthropic\.com → Plans & Billing\); since 2026-10-20 05:50 UTC/);
   assert.equal(providerStopNote({ last_error: err, last_ok_at: '2026-10-20T06:00:00Z' }, 'anthropic'), null, 'answered since');
   assert.equal(providerStopNote({ last_error: { ...err, message: 'overloaded' }, last_ok_at: null }, 'anthropic'), null);
+  assert.equal(providerStopNote({ last_error: err, last_ok_at: null }, 'openai'), null, 'an Anthropic refusal is not an OpenAI stop (zzz1154)');
+  assert.match(providerStopNote({ last_error: { ...err, message: 'Your project has reached its configured enforced spend limit.' }, last_ok_at: null }, 'openai')!, /OpenAI/);
   const l = applyCall(mergeLedgers('2026-10', []), 'x', 0.01, { input_tokens: 1, output_tokens: 1 } as any, '2026-10-20T07:00:00Z');
   assert.equal(l.last_ok_at, '2026-10-20T07:00:00Z');
   const line = verificationBlockLine({ available: true, providerNote: note, queueSize: 410 });

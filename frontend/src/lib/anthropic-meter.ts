@@ -221,6 +221,10 @@ export function providerStopNote(l: Pick<SpendLedger, 'last_error' | 'last_ok_at
   const e = l?.last_error;
   if (!e || !/credit balance is too low|purchase credits|spend limit|insufficient[_ ]quota|exceeded your current quota|billing/i.test(String(e.message || ''))) return null;
   if (l?.last_ok_at && l.last_ok_at > e.at) return null;
+  // zzz1154 — the refusal must come from the provider in use now: after switching Anthropic → OpenAI the old "credit balance is too
+  // low" (Anthropic's words) was shown as an OpenAI stop before OpenAI had been asked anything
+  const from = /anthropic|credit balance is too low|plans & billing/i.test(String(e.message)) ? 'anthropic' : /openai|spend limit|insufficient[_ ]quota|exceeded your current quota/i.test(String(e.message)) ? 'openai' : null;
+  if (from && from !== provider) return null;
   const where = provider === 'openai' ? 'OpenAI (platform.openai.com → Billing / project limits)' : 'Anthropic (console.anthropic.com → Plans & Billing)';
   return `the AI provider account has no credit left — ${where}; since ${String(e.at).slice(0, 16).replace('T', ' ')} UTC every call is refused`;
 }
