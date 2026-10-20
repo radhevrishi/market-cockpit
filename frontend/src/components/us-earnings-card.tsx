@@ -780,7 +780,7 @@ function TileRow({ r, gaapEpsY, opmD, adjEpsCur, adjEpsPrev, epsEst, surp, hasAd
         <Tile key="rev" label="TOTAL REVENUE (BANK)" size={size} {...swingTile(bRY, null)}
           sub={`${fmtUsdLevel(bRP)} → ${fmtUsdLevel(bR)} · interest + fee income`} />
       ) });
-    } else
+    } else if (!isFin)   // zzz1161b — a lender's top line is the NET INTEREST INCOME tile below; no "n/a" revenue tile beside it
     parts.push({
       node: (size) => <Tile key="rev" label="REVENUE" size={size} value={isFin ? 'n/a (bank)' : 'Not read yet'} color="var(--mc-text-3)"
         sub={isFin ? 'a lender reports net interest income, not revenue' : (r as any).prelim ? 'not found in the release; follows with the 10-Q' : 'not in the filing data'} />,
@@ -883,8 +883,10 @@ function TileRow({ r, gaapEpsY, opmD, adjEpsCur, adjEpsPrev, epsEst, surp, hasAd
   // zzz1160 — a margin is a critical field: with no operating line (GM, banks), the NET margin from the same figures, labelled as such
   if (r.opm_pct == null && r.opm_prev_pct == null) {
     const ni = num((r as any).net_income_curr_musd), niP = num((r as any).net_income_prev_musd);
-    const nm = ni != null && revNow != null && revNow > 0 ? (ni / revNow) * 100 : null;
-    const nmP = niP != null && revPrev != null && revPrev > 0 ? (niP / revPrev) * 100 : null;
+    // zzz1161b — a bank with no revenue tag: net income ÷ (net interest income + fee income)
+    const rN = revNow ?? num((r as any).bank_revenue_curr_musd), rP = revPrev ?? num((r as any).bank_revenue_prev_musd);
+    const nm = ni != null && rN != null && rN > 0 ? (ni / rN) * 100 : null;
+    const nmP = niP != null && rP != null && rP > 0 ? (niP / rP) * 100 : null;
     if (nm != null) {
       const d = nmP != null ? nm - nmP : null;
       parts.push({ w: d == null ? 6 : Math.min(60, Math.abs(d) * 6), node: (size) => (
@@ -931,6 +933,15 @@ function TileRow({ r, gaapEpsY, opmD, adjEpsCur, adjEpsPrev, epsEst, surp, hasAd
   if (parts.length) {
     const lender = !!(r as any).is_financial;
     const dc = deCell(deV?.de, deV?.basis, lender);
+    // zzz1161b — a lender: debt/equity means nothing, so its capital cushion instead (equity ÷ total assets); no tile when unknown
+    const ea = num((r as any).equity_assets_pct);
+    if (lender) {
+      if (ea != null) parts.push({ w: 6, node: (size) => (
+        <Tile key="de" label="EQUITY / ASSETS" size={size} value={`${ea.toFixed(1)}%`}
+          color={ea >= 9 ? 'var(--mc-bullish)' : ea >= 7 ? undefined : 'var(--mc-bearish)'}
+          sub={`capital cushion · balance sheet ${String((r as any).equity_assets_asof || '')}`} />
+      ) });
+    } else
     parts.push({ w: deV && deV.de > 1 && !lender ? 26 : 5, node: (size) => (
       <Tile key="de" label="DEBT / EQUITY" size={size} value={dc.text} color={TONE_COLOR[dc.tone]}
         sub={<span title={dc.title}>{lender ? 'not meaningful for lenders' : deV ? deV.basis : 'not in source yet'}</span>} />

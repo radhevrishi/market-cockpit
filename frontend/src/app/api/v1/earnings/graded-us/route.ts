@@ -66,7 +66,7 @@ import {
 import { usTechnicals, spyReturn12m, pooled, yahooLastError, yahooEarningsHistory, yahooForwardEstimates, type UsTechnicals, type EpsHistoryRow, type ForwardEstimate } from '@/lib/us-prices';
 import { nasdaqEarningsOnDetailed, type ExpectedReporter } from '@/lib/us-nasdaq';
 import { guidanceFromFiling, releaseDocument, type Guidance } from '@/lib/us-guidance';
-import { bankQuarterFromFacts, bankFromRelease, bankRowFields } from '@/lib/us-bank-metrics';
+import { bankQuarterFromFacts, bankFromRelease, bankRowFields, equityToAssets } from '@/lib/us-bank-metrics';
 import { financialsFromReleaseHtml, periodEndFromReleaseHtml, releaseAttributesCashToWorkingCapital } from '@/lib/us-pr-financials';
 import { balanceSheetFromReleaseHtml } from '@/lib/us-pr-balance';
 import { US_ENGINE_VERSION, US_ENGINE_PREVIOUS_VERSIONS, US_OVERLAY_VERSION } from '@/lib/us-engine-version';
@@ -1826,7 +1826,7 @@ export async function GET(req: Request) {
       // sector so the client preset can skip that gate, exactly as India does
       // for NBFCs.
       (row as any).is_financial = isFinancialSic(p.f.sic);
-      if ((row as any).is_financial) { try { Object.assign(row as any, bankRowFields(bankQuarterFromFacts(p.facts, p.fundamentals?.q_end ?? null))); } catch { /* bank figures are extra */ } }   // zzz1161
+      if ((row as any).is_financial) { try { Object.assign(row as any, bankRowFields(bankQuarterFromFacts(p.facts, p.fundamentals?.q_end ?? null))); const ea = equityToAssets(p.facts); if (ea) { (row as any).equity_assets_pct = ea.pct; (row as any).equity_assets_asof = ea.asOf; } } catch { /* bank figures are extra */ } }   // zzz1161
       // zzz1068 — no quarter cash flow yet (8-K only): the last 10-K's same-year CFO ÷ net income, labelled
       if (row.cfo_curr_musd == null && !(row as any).is_financial) { const ac = annualCashFromFacts(p.facts, p.fundamentals?.q_end ?? null); if (ac) (row as any).cash_annual = ac; }
       (row as any).close_30d = p.t.close_30d;
@@ -2335,6 +2335,7 @@ export async function GET(req: Request) {
             const rel = doc?.html && bq.nii == null ? bankFromRelease(doc.html, bq) : {};
             const merged = { ...bq, ...Object.fromEntries(Object.entries(rel).filter(([, v]) => v != null)) };
             Object.assign(row as any, bankRowFields(merged));
+            const ea = equityToAssets(facts0); if (ea) { (row as any).equity_assets_pct = ea.pct; (row as any).equity_assets_asof = ea.asOf; }
           } catch { /* bank figures are extra */ }
         }
         if (row.cfo_curr_musd == null && !(row as any).is_financial && facts0) { const ac = annualCashFromFacts(facts0, null); if (ac) (row as any).cash_annual = ac; }   // zzz1068

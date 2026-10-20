@@ -26,13 +26,39 @@ function quarterOf(facts: any, tags: string[], end: string): number | null {
   return null;
 }
 
+/** NII when the filer tags only its two halves: interest income − interest expense (same period). */
+function niiOf(facts: any, end: string): number | null {
+  const direct = quarterOf(facts, NII_TAGS, end);
+  if (direct != null) return direct;
+  const inc = quarterOf(facts, ['InterestAndDividendIncomeOperating', 'InterestIncomeOperating', 'InterestAndFeeIncomeLoansAndLeases'], end);
+  const exp = quarterOf(facts, ['InterestExpense', 'InterestExpenseOperating', 'InterestExpenseDeposits'], end);
+  return inc != null && exp != null && inc > exp ? inc - exp : null;
+}
+
+/** Latest equity ÷ total assets (a lender's capital cushion), from the same balance-sheet date. */
+export function equityToAssets(facts: any): { pct: number; asOf: string } | null {
+  const inst = (c: string) => {
+    const u = facts?.facts?.['us-gaap']?.[c]?.units?.USD as any[] | undefined;
+    const m = new Map<string, number>();
+    for (const e of u || []) if (!e?.start && e?.end && /^10-[QK]/.test(String(e.form)) && typeof e.val === 'number') m.set(e.end, e.val);
+    return m;
+  };
+  const eq = inst('StockholdersEquity'), as = inst('Assets');
+  const ends = [...eq.keys()].filter((d) => as.has(d)).sort();
+  const d = ends[ends.length - 1];
+  if (!d) return null;
+  const a = as.get(d)!, e = eq.get(d)!;
+  if (!(a > 0) || !(e > 0) || e > a) return null;
+  return { pct: Math.round((e / a) * 1000) / 10, asOf: d };
+}
+
 /** Bank figures for the quarter ending `qEnd` and the same quarter a year earlier. */
 export function bankQuarterFromFacts(facts: any, qEnd: string | null): BankQuarter {
   const empty: BankQuarter = { nii: null, nii_prev: null, nonint: null, nonint_prev: null, provision: null, provision_prev: null };
   if (!facts || !qEnd || !/^\d{4}-\d{2}-\d{2}$/.test(qEnd)) return empty;
   const ya = new Date(Date.parse(`${qEnd}T00:00:00Z`) - 365 * 86_400_000).toISOString().slice(0, 10);
   return {
-    nii: quarterOf(facts, NII_TAGS, qEnd), nii_prev: quarterOf(facts, NII_TAGS, ya),
+    nii: niiOf(facts, qEnd), nii_prev: niiOf(facts, ya),
     nonint: quarterOf(facts, NONINT_TAGS, qEnd), nonint_prev: quarterOf(facts, NONINT_TAGS, ya),
     provision: quarterOf(facts, PROV_TAGS, qEnd), provision_prev: quarterOf(facts, PROV_TAGS, ya),
   };

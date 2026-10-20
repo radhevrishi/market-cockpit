@@ -40,3 +40,22 @@ test('wiring: graded-us, US card, enrich, graded and India card carry the lender
   const pg = readFileSync(new URL('../../app/(dashboard)/earnings-opportunities/page.tsx', import.meta.url), 'utf8');
   assert.match(pg, /NET INTEREST INCOME YOY/); assert.match(pg, /INTEREST EARNED YOY/);
 });
+
+test('NII from its halves when the filer tags no net figure; equity ÷ assets from one balance-sheet date', async () => {
+  const { equityToAssets } = await import('../us-bank-metrics');
+  const f = { facts: { 'us-gaap': {
+    InterestAndDividendIncomeOperating: { units: { USD: [q('2026-07-01', '2026-09-30', 200_000_000), q('2025-07-01', '2025-09-30', 180_000_000)] } },
+    InterestExpense: { units: { USD: [q('2026-07-01', '2026-09-30', 80_000_000), q('2025-07-01', '2025-09-30', 80_000_000)] } },
+    StockholdersEquity: { units: { USD: [{ end: '2026-06-30', val: 1_000_000_000, form: '10-Q' }] } },
+    Assets: { units: { USD: [{ end: '2026-06-30', val: 10_000_000_000, form: '10-Q' }] } },
+  } } };
+  const b = bankQuarterFromFacts(f, '2026-09-30');
+  assert.equal(b.nii, 120_000_000); assert.equal(b.nii_prev, 100_000_000);
+  assert.deepEqual(equityToAssets(f), { pct: 10, asOf: '2026-06-30' });
+});
+
+test('lender card: no "n/a" revenue or debt/equity tiles', () => {
+  const card = readFileSync(new URL('../../components/us-earnings-card.tsx', import.meta.url), 'utf8');
+  assert.match(card, /else if \(!isFin\)/);
+  assert.match(card, /EQUITY \/ ASSETS/);
+});
