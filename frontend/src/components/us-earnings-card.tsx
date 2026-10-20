@@ -178,10 +178,8 @@ type TileSize = 'lead' | 'normal' | 'compact';
 const TILE_SCALE: Record<TileSize, { pad: string; val: number; lab: number; sub: number }> = {
   lead:    { pad: '11px 13px', val: 25, lab: 10.5, sub: 10.5 },
   normal:  { pad: '7px 9px',   val: 15, lab: 10,   sub: 10 },
-  compact: { pad: '5px 8px',   val: 12.5, lab: 8.5, sub: 8.5 },
+  compact: { pad: '6px 8px',   val: 13, lab: 9.5, sub: 9.5 },
 };
-/** Relative column width, so a lead tile is physically wider as well as louder. */
-const TILE_FR: Record<TileSize, number> = { lead: 1.55, normal: 1, compact: 0.78 };
 
 function Tile({ label, value, sub, color, size = 'normal' }: {
   label: string; value: string; sub?: React.ReactNode; color?: string; size?: TileSize;
@@ -197,9 +195,10 @@ function Tile({ label, value, sub, color, size = 'normal' }: {
       borderLeft: lead ? `3px solid ${color || 'var(--mc-text-1)'}` : '1px solid var(--mc-bg-4)',
       borderRadius: 6, padding: s.pad, minWidth: 0,
     }}>
-      <div style={{ fontSize: s.lab, color: lead ? 'var(--mc-text-2)' : 'var(--mc-text-3)', fontWeight: 700, letterSpacing: 0.3 }}>{label}</div>
-      <div style={{ fontSize: s.val, fontWeight: lead ? 900 : 800, color: color || 'var(--mc-text-0)', lineHeight: 1.2, letterSpacing: lead ? -0.5 : 0 }}>{value}</div>
-      {sub && <div style={{ fontSize: s.sub, color: 'var(--mc-text-4)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{sub}</div>}
+      {/* zzz1162 (owner: "messy, text truncated — institution level") — label and value never cut; the note wraps to two lines */}
+      <div style={{ fontSize: s.lab, color: lead ? 'var(--mc-text-2)' : 'var(--mc-text-3)', fontWeight: 700, letterSpacing: 0.3, lineHeight: 1.25 }} title={label}>{label}</div>
+      <div style={{ fontSize: s.val, fontWeight: lead ? 900 : 800, color: color || 'var(--mc-text-0)', lineHeight: 1.2, letterSpacing: lead ? -0.5 : 0, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>{value}</div>
+      {sub && <div title={typeof sub === 'string' ? sub : undefined} style={{ fontSize: s.sub, color: 'var(--mc-text-4)', lineHeight: 1.3, marginTop: 2, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', overflowWrap: 'anywhere' }}>{sub}</div>}
     </div>
   );
 }
@@ -671,7 +670,8 @@ export function GuideOneLiner({ r }: { r: UsGradedRow }) {
     <div title={[gl.title, gl.source ? `Source: ${gl.source}` : ''].filter(Boolean).join('\n')}
       style={{ fontSize: 11, lineHeight: 1.35, color: 'var(--mc-text-2)', margin: '-3px 0 8px', display: 'flex', gap: 5, alignItems: 'baseline', minWidth: 0 }}>
       <span aria-hidden style={{ flexShrink: 0 }}>{GUIDE_LINE_GLYPH[gl.direction]}</span>
-      <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+      {/* zzz1162 — the guidance figures are the point of the line: up to three lines, never cut mid-number */}
+      <span style={{ minWidth: 0, flex: 1, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
         <b style={{ color }}>{gl.text.split(' — ')[0]}</b>
         {gl.text.includes(' — ') && <span> — {gl.text.split(' — ').slice(1).join(' — ')}</span>}
         {moved && <span style={{ color: 'var(--mc-text-4)' }}> · moved from {moved} to MIXED</span>}
@@ -955,8 +955,12 @@ function TileRow({ r, gaapEpsY, opmD, adjEpsCur, adjEpsPrev, epsEst, surp, hasAd
   // matters is both louder and larger.
   const sizes = sizesFor(parts.map((p) => p.w));
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: sizes.map((z) => `minmax(0, ${TILE_FR[z]}fr)`).join(' '), gap: 6, alignItems: 'stretch' }}>
-      {parts.map((p, i) => p.node(sizes[i]))}
+    // zzz1162 — tiles WRAP onto a second row instead of squeezing seven into one (labels and figures were being cut); a lead tile
+    // takes two columns, so the figure that matters stays the largest.
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(112px, 100%), 1fr))', gridAutoFlow: 'row dense', gap: 6, alignItems: 'stretch' }}>
+      {parts.map((p, i) => (
+        <div key={i} style={{ gridColumn: sizes[i] === 'lead' ? 'span 2' : undefined, display: 'grid', minWidth: 0 }}>{p.node(sizes[i])}</div>
+      ))}
     </div>
   );
 }
@@ -1119,7 +1123,7 @@ export function SecondaryTiles({ r }: { r: UsGradedRow }) {
   // headline belongs to the row above.
   const sizes = sizesFor(parts.map((p) => p.w), 1);
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: sizes.map((z) => `minmax(0, ${TILE_FR[z]}fr)`).join(' '), gap: 6, marginTop: 6 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(112px, 100%), 1fr))', gap: 6, marginTop: 6 }}>
       {parts.map((p, i) => p.node(sizes[i]))}
     </div>
   );
