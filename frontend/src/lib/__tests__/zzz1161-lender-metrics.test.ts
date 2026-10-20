@@ -59,3 +59,10 @@ test('lender card: no "n/a" revenue or debt/equity tiles', () => {
   assert.match(card, /else if \(!isFin\)/);
   assert.match(card, /EQUITY \/ ASSETS/);
 });
+
+test('release: five-quarter table takes the FIRST column; a stray year is skipped', () => {
+  const five = '<tr><td>Net interest income</td><td>$ 30,100</td><td>29,500</td><td>28,900</td><td>28,200</td><td>27,530</td></tr>';
+  assert.equal(bankFromRelease(five, { nii_prev: 27_530_000, nonint_prev: null, provision_prev: null }).nii, 30_100_000);
+  const yr = '<tr><td>Net interest income 2026</td><td>121,500</td><td>103,400</td></tr>';
+  assert.equal(bankFromRelease(yr, { nii_prev: 103_400_000, nonint_prev: null, provision_prev: null }).nii, 121_500_000);
+});

@@ -97,12 +97,20 @@ export function bankFromRelease(html: string, yearAgo: Pick<BankQuarter, 'nii_pr
       const ya = prevOf[key];
       if (ya == null || ya === 0) continue;
       const nums = numsAfter(line.slice(m.index + m[0].length));
-      for (let i = 1; i < nums.length; i++) {
-        let hit = false;
+      // zzz1161c — the CURRENT quarter is the first column (bank releases often print five quarters: the year-ago one is last, not
+      // second); a stray year ("2026") is skipped; the current figure must sit within 0.5–2× of the year-ago one.
+      outer: for (let i = 1; i < nums.length; i++) {
         for (const sc of [1e3, 1e6, 1, 1e9]) {
-          if (Math.abs(nums[i] * sc - ya) / Math.abs(ya) <= 0.015) { (out as any)[key] = nums[i - 1] * sc; (out as any)[`${key}_prev`] = ya; hit = true; break; }
+          if (Math.abs(nums[i] * sc - ya) / Math.abs(ya) > 0.015) continue;
+          for (let j = 0; j < i; j++) {
+            const v = nums[j] * sc;
+            if (Number.isInteger(nums[j]) && nums[j] >= 1990 && nums[j] <= 2100 && !/,/.test(String(nums[j]))) {
+              const r0 = v / ya; if (!(r0 >= 0.5 && r0 <= 2)) continue;
+            }
+            const r = v / ya;
+            if (r >= 0.5 && r <= 2) { (out as any)[key] = v; (out as any)[`${key}_prev`] = ya; break outer; }
+          }
         }
-        if (hit) break;
       }
     }
   }
