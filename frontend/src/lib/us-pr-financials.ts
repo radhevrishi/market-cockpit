@@ -193,7 +193,7 @@ const isBadEpsLabel = (s: string) =>
   /non-?gaap|adjusted|adj\.|pro\s*forma|weighted|shares|dividend|guidance|outlook|constant|organic|before\s+discontinued|discontinued/i.test(s)
   || (/\bbasic\b/i.test(s) && !/basic\s*(?:and|&|\/|,)\s*diluted/i.test(s));
 
-const REVENUE = /^(?:total\s+)?(?:net\s+)?(?:operating\s+)?(?:revenues?|sales|net\s+sales)(?:\s*,?\s*net)?(?:\s*\(.*\))?$/i;
+const REVENUE = /^(?:total\s+)?(?:net\s+)?(?:operating\s+)?(?:revenues?|sales|net\s+sales|revenues?\s+from\s+services)(?:\s*,?\s*net)?(?:\s*\(.*\))?$/i;   // zzz1163: ManpowerGroup "Revenues from services (a)"
 // "Consolidated operating profit" is the same line as "Operating profit", and
 // leaving the qualifier out of the shape cost Lockheed Martin its margin
 // entirely: its release states "Consolidated operating profit | $2,479 | $748"
@@ -924,7 +924,7 @@ export function financialsFromReleaseHtml(html: string, yearAgo: YearAgoRef, opt
     for (let ti = 0; ti < tables.length; ti++) {
       for (const r of tables[ti].rows) {
         const lbl = cleanLabel(r.label);
-        if (!lbl || !REVENUE.test(lbl) || EXCLUDE.test(lbl.replace(/^(total\s+)?(net\s+)?(revenues?|sales)/i, ''))) continue;
+        if (!lbl || !REVENUE.test(lbl) || EXCLUDE.test(lbl.replace(/^(total\s+)?(net\s+)?(revenues?\s+from\s+services|revenues?|sales)/i, ''))) continue;   // zzz1163: a services company's only revenue line (MAN) — still has to reproduce last year's total
         if (OUTLOOK_ZONE.test(r.rest)) continue;
         const b = binds[ti];
         const h = b ? matchBound(b.pick(r), yearAgo.revenue, false, null, lbl, ti)

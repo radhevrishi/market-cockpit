@@ -62,7 +62,10 @@
 // 2026.10.12-a (zzz962/963) — working-capital quarters read from the release's cash-flow statement (Penguin Solutions) and a
 // lowered outlook keeps a quarter out of BLOCKBUSTER/STRONG. Browsers held the old day for 30 days, so PENG stayed MIXED on
 // screen; the bump makes every browser re-read its days (regraded in-process, no SEC re-read).
-export const US_ENGINE_VERSION = '2026.10.12-a';
+// 2026.10.20-a (zzz1163) — a re-grade of a named company no longer credits a later non-results 8-K with last quarter's XBRL
+// (SM, VG showed Q2 figures as "Q3 FY26"; ManpowerGroup's real Q3 print was graded on Q2); lenders carry net interest income,
+// bank revenue, credit-loss provision and equity ÷ assets. The bump re-grades bench entries so they pick these up.
+export const US_ENGINE_VERSION = '2026.10.20-a';
 
 /** zzz807 — earlier engine versions whose cached days can be REGRADED in-process
  *  (their rows carry every figure the grade reads). Newest first. A rules-only

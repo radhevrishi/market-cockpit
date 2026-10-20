@@ -67,6 +67,7 @@ import { usTechnicals, spyReturn12m, pooled, yahooLastError, yahooEarningsHistor
 import { nasdaqEarningsOnDetailed, type ExpectedReporter } from '@/lib/us-nasdaq';
 import { guidanceFromFiling, releaseDocument, type Guidance } from '@/lib/us-guidance';
 import { bankQuarterFromFacts, bankFromRelease, bankRowFields, equityToAssets } from '@/lib/us-bank-metrics';
+import { announcingFiling } from '@/lib/us-earnings-dates';
 import { financialsFromReleaseHtml, periodEndFromReleaseHtml, releaseAttributesCashToWorkingCapital } from '@/lib/us-pr-financials';
 import { balanceSheetFromReleaseHtml } from '@/lib/us-pr-balance';
 import { US_ENGINE_VERSION, US_ENGINE_PREVIOUS_VERSIONS, US_OVERLAY_VERSION } from '@/lib/us-engine-version';
@@ -1098,7 +1099,12 @@ export async function GET(req: Request) {
         const lastPeriodic = x.s?.recent.find((f) => f.form === '10-Q' || f.form === '10-K');
         const src = last202 || lastPeriodic || null;
         if (src?.filingDate) filed = src.filingDate;
-        filings.push({
+        // zzz1163 — every earnings 8-K on file, so a later non-results Item 2.02 (an operations update, SM 14 Oct) can be swapped
+        // for the 8-K that actually announced the quarter whose XBRL is on file (see the freshness step).
+        const earnings8k = (x.s?.recent || []).filter((f) => f.form === '8-K' && f.items.includes('2.02')).slice(0, 8)
+          .map((f) => ({ filingDate: f.filingDate, accession: f.accession }));
+        filings.push(<any>{
+          _earnings8k: earnings8k, _periodic: lastPeriodic ? { filingDate: lastPeriodic.filingDate, accession: lastPeriodic.accession, form: lastPeriodic.form } : null,
           cik: String(x.r.cik).padStart(10, '0'), cikNum: x.r.cik!,
           ticker: x.r.t, company: x.s?.name || x.r.t,
           form: last202 ? '8-K' : (lastPeriodic?.form || '10-Q'),
@@ -1246,13 +1252,18 @@ export async function GET(req: Request) {
       // was being dropped as "reported earlier". See classifyXbrlFreshness.
       const fresh = classifyXbrlFreshness({
         filed: f.filed, qEnd: fund.q_end, qFiled: fund.q_filed,
-        maxLagDays: MAX_QUARTER_LAG_DAYS, checkAlreadyPublic: !explicit,
+        // zzz1163 — the explicit (re-grade) path used to skip this check, so a later non-results 8-K was credited with LAST
+        // quarter's XBRL and labelled the next quarter (SM, VG: Q2 figures shown as "Q3 FY26"; MAN's real Q3 print graded on Q2).
+        maxLagDays: MAX_QUARTER_LAG_DAYS, checkAlreadyPublic: true,
       });
       if (fresh === 'quarter-stale') {
         pendingXbrl++; addPending(f, 'quarter-stale'); awaitingXbrl.push({ f, t, facts: fx }); continue;
       }
       if (fresh === 'reported-earlier') {
-        addPending(f, 'reported-earlier'); continue;
+        const sw = explicit ? announcingFiling(f as any, fund.q_end, fund.q_filed) : null;
+        if (!sw) { addPending(f, 'reported-earlier'); continue; }
+        // the quarter on file was announced by an earlier filing: grade it under THAT date
+        Object.assign(f, sw);
       }
       prepared.push({ f, t, facts: fx, shares: sharesOutstandingFromFacts(fx, fund.q_end), fundamentals: fund });
     }
@@ -1980,7 +1991,7 @@ export async function GET(req: Request) {
     // EPS the same evening, so we grade on EPS growth + surprise + reaction,
     // mark the row PRELIM, and let the full grade replace it when the filing
     // lands. Only for 8-K filers whose surprise row matches the filing date.
-    if (!explicit && awaitingXbrl.length) {
+    if (awaitingXbrl.length) {   // zzz1163 — the explicit re-grade gets the same release reading as the daily run
       const sur = await pooled(awaitingXbrl, 6, (x) => yahooEarningsHistory(x.f.ticker!));
       const prelimCiks = new Set<number>();
       let dbgRows = 0, dbgMatch = 0, dbgEps = 0, dbgRow = 0;

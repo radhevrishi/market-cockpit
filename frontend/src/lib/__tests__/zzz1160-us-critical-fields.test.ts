@@ -31,6 +31,6 @@ test('the release total-revenue row is read when its year-ago column differs fro
 
 test('the card never drops revenue silently; a net margin shows when there is no operating line', () => {
   const c = readFileSync(new URL('../../components/us-earnings-card.tsx', import.meta.url), 'utf8');
-  assert.match(c, /'n\/a \(bank\)' : 'Not read yet'/);
+  assert.match(c, /label="REVENUE" size=\{size\} value="Not read yet"/);   // zzz1163: no "n/a" — a lender shows net interest income instead
   assert.match(c, /label="NET MARGIN"/);
 });

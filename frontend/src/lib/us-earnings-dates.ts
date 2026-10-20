@@ -233,3 +233,17 @@ export function classifyXbrlFreshness(p: {
   }
   return 'current';
 }
+
+/** zzz1163 — the filing that announced the quarter ending `qEnd`: the latest earnings 8-K filed between the quarter end and a
+ *  week after its 10-Q/10-K, else the periodic filing itself. Null when neither is known. Pure. */
+export function announcingFiling(f: { cikNum: number; _earnings8k?: Array<{ filingDate: string; accession: string }>; _periodic?: { filingDate: string; accession: string; form: string } | null },
+  qEnd: string | null, qFiled: string | null): { filed: string; accession: string; form: string; items: string[]; filing_url: string } | null {
+  if (!qEnd) return null;
+  const lim = qFiled ? new Date(Date.parse(`${qFiled}T00:00:00Z`) + 7 * 86_400_000).toISOString().slice(0, 10) : null;
+  const url = (acc: string) => `https://www.sec.gov/Archives/edgar/data/${f.cikNum}/${acc.replace(/-/g, '')}/${acc}-index.htm`;
+  const hit = (f._earnings8k || []).filter((x) => x.filingDate > qEnd && (!lim || x.filingDate <= lim)).sort((a, b) => b.filingDate.localeCompare(a.filingDate))[0];
+  if (hit) return { filed: hit.filingDate, accession: hit.accession, form: '8-K', items: ['2.02'], filing_url: url(hit.accession) };
+  const p = f._periodic;
+  if (p && p.filingDate > qEnd) return { filed: p.filingDate, accession: p.accession, form: p.form, items: [], filing_url: url(p.accession) };
+  return null;
+}

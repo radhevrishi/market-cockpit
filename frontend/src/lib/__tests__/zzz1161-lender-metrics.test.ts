@@ -56,7 +56,7 @@ test('NII from its halves when the filer tags no net figure; equity ÷ assets fr
 
 test('lender card: no "n/a" revenue or debt/equity tiles', () => {
   const card = readFileSync(new URL('../../components/us-earnings-card.tsx', import.meta.url), 'utf8');
-  assert.match(card, /else if \(!isFin\)/);
+  assert.match(card, /else if \(!isFin \|\|/); assert.doesNotMatch(card, /'n\/a \(bank\)'/);
   assert.match(card, /EQUITY \/ ASSETS/);
 });
 

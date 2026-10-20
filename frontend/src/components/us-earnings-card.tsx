@@ -780,9 +780,9 @@ function TileRow({ r, gaapEpsY, opmD, adjEpsCur, adjEpsPrev, epsEst, surp, hasAd
         <Tile key="rev" label="TOTAL REVENUE (BANK)" size={size} {...swingTile(bRY, null)}
           sub={`${fmtUsdLevel(bRP)} → ${fmtUsdLevel(bR)} · interest + fee income`} />
       ) });
-    } else if (!isFin)   // zzz1161b — a lender's top line is the NET INTEREST INCOME tile below; no "n/a" revenue tile beside it
+    } else if (!isFin || (num((r as any).nii_curr_musd) == null && num((r as any).nii_prev_musd) == null))   // zzz1161b — a lender's top line is the NET INTEREST INCOME tile below; no "n/a" revenue tile beside it
     parts.push({
-      node: (size) => <Tile key="rev" label="REVENUE" size={size} value={isFin ? 'n/a (bank)' : 'Not read yet'} color="var(--mc-text-3)"
+      node: (size) => <Tile key="rev" label="REVENUE" size={size} value="Not read yet" color="var(--mc-text-3)"
         sub={isFin ? 'a lender reports net interest income, not revenue' : (r as any).prelim ? 'not found in the release; follows with the 10-Q' : 'not in the filing data'} />,
       w: 10,
     });
@@ -790,7 +790,9 @@ function TileRow({ r, gaapEpsY, opmD, adjEpsCur, adjEpsPrev, epsEst, surp, hasAd
 
   // zzz1161 (owner: "lenders report net interest income, not revenue — are you showing the correct metrics?") — a lender is judged
   // on NET INTEREST INCOME growth and on what its credit risk cost (provision for credit losses). Shown in addition to the rest.
-  if ((r as any).is_financial) {
+  // zzz1163 — only for a LENDER: a REIT or land company is "financial" by its industry code but earns rent, not interest; the tile
+  // shows when a net-interest figure exists for either year (a lender always has last year's in its filings)
+  if ((r as any).is_financial && (num((r as any).nii_curr_musd) != null || num((r as any).nii_prev_musd) != null)) {
     const nii = num((r as any).nii_curr_musd), niiP = num((r as any).nii_prev_musd), niiY = num((r as any).nii_yoy_pct);
     parts.push({ w: nii != null ? Math.max(14, moveWeight(niiY)) : 10, node: (size) => nii != null
       ? <Tile key="nii" label="NET INTEREST INCOME" size={size} {...swingTile(niiY, null)} sub={`${fmtUsdLevel(niiP)} → ${fmtUsdLevel(nii)}`} />

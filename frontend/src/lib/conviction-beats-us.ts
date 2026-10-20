@@ -479,6 +479,11 @@ export function usBenchFields(rawIn: Record<string, any>): Record<string, any> {
 
     revenue_curr_musd: num(r.revenue_curr_musd),
     revenue_prev_musd: num(r.revenue_prev_musd),
+    // zzz1161/1163 — a lender's own figures (net interest income, bank revenue, credit-loss provision, capital cushion)
+    nii_curr_musd: num(r.nii_curr_musd), nii_prev_musd: num(r.nii_prev_musd), nii_yoy_pct: num(r.nii_yoy_pct),
+    bank_revenue_curr_musd: num(r.bank_revenue_curr_musd), bank_revenue_prev_musd: num(r.bank_revenue_prev_musd), bank_revenue_yoy_pct: num(r.bank_revenue_yoy_pct),
+    provision_curr_musd: num(r.provision_curr_musd), provision_prev_musd: num(r.provision_prev_musd),
+    equity_assets_pct: num(r.equity_assets_pct), equity_assets_asof: str(r.equity_assets_asof),
     net_income_curr_musd: num(r.net_income_curr_musd),
     net_income_prev_musd: num(r.net_income_prev_musd),
     eps_curr: num(r.eps_curr),
@@ -978,6 +983,30 @@ export function syncUsConviction(entries: UsSyncEntry[]): number {
 }
 
 /**
+ * zzz1163 — a live entry that carries the SAME quarter's figures (same period end) as an archived quarter of the same company,
+ * under a later filing date and another quarter label, is last quarter mislabelled: a later non-results 8-K was credited with
+ * the quarter already on file (SM, VG: Q2 figures shown as a new "Q3 FY26"). The archived record is the true one and becomes the
+ * live entry again; the mislabelled copy is dropped. Pure.
+ */
+export function foldMislabelledQuarters(mapIn: Record<string, UsConvictionEntry>): Record<string, UsConvictionEntry> {
+  const map = { ...mapIn };
+  for (const k of Object.keys(map)) {
+    if (k.includes('@')) continue;
+    const live: any = map[k];
+    const pe = String(live?.period_end || '').slice(0, 10);
+    if (!pe) continue;
+    const twin = Object.keys(map).find((ak) => ak.startsWith(`${k}@`) && String((map[ak] as any).period_end || '').slice(0, 10) === pe
+      && String((map[ak] as any).filing_date || '') < String(live.filing_date || ''));
+    if (!twin) continue;
+    const a: any = map[twin];
+    const { bench_key, ...rest } = a;
+    map[k] = { ...rest, anchor: live.anchor || a.anchor, added_at: a.added_at || live.added_at } as any;
+    delete map[twin];
+  }
+  return map;
+}
+
+/**
  * zzz828 — the upsert, PURE (no window, no storage) so it can be tested.
  * Every record it writes is stamped with the current engine version.
  *
@@ -991,7 +1020,7 @@ export function syncUsConviction(entries: UsSyncEntry[]): number {
 export function syncUsConvictionMap(
   mapIn: Record<string, UsConvictionEntry>, entries: UsSyncEntry[], engineVersion: string = US_ENGINE_VERSION,
 ): { map: Record<string, UsConvictionEntry>; count: number; binned: UsConvictionEntry[]; nowMixed: string[] } {
-  const map: Record<string, UsConvictionEntry> = { ...mapIn };
+  const map: Record<string, UsConvictionEntry> = foldMislabelledQuarters({ ...mapIn });
   const binned: UsConvictionEntry[] = [];
   const nowMixed: string[] = [];
   let count = 0;
@@ -1037,6 +1066,10 @@ export function syncUsConvictionMap(
     if (!e.filing_date) continue;
 
     if (existing) {
+      // zzz1163 — a later filing carrying the SAME period end under another quarter label is not a new quarter
+      if (e.filing_date > existing.filing_date && e.period_end && existing.period_end
+        && String(e.period_end).slice(0, 10) === String(existing.period_end).slice(0, 10)
+        && e.quarter && existing.quarter && e.quarter !== existing.quarter) continue;
       const newerDate = e.filing_date > existing.filing_date;
       const tierUpgrade = tier === 'BLOCKBUSTER' && existing.tier === 'STRONG';
       if (!newerDate && !tierUpgrade) {
@@ -1160,7 +1193,7 @@ export function clearUsConviction() {
 /** Newest filing first, BLOCKBUSTER ahead of STRONG on the same date.
  *  Every entry is stamped with the map key it lives under (`bench_key`). */
 export function getUsConvictionList(): UsConvictionEntry[] {
-  const map = readUsConviction();
+  const map = foldMislabelledQuarters(readUsConviction());
   const out: UsConvictionEntry[] = [];
   // zzz828: a record saved before the write-time decode still reads cleanly.
   for (const k of Object.keys(map)) {
@@ -2265,6 +2298,14 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
  * old version returned early, so typing a ticker in the search box with NEW on
  * returned the whole bench, and every chip count collapsed to the same number.
  */
+/** zzz1163 — top-line growth: revenue, or for a lender bank revenue (net interest + fee income), else net interest income. */
+export function usSalesGrowth(e: any): number | null {
+  const r = num(e?.sales_yoy_pct);
+  if (r != null) return r;
+  if (!e?.is_financial) return null;
+  return num(e.bank_revenue_yoy_pct) ?? num(e.nii_yoy_pct);
+}
+
 export function passesUsConvictionFilter(e: UsConvictionEntry, f: UsConvFilters, win?: NewWindow): boolean {
   // ── scope: always enforced ──────────────────────────────────────────────
   if (f.q) {
@@ -2300,7 +2341,10 @@ export function passesUsConvictionFilter(e: UsConvictionEntry, f: UsConvFilters,
   }
 
   // ── quality gates ───────────────────────────────────────────────────────
-  const sales = num(e.sales_yoy_pct) ?? 0;
+  // zzz1163 — a lender has no revenue line: its top-line growth is bank revenue (net interest + fee income), else net interest income
+  const sales = usSalesGrowth(e) ?? 0;
+  // zzz1163 — the same filing re-graded below STRONG under today's rules does not pass the quality gates (it stays on the bench, labelled)
+  if (e.now_tier && f.sales != null) return false;
   const pat = num(e.net_profit_yoy_pct) ?? 0;
   const eps = num(e.eps_yoy_pct) ?? 0;
   if (f.sales != null && sales < f.sales) return false;
@@ -2586,7 +2630,7 @@ export function usCbFailReasons(e: UsConvictionEntry, f: UsConvFilters, win?: Ne
   if (passesUsConvictionFilter(e, f, win)) return [];
   const x: any = e;
   const W: Record<string, () => string> = {
-    sales: () => `revenue growth ${usFmt(x.sales_yoy_pct)}% (needs ${f.sales}%)`,
+    sales: () => e.now_tier ? `now ${e.now_tier} under current rules (the same filing, re-graded)` : `${num(x.sales_yoy_pct) == null && usSalesGrowth(e) != null ? 'bank revenue' : 'revenue'} growth ${usFmt(usSalesGrowth(e))}% (needs ${f.sales}%)`,
     eps: () => `EPS growth ${usFmt(x.eps_yoy_pct)}% (needs ${f.eps}%)`,
     pat: () => `net income growth ${usFmt(x.net_profit_yoy_pct)}% (needs ${f.pat}%)`,
     pead: () => 'post-results drift reading below your threshold',
@@ -2625,7 +2669,7 @@ function usMissingFor(e: UsConvictionEntry, k: string): string[] {
   const x: any = e;
   const need = (pairs: Array<[string, string]>) => pairs.filter(([field]) => num(x[field]) == null).map(([, w]) => w);
   switch (k) {
-    case 'sales': return need([['sales_yoy_pct', 'revenue growth']]);
+    case 'sales': return usSalesGrowth(e) != null ? [] : need([['sales_yoy_pct', 'revenue growth']]);
     // A loss→profit swing has no percentage, and a loss is not a missing figure.
     case 'eps': return x.eps_swing ? [] : need([['eps_yoy_pct', 'EPS growth']]);
     case 'pat': return x.net_income_swing ? [] : need([['net_profit_yoy_pct', 'net income growth']]);
