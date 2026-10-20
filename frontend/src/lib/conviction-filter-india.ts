@@ -17,6 +17,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { peadScore } from '@/lib/pead-score';
+import { finSubKind } from '@/lib/fin-kind';
 import { INDIA_PRESET } from '@/lib/quality-preset';
 import type { ConvictionEntry } from '@/lib/conviction-beats';
 import { runCriteriaCheck, type CriteriaCheck } from '@/lib/criteria-check';
@@ -512,7 +513,9 @@ export interface CbCashView {
 const finN = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
 export function cbCashView(e: any): CbCashView {
-  if (cbIsFinancial(e) || financialKindOfRow(e) || e?.cash_note === 'not meaningful for lenders') {
+  // zzz1164 — an asset-light financial (payments / fintech, asset manager, exchange, rating agency) is not a lender: its cash
+  // conversion means what it means for anyone (MPIMANIPAL showed "not meaningful (lender)" here while the EO card graded it)
+  if ((cbIsFinancial(e) || financialKindOfRow(e) || e?.cash_note === 'not meaningful for lenders') && finSubKind(e, true) !== 'asset-light') {
     return { ratio: null, state: 'na', basis: null, text: 'cash conversion not meaningful for lenders (skipped)' };
   }
   const fy = typeof e?.cash_fy === 'string' && e.cash_fy.trim() ? e.cash_fy.trim() : null;

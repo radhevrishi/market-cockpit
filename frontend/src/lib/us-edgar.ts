@@ -1266,5 +1266,8 @@ export function normalizeCompanyName(raw: string | null | undefined): string {
 export function isFinancialSic(sic: string | null): boolean {
   if (!sic) return false;
   const n = parseInt(sic, 10);
+  // zzz1164 — royalty holders and patent owners file under 67xx but are operating businesses (Digital Turbine 6794, LandBridge,
+  // Texas Pacific Land, oil royalty trusts 6792/6795): their cash conversion and debt ratios mean what they mean for anyone.
+  if ([6792, 6794, 6795].includes(n)) return false;
   return Number.isFinite(n) && n >= 6000 && n <= 6799;
 }

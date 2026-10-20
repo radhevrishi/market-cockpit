@@ -42,3 +42,16 @@ test('a services company whose only revenue line is "Revenues from services (a)"
   const r = financialsFromReleaseHtml(html, { revenue: 4634.4e6, operating_income: null, net_income: 18.0e6, eps: null } as any);
   assert.equal(r.revenue, 4840e6);
 });
+
+test('patent owners and royalty holders are operating companies, not financials (Digital Turbine 6794)', async () => {
+  const { isFinancialSic } = await import('../us-edgar');
+  assert.equal(isFinancialSic('6794'), false); assert.equal(isFinancialSic('6792'), false);
+  assert.equal(isFinancialSic('6022'), true); assert.equal(isFinancialSic('6798'), true);
+});
+
+test('India bench: an asset-light financial gets the real cash test, a lender is skipped', async () => {
+  const { cbCashView } = await import('../conviction-filter-india');
+  const base = { cash_fy: 'Mar 2026', ocf_annual_cr: 20, pat_annual_cr: 100, cfo_to_pat_ratio: 0.2 };
+  assert.equal(cbCashView({ ...base, company: 'Manipal Payment and Identity Solutions Ltd', sector: 'Financial Services', industry: 'Financial Technology (Fintech)' }).state, 'ok');
+  assert.equal(cbCashView({ ...base, company: 'Fedbank Financial Services Ltd', sector: 'Financial Services', industry: 'Non Banking Financial Company (NBFC)' }).state, 'na');
+});
