@@ -24,7 +24,14 @@ export function useSkyGoldFacts(keys: string[], names?: Record<string, string>):
   const [failed, setFailed] = useState(false);
   const asked = useRef<Set<string>>(new Set());
   const done = useRef<Set<string>>(new Set());
-  const sig = keys.slice().sort().join(',');
+  // zzz1165 — a failed fetch (the server restarting after a deploy) is asked again on its own: 20 s, 60 s, then every 3 minutes
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    if (!failed) return;
+    const t = setTimeout(() => setRetry((n) => n + 1), retry === 0 ? 20_000 : retry === 1 ? 60_000 : 180_000);
+    return () => clearTimeout(t);
+  }, [failed, retry]);
+  const sig = keys.slice().sort().join(',') + `#${retry}`;
   useEffect(() => {
     const askedSet = asked.current, doneSet = done.current;
     const todo = keys.filter((k) => !askedSet.has(k));

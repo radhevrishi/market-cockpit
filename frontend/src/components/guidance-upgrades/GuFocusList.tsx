@@ -276,7 +276,7 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
         </div>
         </div>
       </details>
-      {skyFailed && <div style={{ fontSize: 12, color: R.amber }}>The company figures could not be read just now — scores use the guidance checks only.</div>}
+      {skyFailed && <div style={{ fontSize: 12, color: R.amber }}>The company figures could not be read just now (the server may be restarting) — trying again automatically; scores use the guidance checks until then.</div>}
       {uniLine && (
         <div role={uniLine.tone === 'info' ? 'status' : 'alert'} style={{ fontSize: 12.5, color: uniLine.tone === 'error' ? R.red : uniLine.tone === 'warn' ? R.amber : R.dim, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <span>{uniLine.text}{uniLine.tone !== 'info' ? ' The raises below come from the event feed and are not affected.' : ''}</span>

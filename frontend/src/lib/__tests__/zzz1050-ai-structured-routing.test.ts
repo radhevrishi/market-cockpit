@@ -11,7 +11,7 @@ import {
   STRUCTURED_OUTPUT_MODE, classifierEntities, type JsonSchema,
 } from '../ai-schemas';
 import {
-  EXTRACT_PROMPT_VERSION, SYSTEM_PROMPT, GUIDANCE_TOOL, OK_INDEX_KEY, REFRESH_CURSOR_KEY, resultKey, extractDoc, runExtraction, refreshCandidates,
+  EXTRACT_PROMPT_VERSION, SYSTEM_PROMPT, GUIDANCE_TOOL, OK_INDEX_KEY, REFRESH_CURSOR_KEY, resultKey, extractDoc, runExtraction, refreshCandidates, refreshMax,
   type RawRow, type KvIo, type ModelCallResult, type ModelCallRequest, type ExtractDeps, type GuidanceDocStore,
 } from '../ai-guidance-extract';
 import {
@@ -351,7 +351,7 @@ function store(docs: GuidanceDoc[]): GuidanceDocStore & { marked: string[] } {
 
 describe('the run: escalations stay inside the sub-cap; records are written once', () => {
   test('ten hard documents, sub-cap $0.075, ~$0.04 per strong call → at most what the sub-cap allows', async () => {
-    const docs = Array.from({ length: 10 }, (_, i) => gdoc(`hard-${i}`, { ticker: `HARD${i}` }));
+    const docs = Array.from({ length: 10 }, (_, i) => gdoc(`hard-${i}`, { ticker: `HARD${i}`, text: `${TRANSCRIPT} Document ${i}.` }));   // zzz1165: distinct texts (one text is read once)
     const written: AiRunRecord[][] = [];
     const m = modelDeps(cheapBadShape, () => ({ ok: true, raw: { unreadable: false, rows: [goodRow] }, costUsd: 0.035, model: 'gpt-5' }));
     const deps: ExtractDeps = { ...m, store: store(docs), kv: fakeKv(), recordRuns: async (recs) => { written.push(recs); } };
@@ -469,4 +469,20 @@ test('zzz1050 build: the meter never imports lib/ai-runs or lib/db (it is bundle
   const meter = readFileSync(join(__dirname, '..', 'anthropic-meter.ts'), 'utf8');
   assert.ok(!/import\(\s*'\.\/ai-runs'\s*\)|from '\.\/db'|import\(\s*'\.\/db'\s*\)/.test(meter));
   assert.match(readFileSync(join(__dirname, '..', '..', 'instrumentation.ts'), 'utf8'), /setRunRecorder\(/);
+});
+
+describe('zzz1165: the same text under another link is read once', () => {
+  test('two links, one text → one AI call, the second document reuses the answer', async () => {
+    const a = gdoc('copy-a', { ticker: 'SAME' }); const b = { ...gdoc('copy-b', { ticker: 'SAME' }), url: 'https://www.bseindia.com/x.pdf' };
+    const m = modelDeps(cheapOk);
+    const kv = fakeKv();
+    const st = await runExtraction({ ...m, store: store([a]), kv }, { limit: 5, maxUsd: 1, refreshMax: 0, concurrency: 1 });
+    assert.equal(m.calls.length, 1); assert.equal(st.ok, 1);
+    const st2 = await runExtraction({ ...m, store: store([a, b].map((d) => d)), kv }, { limit: 5, maxUsd: 1, refreshMax: 0, concurrency: 1 });
+    assert.equal(m.calls.length, 1, 'no second AI call');
+    assert.equal(st2.copied, 1);
+  });
+  test('re-reading old results after a prompt edit is off unless asked', () => {
+    assert.equal(refreshMax(), 0);
+  });
 });

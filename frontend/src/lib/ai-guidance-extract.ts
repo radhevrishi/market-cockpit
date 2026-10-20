@@ -43,6 +43,17 @@ import {
 import { buildRunRecord, newRunId, type AiRunRecord, type AiRunOutcome } from './ai-runs';
 import { ruleRowsFor } from './rule-extract';   // zzz1156
 const rulesTriedKey = (docId: string) => `guidance-extract:rules-tried:v1:${docId}`;
+// zzz1165 (owner, 20 Oct: "it checks always and takes the same data always — I lose money for nothing"). A document is stored under
+// a hash of its LINK, so the same transcript filed on NSE, on BSE and listed on screener.in is three documents — and was read by the
+// AI three times. The answer is now kept under a hash of the TEXT too, and a document whose text was already read reuses that answer.
+export const textKey = (h: string) => `guidance-extract:v1:bytext:${h}`;
+/** A short, stable hash of a document's text (whitespace and case ignored): two 32-bit FNV-1a lanes + the length. Pure. */
+export function textHash(text: string): string {
+  const t = String(text || '').toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 400_000);
+  let a = 0x811c9dc5, b = 0x01000193 ^ t.length;
+  for (let i = 0; i < t.length; i++) { const c = t.charCodeAt(i); a = Math.imul(a ^ c, 0x01000193) >>> 0; b = Math.imul(b ^ c, 0x5bd1e995) >>> 0; b ^= b >>> 13; }
+  return `${a.toString(16).padStart(8, '0')}${b.toString(16).padStart(8, '0')}${t.length.toString(16)}`;
+}
 import { decideEscalation, estimateStrongUsd, guidanceWordHits, pickBetter, escalateMaxPerRun, EscalationGate, type EscalationReason } from './ai-guidance-router';
 
 export const EXTRACT_VERSION = 'v1';
@@ -956,7 +967,8 @@ export async function buildPlan(rows: GuidanceDocIndexRow[], io: PriorityIo | un
 export interface ExtractRunStat {
   at: string; available: boolean; unavailableReason: string | null; provider: string; model: string | null;
   queued: number; attempted: number; ok: number; noGuidance: number; screened?: number;
-  /** zzz1156: read by rules (no AI call) / left waiting for the AI in a rules-only run */ ruleRead?: number; waitingForAi?: number; unreadable: number; errors: number; skippedBackoff: number; alreadyDone: number; missingDoc: number;
+  /** zzz1156: read by rules (no AI call) / left waiting for the AI in a rules-only run */ ruleRead?: number; waitingForAi?: number;
+  /** zzz1165: documents whose text was already read under another link (NSE / BSE / screener copy) — answer reused, no AI */ copied?: number; unreadable: number; errors: number; skippedBackoff: number; alreadyDone: number; missingDoc: number;
   rowsKept: number; rowsDropped: number; dropReasons: Record<string, number>; spentUsd: number;
   stoppedBy: 'done' | 'limit' | 'budget_usd' | 'time' | 'cap' | 'unavailable' | 'locked' | 'no_store'; elapsedMs: number;
   usMode?: UsMode; plan?: QueuePlan['counts'];
@@ -987,7 +999,7 @@ export interface ExtractRunOpts {
 // document (only when this run's new-document queue is shorter than its limit), under the same per-run and daily caps. A re-read that finds
 // rows replaces the old result; one that finds none (or fails for good) keeps the old result, marked refreshedUnder so it is not re-read again.
 export const REFRESH_CURSOR_KEY = `guidance-extract:${EXTRACT_VERSION}:refresh-cursor`;
-export const refreshMax = () => { const raw = process.env.GUIDANCE_EXTRACT_REFRESH_MAX; const v = Number(raw); return raw == null || raw === '' || !Number.isFinite(v) ? 5 : Math.max(0, Math.min(20, Math.round(v))); };
+export const refreshMax = () => { const raw = process.env.GUIDANCE_EXTRACT_REFRESH_MAX; const v = Number(raw); return raw == null || raw === '' || !Number.isFinite(v) ? 0 : Math.max(0, Math.min(20, Math.round(v))); };   // zzz1165: off unless asked — a prompt edit no longer re-reads documents already read
 const REFRESH_SCAN_MAX = 1_000;
 interface RefreshCursor { v: string; pos: number; done: boolean }
 
@@ -1138,6 +1150,27 @@ export async function runExtraction(deps: ExtractDeps, o: ExtractRunOpts = {}): 
           if (isRefresh) { started--; await deps.kv.set(resultKey(row.docId), { ...refreshOld.get(row.docId)!, refreshedUnder: EXTRACT_PROMPT_VERSION }, TTL_RESULT_S).catch(() => undefined); }
           continue;
         }
+        // zzz1165 — the same text already read under another link: reuse that answer, no AI call
+        const tk = doc.text && doc.text.length >= 200 ? textKey(textHash(doc.text)) : null;
+        if (tk && !isRefresh) {
+          const src = await deps.kv.get<{ docId: string }>(tk).catch(() => null);
+          const prev = src && src.docId && src.docId !== row.docId ? await deps.kv.get<GuidanceExtractResult>(resultKey(src.docId)).catch(() => null) : null;
+          if (prev && (prev.status === 'ok' || prev.status === 'no_guidance' || prev.status === 'unreadable')) {
+            started--;
+            const copy: GuidanceExtractResult = {
+              ...prev, docId: row.docId, docUrl: doc.url || prev.docUrl, filedAt: doc.filedAt || prev.filedAt, docKind: doc.kind || prev.docKind,
+              ticker: doc.ticker ?? prev.ticker, company: doc.company || prev.company, extractedAt: nowIso, model: 'copy',
+              note: `same text as document ${src!.docId} — its answer reused, no AI call`,
+            };
+            stat.copied = (stat.copied || 0) + 1;
+            if (copy.status === 'ok') { stat.ok++; if (copy.rows.length) okIds.push(row.docId); }
+            else if (copy.status === 'no_guidance') stat.noGuidance++; else stat.unreadable++;
+            await deps.kv.set(resultKey(row.docId), copy, TTL_RESULT_S).catch(() => undefined);
+            newIndexIds.push(row.docId);
+            await Promise.resolve(deps.store.markExtracted(row.docId)).catch(() => undefined);
+            continue;
+          }
+        }
         stat.attempted++;
         const r = await extractDoc(doc, deps, { av, timeoutMs: Math.max(3_000, Math.min(45_000, remaining - 1_500)), gate, batchId });
         stat.spentUsd += r.costUsd || 0;
@@ -1184,6 +1217,7 @@ export async function runExtraction(deps: ExtractDeps, o: ExtractRunOpts = {}): 
         else if (result.status === 'no_guidance') stat.noGuidance++;
         else if (result.status === 'unreadable') stat.unreadable++;
         await deps.kv.set(resultKey(row.docId), result, TTL_RESULT_S).catch(() => undefined);
+        if (tk && (result.status === 'ok' || result.status === 'no_guidance' || result.status === 'unreadable')) await deps.kv.set(tk, { docId: row.docId }, TTL_RESULT_S).catch(() => undefined);   // zzz1165
         newIndexIds.push(row.docId);
         await Promise.resolve(deps.store.markExtracted(row.docId)).catch(() => undefined);
       }
