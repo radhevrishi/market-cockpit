@@ -79,3 +79,14 @@ test('zzz1153 — a provider account with no credit is said on the page; the run
   assert.match(line!, /paused: the AI provider account has no credit left/); assert.match(line!, /410 documents are waiting/);
   assert.match(readFileSync(new URL('../ai-verify.ts', import.meta.url), 'utf8'), /return \{ available: true, reason: null, provider, model, providerNote \};/);
 });
+
+test('zzz1157 — a company graded on another day for the same results is said with a jump, never "pending" or missing', async () => {
+  const { shownOnOtherDay } = await import('../eo-pending-reason');
+  const m = shownOnOtherDay({ _dropped: [{ ticker: 'rossari', reason: 'already shown on 2026-10-17 (same Q2 FY27 results)' }, { ticker: 'X', reason: 'board meeting only' }] });
+  assert.deepEqual([...m.entries()], [['ROSSARI', '2026-10-17']]);
+  const p = src('app/(dashboard)/earnings-opportunities/page.tsx');
+  assert.match(p, /Graded on another day \(same results\):/);
+  assert.match(p, /onClick=\{\(\) => setFilterDate\(d\)\}/);
+  assert.match(p, /graded on another day ↓/);
+  assert.match(p, /if \(pending\.length === 0\) return elsewhereBlock;/);
+});

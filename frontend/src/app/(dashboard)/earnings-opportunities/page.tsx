@@ -14,7 +14,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { resolveFyYear } from '@/lib/calendar-dates';
-import { pendingReasonMap, pendingReasonWord } from '@/lib/eo-pending-reason';   // zzz879
+import { pendingReasonMap, pendingReasonWord, shownOnOtherDay } from '@/lib/eo-pending-reason';   // zzz879
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import type { CSSProperties } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -2627,10 +2627,15 @@ Source label: ${coverageStats.source}`}
               );
               const dayKey = (view.filing_date || filterDate) as string;
               const sched = (dayKey && calData?.by_date?.[dayKey]) ? calData.by_date[dayKey] : [];
-              const pending = sched.filter((it: any) => !gset.has(String(it.symbol || '').toUpperCase())).length;
-              const total = filed + pending;
-              if (pending > 0) {
-                return `${total} ${total === 1 ? 'company' : 'companies'} today · ${filed} filed & graded · ${pending} results pending ↓`;
+              // zzz1157 — a company whose same results were graded on another day (ROSSARI: filed 17 Oct, on the calendar 18 Oct) is
+              // not "pending": it is counted as shown on that day
+              const other = shownOnOtherDay(view);
+              const pending = sched.filter((it: any) => !gset.has(String(it.symbol || '').toUpperCase()) && !other.has(String(it.symbol || '').toUpperCase())).length;
+              const elsewhere = sched.filter((it: any) => other.has(String(it.symbol || '').toUpperCase())).length;
+              const total = filed + pending + elsewhere;
+              const tail = elsewhere ? ` · ${elsewhere} graded on another day ↓` : '';
+              if (pending > 0 || elsewhere > 0) {
+                return `${total} ${total === 1 ? 'company' : 'companies'} today · ${filed} filed & graded${pending ? ` · ${pending} results pending ↓` : ''}${tail}`;
               }
               return `${filed} filed & graded · ${view.raw_items_total} scanned`;
             })()}
@@ -3523,9 +3528,22 @@ Source label: ${coverageStats.source}`}
             TIER_ORDER.flatMap((t) => (view.by_tier[t] || []).map((s) => (s.ticker || '').toUpperCase()))
           );
           // zzz878 — a name already graded on an earlier day for the same quarter is not "pending" here
-          const shownElsewhere = new Set<string>(((view as any)?._dropped || []).filter((d: any) => /^already shown on /.test(String(d?.reason || ''))).map((d: any) => String(d.ticker || '').toUpperCase()));
+          const otherDay = shownOnOtherDay(view);
+          const shownElsewhere = new Set<string>(otherDay.keys());
           const pending = scheduled.filter((it) => !gradedTickers.has((it.symbol || '').toUpperCase()) && !shownElsewhere.has((it.symbol || '').toUpperCase()));
-          if (pending.length === 0) return null;
+          // zzz1157 — names graded on another day for the same results: said, with a jump to that day (never silently missing)
+          const elsewhereBlock = otherDay.size > 0 ? (
+            <div data-other-day style={{ fontSize: 12.5, color: 'var(--mc-text-2)', margin: '6px 0', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'baseline' }}>
+              <b style={{ color: 'var(--mc-text-1)' }}>Graded on another day (same results):</b>
+              {Array.from(otherDay.entries()).map(([t, d]) => (
+                <button key={t} type="button" onClick={() => setFilterDate(d)} title={`${t}'s results were filed and graded on ${d}; the calendar also lists it on ${filterDate}. Click to open ${d}.`}
+                  style={{ fontSize: 12, padding: '2px 8px', borderRadius: 6, border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', background: 'transparent', color: 'var(--mc-cyan)', cursor: 'pointer', fontWeight: 700 }}>
+                  {t} → {new Date(`${d}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })}
+                </button>
+              ))}
+            </div>
+          ) : null;
+          if (pending.length === 0) return elsewhereBlock;
           // zzz1152 — until this day's graded answer has arrived, nothing is known about a name: say "checking", never "not out yet"
           const dayLoaded = !!gradedData && String((gradedData as any).filing_date || '') === String(filterDate || resolvedDateForGrading || '');
           const whyOf0 = pendingReasonMap(view);   // zzz879 — a short reason per name
@@ -3552,6 +3570,7 @@ Source label: ${coverageStats.source}`}
                   return `📊 ${total} ${total === 1 ? 'company' : 'companies'} on the calendar for ${filterDate} — ${filed} filed & graded below · ${pending.length} results still pending (shown here).`;
                 })()}
               </div>
+              {elsewhereBlock}
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
                 <span style={{ fontSize: 16, fontWeight: 800, color: 'var(--mc-warn)' }}>📅 SCHEDULED TODAY · RESULTS PENDING</span>
                 <span style={{ fontSize: 12, color: 'var(--mc-warn)', fontWeight: 800 }}>{pending.length} {pending.length === 1 ? 'company' : 'companies'}</span>

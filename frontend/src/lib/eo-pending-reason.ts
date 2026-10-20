@@ -32,3 +32,14 @@ export function pendingReasonMap(payload: any): Map<string, PendingWhy> {
   for (const t of Array.from(failed)) if (!out.has(t)) out.set(t, pendingReasonWord(null, true));
   return out;
 }
+
+/** zzz1157 — names the day's payload left out because the same results were graded on another day: ticker → that day. Pure. */
+export function shownOnOtherDay(payload: any): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const d of (Array.isArray(payload?._dropped) ? payload._dropped : [])) {
+    const m = /^already shown on (\d{4}-\d{2}-\d{2})/.exec(String(d?.reason || ''));
+    const t = String(d?.ticker || '').toUpperCase();
+    if (m && t) out.set(t, m[1]);
+  }
+  return out;
+}
