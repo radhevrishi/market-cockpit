@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-10-21T06:06:33Z",
+  "lastSync": "2026-10-21T09:25:13Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -10,12 +10,12 @@
     },
     {
       "name": "capex.csv",
-      "size": 9035,
+      "size": 9032,
       "displayName": "CAPEX"
     },
     {
       "name": "debt-reduction.csv",
-      "size": 10097,
+      "size": 10096,
       "displayName": "Debt Reduction"
     },
     {
@@ -85,12 +85,12 @@
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63320,
+      "size": 63313,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65577,
+      "size": 65573,
       "displayName": "Working watchlist"
     },
     {
