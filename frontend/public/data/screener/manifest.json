@@ -1,21 +1,21 @@
 {
-  "lastSync": "2026-10-22T09:28:07Z",
+  "lastSync": "2026-10-22T17:13:30Z",
   "ok": 19,
   "fail": 0,
   "files": [
     {
       "name": "100-baggers-sales-and-eps-growth.csv",
-      "size": 11637,
+      "size": 12050,
       "displayName": "100 baggers sales and eps growth"
     },
     {
       "name": "capex.csv",
-      "size": 9487,
+      "size": 9907,
       "displayName": "CAPEX"
     },
     {
       "name": "debt-reduction.csv",
-      "size": 10521,
+      "size": 10931,
       "displayName": "Debt Reduction"
     },
     {
@@ -40,12 +40,12 @@
     },
     {
       "name": "lowequitycapital.csv",
-      "size": 4439,
+      "size": 4874,
       "displayName": "Lowequitycapital"
     },
     {
       "name": "monthly-volume-pockets.csv",
-      "size": 6694,
+      "size": 4591,
       "displayName": "Monthly Volume Pockets"
     },
     {
@@ -55,17 +55,17 @@
     },
     {
       "name": "multibagger2-ignoring-trend.csv",
-      "size": 3704,
+      "size": 3705,
       "displayName": "Multibagger2 Ignoring trend"
     },
     {
       "name": "pead-master-screener-rishi-framework.csv",
-      "size": 1635,
+      "size": 1633,
       "displayName": "PEAD MASTER SCREENER - Rishi Framework"
     },
     {
       "name": "rajeev-thakkar-ppfas-screener.csv",
-      "size": 1602,
+      "size": 1600,
       "displayName": "Rajeev Thakkar PPFAS Screener"
     },
     {
@@ -75,27 +75,27 @@
     },
     {
       "name": "turnarounds.csv",
-      "size": 2396,
+      "size": 2812,
       "displayName": "Turnarounds"
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 19490,
+      "size": 19495,
       "displayName": "Latest Portfolio"
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63327,
+      "size": 63334,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65596,
+      "size": 65601,
       "displayName": "Working watchlist"
     },
     {
       "name": "weekly-volume-pockets.csv",
-      "size": 4182,
+      "size": 3354,
       "displayName": "Weekly Volume Pockets"
     }
   ]
