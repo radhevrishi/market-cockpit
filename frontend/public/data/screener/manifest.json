@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-10-24T08:56:13Z",
+  "lastSync": "2026-10-24T15:59:45Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -10,7 +10,7 @@
     },
     {
       "name": "capex.csv",
-      "size": 9511,
+      "size": 9096,
       "displayName": "CAPEX"
     },
     {
@@ -60,7 +60,7 @@
     },
     {
       "name": "pead-master-screener-rishi-framework.csv",
-      "size": 1635,
+      "size": 2096,
       "displayName": "PEAD MASTER SCREENER - Rishi Framework"
     },
     {
@@ -75,17 +75,17 @@
     },
     {
       "name": "turnarounds.csv",
-      "size": 2813,
+      "size": 3181,
       "displayName": "Turnarounds"
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 19507,
+      "size": 19509,
       "displayName": "Latest Portfolio"
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63341,
+      "size": 63344,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
