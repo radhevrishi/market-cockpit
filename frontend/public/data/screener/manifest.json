@@ -1,21 +1,21 @@
 {
-  "lastSync": "2026-10-24T15:59:45Z",
+  "lastSync": "2026-10-25T09:12:42Z",
   "ok": 19,
   "fail": 0,
   "files": [
     {
       "name": "100-baggers-sales-and-eps-growth.csv",
-      "size": 12051,
+      "size": 12049,
       "displayName": "100 baggers sales and eps growth"
     },
     {
       "name": "capex.csv",
-      "size": 9096,
+      "size": 9095,
       "displayName": "CAPEX"
     },
     {
       "name": "debt-reduction.csv",
-      "size": 11792,
+      "size": 11795,
       "displayName": "Debt Reduction"
     },
     {
@@ -40,12 +40,12 @@
     },
     {
       "name": "lowequitycapital.csv",
-      "size": 4460,
+      "size": 4461,
       "displayName": "Lowequitycapital"
     },
     {
       "name": "monthly-volume-pockets.csv",
-      "size": 3321,
+      "size": 4191,
       "displayName": "Monthly Volume Pockets"
     },
     {
@@ -55,7 +55,7 @@
     },
     {
       "name": "multibagger2-ignoring-trend.csv",
-      "size": 3704,
+      "size": 3703,
       "displayName": "Multibagger2 Ignoring trend"
     },
     {
@@ -80,22 +80,22 @@
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 19509,
+      "size": 19512,
       "displayName": "Latest Portfolio"
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63344,
+      "size": 63342,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65595,
+      "size": 65599,
       "displayName": "Working watchlist"
     },
     {
       "name": "weekly-volume-pockets.csv",
-      "size": 3337,
+      "size": 4211,
       "displayName": "Weekly Volume Pockets"
     }
   ]
