@@ -72,7 +72,7 @@ export const THEMES: Array<{ name: string; re: RegExp; structural: boolean }> = 
   { name: 'Defence & aerospace', re: /\b(?:defen[cs]e|aerospace|missiles?|munitions?|ammunition|radar|military|DRDO|HAL|BEL|navy|army|air force|drones?|UAV|satellites?)\b/i, structural: true },
   { name: 'Railways & metro', re: /\b(?:railways?|rail|metro|Vande Bharat|wagons?|locomotives?|coaches|RVNL|IRCON|signall?ing)\b/i, structural: true },
   { name: 'Electronics / EMS / semiconductors', re: /\b(?:EMS|electronics manufactur\w*|PCBs?|printed circuit|semiconductors?|chips?|OSAT|wafers?|fab|display|components? for mobiles?)\b/i, structural: true },
-  { name: 'Pharma CDMO / API / healthcare', re: /\b(?:CDMO|CRAMS|API|ANDA|USFDA|FDA|drug|pharma\w*|biolog\w+|clinical|hospital|diagnostic|medical devices?|vaccine|peptide|GLP-?1)\b/i, structural: true },
+  { name: 'Pharma CDMO / API / healthcare', re: /\b(?:CDMO|CRAMS|API|ANDA|USFDA|FDA|drug|pharma\w*|biolog\w+|clinical|hospitals?|healthcare|health care|diagnostic\w*|medical devices?|vaccines?|peptides?|GLP-?1|formulations?|therapeutics?|biotech\w*)\b/i, structural: true },
   { name: 'Specialty chemicals & materials', re: /\b(?:specialty chemicals?|chemicals?|fluoro\w*|polymers?|resins?|pigments?|agrochem\w*|catalysts?|carbon black|graphite|rare earths?|lithium)\b/i, structural: true },
   { name: 'Auto / EV components', re: /\b(?:auto(?:motive)? components?|EVs?|electric vehicles?|wheels?|forgings?|castings?|two-?wheelers?|tractors?|commercial vehicles?|OEMs?)\b/i, structural: false },
   { name: 'Capital goods / industrial machinery', re: /\b(?:capital goods|machinery|machine tools?|pumps?|valves?|compressors?|engineering|fabrication|heavy equipment|cranes?)\b/i, structural: true },
@@ -80,6 +80,10 @@ export const THEMES: Array<{ name: string; re: RegExp; structural: boolean }> = 
   { name: 'Telecom / networking', re: /\b(?:telecom|5G|network(?:ing)?|fib(?:re|er) optic|broadband|towers?)\b/i, structural: true },
   { name: 'Software / IT services / SaaS', re: /\b(?:software|SaaS|cloud|IT services|digital|cyber ?security|subscription|ARR)\b/i, structural: false },
   { name: 'Metals & mining', re: /\b(?:steel|aluminium|aluminum|copper|zinc|iron ore|mining|minerals?|coal)\b/i, structural: false },
+  { name: 'Paper & packaging', re: /\b(?:paper|paperboard|packaging|kraft|corrugat\w*|pulp|labels?|flexible packaging)\b/i, structural: false },
+  { name: 'Cement & building materials', re: /\b(?:cement|tiles?|sanitaryware|pipes? and fittings|plywood|laminates?|building materials?|glass)\b/i, structural: false },
+  { name: 'Sugar / agri / food processing', re: /\b(?:sugar|ethanol|distiller\w*|agri\w*|fertili[sz]ers?|seeds?|edible oils?|dairy|poultry|aquaculture|tea|coffee|rice)\b/i, structural: false },
+  { name: 'Power utilities & distribution', re: /\b(?:power utilit\w+|discoms?|electricity|power distribution|power generation compan\w+|independent power)\b/i, structural: true },
   { name: 'Consumer / retail / brands', re: /\b(?:consumer|FMCG|retail|stores?|brands?|apparel|footwear|jewell?ery|beverages?|foods?|restaurants?|QSR|e-?commerce)\b/i, structural: false },
   { name: 'Financials / lending', re: /\b(?:bank|NBFC|lending|loans?|AUM|insurance|asset management|broking|fintech|microfinance)\b/i, structural: false },
   { name: 'Real estate', re: /\b(?:real estate|realty|residential|housing|pre-?sales|land parcels?|REIT)\b/i, structural: false },
@@ -90,15 +94,19 @@ export const STRUCTURAL_THEMES = new Set(THEMES.filter((t) => t.structural).map(
 export const OTHER_THEME = 'Other / not classified yet';
 
 /** The theme a set of texts points to: the theme with the most words, ties to the earlier (more specific) one. Pure. */
-export function themeOf(texts: Array<string | null | undefined>): { theme: string; why: string | null } {
-  const hay = texts.filter(Boolean).join(' \n ').slice(0, 6000);
+export function themeOf(texts: Array<string | null | undefined>, industry?: string | null): { theme: string; why: string | null } {
+  // the company's industry counts twice: it says what the company IS, the filing says what happened
+  const hay = [industry, industry, ...texts].filter(Boolean).join(' \n ').slice(0, 6000);
   let best: { name: string; n: number; word: string } | null = null;
   for (const t of THEMES) {
     const g = new RegExp(t.re.source, 'gi');
     const hits = hay.match(g);
     if (hits && hits.length && (!best || hits.length > best.n)) best = { name: t.name, n: hits.length, word: hits[0] };
   }
-  return best ? { theme: best.name, why: `the filing / news says "${best.word}"` } : { theme: OTHER_THEME, why: null };
+  if (best) return { theme: best.name, why: `the filing / industry says "${best.word}"` };
+  // zzz1167 — no table theme: the company's own industry becomes the theme (a NEW theme the table did not know), never "Other"
+  const ind = String(industry || '').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
+  return ind ? { theme: ind.slice(0, 60), why: 'the company\'s industry (screener)' } : { theme: OTHER_THEME, why: null };
 }
 
 // ── the multibagger read (rules; the AI read is separate and labelled as such) ──
@@ -142,6 +150,10 @@ interface Hit { id: string; label: string; kind: TgKind; strong: boolean; offici
 
 function hitsOf(it: AnyItem): Hit[] {
   const out: Hit[] = [];
+  // zzz1168 — "only the most important": a deal counts as STRONG only when it is material to the company (an associate stake
+  // going 32% → 36% is not transformational); an order counts unless it is known to be small.
+  const mat = String((it.market === 'US' ? it.usCard?.material?.label : it.materiality?.label) || '').toUpperCase();
+  const material = /SIGNIFICANT|MODERATE|HIGH/.test(mat), small = /SMALL|LOW/.test(mat);
   const cats: any[] = it.market === 'US' ? (it.usCard?.catalysts || []) : (it.inCard?.catalysts || []);
   for (const c of cats) {
     if (!c || c.routine || c.direction === 'negative' || c.direction === 'neutral') continue;
@@ -149,9 +161,12 @@ function hitsOf(it: AnyItem): Hit[] {
     const id = String(c.id || '');
     const kind = STRONG[id] ?? MEDIUM[id];
     if (!kind) continue;
+    let strong = !!STRONG[id];
+    if (strong && kind === 'STRATEGIC' && !material) strong = false;
+    if (strong && kind === 'ORDERS' && small) strong = false;
     if (id === 'guidance' && !/rais|upgrad|increas|higher|improv/i.test(String(c.sentence || ''))) continue;   // India: only a RAISED guide
     const official = it.market === 'US' ? c.source === 'SEC' : (c.source === 'FILING' || c.confirmedByFiling === true);
-    out.push({ id, label: String(c.label || id), kind, strong: !!STRONG[id], official, date: c.date ?? null, sentence: String(c.sentence || ''), url: c.url ?? null });
+    out.push({ id, label: String(c.label || id), kind, strong, official, date: c.date ?? null, sentence: String(c.sentence || ''), url: c.url ?? null });
   }
   return out;
 }
@@ -197,17 +212,22 @@ export function transformationalFrom(items: AnyItem[], market: TgMarket, session
     const strongAny = hits.filter((h) => h.strong);
     // two medium events count only when they are not both just the results release (record / margin lines come with every good quarter)
     const medOff = hits.filter((h) => !h.strong && h.official && h.kind !== 'RESULTS');
-    if (!strongAny.length && !infl && medOff.length < 2) continue;
+    // zzz1167 (owner: "most of the multibaggers from AI Daily Gainers should be here") — a candidate is any positive event with
+    // substance: a strong event, an inflection, a medium event from the company, or filed growth (sales ≥ 15% or profit ≥ 30%).
+    // Strong / inflection / two medium events always stay; the rest stay when the multibagger read is at least LOW-plus (≥ 40).
+    const filedGrowth = (usOfficialEarnings || inOfficialEarnings) && ((facts.revenueYoY ?? 0) >= 15 || (facts.patYoY ?? 0) >= 30);
+    const core = strongAny.length > 0 || !!infl || medOff.length >= 2;
+    if (!core && !medOff.length && !filedGrowth) continue;
     const lead = strongOff[0] || (infl ? null : strongAny[0]) || medOff[0] || null;
     const kind: TgKind = lead ? lead.kind : (facts.revenueYoY != null && facts.patYoY == null && /turn|profit/i.test(String(it.headline || '')) ? 'TURNAROUND' : 'RESULTS');
-    const evidence: 'official' | 'press' = strongOff.length || infl || medOff.length >= 2 ? 'official' : 'press';
+    const evidence: 'official' | 'press' = strongOff.length || infl || medOff.length || filedGrowth ? 'official' : 'press';
     const durationYears = it.persistence === 'YEARS' || it.potentialDuration?.value === 'YEARS';
     const matLabel = market === 'US' ? (it.usCard?.material?.label ?? null) : (it.materiality?.label ?? null);
     const significant = /SIGNIFICANT|HIGH/i.test(String(matLabel || ''));
     const strength: TgStrength = (strongOff.length && (durationYears || significant || infl)) ? 'TRANSFORMATIONAL'
       : (infl || strongOff.length) ? 'INFLECTION' : 'NOTABLE';
     const company = String(it.companyName || it.company || it.ticker);
-    const th = themeOf([company, it.headline, it.whatChanged, ...hits.map((h) => h.sentence), it.quote]);
+    const th = themeOf([company, it.headline, it.whatChanged, ...hits.map((h) => h.sentence), it.quote], it.industry || it.sector || null);
     const signals = Array.from(new Set([...(infl ? [`Earnings inflection: ${infl}`] : []), ...hits.map((h) => `${h.label}${h.official ? '' : ' (press)'}`)])).slice(0, 8);
     const eventDate = (lead?.date || it.headlineFiledDate || it.filedDate || null);
     const base = {
@@ -225,6 +245,10 @@ export function transformationalFrom(items: AnyItem[], market: TgMarket, session
       sourceUrl: lead?.url || it.sourceUrl || null, materiality: matLabel, themeWhy: th.why,
       mb: multibaggerOf(base as any),
     });
+    // zzz1168 — kept: a filed STRONG event, an inflection or two medium events from the company; anything weaker (press-only,
+    // one medium event, plain growth) only with a clear multibagger read (≥ 55)
+    const firm = strongOff.length > 0 || !!infl || medOff.length >= 2;
+    if (!firm && out[out.length - 1].mb.score < 55) out.pop();
   }
   return out;
 }

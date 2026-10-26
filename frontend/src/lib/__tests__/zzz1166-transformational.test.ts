@@ -40,7 +40,7 @@ test('never kept: negative, price commentary, no catalyst, a plain good quarter,
   assert.equal(transformationalFrom([routine], 'IN', '2026-10-23').length, 0);
 });
 
-test('a US order from an SEC filing is kept; a press-only one is kept as press (verify)', () => {
+test('a US order from an SEC filing is kept; a press-only one is not', () => {
   const us = { ticker: 'TTMI', company: 'TTM Technologies', market: 'US', eventClass: 'CONFIRMED_MATERIAL', direction: 'positive', headline: 'Q3 results',
     marketCap: 6_500_000_000, returns: { w1: -14, m1: -36, m3: -43 }, flags: {}, persistence: 'QUARTER', usCard: {
       source: { tier: 'SEC' }, material: { label: 'HIGH' },
@@ -50,8 +50,8 @@ test('a US order from an SEC filing is kept; a press-only one is kept as press (
   assert.equal(x.kind, 'ORDERS'); assert.equal(x.strength, 'TRANSFORMATIONAL'); assert.equal(x.marketCap, 6500);
   assert.equal(x.theme, 'AI / data-centre infrastructure');
   const press = { ...us, usCard: { ...us.usCard, source: { tier: 'PRESS' }, earnings: null, catalysts: [{ ...us.usCard.catalysts[0], source: 'PRESS' }] } };
-  const [p] = transformationalFrom([press], 'US', '2026-10-23');
-  assert.equal(p.evidence, 'press'); assert.equal(p.strength, 'NOTABLE');
+  // zzz1168 — only the most important: a press-only claim without a strong multibagger read is not kept
+  assert.equal(transformationalFrom([press], 'US', '2026-10-23').length, 0);
 });
 
 test('themes from the company\'s own words; nothing matched = Other', () => {
@@ -101,4 +101,10 @@ test('the archive reads the view\'s real lists (queue / watch / portfolio / cont
   const it = (t: string) => ({ ticker: t });
   const v = { top3: [it('A')], queue: [it('A'), it('B')], watch: [it('C')], portfolio: [it('B')], context: [it('D')], noCatalyst: [it('E')] };
   assert.deepEqual(viewItems(v).map((x) => x.ticker), ['A', 'B', 'C', 'D']);
+});
+
+test('a small strategic step (an associate stake 32% → 36%, materiality unknown) is not transformational on its own', () => {
+  const it = inItem({ earnings: null, materiality: { label: 'UNKNOWN' }, inCard: { catalysts: [{ id: 'acquisition', label: 'Acquisition', direction: 'positive', source: 'FILING', date: '2026-10-24', sentence: 'increase in effective shareholding from 32.40% to 35.78%', ageDays: 2 }] } });
+  const out = transformationalFrom([it], 'IN', '2026-10-26');
+  assert.ok(out.length === 0 || out[0].strength !== 'TRANSFORMATIONAL');
 });

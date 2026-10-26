@@ -5,7 +5,7 @@
 // 60 days, grouped by theme, with the themes and companies that are NEW this week and a multibagger-chance read (rules,
 // plus an AI second opinion on request). Filled automatically from the daily research; no AI runs on page load.
 // ═══════════════════════════════════════════════════════════════════════════
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import NavLink from '@/components/NavLink';
 import { R, tint } from '@/components/special-situations/radar-tokens';
 import { MbChip, MB_COLOR } from '@/components/transformational/MbChip';
@@ -54,25 +54,9 @@ export default function TransformationalGainersPage() {
   }, [days]);
   useEffect(() => { load(); }, [load]);
 
-  // zzz1166 — the first visit of a day fills the board from every gainers session still stored (≈ the last 10 days, India + USA):
-  // stored research only, no AI. The daily job does the same on its own; this makes a new board useful at once.
-  const [filling, setFilling] = useState<string | null>(null);
-  useEffect(() => {
-    if (state !== 'ok' || !data) return;
-    const stamp = `mc:transformational:backfill:${new Date().toISOString().slice(0, 10)}`;
-    try { if (localStorage.getItem(stamp)) return; localStorage.setItem(stamp, '1'); } catch { /* run once anyway */ }
-    (async () => {
-      const dates: string[] = [];
-      for (let i = 0; i <= 14; i++) { const d = new Date(Date.now() - i * 86_400_000); if (d.getUTCDay() % 6 !== 0) dates.push(d.toISOString().slice(0, 10)); }
-      let saved = 0, n = 0;
-      for (const m of ['IN', 'US']) for (const d of dates) {
-        n++; setFilling(`Filling the board from stored gainers research… ${n}/${dates.length * 2}`);
-        try { const r = await fetch(`/api/v1/ai-gainers/research?market=${m}&date=${d}&archive=1&lite=1`, { cache: 'no-store' }); const j = await r.json().catch(() => null); saved += Number(j?.archived || 0); } catch { /* next */ }
-      }
-      setFilling(null);
-      if (saved > 0) load();
-    })();
-  }, [state, data, load]);
+  // zzz1167 — no browser backfill: 30 research views built back to back held the whole server for minutes (every page slow).
+  // The daily job fills the board from the stored sessions, spaced out (lib/app-scheduler transformational-archive).
+  const filling: string | null = null;
 
   const newSet = useMemo(() => new Set(data?.newCompanies || []), [data]);
   const rank: Record<MbLabel, number> = { HIGH: 3, MEDIUM: 2, LOW: 1, UNLIKELY: 0 };
@@ -116,118 +100,208 @@ export default function TransformationalGainersPage() {
 
   const chip = (on: boolean, c: string = R.cyan): React.CSSProperties => ({ cursor: 'pointer', fontSize: 12, fontWeight: 700, padding: '4px 10px', borderRadius: 999, border: `1px solid ${on ? c : R.border}`, color: on ? c : R.dim, background: on ? tint(c, 12) : 'transparent' });
 
-  return (
-    <div style={{ maxWidth: 1240, margin: '0 auto', padding: 16, color: R.text }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-        <h1 style={{ fontSize: 22, fontWeight: 900, margin: 0 }}>🧬 Transformational Gainers</h1>
-        <span style={{ fontSize: 12, color: R.dim }}>India + USA · last {days} days · from AI Daily Gainers</span>
-        <NavLink href="/ai-gainers" style={{ fontSize: 12, color: R.cyan, marginLeft: 'auto' }}>AI Daily Gainers →</NavLink>
-      </div>
-      <p style={{ fontSize: 13, color: R.dim, margin: '6px 0 12px', lineHeight: 1.5 }}>
-        Only the events that can change future earnings: large orders, capacity coming on stream, approvals, a new business, strategic deals,
-        raised guidance and earnings inflections — taken from each day&apos;s gainers research and kept {days} days. Grouped by theme, with the
-        themes and companies that are new this week. The multibagger chance is a research prompt from the filed facts, not a forecast.
-      </p>
+  const kpi = useMemo(() => {
+    const cos = groups.length;
+    const trans = groups.filter((g) => g.items.some((x) => x.strength === 'TRANSFORMATIONAL')).length;
+    const high = groups.filter((g) => g.items.some((x) => x.mb.label === 'HIGH' || x.ai?.label === 'HIGH')).length;
+    const fresh = groups.filter((g) => newSet.has(g.key)).length;
+    const newThemes = themes.filter((t) => t.isNew).length;
+    return { cos, trans, high, fresh, themes: themes.length, newThemes };
+  }, [groups, newSet, themes]);
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  const maxThemeCos = Math.max(1, ...themes.map((t) => t.companies));
+  const sectionTitle: React.CSSProperties = { fontSize: 11, fontWeight: 800, letterSpacing: 0.6, textTransform: 'uppercase', color: R.faint, margin: '0 0 6px' };
 
-      {/* controls */}
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
-        {(['ALL', 'IN', 'US'] as Mkt[]).map((m) => <button key={m} type="button" style={chip(mkt === m)} onClick={() => setMkt(m)}>{m === 'ALL' ? 'All' : m === 'IN' ? '🇮🇳 India' : '🇺🇸 USA'}</button>)}
-        <span style={{ width: 8 }} />
-        {[60, 30, 14, 7].map((d) => <button key={d} type="button" style={chip(days === d)} onClick={() => setDays(d)}>{d}d</button>)}
-        <span style={{ width: 8 }} />
-        <button type="button" style={chip(smallMid, R.green)} onClick={() => setSmallMid((v) => !v)} title="India under ₹25,000 Cr, USA under $10B">Small & mid only</button>
-        <button type="button" style={chip(onlyNew, R.violet)} onClick={() => setOnlyNew((v) => !v)}>🆕 New this week ({data?.newCompanies.length ?? 0})</button>
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search company, ticker, theme…" style={{ fontSize: 13, padding: '5px 10px', borderRadius: 8, border: `1px solid ${R.border}`, background: R.bg, color: R.text, minWidth: 200 }} />
+  return (
+    <div className="tg-page" style={{ padding: '14px 20px 28px', color: R.text, width: '100%', boxSizing: 'border-box' }}>
+      <style>{`
+        .tg-grid{display:grid;grid-template-columns:270px minmax(0,1fr);gap:16px;align-items:start}
+        .tg-side{position:sticky;top:8px;display:flex;flex-direction:column;gap:12px}
+        .tg-kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin:10px 0 14px}
+        .tg-table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}
+        .tg-table th{position:sticky;top:0;background:var(--mc-bg-1);text-align:left;font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--mc-text-3);padding:8px 10px;border-bottom:2px solid var(--mc-bg-4);white-space:nowrap}
+        .tg-table td{padding:9px 10px;border-bottom:1px solid var(--mc-bg-4);vertical-align:top}
+        .tg-row{cursor:pointer}
+        .tg-row:hover td{background:color-mix(in srgb, var(--mc-cyan) 6%, transparent)}
+        .tg-clamp{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+        @media (max-width:1100px){.tg-grid{grid-template-columns:1fr}.tg-side{position:static}.tg-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}}
+        @media (max-width:640px){.tg-hide-sm{display:none}.tg-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+      `}</style>
+
+      {/* header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <div>
+          <h1 style={{ fontSize: 22, fontWeight: 900, margin: 0, letterSpacing: 0.2 }}>🧬 Transformational Gainers</h1>
+          <div style={{ fontSize: 13, color: R.dim, marginTop: 2 }}>Events from AI Daily Gainers that can change future earnings · India + USA · rolling {days} days</div>
+        </div>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button type="button" disabled={!!aiBusy} onClick={() => askAi(null, 'auto')} style={{ ...chip(true, R.violet), padding: '7px 14px', fontSize: 13, opacity: aiBusy ? 0.6 : 1 }}
+            title="The AI reads the strongest events that have no AI read yet (up to 12 at a time, 60 a day; each event is read once).">
+            {aiBusy === 'auto' ? '🤖 Reading…' : '🤖 AI multibagger read · top events'}
+          </button>
+          <NavLink href="/ai-gainers" style={{ fontSize: 13, color: R.cyan, fontWeight: 700 }}>AI Daily Gainers →</NavLink>
+        </div>
       </div>
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
-        <span style={{ fontSize: 12, color: R.faint }}>Strength:</span>
-        {(['TRANSFORMATIONAL', 'INFLECTION', 'NOTABLE'] as TgStrength[]).map((s) => <button key={s} type="button" style={chip(strength === s, STRENGTH_COLOR[s])} onClick={() => setStrength((v) => (v === s ? null : s))}>{STRENGTH_WORD[s]}</button>)}
-        <span style={{ width: 8 }} />
-        <span style={{ fontSize: 12, color: R.faint }}>Multibagger chance at least:</span>
-        {(['HIGH', 'MEDIUM', 'LOW'] as MbLabel[]).map((s) => <button key={s} type="button" style={chip(mbMin === s, MB_COLOR[s])} onClick={() => setMbMin((v) => (v === s ? null : s))}>{MB_WORD[s]}</button>)}
-        <span style={{ width: 8 }} />
-        <span style={{ fontSize: 12, color: R.faint }}>Sort:</span>
-        <button type="button" style={chip(sort === 'newest')} onClick={() => setSort('newest')}>Newest</button>
-        <button type="button" style={chip(sort === 'chance')} onClick={() => setSort('chance')}>Multibagger chance</button>
-        <button type="button" disabled={!!aiBusy} onClick={() => askAi(null, 'auto')} style={{ ...chip(true, R.violet), marginLeft: 'auto', opacity: aiBusy ? 0.6 : 1 }}
-          title="The AI reads the strongest events that have no AI read yet (up to 12 at a time, 60 a day; each event is read once).">
-          {aiBusy === 'auto' ? '🤖 Reading…' : '🤖 Ask AI: multibagger chance for the top events'}
-        </button>
+      {aiNote && <div style={{ fontSize: 12, color: R.dim, marginTop: 6 }}>{aiNote}</div>}
+      {filling && <div style={{ fontSize: 12, color: R.cyan, marginTop: 6 }}>{filling}</div>}
+
+      {/* KPI strip */}
+      <div className="tg-kpis">
+        {[
+          { k: 'Companies', v: kpi.cos, c: R.text, sub: `${filtered.length} events` },
+          { k: 'Transformational', v: kpi.trans, c: R.green, sub: 'lasting change to earnings' },
+          { k: 'High multibagger chance', v: kpi.high, c: R.green, sub: 'rules or AI' },
+          { k: 'New this week', v: kpi.fresh, c: R.violet, sub: 'first seen in 7 days', on: onlyNew, click: () => setOnlyNew((v) => !v) },
+          { k: 'Themes', v: kpi.themes, c: R.cyan, sub: `${kpi.newThemes} new this week` },
+          { k: 'Window', v: `${days}d`, c: R.text, sub: data ? `${data.from} → ${data.to}` : '' },
+        ].map((t) => (
+          <div key={t.k} onClick={t.click} style={{ cursor: t.click ? 'pointer' : 'default', border: `1px solid ${t.on ? t.c : R.border}`, borderRadius: 10, padding: '10px 12px', background: R.bg }}>
+            <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.5, textTransform: 'uppercase', color: R.faint }}>{t.k}</div>
+            <div style={{ fontSize: 24, fontWeight: 900, color: t.c, lineHeight: 1.15, fontVariantNumeric: 'tabular-nums' }}>{t.v}</div>
+            <div style={{ fontSize: 11, color: R.dim }}>{t.sub}</div>
+          </div>
+        ))}
       </div>
-      {aiNote && <div style={{ fontSize: 12, color: R.dim, marginBottom: 8 }}>{aiNote}</div>}
-      {filling && <div style={{ fontSize: 12, color: R.cyan, marginBottom: 8 }}>{filling}</div>}
 
       {state === 'loading' && <div style={{ color: R.dim, fontSize: 13 }}>Loading…</div>}
       {state === 'error' && <div style={{ color: R.red, fontSize: 13 }}>Could not load: {err} <button type="button" style={chip(false)} onClick={load}>Retry</button></div>}
 
       {state === 'ok' && data && (
-        <>
-          {/* themes */}
-          <section style={{ border: `1px solid ${R.border}`, borderRadius: 10, padding: 10, marginBottom: 12 }}>
-            <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 6 }}>Themes in these events <span style={{ fontWeight: 400, color: R.faint }}>— click one to filter · 🆕 = first seen this week · ★ = structural theme</span></div>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {themes.length === 0 && <span style={{ fontSize: 12, color: R.dim }}>No events yet — the board fills from each day&apos;s gainers research (it grows to {days} days on its own).</span>}
-              {themes.map((t) => (
-                <button key={t.theme} type="button" onClick={() => setTheme((v) => (v === t.theme ? null : t.theme))} style={chip(theme === t.theme, t.isNew ? R.violet : t.structural ? R.green : R.cyan)}
-                  title={`${t.companies} companies, ${t.events} events · first ${t.firstSeen} · latest ${t.lastSeen} · ${t.tickers.slice(0, 12).join(', ')}`}>
-                  {t.isNew ? '🆕 ' : ''}{t.structural ? '★ ' : ''}{t.theme === OTHER_THEME ? 'Other' : t.theme} · {t.companies}
-                </button>
-              ))}
+        <div className="tg-grid">
+          {/* side: filters + themes */}
+          <aside className="tg-side">
+            <div style={{ border: `1px solid ${R.border}`, borderRadius: 10, padding: 12, background: R.bg, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search company, ticker, theme…" style={{ fontSize: 13, padding: '7px 10px', borderRadius: 8, border: `1px solid ${R.border}`, background: R.bg2, color: R.text, width: '100%', boxSizing: 'border-box' }} />
+              <div><div style={sectionTitle}>Market</div><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {(['ALL', 'IN', 'US'] as Mkt[]).map((m) => <button key={m} type="button" style={chip(mkt === m)} onClick={() => setMkt(m)}>{m === 'ALL' ? 'All' : m === 'IN' ? '🇮🇳 India' : '🇺🇸 USA'}</button>)}
+              </div></div>
+              <div><div style={sectionTitle}>Period</div><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {[60, 30, 14, 7].map((d) => <button key={d} type="button" style={chip(days === d)} onClick={() => setDays(d)}>{d}d</button>)}
+              </div></div>
+              <div><div style={sectionTitle}>Show</div><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <button type="button" style={chip(smallMid, R.green)} onClick={() => setSmallMid((v) => !v)} title="India under ₹25,000 Cr, USA under $10B">Small & mid only</button>
+                <button type="button" style={chip(onlyNew, R.violet)} onClick={() => setOnlyNew((v) => !v)}>🆕 New this week</button>
+              </div></div>
+              <div><div style={sectionTitle}>Strength</div><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {(['TRANSFORMATIONAL', 'INFLECTION', 'NOTABLE'] as TgStrength[]).map((x) => <button key={x} type="button" style={chip(strength === x, STRENGTH_COLOR[x])} onClick={() => setStrength((v) => (v === x ? null : x))}>{STRENGTH_WORD[x]}</button>)}
+              </div></div>
+              <div><div style={sectionTitle}>Multibagger chance at least</div><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {(['HIGH', 'MEDIUM', 'LOW'] as MbLabel[]).map((x) => <button key={x} type="button" style={chip(mbMin === x, MB_COLOR[x])} onClick={() => setMbMin((v) => (v === x ? null : x))}>{MB_WORD[x]}</button>)}
+              </div></div>
+              <div><div style={sectionTitle}>Sort</div><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <button type="button" style={chip(sort === 'newest')} onClick={() => setSort('newest')}>Newest</button>
+                <button type="button" style={chip(sort === 'chance')} onClick={() => setSort('chance')}>Multibagger chance</button>
+              </div></div>
             </div>
-          </section>
-
-          <div style={{ fontSize: 12, color: R.faint, marginBottom: 8 }}>{groups.length} companies · {filtered.length} events · {data.from} → {data.to}</div>
-
-          {groups.length === 0 && <div style={{ fontSize: 13, color: R.dim, padding: 16, border: `1px dashed ${R.border}`, borderRadius: 10 }}>
-            No events match these filters.{data.items.length === 0 ? ' The board starts from the gainers sessions still stored (the last ~10 days) and grows by one session a day until it holds 60 days.' : ''}
-          </div>}
-
-          <div style={{ display: 'grid', gap: 10 }}>
-            {groups.map((g) => {
-              const x = g.best;
-              const isNew = newSet.has(g.key);
-              return (
-                <article key={g.key} style={{ border: `1px solid ${R.border}`, borderLeft: `4px solid ${STRENGTH_COLOR[x.strength]}`, borderRadius: 10, padding: '10px 12px', background: R.bg }}>
-                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-                    <span style={{ fontWeight: 900, fontSize: 16 }}>{g.ticker}</span>
-                    <span style={{ fontSize: 13, color: R.dim }}>{g.market === 'IN' ? '🇮🇳' : '🇺🇸'} {g.company}</span>
-                    <span style={{ fontSize: 12, color: R.faint }}>{fmtCap(x)}</span>
-                    {isNew && <span style={{ fontSize: 11, fontWeight: 800, color: R.violet, border: `1px solid ${R.violet}`, borderRadius: 999, padding: '1px 7px' }}>🆕 NEW THIS WEEK</span>}
-                    <span style={{ fontSize: 11, fontWeight: 800, color: STRENGTH_COLOR[x.strength], border: `1px solid ${STRENGTH_COLOR[x.strength]}`, borderRadius: 999, padding: '1px 7px' }}>{STRENGTH_WORD[x.strength]}</span>
-                    <button type="button" onClick={() => setTheme(x.theme)} title={x.themeWhy || ''} style={{ fontSize: 11, fontWeight: 700, color: R.cyan, background: tint(R.cyan, 8), border: `1px solid ${R.border}`, borderRadius: 999, padding: '1px 8px', cursor: 'pointer' }}>{x.theme}</button>
-                    <span style={{ marginLeft: 'auto', display: 'flex', gap: 10, fontSize: 12 }}>
-                      <NavLink href={`/charts?m=${g.market}&t=${encodeURIComponent(g.ticker)}`} style={{ color: R.cyan }}>Chart</NavLink>
-                      <NavLink href={`/ai-gainers?market=${g.market}`} style={{ color: R.cyan }}>Daily Gainers</NavLink>
-                    </span>
-                  </div>
-                  <div style={{ marginTop: 6 }}><MbChip mb={x.mb} ai={x.ai} /></div>
-                  {g.items.map((it) => (
-                    <div key={it.id} style={{ marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${R.border}` }}>
-                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'baseline', fontSize: 12, color: R.faint }}>
-                        <span style={{ fontWeight: 800, color: R.text }}>{tgKindWord(it.kind)}</span>
-                        <span>session {it.sessionDate}{it.eventDate && it.eventDate !== it.sessionDate ? ` · filed ${it.eventDate}` : ''}</span>
-                        <span style={{ color: (it.movePct ?? 0) >= 0 ? R.green : R.red }}>move {pct(it.movePct)} ({it.moveWindow})</span>
-                        {it.returns.m3 != null && <span>3M {pct(it.returns.m3)}</span>}
-                        <span style={{ color: it.evidence === 'official' ? R.green : R.amber }}>{it.evidence === 'official' ? '✓ company filing' : '⚠ press only — verify'}</span>
-                        {it.durationYears && <span style={{ color: R.green }}>multi-year runway</span>}
-                        {it.sourceUrl && /^https?:\/\//.test(it.sourceUrl) && <a href={it.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: R.cyan }}>source ↗</a>}
-                        {!it.ai && <button type="button" disabled={!!aiBusy} onClick={() => askAi([it.id], it.id)} style={{ ...chip(false, R.violet), padding: '1px 8px', fontSize: 11 }}>{aiBusy === it.id ? '🤖 reading…' : '🤖 Ask AI'}</button>}
+            <div style={{ border: `1px solid ${R.border}`, borderRadius: 10, padding: 12, background: R.bg }}>
+              <div style={{ ...sectionTitle, display: 'flex', justifyContent: 'space-between' }}><span>Themes</span>{theme && <button type="button" onClick={() => setTheme(null)} style={{ fontSize: 11, color: R.cyan, background: 'none', border: 'none', cursor: 'pointer' }}>clear ✕</button>}</div>
+              {themes.length === 0 && <div style={{ fontSize: 12, color: R.dim }}>No themes yet.</div>}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {themes.map((t) => {
+                  const c = t.isNew ? R.violet : t.structural ? R.green : R.cyan;
+                  return (
+                    <button key={t.theme} type="button" onClick={() => setTheme((v) => (v === t.theme ? null : t.theme))}
+                      title={`${t.companies} companies, ${t.events} events · first ${t.firstSeen} · latest ${t.lastSeen} · ${t.tickers.slice(0, 12).join(', ')}`}
+                      style={{ textAlign: 'left', cursor: 'pointer', border: `1px solid ${theme === t.theme ? c : 'transparent'}`, background: theme === t.theme ? tint(c, 10) : 'transparent', borderRadius: 6, padding: '4px 6px', color: R.text }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6, fontSize: 12, fontWeight: 700 }}>
+                        <span>{t.isNew ? '🆕 ' : ''}{t.structural ? '★ ' : ''}{t.theme === OTHER_THEME ? 'Other' : t.theme}</span>
+                        <span style={{ color: R.faint, fontVariantNumeric: 'tabular-nums' }}>{t.companies}</span>
                       </div>
-                      <div style={{ fontSize: 14, fontWeight: 700, marginTop: 3, lineHeight: 1.4 }}>{it.headline}</div>
-                      {it.whatChanged && it.whatChanged !== it.headline && <div style={{ fontSize: 13, color: R.dim, marginTop: 2, lineHeight: 1.45 }}>{it.whatChanged}</div>}
-                      {it.signals.length > 0 && <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 5 }}>
-                        {it.signals.map((s) => <span key={s} style={{ fontSize: 11, padding: '1px 7px', borderRadius: 999, background: tint(R.green, 8), color: R.text, border: `1px solid ${R.border}` }}>{s}</span>)}
-                      </div>}
-                      {it.quote && <div style={{ fontSize: 12, color: R.faint, marginTop: 5, fontStyle: 'italic', lineHeight: 1.45 }}>“{it.quote}”</div>}
-                      {it !== x && <div style={{ marginTop: 5 }}><MbChip mb={it.mb} ai={it.ai} compact /></div>}
-                    </div>
-                  ))}
-                </article>
-              );
-            })}
-          </div>
-          <p style={{ fontSize: 11, color: R.faint, marginTop: 14 }}>Company data only. Not investment advice. Price is context here, never the reason an event is listed.</p>
-        </>
+                      <div style={{ height: 4, borderRadius: 2, background: tint(c, 18), marginTop: 3 }}><div style={{ height: 4, borderRadius: 2, width: `${Math.round((t.companies / maxThemeCos) * 100)}%`, background: c }} /></div>
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize: 11, color: R.faint, marginTop: 8 }}>★ structural theme · 🆕 first seen this week</div>
+            </div>
+          </aside>
+
+          {/* results */}
+          <section style={{ minWidth: 0 }}>
+            {groups.length === 0 ? (
+              <div style={{ fontSize: 13, color: R.dim, padding: 16, border: `1px dashed ${R.border}`, borderRadius: 10 }}>
+                No events match these filters.{data.items.length === 0 ? ' The board fills from each day’s gainers research and grows by one session a day until it holds 60 days.' : ''}
+              </div>
+            ) : (
+              <div style={{ border: `1px solid ${R.border}`, borderRadius: 10, overflow: 'hidden', background: R.bg }}>
+                <div style={{ overflowX: 'auto' }}>
+                  <table className="tg-table">
+                    <thead><tr>
+                      <th>Company</th><th className="tg-hide-sm">Theme</th><th>What changed</th><th className="tg-hide-sm">Growth (filed)</th><th>Multibagger chance</th><th className="tg-hide-sm">Move</th><th className="tg-hide-sm">Session</th>
+                    </tr></thead>
+                    <tbody>
+                      {groups.map((g) => {
+                        const x = g.best; const f = x.facts; const open = openKey === g.key;
+                        const dm = f.marginNow != null && f.marginPrior != null ? f.marginNow - f.marginPrior : null;
+                        return (
+                          <Fragment key={g.key}>
+                            <tr className="tg-row" onClick={() => setOpenKey(open ? null : g.key)} style={{ boxShadow: `inset 3px 0 0 ${STRENGTH_COLOR[x.strength]}` }}>
+                              <td style={{ minWidth: 170 }}>
+                                <div style={{ fontWeight: 900, fontSize: 14 }}>{g.ticker} {newSet.has(g.key) && <span style={{ fontSize: 10, fontWeight: 800, color: R.violet, border: `1px solid ${R.violet}`, borderRadius: 999, padding: '0 5px', marginLeft: 4 }}>NEW</span>}</div>
+                                <div style={{ fontSize: 12, color: R.dim }}>{g.market === 'IN' ? '🇮🇳' : '🇺🇸'} {g.company}</div>
+                                <div style={{ fontSize: 11, color: R.faint }}>{fmtCap(x)}</div>
+                              </td>
+                              <td className="tg-hide-sm" style={{ minWidth: 140 }}>
+                                <span style={{ fontSize: 12, fontWeight: 700, color: R.cyan }}>{x.theme === OTHER_THEME ? 'Other' : x.theme}</span>
+                                <div style={{ fontSize: 11, fontWeight: 800, color: STRENGTH_COLOR[x.strength], marginTop: 3 }}>{STRENGTH_WORD[x.strength]}</div>
+                              </td>
+                              <td style={{ minWidth: 260 }}>
+                                <div style={{ fontSize: 11, fontWeight: 800, color: R.faint, textTransform: 'uppercase', letterSpacing: 0.4 }}>{tgKindWord(x.kind)}{g.items.length > 1 ? ` · ${g.items.length} events` : ''}</div>
+                                <div className="tg-clamp" style={{ fontWeight: 700, lineHeight: 1.4 }}>{x.headline}</div>
+                                <div className="tg-clamp" style={{ fontSize: 12, color: R.dim, marginTop: 2 }}>{x.signals.slice(0, 3).join(' · ')}</div>
+                              </td>
+                              <td className="tg-hide-sm" style={{ whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>
+                                <div>Sales <b style={{ color: (f.revenueYoY ?? 0) >= 25 ? R.green : R.text }}>{pct(f.revenueYoY)}</b></div>
+                                <div>Profit <b style={{ color: (f.patYoY ?? 0) >= 40 ? R.green : R.text }}>{pct(f.patYoY)}</b></div>
+                                <div>Margin <b style={{ color: (dm ?? 0) >= 3 ? R.green : R.text }}>{dm == null ? '—' : `${dm >= 0 ? '+' : ''}${dm.toFixed(1)}pt`}</b></div>
+                              </td>
+                              <td style={{ minWidth: 190 }} onClick={(e) => e.stopPropagation()}><MbChip mb={x.mb} ai={x.ai} compact /></td>
+                              <td className="tg-hide-sm" style={{ whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>
+                                <div style={{ color: (x.movePct ?? 0) >= 0 ? R.green : R.red, fontWeight: 800 }}>{pct(x.movePct)} <span style={{ color: R.faint, fontWeight: 400 }}>{x.moveWindow}</span></div>
+                                <div style={{ color: R.faint }}>3M {pct(x.returns.m3)}</div>
+                              </td>
+                              <td className="tg-hide-sm" style={{ whiteSpace: 'nowrap', fontSize: 12, color: R.dim }}>{g.items[0].sessionDate}<div style={{ color: R.faint }}>{open ? '▲ less' : '▼ more'}</div></td>
+                            </tr>
+                            {open && (
+                              <tr><td colSpan={7} style={{ background: R.bg2, padding: '10px 14px' }}>
+                                <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 12, marginBottom: 6 }}>
+                                  <NavLink href={`/charts?m=${g.market}&t=${encodeURIComponent(g.ticker)}`} style={{ color: R.cyan, fontWeight: 700 }}>Open chart →</NavLink>
+                                  <NavLink href={`/ai-gainers?market=${g.market}`} style={{ color: R.cyan, fontWeight: 700 }}>AI Daily Gainers →</NavLink>
+                                  {x.themeWhy && <span style={{ color: R.faint }}>Theme from {x.themeWhy}</span>}
+                                </div>
+                                {g.items.map((it) => (
+                                  <div key={it.id} style={{ padding: '8px 0', borderTop: `1px dashed ${R.border}` }}>
+                                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'baseline', fontSize: 12, color: R.faint }}>
+                                      <b style={{ color: R.text }}>{tgKindWord(it.kind)}</b>
+                                      <span>session {it.sessionDate}{it.eventDate && it.eventDate !== it.sessionDate ? ` · filed ${it.eventDate}` : ''}</span>
+                                      <span style={{ color: it.evidence === 'official' ? R.green : R.amber }}>{it.evidence === 'official' ? '✓ company filing' : '⚠ press only — verify'}</span>
+                                      {it.durationYears && <span style={{ color: R.green }}>multi-year runway</span>}
+                                      {it.materiality && <span>materiality {String(it.materiality).toLowerCase()}</span>}
+                                      {it.sourceUrl && /^https?:\/\//.test(it.sourceUrl) && <a href={it.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: R.cyan }}>source ↗</a>}
+                                      {!it.ai && <button type="button" disabled={!!aiBusy} onClick={() => askAi([it.id], it.id)} style={{ ...chip(false, R.violet), padding: '1px 8px', fontSize: 11 }}>{aiBusy === it.id ? '🤖 reading…' : '🤖 Ask AI'}</button>}
+                                    </div>
+                                    <div style={{ fontSize: 14, fontWeight: 700, marginTop: 3, lineHeight: 1.4 }}>{it.headline}</div>
+                                    {it.whatChanged && it.whatChanged !== it.headline && <div style={{ fontSize: 13, color: R.dim, marginTop: 2, lineHeight: 1.45 }}>{it.whatChanged}</div>}
+                                    {it.signals.length > 0 && <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 5 }}>
+                                      {it.signals.map((sg) => <span key={sg} style={{ fontSize: 11, padding: '1px 7px', borderRadius: 999, background: tint(R.green, 8), border: `1px solid ${R.border}` }}>{sg}</span>)}
+                                    </div>}
+                                    {it.quote && <div style={{ fontSize: 12, color: R.faint, marginTop: 5, fontStyle: 'italic', lineHeight: 1.45 }}>“{it.quote}”</div>}
+                                    <div style={{ marginTop: 6 }}><MbChip mb={it.mb} ai={it.ai} /></div>
+                                  </div>
+                                ))}
+                              </td></tr>
+                            )}
+                          </Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+            <p style={{ fontSize: 11, color: R.faint, marginTop: 10 }}>Company data only. Not investment advice. Price is context, never the reason an event is listed. Multibagger chance is a research prompt from the filed facts.</p>
+          </section>
+        </div>
       )}
     </div>
   );

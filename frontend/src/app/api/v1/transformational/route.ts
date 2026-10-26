@@ -13,7 +13,9 @@ export async function GET(req: NextRequest) {
   const m = (sp.get('market') || '').toUpperCase();
   const market: TgMarket | undefined = m === 'IN' || m === 'US' ? m : undefined;
   try {
-    const all = await loadItems(days + 7, market);
+    // zzz1168 — only the most important: rows saved under the first, looser rule that are neither a firm event nor a clear
+    // multibagger read are not shown (the daily job re-saves each session under the current rule)
+    const all = (await loadItems(days + 7, market)).filter((x) => x.strength !== 'NOTABLE' || (x.mb?.score ?? 0) >= 55);
     const today = new Date().toISOString().slice(0, 10);
     const board = buildBoard(all, today, days);
     return NextResponse.json({ ok: true, ...board, generatedAt: new Date().toISOString() }, { headers: { 'cache-control': 'no-store' } });

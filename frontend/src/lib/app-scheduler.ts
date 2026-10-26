@@ -265,11 +265,19 @@ export function sessionDatesBack(now: Date, days = 14): string[] {
 }
 async function transformationalJob(ctx: JobCtx): Promise<JobOutcome> {
   let saved = 0;
+  // zzz1168 — a research view is heavy (seconds of server time each): a past session is archived ONCE (marked in Redis); only
+  // today and the previous two days are re-read each run, spaced out so the site stays fast.
+  const { kvGet, kvSet } = await import('./kv');
+  const dates = sessionDatesBack(ctx.slot);
   for (const market of ['IN', 'US'] as const) {
-    for (const d of sessionDatesBack(ctx.slot)) {
+    for (const [i, d] of dates.entries()) {
       if (Date.now() >= ctx.deadline) break;
+      const mark = `transformational:archived:v2:${market}:${d}`;
+      if (i > 2 && await kvGet(mark).catch(() => null)) continue;
       const r = await ctx.call(`/api/v1/ai-gainers/research?market=${market}&date=${d}&archive=1&lite=1`, { timeoutMs: 60_000, retry: false });
       saved += Number(r.json?.archived || 0);
+      if (r.ok && r.json?.viewBuilt) await kvSet(mark, 1, 30 * 86_400).catch(() => undefined);
+      await ctx.sleep(5_000);
     }
   }
   for (const market of ['IN', 'US'] as const) {
@@ -467,7 +475,7 @@ export const APP_JOBS: readonly AppJob[] = [
   } },
   // zzz1166 — Transformational Gainers: each stored gainers session (≤ 14 days back) is saved to the 60-day board, then the
   // strongest new events get the AI multibagger read (≤ 12 a call, ≤ 60 a day in total).
-  { name: 'transformational-archive', crons: ['47 14 * * 1-5', '47 23 * * 1-5'], timeoutMs: 12 * MIN, workflow: 'daily-research.yml', does: 'GET /api/v1/ai-gainers/research?archive=1&lite=1 for the stored sessions of the last 14 days (IN + US), then POST /api/v1/transformational/ai {auto} per market', run: transformationalJob },
+  { name: 'transformational-archive', crons: ['17 3 * * 2-6', '47 23 * * 1-5'], timeoutMs: 12 * MIN, workflow: 'daily-research.yml', does: 'GET /api/v1/ai-gainers/research?archive=1&lite=1 for the stored sessions of the last 14 days (IN + US), then POST /api/v1/transformational/ai {auto} per market', run: transformationalJob },
   // zzz913 — Daily Gainers Brief (was a Claude scheduled task). Logic in lib/gainers-brief.ts (loaded lazily: no import edit here).
   { name: 'gainers-in-backup', crons: ['41 11 * * 1-5'], timeoutMs: 40 * MIN, workflow: 'daily-research.yml', does: 'GET /api/v1/ai-gainers/research?market=IN; only when GitHub’s gainers-in sweep is missing or stalled: GET /api/v1/ai-gainers?market=IN, POST /api/v1/ai-gainers/research rounds (no re-process)', run: async (ctx) => (await import('./gainers-brief')).gainersInBackupJob(ctx) },
   { name: 'gainers-brief-in', crons: ['57 11 * * 1-5', '37 12 * * 1-5', '31 13 * * 1-5'], timeoutMs: 4 * MIN, workflow: 'gainers-brief.yml', does: 'POST /api/v1/cron/gainers-brief?final=0 (sends when the sweep is complete); the 13:31 slot sends with final=1 (PARTIAL when incomplete)', run: async (ctx) => (await import('./gainers-brief')).gainersBriefJob(ctx) },

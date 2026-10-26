@@ -3708,6 +3708,6 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   `record_multibagger_view`, feature `transformational-mb`) via POST `/api/v1/transformational/ai` — ≤ 12 a call, ≤ 60 a day, stored once.
 - Storage: Postgres migration 10 `transformational_event` (data refreshed on each sighting, `ai` never overwritten); KV fallback.
 - Filled by: GET `/api/v1/ai-gainers/research` (`archiveView`, throttled 10 min; `archive=1&lite=1` forces), app job
-  `transformational-archive` (14:47 + 23:47 UTC weekdays: last 14 days' stored sessions, then AI auto read), the gainers page after an AI
+  `transformational-archive` (03:17 + 23:47 UTC — night in Europe and India; past sessions once: last 14 days' stored sessions, then AI auto read), the gainers page after an AI
   sweep, and the board's first visit of a day (backfill from stored sessions). Research states keep ~10 days, so history starts there.
 - ResearchView has NO `items` array — read `top3/queue/portfolio/watch/needsReading/context` (`viewItems`).

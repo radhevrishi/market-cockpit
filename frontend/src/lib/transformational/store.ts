@@ -16,6 +16,13 @@ export async function saveItems(items: TgItem[]): Promise<number> {
   if (await db()) {
     const { dbQuery } = await import('../db');
     let n = 0;
+    // zzz1168 — a session re-read under a stricter rule drops what it no longer lists (rows first seen on that session only)
+    const bySession = new Map<string, string[]>();
+    for (const x of items) bySession.set(`${x.market}|${x.sessionDate}`, [...(bySession.get(`${x.market}|${x.sessionDate}`) || []), x.id]);
+    for (const [k, ids] of bySession) {
+      const [m, d] = k.split('|');
+      await dbQuery('DELETE FROM transformational_event WHERE market = $1 AND session_date = $2 AND NOT (id = ANY($3::text[])) AND ai IS NULL', [m, d, ids]).catch(() => undefined);
+    }
     for (const x of items) {
       const { ai: _ai, ...data } = x;
       // the FIRST session the event was seen on is kept; the newest move / figures are refreshed
