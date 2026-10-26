@@ -2,10 +2,17 @@
 // zzz1174 — 🔥 Choke-Point Themes on the News page. Shows the LAST AI run (static until the owner clicks); the button runs the
 // AI once with the latest news and saves the result for every device. US first, then India, each with its Investor Playbook.
 import { useCallback, useEffect, useState } from 'react';
-import { chokeAsText, type ChokeReport, type ChokeRegion } from '@/lib/choke-themes/core';
+import { chokeAsText, fmtChokeCap, SMALL_MID_MAX, type ChokeLeader, type ChokeReport, type ChokeRegion } from '@/lib/choke-themes/core';
 
 const OPEN_KEY = 'mc:choke-themes:open:v1';
 const C = { bg: 'var(--mc-bg-1)', bg2: 'var(--mc-bg-2)', border: 'var(--mc-border-1)', text: 'var(--mc-text-1)', dim: 'var(--mc-text-3)', faint: 'var(--mc-text-4)', red: 'var(--mc-bearish)', green: 'var(--mc-bullish)', accent: 'var(--mc-accent)', warn: 'var(--mc-warn)' };
+
+function who(list: ChokeLeader[], region: ChokeRegion) {
+  return list.map((l, i) => {
+    const c = fmtChokeCap(l.cap, region);
+    return <span key={l.ticker} title={l.note || ''}>{i > 0 ? ', ' : ''}{l.name} (<b>{l.ticker}</b>{c ? <span style={{ color: 'var(--mc-text-4)', fontWeight: 400 }}> · {c}</span> : null})</span>;
+  });
+}
 
 export default function ChokeThemesPanel() {
   const [report, setReport] = useState<ChokeReport | null>(null);
@@ -14,8 +21,10 @@ export default function ChokeThemesPanel() {
   const [msg, setMsg] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<ChokeRegion>('US');
+  const [sm, setSm] = useState(false);   // zzz1175 — small & mid caps only
 
-  useEffect(() => { try { setOpen(localStorage.getItem(OPEN_KEY) === '1'); } catch { /* optional */ } }, []);
+  useEffect(() => { try { setOpen(localStorage.getItem(OPEN_KEY) === '1'); setSm(localStorage.getItem(OPEN_KEY + ':sm') === '1'); } catch { /* optional */ } }, []);
+  useEffect(() => { try { localStorage.setItem(OPEN_KEY + ':sm', sm ? '1' : '0'); } catch { /* optional */ } }, [sm]);
   const toggle = () => setOpen((v) => { try { localStorage.setItem(OPEN_KEY, v ? '0' : '1'); } catch { /* optional */ } return !v; });
 
   useEffect(() => {
@@ -66,6 +75,9 @@ export default function ChokeThemesPanel() {
           )}
           <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
             {(['US', 'IN'] as ChokeRegion[]).map((r) => <button key={r} type="button" style={btn(tab === r)} onClick={() => setTab(r)}>{r === 'US' ? '🇺🇸 United States' : '🇮🇳 India'}</button>)}
+            <span style={{ width: 12 }} />
+            <button type="button" style={btn(!sm)} onClick={() => setSm(false)}>All leaders</button>
+            <button type="button" style={btn(sm)} onClick={() => setSm(true)} title="US under $10B, India under ₹25,000 Cr (checked against the stock screener)">🔎 Small & mid caps</button>
           </div>
           {g && (
             <>
@@ -74,9 +86,13 @@ export default function ChokeThemesPanel() {
                   <div key={t.name} style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 12px', background: C.bg2, fontSize: 13, lineHeight: 1.5 }}>
                     <div style={{ fontWeight: 900, fontSize: 14, marginBottom: 4 }}>🔥 {t.name} {t.emoji}</div>
                     <div><b>Why:</b> {t.why}</div>
-                    <div style={{ marginTop: 4 }}><b>Leaders:</b>{' '}
-                      {t.leaders.map((l, i) => <span key={l.ticker} title={l.note || ''}>{i > 0 ? ', ' : ''}{l.name} (<b>{l.ticker}</b>)</span>)}.
-                    </div>
+                    {!sm && <div style={{ marginTop: 4 }}><b>Leaders:</b>{' '}{who(t.leaders, g.region)}.</div>}
+                    {(() => {
+                      // small & mid: the AI's small & mid list plus any headline leader that is itself under the limit
+                      const list = [...(t.smallMid || []), ...(sm ? t.leaders.filter((l) => l.cap != null && l.cap <= SMALL_MID_MAX[g.region] && !(t.smallMid || []).some((x) => x.ticker === l.ticker)) : [])];
+                      if (!list.length) return sm ? <div style={{ marginTop: 4, color: C.faint }}><b>Small & mid caps:</b> none that pass the size and governance filter.</div> : null;
+                      return <div style={{ marginTop: 4 }}><b>Small & mid caps:</b>{' '}{who(list, g.region)}.</div>;
+                    })()}
                     <div style={{ marginTop: 4 }}><b>Asymmetry:</b> <span style={{ color: C.red }}>Bear: {t.bear}</span> <span style={{ color: C.green }}>Bull: {t.bull}</span></div>
                     {t.evidence && <div style={{ marginTop: 4, fontSize: 12, color: C.dim }}>📰 Recent: {t.evidence}</div>}
                   </div>
@@ -85,6 +101,7 @@ export default function ChokeThemesPanel() {
               <div style={{ marginTop: 10, border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 12px', fontSize: 13, lineHeight: 1.5 }}>
                 <div style={{ fontWeight: 900, fontSize: 14, marginBottom: 4 }}>🎯 Investor Playbook — {g.region === 'US' ? 'US' : 'India'}</div>
                 <ul style={{ margin: '0 0 6px', paddingLeft: 18 }}>{g.playbook.dominant.map((d) => <li key={d}>{d}</li>)}</ul>
+                {g.playbook.smallMid && <div style={{ marginBottom: 4 }}><b>Small & mid caps first:</b> {g.playbook.smallMid}</div>}
                 <div><b>Accumulation:</b> {g.playbook.accumulation}</div>
               </div>
             </>

@@ -2,7 +2,7 @@
 // One call to the stronger model (the guidance router's choice, priced and metered like every call), grounded in the
 // last 14 days of the news feed and the Transformational Gainers themes, compared with the previous run. Stored in KV
 // (latest + previous); nothing runs on a schedule — the News page shows the last run until the owner clicks again.
-import { CHOKE_SYSTEM, CHOKE_TOOL, cleanChoke, type ChokeReport } from './core';
+import { CHOKE_SYSTEM, CHOKE_TOOL, cleanChoke, withCaps, type ChokeRegion, type ChokeReport } from './core';
 
 export const CHOKE_KEY = 'choke-themes:v1:latest';
 export const CHOKE_PREV_KEY = 'choke-themes:v1:previous';
@@ -78,6 +78,16 @@ export async function runChoke(): Promise<{ ok: true; report: ChokeReport } | { 
     const d = (j?.content || []).find((c: any) => c?.type === 'tool_use')?.input;
     const clean = cleanChoke(d);
     if (!clean) return { ok: false, error: 'The AI answer was incomplete — the previous run is still shown. Try again.' };
+    // zzz1175 — real market caps from the stock screener; a "small & mid" pick that is actually large is dropped
+    const caps: Record<ChokeRegion, Map<string, number>> = { US: new Map(), IN: new Map() };
+    try {
+      const { getSnapshot } = await import('../screener/snapshot-cache');
+      for (const mk of ['US', 'IN'] as ChokeRegion[]) {
+        const snap: any = await Promise.race([getSnapshot(mk), new Promise((r) => setTimeout(() => r(null), 5000))]);
+        for (const row of (snap?.rows || [])) if (row?.t && typeof row.mc === 'number') caps[mk].set(String(row.t).toUpperCase(), row.mc);
+      }
+    } catch { /* caps unknown */ }
+    withCaps(clean, caps);
     const report: ChokeReport = { ...clean, generatedAt: new Date().toISOString(), model: j?.model ?? (strong || cheap), newsUsed: news.lines.length, asOfNews: news.asOf };
     if (prev) await kvSet(CHOKE_PREV_KEY, prev, TTL).catch(() => undefined);
     await kvSet(CHOKE_KEY, report, TTL);
