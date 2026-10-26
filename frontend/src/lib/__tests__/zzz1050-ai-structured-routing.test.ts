@@ -178,12 +178,13 @@ describe('router: escalates only on the listed conditions', () => {
 
 describe('router: configuration and cost guardrails', () => {
   test('the stronger model: default per provider, switchable off, must be priced and of the active provider', () => {
-    assert.equal(strongModel('openai', 'gpt-5-mini', {}), 'gpt-5');
+    assert.equal(strongModel('openai', 'gpt-5-mini', {}), 'gpt-6.1-terra');   // zzz1182 — was gpt-5
     assert.equal(strongModel('anthropic', 'claude-haiku-4-5-20251001', {}), 'claude-sonnet-4-5');
     for (const off of ['off', 'none', '0', 'false', 'OFF']) assert.equal(strongModel('openai', 'gpt-5-mini', { GUIDANCE_EXTRACT_STRONG_MODEL: off }), null);
     assert.equal(strongModel('openai', 'gpt-5-mini', { GUIDANCE_EXTRACT_STRONG_MODEL: 'gpt-9-ultra' }), null);          // unpriced
     assert.equal(strongModel('openai', 'gpt-5-mini', { GUIDANCE_EXTRACT_STRONG_MODEL: 'claude-sonnet-4-5' }), null);    // other provider
-    assert.equal(strongModel('openai', 'gpt-5', {}), null);                                                              // same as the cheap model
+    assert.equal(strongModel('openai', 'gpt-6.1-terra', {}), null);                                                      // same as the cheap model
+    assert.equal(strongModel('openai', 'gpt-5-mini', { GUIDANCE_EXTRACT_STRONG_MODEL: 'gpt-5' }), 'gpt-5');
     assert.equal(strongModel('openai', 'gpt-5-mini', { GUIDANCE_EXTRACT_STRONG_MODEL: 'gpt-4.1' }), 'gpt-4.1');
   });
   test('the escalation share can be lowered, never raised past 30%', () => {

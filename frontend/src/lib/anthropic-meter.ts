@@ -82,6 +82,9 @@ export const PRICING: Record<string, { input: number; output: number; cacheRead:
   'gpt-5-nano':        { input: 0.05, output: 0.40, cacheRead: 0.005, cacheWrite: 0.05 },
   'gpt-5-mini':        { input: 0.25, output: 2.00, cacheRead: 0.025, cacheWrite: 0.25 },
   'gpt-5':             { input: 1.25, output: 10,   cacheRead: 0.125, cacheWrite: 1.25 },
+  // zzz1182 — GPT-6 family (owner, 26 Oct 2026: "gpt-6.1-terra $1 in / $0.05 cached / $5 out"). The stronger pass uses it
+  // instead of gpt-5 (cheaper and stronger); routine calls stay on gpt-5-mini, which is cheaper still. Verify on the pricing page.
+  'gpt-6.1-terra':     { input: 1,    output: 5,    cacheRead: 0.05,  cacheWrite: 1 },
   'gpt-4.1-nano':      { input: 0.10, output: 0.40, cacheRead: 0.025, cacheWrite: 0.10 },
   'gpt-4.1-mini':      { input: 0.40, output: 1.60, cacheRead: 0.10,  cacheWrite: 0.40 },
   'gpt-4.1':           { input: 2,    output: 8,    cacheRead: 0.50,  cacheWrite: 2 },
@@ -104,9 +107,13 @@ export function pricingFor(model: string) {
   return key ? PRICING[key] : null;
 }
 
-/** Cost of one call in USD from its usage block. 0 when the model is unknown. */
+/** zzz1182 — an OpenAI / Anthropic model the table does not know is charged at a deliberately HIGH rate, never 0: an
+ *  unpriced model (a new OPENAI_MODEL set in the host) must still count against the daily and monthly caps. */
+const UNKNOWN_MODEL_RATE = { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3 };
+
+/** Cost of one call in USD from its usage block. An unknown gpt-* / claude-* model is charged at a high fallback rate. */
 export function costOf(model: string, u: Usage | null | undefined): number {
-  const p = pricingFor(model);
+  const p = pricingFor(model) || (/^(?:gpt-|o\d|claude-)/i.test(String(model || '')) ? UNKNOWN_MODEL_RATE : null);
   if (!p || !u) return 0;
   const n = (x: any) => (Number.isFinite(Number(x)) ? Number(x) : 0);
   return (
@@ -387,7 +394,7 @@ export function toOpenAIRequest(body: MessagesBody, model: string, reasoningEffo
       messages.push({ role: m.role, content });
     } else messages.push({ role: m.role, content: contentText(m.content) });
   }
-  const reasoning = /^gpt-5/.test(model) || /^o\d/.test(model);
+  const reasoning = /^gpt-(?:[5-9]|\d{2})/.test(model) || /^o\d/.test(model);   // zzz1182 — GPT-6 is a reasoning model too
   // A caller's max_tokens is a budget for the VISIBLE answer. On reasoning
   // models the same budget also pays for hidden reasoning tokens, and the
   // first live call proved it: 2,600 completion tokens = the cap, and the
@@ -506,6 +513,8 @@ export async function anthropicMessages(feature: string, body: MessagesBody, opt
   return resp;
 }
 
+const STRONG_FALLBACK = 'gpt-5';
+
 /** OpenAI behind the Anthropic shape. Same gate, same ledger, same failure accounting. */
 async function openaiMessages(feature: string, body: MessagesBody, opts: MeterOpts = {}): Promise<Response> {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -545,6 +554,12 @@ async function openaiMessages(feature: string, body: MessagesBody, opts: MeterOp
     try { const t = await resp.clone().text(); const je = JSON.parse(t); message = String(je?.error?.message || je?.message || t); } catch { message = `HTTP ${resp.status}`; }
     await record(feature, 0, null, false, { status: resp.status, message });
     track(feature, opts.run, model, startedAt, null, 0, 'failed', `HTTP ${resp.status}: ${message}`);
+    // zzz1182 — a stronger model the account cannot use (wrong name, not yet enabled) falls back once to gpt-5, so a model
+    // switch never breaks the guidance escalation or the research panels
+    if (opts.openaiModel && opts.openaiModel !== STRONG_FALLBACK && [400, 403, 404].includes(resp.status)
+        && /model/i.test(message) && /(not exist|not found|does not have access|invalid|unknown|unsupported)/i.test(message)) {
+      return openaiMessages(feature, body, { ...opts, openaiModel: STRONG_FALLBACK });
+    }
     return resp;
   }
   let translated: Record<string, any>;

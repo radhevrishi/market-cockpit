@@ -34,7 +34,7 @@
 //   • the strong model must be priced in lib/anthropic-meter PRICING, or routing
 //     is off (an unpriced call could not be counted against the caps).
 //
-// Switch: GUIDANCE_EXTRACT_STRONG_MODEL = gpt-5 (default for OpenAI) /
+// Switch: GUIDANCE_EXTRACT_STRONG_MODEL = gpt-6.1-terra (default for OpenAI since zzz1182; was gpt-5) /
 // claude-sonnet-4-5 (default for Anthropic) / any priced model of the active
 // provider / "off".
 // ═══════════════════════════════════════════════════════════════════════════
@@ -54,7 +54,8 @@ const isAnthropicModel = (m: string) => /^claude-/i.test(m);
 export function strongModel(provider: 'openai' | 'anthropic', cheapModel: string | null, env: Record<string, string | undefined> = process.env): string | null {
   const raw = String(env.GUIDANCE_EXTRACT_STRONG_MODEL ?? '').trim();
   if (raw && OFF.test(raw)) return null;
-  const m = raw || (provider === 'openai' ? 'gpt-5' : 'claude-sonnet-4-5');
+  // zzz1182 — OpenAI's stronger pass is gpt-6.1-terra (cheaper than gpt-5, stronger); a name the account cannot use falls back to gpt-5 in the meter
+  const m = raw || (provider === 'openai' ? 'gpt-6.1-terra' : 'claude-sonnet-4-5');
   if (provider === 'openai' ? !isOpenAiModel(m) : !isAnthropicModel(m)) return null;
   if (!pricingFor(m)) return null;
   // the "stronger" model must not be the one that already read the document
