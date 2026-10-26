@@ -66,7 +66,8 @@
 // (SM, VG showed Q2 figures as "Q3 FY26"; ManpowerGroup's real Q3 print was graded on Q2); lenders carry net interest income,
 // bank revenue, credit-loss provision and equity ÷ assets. The bump re-grades bench entries so they pick these up.
 // 2026.10.20-b (zzz1164) — patent / royalty filers are no longer "financial", so the cash gate applies to them (Digital Turbine).
-export const US_ENGINE_VERSION = '2026.10.20-b';
+// 2026.10.26-a (zzz1172) — a one-off in the year-ago quarter (GAAP prev far below adjusted prev, OSBC): graded on core EPS growth.
+export const US_ENGINE_VERSION = '2026.10.26-a';
 
 /** zzz807 — earlier engine versions whose cached days can be REGRADED in-process
  *  (their rows carry every figure the grade reads). Newest first. A rules-only

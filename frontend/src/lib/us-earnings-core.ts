@@ -3552,7 +3552,8 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   const revC = f.revenue, revP = f.revenue_prev;
   const niC = f.net_income, niP = f.net_income_prev;
   const salesY = yoyPct(revC, revP);
-  const patY = yoyPct(niC, niP);
+  const patYReported = yoyPct(niC, niP);
+  let patY = patYReported;
   const epsYGaap = yoyPct(f.eps, f.eps_prev);
   // When the GAAP line gives no usable growth rate — a loss last year, a loss
   // this year — fall back to the basis the market actually trades: adjusted
@@ -3565,7 +3566,16 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   // the ex-refund number is +39%. The card still shows the headline.
   const epsYAdj = yoyPct(input.adj_eps_ex_oneoff ?? input.adj_eps ?? null, input.adj_eps_prev ?? null);
   const usedAdjEps = epsYGaap == null && epsYAdj != null;
-  const epsY = epsYGaap ?? epsYAdj;
+  // zzz1172 — A ONE-OFF IN THE YEAR-AGO QUARTER (OSBC, Q3 2026). GAAP EPS $0.18 → $0.56 reads +211%, but the company's own
+  // adjusted EPS went $0.53 → $0.55 (+4%): last year's GAAP carried a one-off loss, so the growth rate measures that loss,
+  // not the business. When the year-ago GAAP sits well below the year-ago adjusted figure AND the two growth rates are far
+  // apart, the quarter is graded on the CORE (adjusted) growth — net income growth follows it — and the card says why. The
+  // GAAP tiles stay as printed.
+  const adjPrevV = input.adj_eps_prev ?? null;
+  const priorOneOff = epsYGaap != null && epsYAdj != null && f.eps_prev != null && adjPrevV != null && adjPrevV > 0
+    && (adjPrevV - f.eps_prev) >= Math.max(0.05, adjPrevV * 0.25) && (epsYGaap - epsYAdj) >= 40;
+  const epsY = priorOneOff ? epsYAdj : (epsYGaap ?? epsYAdj);
+  if (priorOneOff) patY = epsYAdj;
   const opm = (f.operating_income != null && revC) ? (f.operating_income / revC) * 100 : null;
   const opmPrev = (f.operating_income_prev != null && revP) ? (f.operating_income_prev / revP) * 100 : null;
   const opmExp = (opm != null && opmPrev != null) ? opm - opmPrev : null;
@@ -3590,6 +3600,7 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
 
   const methodology_tags: string[] = [];
   const caveat_tags: string[] = [];
+  if (priorOneOff) caveat_tags.push(`prior-year one-off — GAAP EPS ${epsYGaap! >= 0 ? '+' : ''}${Math.round(epsYGaap!)}% off a depressed base; core (adjusted) EPS ${epsYAdj! >= 0 ? '+' : ''}${Math.round(epsYAdj!)}%, graded on core`);
 
   // THE REFUSAL, SAID OUT LOUD. `eps_prev` is null here not because the filer
   // tagged nothing but because this quarter and the year-ago quarter are on
@@ -4477,7 +4488,7 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     fcf_curr_musd: fcfC != null ? Math.round(fcfC / 1e4) / 100 : null,
     fcf_prev_musd: fcfP != null ? Math.round(fcfP / 1e4) / 100 : null,
     fcf_yoy_pct: yoyPct(fcfC, fcfP),
-    sales_yoy_pct: salesY, net_profit_yoy_pct: patY, eps_yoy_pct: epsY,
+    sales_yoy_pct: salesY, net_profit_yoy_pct: patYReported, eps_yoy_pct: priorOneOff ? epsYGaap : epsY,
     opm_pct: opm != null ? Math.round(opm * 100) / 100 : null,
     opm_prev_pct: opmPrev != null ? Math.round(opmPrev * 100) / 100 : null,
     cfo_to_pat_ratio: cfoPat != null ? Math.round(cfoPat * 100) / 100 : null,
