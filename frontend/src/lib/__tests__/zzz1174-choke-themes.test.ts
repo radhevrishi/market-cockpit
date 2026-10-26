@@ -41,3 +41,15 @@ test('small & mid caps: listed per theme; a "small" pick that is really large is
   const txt = chokeAsText({ ...c, generatedAt: '', model: null, newsUsed: 0, asOfNews: null });
   assert.match(txt, /Small & mid caps: Energy Fuels \(UUUU\)\./); assert.match(txt, /Small & mid caps first: UUUU first\./);
 });
+
+test('zzz1176: trillion caps read $5.2T; a leader is not repeated as a small & mid pick; unknown home tickers are marked', async () => {
+  const { fmtChokeCap } = await import('../choke-themes/core');
+  assert.equal(fmtChokeCap(5_213_000, 'US'), '$5.2T'); assert.equal(fmtChokeCap(8_500, 'US'), '$8.5B');
+  const c = cleanChoke({ regions: [region('US'), region('IN')], changes: [] })!;
+  c.regions[0].themes[0].smallMid.push({ name: 'MP again', ticker: 'MP', note: null });
+  c.regions[1].themes[0].leaders.push({ name: 'Kalpataru', ticker: 'KALPATPOWR', note: null });
+  withCaps(c, { US: new Map([['UUUU', 1500], ['MP', 9000]]), IN: new Map([['KPIL', 20000]]) });
+  assert.ok(!c.regions[0].themes[0].smallMid.some((l) => l.ticker === 'MP'));
+  assert.equal(c.regions[1].themes[0].leaders.find((l) => l.ticker === 'KALPATPOWR')?.found, false);
+  assert.equal(c.regions[0].themes[0].leaders.find((l) => l.ticker === 'LYC, ASX')?.found, null, 'foreign listing not checked');
+});

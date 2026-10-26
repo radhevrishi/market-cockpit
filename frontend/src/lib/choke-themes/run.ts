@@ -9,9 +9,27 @@ export const CHOKE_PREV_KEY = 'choke-themes:v1:previous';
 export const CHOKE_DAILY_MAX = 6;
 const TTL = 400 * 86_400;
 
+/** ticker → market cap ($ M US / ₹ Cr India) from the stock screener (memory-cached on the server). */
+async function screenerCaps(): Promise<Record<ChokeRegion, Map<string, number>>> {
+  const caps: Record<ChokeRegion, Map<string, number>> = { US: new Map(), IN: new Map() };
+  try {
+    const { getSnapshot } = await import('../screener/snapshot-cache');
+    await Promise.all((['US', 'IN'] as ChokeRegion[]).map(async (mk) => {
+      const snap: any = await Promise.race([getSnapshot(mk), new Promise((r) => setTimeout(() => r(null), 5000))]);
+      for (const row of (snap?.rows || [])) if (row?.t && typeof row.mc === 'number') caps[mk].set(String(row.t).toUpperCase(), row.mc);
+    }));
+  } catch { /* caps unknown */ }
+  return caps;
+}
+
+/** The last run, with today's market caps (and the same size / duplicate / unknown-ticker checks) laid over it. No AI. */
 export async function loadChoke(): Promise<ChokeReport | null> {
   const { kvGet } = await import('../kv');
-  return (await kvGet<ChokeReport>(CHOKE_KEY).catch(() => null)) || null;
+  const r = (await kvGet<ChokeReport>(CHOKE_KEY).catch(() => null)) || null;
+  if (!r) return null;
+  for (const g of r.regions) for (const t of g.themes) t.smallMid = t.smallMid || [];
+  withCaps(r, await screenerCaps());
+  return r;
 }
 
 /** The most important recent headlines (14 days), newest and highest-importance first, as short lines. */
@@ -78,15 +96,8 @@ export async function runChoke(): Promise<{ ok: true; report: ChokeReport } | { 
     const d = (j?.content || []).find((c: any) => c?.type === 'tool_use')?.input;
     const clean = cleanChoke(d);
     if (!clean) return { ok: false, error: 'The AI answer was incomplete — the previous run is still shown. Try again.' };
-    // zzz1175 — real market caps from the stock screener; a "small & mid" pick that is actually large is dropped
-    const caps: Record<ChokeRegion, Map<string, number>> = { US: new Map(), IN: new Map() };
-    try {
-      const { getSnapshot } = await import('../screener/snapshot-cache');
-      for (const mk of ['US', 'IN'] as ChokeRegion[]) {
-        const snap: any = await Promise.race([getSnapshot(mk), new Promise((r) => setTimeout(() => r(null), 5000))]);
-        for (const row of (snap?.rows || [])) if (row?.t && typeof row.mc === 'number') caps[mk].set(String(row.t).toUpperCase(), row.mc);
-      }
-    } catch { /* caps unknown */ }
+    // zzz1175 — real market caps from the stock screener; a "small & mid" pick that is really large is dropped
+    const caps = await screenerCaps();
     withCaps(clean, caps);
     const report: ChokeReport = { ...clean, generatedAt: new Date().toISOString(), model: j?.model ?? (strong || cheap), newsUsed: news.lines.length, asOfNews: news.asOf };
     if (prev) await kvSet(CHOKE_PREV_KEY, prev, TTL).catch(() => undefined);
