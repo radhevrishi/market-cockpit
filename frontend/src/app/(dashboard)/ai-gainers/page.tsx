@@ -29,6 +29,8 @@
 
 'use client';
 
+import { TgAiContext } from '@/components/transformational/TgCardBadge';   // zzz1166
+import type { AiMb } from '@/lib/transformational/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { readJsonResponse, describeFetchError } from '@/lib/ai-gainers/client-fetch';
 import { boardCoverage, marketRunOf } from '@/lib/ai-gainers/research-present';
@@ -156,6 +158,28 @@ function withNames(v: ResearchView, names: Record<string, string>): ResearchView
 
 export default function AiGainersPage() {
   const [market, setMarketState] = useState<Mkt>('US');
+  // zzz1166 — stored AI multibagger reads for this market's transformational events (shown on each card's 🧬 badge)
+  const [tgAi, setTgAi] = useState<Record<string, AiMb>>({});
+  const loadTgAi = useCallback(async (m: Mkt) => {
+    try {
+      const r = await fetch(`/api/v1/transformational?days=21&market=${m}`, { cache: 'no-store' });
+      const res = await readJsonResponse<{ items?: any[] }>(r, 'The transformational board');
+      const map: Record<string, AiMb> = {};
+      for (const x of ((res.ok && res.json?.items) || [])) if (x?.ai && !map[`${x.market}:${x.ticker}`]) map[`${x.market}:${x.ticker}`] = x.ai;
+      setTgAi(map);
+    } catch { /* badges keep the rules read */ }
+  }, []);
+  useEffect(() => { loadTgAi(market); }, [market, loadTgAi]);
+  // zzz1166 — after an AI research sweep: save the session's transformational events, then the AI multibagger read for the strongest
+  const tgAfterSweep = useCallback(async (m: Mkt) => {
+    try {
+      await fetch(`/api/v1/ai-gainers/research?market=${m}&archive=1&lite=1`, { cache: 'no-store' });
+      await fetch('/api/v1/transformational/ai', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ auto: true, market: m, sinceDays: 2 }) });
+      await loadTgAi(m);
+    } catch { /* the daily job does the same later */ }
+  }, [loadTgAi]);
+  const tgAfterSweepRef = useRef(tgAfterSweep);
+  useEffect(() => { tgAfterSweepRef.current = tgAfterSweep; }, [tgAfterSweep]);
   // The URL / last choice is read once on mount, BEFORE the first load, so a
   // ?market=IN deep link does not first load (and discard) the US board.
   const [ready, setReady] = useState(false);
@@ -327,6 +351,7 @@ export default function AiGainersPage() {
     } finally {
       if (sweepGenRef.current === gen) sweepGenRef.current = -1;
       if (genRef.current === gen) { setSweeping(false); if (m === 'US' && stopReason) setSweepNote(stopReason); }
+      if (!noModel && genRef.current === gen) void tgAfterSweepRef.current(m);   // zzz1166
     }
   }, []);
 
@@ -648,6 +673,7 @@ export default function AiGainersPage() {
     : market === 'IN' && data?.session && data.session.state === 'open' ? 'Moves are intraday and will change until 15:30 IST.' : null;
 
   return (
+    <TgAiContext.Provider value={tgAi}>
     <div style={{ padding: '16px 16px 28px', display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 1480, minWidth: 0, boxSizing: 'border-box' }}>
       {!view && (
         <header>
@@ -686,6 +712,7 @@ export default function AiGainersPage() {
       )}
       {!view && data && (<>{notice}{technical}</>)}
     </div>
+    </TgAiContext.Provider>
   );
 }
 

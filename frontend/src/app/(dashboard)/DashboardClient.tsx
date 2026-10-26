@@ -85,6 +85,8 @@ const NAV_GROUPS: NavGroup[] = [
       // because in Phase 1 every catalyst it shows IS a filed result; the day
       // it reads announcements without a filing behind them, it moves.
       { href: '/ai-gainers',                label: 'AI Daily Gainers',          icon: <Zap className="w-4 h-4" /> },
+      // zzz1166 — the 60-day board of transformational events from the gainers, with themes and a multibagger-chance read.
+      { href: '/transformational-gainers',  label: 'Transformational Gainers',  icon: <Zap className="w-4 h-4" /> },
       // zzz843 — positive guidance raises in the last 7 days, verified and quantified.
       { href: '/guidance-upgrades',         label: 'Guidance Upgrades',         icon: <LineChart className="w-4 h-4" /> },
       // zzz846 — companies where management guides unusually high growth (30%+), verified.

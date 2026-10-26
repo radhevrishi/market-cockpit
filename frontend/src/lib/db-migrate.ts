@@ -329,6 +329,29 @@ export const MIGRATIONS: readonly Migration[] = [
         created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
       );`,
   },
+  {
+    // zzz1166 — Transformational Gainers: the events from AI Daily Gainers that can change future earnings, kept 60+ days.
+    //   data = the item as built by lib/transformational/core (refreshed on every sighting); ai = the AI multibagger read
+    //   (written only by the AI step, never overwritten by a refresh).
+    id: 10, name: 'transformational_event',
+    sql: `
+      CREATE TABLE IF NOT EXISTS transformational_event (
+        id            TEXT PRIMARY KEY,
+        market        TEXT NOT NULL CHECK (market IN ('IN', 'US')),
+        ticker        TEXT NOT NULL,
+        session_date  DATE NOT NULL,
+        event_date    DATE,
+        theme         TEXT NOT NULL,
+        strength      TEXT NOT NULL,
+        mb_score      INTEGER NOT NULL DEFAULT 0,
+        data          JSONB NOT NULL,
+        ai            JSONB,
+        first_seen    TIMESTAMPTZ NOT NULL DEFAULT now(),
+        last_seen     TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS transformational_event_session_idx ON transformational_event (session_date DESC);
+      CREATE INDEX IF NOT EXISTS transformational_event_ticker_idx ON transformational_event (market, ticker, session_date DESC);`,
+  },
 ] as const;
 
 const LOCK_ID = 88_301_883;   // advisory-lock id for migrations

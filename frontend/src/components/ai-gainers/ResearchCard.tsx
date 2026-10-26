@@ -7,6 +7,7 @@ import React, { useState } from 'react';
 import type { EarningsMini, ResearchItem } from '@/lib/ai-gainers/research-view';
 import { Btn, CatalystChips, CatalystForBadge, CardFacts, FactLine, FlagChips, Move, Name, OlderContextBadge, RelevanceBadge, ScanNote, SourceBadge, StatusPill, TriagePill, UsCatalystList, InCatalystList } from './Badges';
 import { ScoreBox } from './ScoreBox';
+import { TgCardBadge } from '@/components/transformational/TgCardBadge';   // zzz1166
 import { C, CLASS_META, PRICE_COMMENTARY_LABEL, isPriceCommentary, pctND, tint, txt } from './tokens';
 
 const label: React.CSSProperties = { fontSize: 11, fontWeight: 800, letterSpacing: 0.5, color: C.faint };
@@ -364,6 +365,8 @@ export function ResearchCard({ it, rank, onOpen, older, section }: { it: Researc
           <span style={{ ...label, marginRight: 6 }}>RANK BASIS:</span>{it.rankReason}
         </div>
       )}
+      {/* zzz1166 — transformational event? theme + multibagger chance (rules; AI read when stored) */}
+      <TgCardBadge it={it} />
       <ScoreBox it={it} />
       <AlsoIn it={it} here={section} />
       <AlsoOnFile it={it} />

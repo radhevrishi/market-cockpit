@@ -27,6 +27,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
+import { archiveView } from '@/lib/transformational/archive';   // zzz1166
 import { fetchCompanyResearch, yahooReturns, fetchNseAnnouncementsLite } from '@/lib/ai-gainers/screener-company';
 import { chooseDocuments, readIndiaDocuments, relatedFilings, INDIA_HISTORY_BUDGET, type DocRead, type IndiaFacts } from '@/lib/ai-gainers/india-extract';
 import { fetchEdgarResearch, fetchEdgarText, readUsFilingDocument, usFindingEvidence, type EdgarResearch, type UsDocReadResult } from '@/lib/ai-gainers/edgar-research';
@@ -412,7 +413,12 @@ export async function GET(req: NextRequest) {
     const wantBoard = market === 'US' ? searchParams.get('board') : null;
     const boardMatch = wantBoard ? (st.board_hash ?? null) === wantBoard : null;
     const view = boardMatch === false ? null : await viewFor(st, market, date, session);
-    return NextResponse.json({ ok: true, market, date, session, ...payload, ...(market === 'US' ? { board_match: boardMatch } : {}), view });
+    // zzz1166 — the day's transformational events go to the 60-day Transformational Gainers board (archive=1 waits and forces)
+    const wantArchive = searchParams.get('archive') === '1';
+    const arch = archiveView(view, market, date, wantArchive);
+    const archived = wantArchive ? await arch : undefined;
+    if (wantArchive && searchParams.get('lite') === '1') return NextResponse.json({ ok: true, market, date, archived, viewBuilt: !!view });
+    return NextResponse.json({ ok: true, market, date, session, ...payload, ...(market === 'US' ? { board_match: boardMatch } : {}), view, ...(wantArchive ? { archived } : {}) });
   } catch (e) { return jsonError(e); }
 }
 
