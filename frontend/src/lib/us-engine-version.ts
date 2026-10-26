@@ -67,7 +67,8 @@
 // bank revenue, credit-loss provision and equity ÷ assets. The bump re-grades bench entries so they pick these up.
 // 2026.10.20-b (zzz1164) — patent / royalty filers are no longer "financial", so the cash gate applies to them (Digital Turbine).
 // 2026.10.26-a (zzz1172) — a one-off in the year-ago quarter (GAAP prev far below adjusted prev, OSBC): graded on core EPS growth.
-export const US_ENGINE_VERSION = '2026.10.26-a';
+// 2026.10.26-b (zzz1173) — a bank's per-share capital / tangible book row is never read as adjusted EPS (LKFN read $12.32).
+export const US_ENGINE_VERSION = '2026.10.26-b';
 
 /** zzz807 — earlier engine versions whose cached days can be REGRADED in-process
  *  (their rows carry every figure the grade reads). Newest first. A rules-only

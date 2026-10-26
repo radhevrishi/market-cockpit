@@ -158,6 +158,8 @@ const NOT_EPS_RE = new RegExp(
     'tax\\s+rate', 'effective\\s+tax', '\\bmargins?\\b', 'backlog', 'bookings',
     '\\bARR\\b', 'billings', 'funds\\s+from\\s+operations', '\\bFFO\\b',
     'par\\s+value', 'price\\s+per\\s+share', 'per\\s+share\\s+price',
+    // zzz1173 — a bank's "Adjusted Tangible Capital" per share (LKFN, $12.32) is book value, not earnings
+    '\\btangible\\b', '\\bcapital\\b', '(?:stock|share)holders[\'’]?\\s+equity', '\\bcommon\\s+equity\\b', '\\btotal\\s+assets\\b',
   ].join('|'),
   'i',
 );
