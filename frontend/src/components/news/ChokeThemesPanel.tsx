@@ -4,6 +4,7 @@
 // zzz1176 — clearer layout: ranked theme cards, ticker chips with market cap that open the chart, ⚠ on tickers the stock
 // screener does not know, red / green bear and bull boxes, a playbook with the -30 / -50 / -70% tranche ladder.
 import { useCallback, useEffect, useState } from 'react';
+import { pollJob, startAndPoll } from '@/lib/ai-panel-client';
 import type { ThemePulse } from '@/lib/choke-themes/pulse';
 import { chokeAsText, fmtChokeCap, SMALL_MID_MAX, type ChokeLeader, type ChokeReport, type ChokeRegion, type ChokeTheme } from '@/lib/choke-themes/core';
 
@@ -106,7 +107,7 @@ function ThemeCard({ t, i, region, sm, pulse }: { t: ChokeTheme; i: number; regi
         {t.jcurve && <span title="Where the theme sits on the J-curve (AI's call)" style={{ flexShrink: 0, fontSize: 12, fontWeight: 900, padding: '3px 8px', borderRadius: 6, color: JC[t.jcurve].c, border: `1px solid ${JC[t.jcurve].c}`, background: tint(JC[t.jcurve].c, 10) }}>{JC[t.jcurve].w}</span>}
         {t.stage && <span title={STAGE_WHY[t.stage]} style={{ flexShrink: 0, fontSize: 12, fontWeight: 900, padding: '3px 8px', borderRadius: 6, color: STAGE_C[t.stage], border: `1px solid ${STAGE_C[t.stage]}`, background: tint(STAGE_C[t.stage], 10) }}>{t.stage}</span>}
       </div>
-      {t.alreadyRan && <div style={{ fontSize: 14, fontWeight: 800, color: C.red, padding: '6px 9px', borderRadius: 8, background: tint(C.red, 8), border: `1px solid ${tint(C.red, 35)}` }}>⚠ Already ran — its companies are up {t.ran5y != null ? `${Math.round(t.ran5y / 100 + 1)}x in 5 years` : 'a lot'} (median{t.ran1y != null ? `; ${t.ran1y >= 0 ? '+' : ''}${t.ran1y}% in 1 year` : ''}). Not early — the J-curve is behind it.</div>}
+      {t.alreadyRan && <div style={{ fontSize: 14, fontWeight: 800, color: C.red, padding: '6px 9px', borderRadius: 8, background: tint(C.red, 8), border: `1px solid ${tint(C.red, 35)}` }}>{t.unwinding ? <>⚠ Ran and now unwinding — its companies are up {t.ran5y}% in 5 years but {t.ran1y}% in the last year (median). The J-curve is behind it.</> : t.ran5y != null && t.ran5y >= 200 ? <>⚠ Already ran — its companies are up {Math.round(t.ran5y / 100 + 1)}x in 5 years (median{t.ran1y != null ? `; ${t.ran1y >= 0 ? '+' : ''}${t.ran1y}% in 1 year` : ''}). Not early — the J-curve is behind it.</> : <>⚠ The AI places it mid-run or late on the J-curve — not early.</>}</div>}
       {!t.alreadyRan && t.ran5y != null && <div style={{ fontSize: 13.5, color: C.dim }}>J-curve check: theme companies {t.ran5y >= 0 ? 'up' : 'down'} {Math.abs(t.ran5y)}% in 5 years (median){t.ran1y != null ? `, ${t.ran1y >= 0 ? '+' : ''}${t.ran1y}% in 1 year` : ''} — not yet a big run.</div>}
       {t.notPricedIn && <div style={{ fontSize: 14.5, lineHeight: 1.5, padding: '6px 9px', borderRadius: 8, background: tint(C.accent, 6), border: `1px solid ${tint(C.accent, 25)}` }}><b>What the market misses:</b> {t.notPricedIn}</div>}
       <div style={{ fontSize: 14.5, lineHeight: 1.55 }}><span style={{ fontWeight: 800, color: C.faint, fontSize: 12, letterSpacing: 0.5 }}>WHY </span>{t.why}</div>
@@ -160,7 +161,10 @@ export default function ChokeThemesPanel() {
   const toggle = () => setOpen((v) => { try { localStorage.setItem(OPEN_KEY, v ? '0' : '1'); } catch { /* optional */ } return !v; });
 
   useEffect(() => {
-    fetch('/api/v1/choke-themes', { cache: 'no-store' }).then((r) => r.json()).then((j) => { if (j?.report) setReport(j.report); }).catch(() => undefined).finally(() => setLoaded(true));
+    fetch('/api/v1/choke-themes', { cache: 'no-store' }).then((r) => r.json()).then((j) => {
+      if (j?.report) setReport(j.report);
+      if (j?.job?.state === 'running') { setBusy(true); setMsg('An AI run is in progress…'); pollJob<any>('/api/v1/choke-themes', j.job.startedAt, (s) => setMsg(`The AI is reading the latest news and updating the themes — ${s} s…`)).then(finish); }
+    }).catch(() => undefined).finally(() => setLoaded(true));
   }, []);
 
   // zzz1179 — the live pulse of every theme (no AI): loaded once the panel is open and whenever a new AI run lands
@@ -170,16 +174,17 @@ export default function ChokeThemesPanel() {
     fetch('/api/v1/choke-themes/pulse', { cache: 'no-store' }).then((r) => r.json()).then((j) => setPulses(j?.ok ? (j.pulses || {}) : null)).catch(() => setPulses(null));
   }, [open, report?.generatedAt]);   // eslint-disable-line react-hooks/exhaustive-deps
 
-  const run = useCallback(async () => {
-    setBusy(true); setMsg('The AI is reading the latest news and updating the themes — about 1–2 minutes…'); setOpen(true);
-    try {
-      const r = await fetch('/api/v1/choke-themes', { method: 'POST' });
-      const j = await r.json().catch(() => null);
-      if (j?.ok && j.report) { setReport(j.report); setMsg(null); }
-      else setMsg(j?.error || `Update failed (HTTP ${r.status}) — the previous run is still shown.`);
-    } catch (e: any) { setMsg(`Update failed: ${String(e?.message || e)} — the previous run is still shown.`); }
+  // zzz1181 — the run continues on the server; the page checks its state every 5 s (a long request was cut with HTTP 502)
+  const finish = useCallback((res: { report: any; error: string | null }) => {
+    if (res.report) setReport(res.report);
+    setMsg(res.error ? `${res.error} — the previous run is still shown.` : null);
     setBusy(false);
   }, []);
+  const run = useCallback(async () => {
+    setBusy(true); setMsg('The AI is reading the latest news and updating the themes — usually 1–3 minutes. You can leave this page; the result is saved.'); setOpen(true);
+    try { finish(await startAndPoll<any>('/api/v1/choke-themes', (s) => setMsg(`The AI is reading the latest news and updating the themes — ${s} s…`))); }
+    catch (e: any) { finish({ report: null, error: `Update failed: ${String(e?.message || e)}` }); }
+  }, [finish]);
 
   const copy = () => { if (report) navigator.clipboard?.writeText(chokeAsText(report)).then(() => setMsg('Copied as text.')).catch(() => undefined); };
   const g = report?.regions.find((x) => x.region === tab) || null;

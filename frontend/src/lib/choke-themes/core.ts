@@ -6,7 +6,7 @@ export type ChokeRegion = 'US' | 'IN';
 export interface ChokeLeader { name: string; ticker: string; note: string | null; /** zzz1175 — market cap from the stock screener ($ M US / ₹ Cr India), when known */ cap?: number | null; /** zzz1176 — false = the ticker is not in the stock screener (wrong, renamed or foreign) */ found?: boolean | null; /** zzz1178 — 1-year share move % (stock screener) */ p1y?: number | null }
 export type ChokeStage = 'EARLY' | 'BUILDING' | 'CROWDED';
 export type JCurve = 'PRE_INFLECTION' | 'INFLECTING' | 'MID_RUN' | 'LATE';
-export interface ChokeTheme { name: string; emoji: string; keywords?: string[]; jcurve?: JCurve; /** zzz1180 — the data check: median 5-year / 1-year share move of the theme's companies, and whether it already ran */ ran5y?: number | null; ran1y?: number | null; alreadyRan?: boolean; stage?: ChokeStage; notPricedIn?: string; signals?: string; why: string; leaders: ChokeLeader[]; smallMid: ChokeLeader[]; bear: string; bull: string; evidence: string | null }
+export interface ChokeTheme { name: string; emoji: string; keywords?: string[]; jcurve?: JCurve; /** zzz1180 — the data check: median 5-year / 1-year share move of the theme's companies, and whether it already ran */ ran5y?: number | null; ran1y?: number | null; alreadyRan?: boolean; unwinding?: boolean; stage?: ChokeStage; notPricedIn?: string; signals?: string; why: string; leaders: ChokeLeader[]; smallMid: ChokeLeader[]; bear: string; bull: string; evidence: string | null }
 export interface ChokePlaybook { dominant: string[]; accumulation: string; smallMid: string }
 export interface ChokeRegionView { region: ChokeRegion; themes: ChokeTheme[]; playbook: ChokePlaybook }
 export interface ChokeReport {
@@ -189,7 +189,10 @@ export function jcurveCheck(r: Pick<ChokeReport, 'regions'>, p5y: Record<ChokeRe
       const one = tk.map((x) => p1y?.[g.region]?.get(x)).filter((v): v is number => typeof v === 'number');
       t.ran5y = five.length ? Math.round(med(five)!) : null;
       t.ran1y = one.length ? Math.round(med(one)!) : null;
-      t.alreadyRan = t.ran5y != null && t.ran5y >= RAN_5Y_PCT || t.jcurve === 'LATE';
+      // zzz1181 — also "ran and now unwinding": up a lot over 5 years but falling hard this year (Indian rail / PSU EPC in 2026)
+      const unwinding = t.ran5y != null && t.ran1y != null && t.ran5y >= 80 && t.ran1y <= -25;
+      t.unwinding = unwinding;
+      t.alreadyRan = (t.ran5y != null && t.ran5y >= RAN_5Y_PCT) || unwinding || t.jcurve === 'LATE' || t.jcurve === 'MID_RUN';
     }
     // early first: not-yet-run themes keep the AI's order, already-ran themes go last
     g.themes = [...g.themes.filter((t) => !t.alreadyRan), ...g.themes.filter((t) => t.alreadyRan)];

@@ -2,6 +2,7 @@
 // zzz1178 — 🚀 Future 100-baggers (USA + India). Shows the last AI run; "Update with AI" runs it once with today's stock-screener
 // shortlist and saves the result for every device. Nothing runs unless the owner clicks.
 import { Fragment, useCallback, useEffect, useState } from 'react';
+import { pollJob, startAndPoll } from '@/lib/ai-panel-client';
 import { HB_CLASS_WORD, HB_FACTORS, hbAsText, type HbPick, type HbReport } from '@/lib/hundred-baggers/core';
 import { capText, type CandMarket } from '@/lib/screener/ai-candidates';
 
@@ -56,16 +57,21 @@ export default function HundredBaggersPage() {
   const [open, setOpen] = useState<string | null>(null);
   const [cls, setCls] = useState<'ALL' | 'SECULAR_COMPOUNDER' | 'CYCLE_PLAYER'>('ALL');
 
-  useEffect(() => { fetch('/api/v1/hundred-baggers', { cache: 'no-store' }).then((r) => r.json()).then((j) => { if (j?.report) setReport(j.report); }).catch(() => undefined).finally(() => setLoaded(true)); }, []);
-  const run = useCallback(async () => {
-    setBusy(true); setMsg('The AI is scoring the stock-screener shortlist for the USA and India — about 2 minutes…');
-    try {
-      const r = await fetch('/api/v1/hundred-baggers', { method: 'POST' });
-      const j = await r.json().catch(() => null);
-      if (j?.ok && j.report) { setReport(j.report); setMsg(null); } else setMsg(j?.error || `Update failed (HTTP ${r.status}) — the previous run is still shown.`);
-    } catch (e: any) { setMsg(`Update failed: ${String(e?.message || e)} — the previous run is still shown.`); }
+  useEffect(() => { fetch('/api/v1/hundred-baggers', { cache: 'no-store' }).then((r) => r.json()).then((j) => {
+      if (j?.report) setReport(j.report);
+      if (j?.job?.state === 'running') { setBusy(true); setMsg('An AI run is in progress…'); pollJob<any>('/api/v1/hundred-baggers', j.job.startedAt, (s) => setMsg(`The AI is scoring the stock-screener shortlist for the USA and India — ${s} s…`)).then(finish); }
+    }).catch(() => undefined).finally(() => setLoaded(true)); }, []);
+  // zzz1181 — the run continues on the server; the page checks its state every 5 s (a long request was cut with HTTP 502)
+  const finish = useCallback((res: { report: any; error: string | null }) => {
+    if (res.report) setReport(res.report);
+    setMsg(res.error ? `${res.error} — the previous run is still shown.` : null);
     setBusy(false);
   }, []);
+  const run = useCallback(async () => {
+    setBusy(true); setMsg('The AI is scoring the stock-screener shortlist for the USA and India — usually 1–3 minutes. You can leave this page; the result is saved.');
+    try { finish(await startAndPoll<any>('/api/v1/hundred-baggers', (s) => setMsg(`The AI is scoring the stock-screener shortlist for the USA and India — ${s} s…`))); }
+    catch (e: any) { finish({ report: null, error: `Update failed: ${String(e?.message || e)}` }); }
+  }, [finish]);
   const copy = () => { if (report) navigator.clipboard?.writeText(hbAsText(report)).then(() => setMsg('Copied as text.')).catch(() => undefined); };
 
   const g = report?.markets.find((x) => x.market === mkt) || null;

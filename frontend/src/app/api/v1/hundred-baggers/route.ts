@@ -1,18 +1,19 @@
-// zzz1178 — GET the last Future 100-baggers run (no AI); POST runs the AI once (owner's click, ≤ 6 a day).
+// zzz1178 — GET the last Future 100-baggers run (no AI) and the state of a run in progress; POST starts the AI run in the
+// background (zzz1181 — returns at once; the page polls GET). ≤ 6 runs a day.
 import { NextResponse } from 'next/server';
 import { loadHb, runHb } from '@/lib/hundred-baggers/run';
+import { jobState, startJob } from '@/lib/ai-panel-job';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 180;
+const KEY = 'hundred-baggers';
 
 export async function GET() {
-  const report = await loadHb().catch(() => null);
-  return NextResponse.json({ ok: true, report }, { headers: { 'cache-control': 'no-store' } });
+  const [report, job] = await Promise.all([loadHb().catch(() => null), jobState(KEY)]);
+  return NextResponse.json({ ok: true, report, job }, { headers: { 'cache-control': 'no-store' } });
 }
 
 export async function POST() {
-  const r = await runHb();
-  if (!r.ok) return NextResponse.json({ ok: false, error: r.error }, { status: 200 });
-  return NextResponse.json({ ok: true, report: r.report });
+  const job = await startJob(KEY, async () => { const r = await runHb(); return r.ok ? { ok: true } : { ok: false, error: r.error }; });
+  return NextResponse.json({ ok: true, job }, { status: 202 });
 }
