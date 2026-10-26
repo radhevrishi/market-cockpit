@@ -55,6 +55,7 @@ export const PROTECTED_API_PREFIXES = [
   '/api/v1/ai-eval',             // zzz883 — AI golden-set evaluation (paid AI)
   '/api/v1/guidance-diagnose',   // zzz909 — per-company guidance pipeline trace (workflow sends x-cron-secret)
   '/api/v1/transformational',    // zzz1166 — Transformational Gainers (reads the book's research; /ai is paid AI)
+  '/api/v1/choke-themes',       // zzz1174 — Choke-Point Themes (POST is paid AI, on the owner's click)
   '/api/v1/search',              // zzz1051 — document search (paid embeddings / rerank within small daily ceilings)
   '/api/v1/ai-runs',             // zzz1050 — AI call records (models, costs, outcomes, document ids)
   '/api/v1/price-alerts',        // zzz1054 — the owner's price alerts and what fired (personal data)

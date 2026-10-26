@@ -1,5 +1,6 @@
 'use client';
 
+import ChokeThemesPanel from '@/components/news/ChokeThemesPanel';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { RefreshCw, Filter, X, AlertCircle, Zap, ChevronRight } from 'lucide-react';
@@ -760,6 +761,9 @@ export default function NewsFeedPage() {
         label="news"
         onRefresh={handleRefresh}
       />
+
+      {/* zzz1174 — 🔥 Choke-Point Themes (AI on click; last run otherwise) */}
+      <ChokeThemesPanel />
 
       {/* ── IN PLAY TODAY bar ─────────────────────────────────────────── */}
       {!inPlayLoading && (
