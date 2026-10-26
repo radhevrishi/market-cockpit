@@ -19,9 +19,9 @@ const tint = (c: string, p: number) => `color-mix(in srgb, ${c} ${p}%, transpare
 const J_C: Record<JStage, string> = { J0: C.faint, J1: C.warn, J2: C.green, J3: C.green, J4: C.accent, J5: C.red };
 const EXPO_C: Record<string, string> = { DIRECT: C.green, ENABLER: C.accent, PROXY: C.warn, SPECULATIVE: C.faint };
 const CHECK: Record<string, { w: string; c: string; why: string }> = {
-  CONFIRMS: { w: '✓ figures confirm', c: C.green, why: 'The stock-screener figures (sales growth / acceleration) back the stage' },
-  MIXED: { w: '≈ figures mixed', c: C.warn, why: 'The figures neither clearly back nor contradict the stage' },
-  CONTRADICTS: { w: '✗ figures contradict', c: C.red, why: 'Sales are shrinking while an inflection is claimed' },
+  CONFIRMS: { w: '✓ screener figures agree', c: C.green, why: 'The stock-screener sales figures (latest quarter vs a year earlier, last fiscal year) agree with the stage. Not reconciled to filings; does not verify product exposure or governance.' },
+  MIXED: { w: '≈ screener figures mixed', c: C.warn, why: 'The figures neither clearly back nor contradict the stage' },
+  CONTRADICTS: { w: '✗ screener figures contradict', c: C.red, why: 'Sales are shrinking while an inflection is claimed' },
   NO_DATA: { w: '? no figures', c: C.faint, why: 'No stock-screener figures — evidence confidence is lower' },
 };
 const pc = (v: number | null | undefined) => (v == null ? '—' : `${v > 0 ? '+' : ''}${Math.round(v)}%`);
@@ -99,7 +99,7 @@ function CandDetail({ c, region }: { c: ChokeCandidate; region: ChokeRegion }) {
           {label('STOCK-SCREENER FIGURES')}
           {f ? (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, fontSize: 13 }}>
-              {[['Mkt cap', fmtChokeCap(f.cap, region) || '—'], ['Sales qtr', pc(f.revQ)], ['Sales yr', pc(f.revA)], ['EPS qtr', pc(f.epsQ)], ['Op margin', f.opm == null ? '—' : `${Math.round(f.opm)}%`], ['P/E', f.pe == null || f.pe <= 0 ? '—' : String(Math.round(f.pe))], ['FCF margin', f.fcfm == null ? '—' : `${Math.round(f.fcfm)}%`], ['D/E', f.de == null ? '—' : f.de.toFixed(1)]].map(([k, v]) => (
+              {[['Mkt cap', fmtChokeCap(f.cap, region) || '—'], ['Sales qtr YoY', pc(f.revQ)], ['Sales last FY', pc(f.revA)], ['EPS qtr YoY', pc(f.epsQ)], ['Op margin TTM', f.opm == null ? '—' : `${Math.round(f.opm)}%${f.opmFY != null && Math.abs(f.opm - f.opmFY) >= 15 ? ` (FY ${Math.round(f.opmFY)}% — TTM has one-offs?)` : ''}`], ['P/E', f.pe == null || f.pe <= 0 ? '—' : String(Math.round(f.pe))], ['FCF margin', f.fcfm == null ? '—' : `${Math.round(f.fcfm)}%`], ['D/E', f.de == null ? '—' : f.de.toFixed(1)]].map(([k, v]) => (
                 <span key={k} style={{ border: `1px solid ${C.border}`, borderRadius: 6, padding: '2px 7px', background: C.bg }}><span style={{ color: C.faint }}>{k}</span> <b>{v}</b></span>
               ))}
             </div>
@@ -171,7 +171,7 @@ function ThemeCard({ t, i, region, pulse }: { t: ChokeTheme; i: number; region: 
       <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', flexWrap: 'wrap' }}>
         <span style={{ flexShrink: 0, width: 28, height: 28, borderRadius: 8, background: tint(C.accent, 14), color: C.accent, fontWeight: 900, fontSize: 15, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
         <div style={{ fontWeight: 900, fontSize: 17.5, lineHeight: 1.3, flex: 1, minWidth: 200 }}>🔥 {t.name} <span style={{ whiteSpace: 'nowrap' }}>{t.emoji}</span></div>
-        {t.qualifies ? tag('✓ evidence-backed candidates', C.green, 'At least one DIRECT / ENABLER company at J2 / J3 whose figures do not contradict it') : tag('watch — no confirmed inflection yet', C.warn, 'No DIRECT / ENABLER candidate at J2 / J3 backed by its figures')}
+        {t.qualifies ? tag('✓ figures support a candidate', C.green, 'At least one DIRECT / ENABLER company at J2 / J3 whose screener figures agree. Verified: the financial turn in screener figures. NOT verified here: that the product is the earnings driver, the scarcity economics, governance.') : tag('watch — no confirmed inflection yet', C.warn, 'No DIRECT / ENABLER candidate at J2 / J3 backed by its figures')}
         {pulse && <StrengthBadge p={pulse} />}
       </div>
       <div style={{ fontSize: 15, lineHeight: 1.55 }}>{t.why}</div>
@@ -198,20 +198,38 @@ function ThemeCard({ t, i, region, pulse }: { t: ChokeTheme; i: number; region: 
   );
 }
 
+// zzz1185 — at the END of the panel, collapsed: theme changes first, company changes grouped per theme in one line each
 function Changes({ changes }: { changes: Array<ChokeChange | string> }) {
+  const [open, setOpen] = useState(false);
   if (!changes.length) return null;
   const KC: Record<string, string> = { ADDED: C.green, DROPPED: C.red, CHANGED: C.accent };
+  const rows = changes.filter((x): x is ChokeChange => typeof x !== 'string');
+  const themeRows = rows.filter((x) => x.what.startsWith('theme: '));
+  const groups = new Map<string, { kind: string; region: string; theme: string; items: string[] }>();
+  for (const x of rows.filter((r) => !r.what.startsWith('theme: '))) {
+    const m = /^(\S+) \((.*)\)$/.exec(x.what);
+    const key = `${x.kind}|${x.region}|${m ? m[2] : ''}`;
+    const g = groups.get(key) || { kind: x.kind, region: x.region, theme: m ? m[2] : '', items: [] };
+    g.items.push(m ? `${m[1]}${x.to ? ` (${x.to})` : ''}` : `${x.what}${x.from || x.to ? ` ${x.from ?? '—'} → ${x.to ?? '—'}` : ''}`);
+    groups.set(key, g);
+  }
+  const counts = { ADDED: rows.filter((x) => x.kind === 'ADDED').length, DROPPED: rows.filter((x) => x.kind === 'DROPPED').length, CHANGED: rows.filter((x) => x.kind === 'CHANGED').length };
   return (
-    <div style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 12px', marginBottom: 12, background: C.bg2 }}>
-      <div style={{ fontWeight: 900, fontSize: 15.5, marginBottom: 6 }}>🔄 What changed since the last run <span style={{ fontWeight: 400, fontSize: 13, color: C.faint }}>(computed from the two stored runs)</span></div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        {changes.map((x, k) => typeof x === 'string'
-          ? <div key={k} style={{ fontSize: 14 }}>{x}</div>
-          : <div key={k} style={{ display: 'flex', gap: 8, alignItems: 'baseline', fontSize: 14, lineHeight: 1.5 }}>
-              {tag(x.kind, KC[x.kind])}<span>{x.region === 'US' ? '🇺🇸' : '🇮🇳'}</span>
-              <span>{x.what}{x.from || x.to ? <span style={{ color: C.dim }}> {x.from ?? '—'} → {x.to ?? '—'}</span> : null}</span>
-            </div>)}
-      </div>
+    <div style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 12px', marginTop: 12, background: C.bg2 }}>
+      <button type="button" onClick={() => setOpen((v) => !v)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: C.text, fontWeight: 900, fontSize: 15 }}>
+        {open ? '▾' : '▸'} 🔄 What changed since the last run <span style={{ fontWeight: 600, fontSize: 13.5, color: C.dim }}>· {counts.ADDED} added · {counts.DROPPED} dropped · {counts.CHANGED} stage changes</span>
+      </button>
+      {open && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 8 }}>
+          {themeRows.map((x, k) => <div key={`t${k}`} style={{ display: 'flex', gap: 8, alignItems: 'baseline', fontSize: 14 }}>{tag(x.kind, KC[x.kind])}<span>{x.region === 'US' ? '🇺🇸' : '🇮🇳'}</span><b>{x.what.replace(/^theme: /, '')}</b></div>)}
+          {[...groups.values()].map((g, k) => (
+            <div key={`g${k}`} style={{ display: 'flex', gap: 8, alignItems: 'baseline', fontSize: 13.5, lineHeight: 1.5 }}>
+              {tag(g.kind, KC[g.kind])}<span>{g.region === 'US' ? '🇺🇸' : '🇮🇳'}</span>
+              <span>{g.theme && <span style={{ color: C.dim }}>{g.theme}: </span>}{g.items.join(', ')}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -271,7 +289,7 @@ export default function ChokeThemesPanel() {
           {open ? '▾' : '▸'} 🔥 Choke-Point Themes <span style={{ fontWeight: 600, color: C.dim, fontSize: 14.5 }}>· companies on an earnings J-curve · 🇺🇸 US + 🇮🇳 India</span>
         </button>
         <span style={{ fontSize: 13.5, color: C.faint }}>
-          {!loaded ? 'loading…' : report ? `Last successful research: ${fmt(report.generatedAt)}${report.marketDataAt ? ` · market data ${fmt(report.marketDataAt)}` : ''} · ${report.newsUsed} news items` : 'not run yet'}
+          {!loaded ? 'loading…' : report ? `Last successful research: ${fmt(report.generatedAt)}${report.marketDataAt ? ` · market data ${fmt(report.marketDataAt)}` : ''} · ${report.newsUsed} news items${report.keptFromPrevious?.length ? ` · ${report.keptFromPrevious.map((r) => (r === 'US' ? 'US' : 'India')).join(' and ')} kept from the previous run (its AI call failed)` : ''}` : 'not run yet'}
         </span>
         <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
           {report && <button type="button" style={btn()} onClick={copy} title="Copy the whole report as text">⧉ Copy</button>}
@@ -296,7 +314,11 @@ export default function ChokeThemesPanel() {
             <button type="button" style={btn(order === 'evidence')} onClick={() => setOrder('evidence')} title="Themes ranked by the quality of their evidence-backed candidates">Rank: evidence</button>
             <button type="button" style={btn(order === 'strength')} onClick={() => setOrder('strength')} title="Market & news pulse (news, squeeze talk, company figures, contracts) — not investment quality">Rank: market & news pulse</button>
           </div>
-          <Changes changes={report.changes || []} />
+          {(() => {   // zzz1186 — how wide the search was, so a short list is not mistaken for a full sweep
+            const cv = report.coverage?.[g.region]; if (!cv) return null;
+            const cands = g.themes.reduce((n, t) => n + (t.candidates || []).length, 0), q = g.themes.filter((t) => t.qualifies).length;
+            return <div style={{ fontSize: 13, color: C.dim, marginBottom: 8, lineHeight: 1.5 }}>🔎 Search: {cv.universe.toLocaleString()} listed companies → {cv.inBand.toLocaleString()} in the small / mid band → {cv.turning} with turning figures + {cv.industry} in bottleneck industries sent to the AI with {cv.news} news items → {g.themes.length} themes, {cands} candidates → {q} with figure-supported candidates. Filings are not read one by one; screener figures are not reconciled to filings.</div>;
+          })()}
           {themes.length === 0 && <div style={{ fontSize: 15, padding: 12, border: `1px dashed ${C.border}`, borderRadius: 10 }}>No theme qualified for {g.region === 'US' ? 'the US' : 'India'} in this run — better no list than filler.</div>}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {themes.map((t, i) => <ThemeCard key={t.name} t={t} i={i} region={g.region} pulse={pulses === undefined ? undefined : pulses === null ? null : (pulses[`${g.region}|${t.name}`] ?? null)} />)}
@@ -314,6 +336,7 @@ export default function ChokeThemesPanel() {
             </div>
             <div style={{ fontSize: 13, color: C.dim, marginTop: 8 }}>Entry is a matter of evidence, not of price falls: reassess when a milestone is met or missed, and size by the strength of the evidence.</div>
           </div>
+          <Changes changes={(report.changes || []).filter((x) => typeof x === 'string' || x.region === g.region)} />
           <div style={{ fontSize: 13, color: C.faint, marginTop: 8, lineHeight: 1.5 }}>
             J-stages and exposure classes are the AI analyst’s classifications under this method — not tested forecasts. Figures from the stock screener; scenarios calculated here from the stated assumptions. Screened using available disclosures and the AI’s knowledge as of {fmt(report.generatedAt)} — governance is not certified; check filings before acting. The market & news pulse is separate from the fundamental view. Model: {report.model || 'AI'}. Not investment advice.
           </div>

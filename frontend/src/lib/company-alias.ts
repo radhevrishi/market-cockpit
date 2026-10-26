@@ -472,6 +472,8 @@ export function matchCompanies(text: string, index: AliasIndex = defaultAliasInd
         if (span.some((t) => !NAME_PARTICLES.has(t.norm) && !capitalised(t.raw))) continue;
       } else if (n === 1) {
         if (!capitalised(span[0].raw)) continue;
+      } else if (!capitalised(span[0].raw)) {
+        continue;   // zzz1186 — a lower-case phrase ("₹949-crore power grid orders") is a common noun, not the company Power Grid
       }
       const start = span[0].start, end = span[n - 1].end;
       let conf = owner.confidence;

@@ -914,7 +914,7 @@ export default function NewsFeedPage() {
               🌟 TRANSFORMATIONAL CONTRACTS
             </span>
             <span style={{ fontSize: '13px', color: 'var(--mc-text-4)' }}>
-              {transformationalPreview.total_in_ledger || transformationalPreview.count} qualifying contracts in last {transformationalPreview.window_days || 180} days · newest first
+              {(transformationalPreview.articles || []).length} qualifying{transformationalPreview.total_in_ledger && transformationalPreview.total_in_ledger > (transformationalPreview.articles || []).length ? ` (of ${transformationalPreview.total_in_ledger} recorded — the rest are small vs market cap, not contracts, or undated)` : ''} · last {transformationalPreview.window_days || 180} days · newest first
               {(() => {
                 const ts = transformationalPreview.summary?.newest_recorded_at || transformationalPreview.articles?.[0]?.published_at;
                 const d = ts ? Math.floor((Date.now() - new Date(ts).getTime()) / 86400000) : null;
@@ -1954,9 +1954,8 @@ export default function NewsFeedPage() {
                     )}
                     {/* PATCH 0085: meta row 10 → 13 */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, fontSize: 13, color: 'var(--mc-text-3)' }}>
-                      <span style={{ color: 'var(--mc-bullish)', fontWeight: 700 }}>{b.confidence_pct}% conf</span>
-                      <span>·</span>
-                      <span>{b.sample_count} articles</span>
+                      {/* zzz1186 — no probability-style "% conf" (not calibrated): show the evidence coverage instead */}
+                      <span style={{ fontWeight: 700 }} title="How many articles and distinct sources back this bottleneck — coverage, not a probability">{b.sample_count} {b.sample_count === 1 ? 'article' : 'articles'} · {new Set((b.top_samples || []).map((x: any) => x?.source).filter(Boolean)).size} sources{b.sample_count <= 1 ? ' · single report' : ''}</span>
                       <span>·</span>
                       <span>{b.age_days}d ago</span>
                     </div>
@@ -2065,7 +2064,7 @@ export default function NewsFeedPage() {
                           })}
                           {/* Transmission cascade T0 → T4 */}
                           <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--mc-bg-4)' }}>
-                            <div style={{ fontSize: 11, color: 'var(--mc-text-4)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 }}>Transmission cascade</div>
+                            <div style={{ fontSize: 11, color: 'var(--mc-text-4)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 }} title="A typical pattern for this kind of bottleneck, not a company-specific estimate">Transmission cascade · research hypothesis, not company evidence</div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: 12 }}>
                               {([
                                 ['T0', 'now',    lb.transmission.T0, '#22D3EE'],

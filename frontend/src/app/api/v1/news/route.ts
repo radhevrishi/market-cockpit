@@ -1053,6 +1053,17 @@ function computeSentimentMagnitude(title: string, desc: string): {
   direction: 'positive' | 'negative' | 'neutral';
   magnitude: number; // 1-10
 } {
+  // zzz1186 — the headline decides when it carries a direction ("rallies 4%; Motilal Oswal upgrades stock to 'Buy'" was marked
+  // Bearish because the description mentioned a fall); the description is used only for a neutral headline
+  const tTitle = title.toLowerCase();
+  const POS_T = /\b(upgrades?d?|upgraded to|rall(y|ies|ied)|jumps?|jumped|surges?d?|soars?|climbs?|gains?|beats?|raises? (target|guidance)|to ['‘’"]?buy|outperform|record)\b/i;
+  const NEG_T = /\b(downgrades?d?|plunges?d?|slumps?|sinks?|tumbles?d?|falls?|fell|drops?|dropped|misses?|missed|cuts? (target|guidance)|to ['‘’"]?sell|underperform|probe|raid|fraud|suspension|suspended|forensic audit|resigns?)\b/i;
+  const tp = POS_T.test(tTitle), tn = NEG_T.test(tTitle);
+  if (tp !== tn) {
+    const n = (tTitle.match(/(\d{1,3})\s*%/) || [])[1];
+    const mag = n ? Math.min(8, Math.floor(Number(n) / 5) + 3) : 5;
+    return { direction: tp ? 'positive' : 'negative', magnitude: mag };
+  }
   const text = (title + ' ' + desc).toLowerCase();
 
   // Strong-positive phrases (intensity 8-10)
@@ -1215,6 +1226,9 @@ function generateImpact(
   ];
 
   if (region === 'IN') {
+    // zzz1186 — name the quarter the article is about (a Q2 result was labelled "Q4 earnings season")
+    const qm = /\b(q[1-4])\s*(?:fy\s?'?(\d{2,4}))?\s+(?:result|profit|revenue|earnings|net (?:profit|income))/i.exec(text);
+    if (qm) return `${qm[1].toUpperCase()}${qm[2] ? ` FY${qm[2].slice(-2)}` : ''} results — quarterly delta`;
     for (const [pattern, statement] of indiaPatterns) {
       if (pattern.test(text)) return statement;
     }
@@ -1253,7 +1267,8 @@ function generateImpact(
     }
     return 'Structural supply-chain signal';
   }
-  if (article_type === 'EARNINGS') return region === 'IN' ? 'Quarterly earnings — track delta vs estimate' : 'Earnings — vs consensus';
+  // zzz1186 — only when the article is actually about results (a "Masterclass" piece was given an earnings line)
+  if (article_type === 'EARNINGS' && /\b(result|results|earnings|profit|revenue|quarter|q[1-4]|eps|guidance|margin|net income|sales)\b/i.test(text)) return region === 'IN' ? 'Quarterly earnings — track delta vs estimate' : 'Earnings — vs consensus';
   if (article_type === 'MACRO') return region === 'IN' ? 'India macro signal' : 'US macro signal';
   if (article_type === 'GEOPOLITICAL') return 'Geopolitical risk';
   return '';
@@ -1470,6 +1485,7 @@ async function fetchAllNews(): Promise<any[]> {
               ? detectResolutionState(title + ' ' + desc).state
               : null,
             article_type,
+            text: title + ' ' + desc,
           });
 
           // ── PATCH 0050: Why-This-Matters PM line ──
@@ -2958,6 +2974,10 @@ export async function GET(request: Request) {
               tickers: s.tickers || s.ticker_symbols || [],
             }),
           }));
+          // zzz1186 — an Indian news SOURCE writing about a foreign company (Samsung–Broadcom) is not an India signal: the India
+          // view needs the article itself to be about India
+          const INDIA_TEXT = /\b(india|indian|nse|bse|sebi|rbi|crore|lakh|psu|adani|tata|reliance|mahindra|bharat|hindustan|gujarat|maharashtra|tamil|karnataka|delhi|mumbai)\b|₹/i;
+          for (const t of tagged) if (t.region === 'IN' && !INDIA_TEXT.test(String(t.sample?.title || ''))) t.region = 'GLOBAL';
           const inSamples = tagged.filter((t) => t.region === 'IN').map((t) => t.sample);
           const glSamples = tagged.filter((t) => t.region === 'GLOBAL').map((t) => t.sample);
 

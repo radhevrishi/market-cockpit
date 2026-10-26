@@ -20,8 +20,10 @@ export interface HbPick {
   data: Cand | null;
   /** zzz1184 — calculated scenario (from the model's EPS-growth / exit-P/E / dilution assumptions and today's P/E) and data flags */
   scenario?: ScenarioIn | null; multiples?: ScenarioOut | null; scenarioNote?: string | null; flags?: string[];
+  /** zzz1186 — the AI's own scores before the figures capped them, why they were capped, and what 100x would take */
+  aiScores?: Record<HbFactor, number>; aiTotal?: number; caps?: string[]; math100?: string | null;
 }
-export interface HbMarketView { market: CandMarket; picks: HbPick[]; note: string }
+export interface HbMarketView { market: CandMarket; picks: HbPick[]; note: string; /** zzz1186 — earlier picks that fail today's hard gates */ removed?: Array<{ ticker: string; why: string }> }
 export interface HbReport { markets: HbMarketView[]; generatedAt: string; model: string | null; shortlist: Record<CandMarket, number> }
 
 const SCORES_SCHEMA = { type: 'object', additionalProperties: false, required: HB_FACTORS.map(([k]) => k), properties: Object.fromEntries(HB_FACTORS.map(([k, l]) => [k, { type: 'integer', minimum: 0, maximum: 10, description: l }])) };
@@ -81,6 +83,8 @@ export const HB_SYSTEM = `You are an expert equity analyst hunting future 100-ba
 Choose ONLY from the shortlist given (real companies with stock-screener figures); copy the ticker exactly. Never invent figures: use the shortlist numbers, and mark anything else as an estimate.
 Prioritise: long future runway, bottleneck / mission-critical roles, structural positioning, early financial inflection.
 Exclude: governance, pledge or audit issues; chronic dilution; promoter / board disputes; stocks already fully priced (very high P/S after a huge run). If unsure about governance, leave it out.
+Think like the owner: a 100-bagger is RARE. It needs all of: a market far bigger than the company today (100x means the company must one day be worth 100 times its value now — say whether that is believable for this business); a durable, rising moat; earnings growth of 25%+ a year that it can sustain for 15–20 years mostly from internally generated cash; high and rising returns on capital reinvested at high rates; a founder / promoter owner-operator with skin in the game and a record of honest capital allocation; no reliance on one customer, one government scheme or one commodity cycle. A cyclical, government-tender-driven or commodity company can be a good stock but is rarely a 100-bagger — classify it CYCLE_PLAYER and score durability low. A well-known, widely-owned mid cap near the top of the band is not "hidden".
+The system checks your scores against the figures and caps any that contradict them (negative free cash flow caps capital allocation, high P/E or a big past run caps valuation runway, low returns cap the moats, slow sales growth caps inflection) — so score from the figures.
 Score 15 factors 0–10 each, honestly — 8+ is rare, and a score must match the figures (negative FCF margin cannot be "strong cash generation"; debt/equity near 1 is not a clean balance sheet).
 Classify: SECULAR_COMPOUNDER (long-runway compounder) or CYCLE_PLAYER (cyclical upside, limited durability). The class is not a return promise — the scenario is.
 Read the figures critically: a quarter's sales jump far above the yearly growth is often an acquisition or a low base — say so, do not call it organic growth. Negative FCF margin, rising share count or debt must appear in the risks.
@@ -97,6 +101,44 @@ export function hbFlags(c: Cand): string[] {
   if (c.p5y != null && c.p5y >= 300) f.push(`already up ${Math.round(c.p5y / 100 + 1)}x in 5 years`);
   if (c.pe != null && c.pe > 60) f.push(`rich valuation — P/E ${Math.round(c.pe)}`);
   return f;
+}
+
+/** zzz1186 — a factor score must not contradict the figures: the AI's score is capped where the screener says otherwise.
+ *  Returns the caps and the plain reasons. Pure. */
+export function hbFactCaps(c: Cand): { caps: Partial<Record<HbFactor, number>>; reasons: string[] } {
+  const caps: Partial<Record<HbFactor, number>> = {}, reasons: string[] = [];
+  const cap = (k: HbFactor, v: number, why: string) => { if (caps[k] == null || v < caps[k]!) caps[k] = v; reasons.push(why); };
+  if (c.fcfm != null && c.fcfm < 0) { cap('capital', 5, `capital allocation ≤5: free cash flow negative (${Math.round(c.fcfm)}%)`); cap('light', 4, 'capital-light ≤4: burns cash to grow'); }
+  if (c.de != null && c.de >= 0.5) { cap('resilience', 5, `cycle resilience ≤5: debt/equity ${c.de.toFixed(1)}`); cap('capital', 6, 'capital allocation ≤6: uses debt'); }
+  if (c.bb != null && c.bb < -2) cap('capital', 5, `capital allocation ≤5: share count up ${Math.abs(c.bb).toFixed(1)}% a year`);
+  const roc = c.roce ?? c.roe;
+  if (roc != null && roc < 15) { cap('opmoat', 6, `operational moat ≤6: return on capital ${Math.round(roc)}%`); cap('moat', 6, 'moat ≤6: returns do not show pricing power'); }
+  if (c.opm != null && c.opm < 12) cap('opmoat', 5, `operational moat ≤5: operating margin ${Math.round(c.opm)}%`);
+  if (c.revA != null && c.revA < 15 && (c.revQ == null || c.revQ < 20)) cap('inflection', 4, `financial inflection ≤4: sales growth ${Math.round(c.revA)}% a year`);
+  if (c.revQ != null && c.revQ >= 80 && (c.revA == null || c.revQ >= c.revA * 2)) cap('inflection', 6, 'financial inflection ≤6: the quarter jump looks acquired or base-driven');
+  if (c.pe != null && c.pe > 60) cap('valuation', 4, `valuation runway ≤4: P/E ${Math.round(c.pe)}`);
+  else if (c.pe != null && c.pe > 40) cap('valuation', 6, `valuation runway ≤6: P/E ${Math.round(c.pe)}`);
+  if (c.ps != null && c.ps > 10) cap('valuation', 5, `valuation runway ≤5: P/S ${c.ps.toFixed(1)}`);
+  if (c.p5y != null && c.p5y >= 300) cap('valuation', 5, `valuation runway ≤5: already up ${Math.round(c.p5y / 100 + 1)}x in 5 years`);
+  return { caps, reasons: [...new Set(reasons)] };
+}
+
+/** zzz1186 — the arithmetic of "100x": the market value it implies and the yearly compounding it needs. Pure. */
+export function hbHundredXMath(c: Cand, m: CandMarket): string {
+  const target = c.mc * 100;
+  const cap = m === 'US' ? (target >= 1_000_000 ? `$${(target / 1_000_000).toFixed(1)} trillion` : `$${Math.round(target / 1000)} billion`) : `₹${(target / 100_000).toFixed(1)} lakh crore`;
+  const sales = c.ps && c.ps > 0 ? c.mc / c.ps : null;
+  const salesAt = sales == null ? '' : ` — at today's P/S that is sales of ${m === 'US' ? `$${Math.round(sales * 100 / 1000)} billion` : `₹${Math.round(sales * 100).toLocaleString('en-IN')} Cr`} (about ${Math.round(100)}× today)`;
+  return `100x = ${cap} market value${salesAt}; it needs about 36% a year for 15 years or 26% a year for 20 years.`;
+}
+
+/** Applies the caps to the AI's scores and recomputes the total. Pure. */
+export function hbApplyCaps(p: Pick<HbPick, 'scores' | 'data' | 'aiScores'>): { scores: Record<HbFactor, number>; total: number; caps: string[]; aiScores: Record<HbFactor, number>; aiTotal: number } {
+  const ai = (p.aiScores || p.scores) as Record<HbFactor, number>;
+  const { caps, reasons } = p.data ? hbFactCaps(p.data) : { caps: {}, reasons: [] };
+  const scores = Object.fromEntries(HB_FACTORS.map(([k]) => [k, Math.min(ai[k] ?? 0, caps[k] ?? 10)])) as Record<HbFactor, number>;
+  const sum = (o: Record<string, number>) => Object.values(o).reduce((a, b) => a + b, 0);
+  return { scores, total: sum(scores), caps: reasons, aiScores: ai, aiTotal: sum(ai) };
 }
 
 /** Keeps only picks that name a shortlist company; the total is summed here, never taken from the model. Pure. */
@@ -128,8 +170,9 @@ export function cleanHb(d: any, shortlist: Record<CandMarket, Cand[]>): HbMarket
         ticker: t, name: c.n, thesis: str(p.thesis, 200), scores, total: Object.values(scores).reduce((a, b) => a + b, 0),
         forwardMetrics: str(p.forward_metrics, 220), moat: str(p.moat, 220), megatrend: str(p.megatrend, 160), valuation: str(p.valuation, 180),
         risks: str(p.risks, 220), classification: p.classification === 'CYCLE_PLAYER' ? 'CYCLE_PLAYER' : 'SECULAR_COMPOUNDER', missing: str(p.missing, 220), data: c,
-        scenario, multiples: sm.out, scenarioNote: sm.note, flags: hbFlags(c),
+        scenario, multiples: sm.out, scenarioNote: sm.note, flags: hbFlags(c), math100: hbHundredXMath(c, m),
       });
+      Object.assign(picks[picks.length - 1], hbApplyCaps(picks[picks.length - 1]));
     }
     if (picks.length < 3) return null;
     picks.sort((a, b) => b.total - a.total);

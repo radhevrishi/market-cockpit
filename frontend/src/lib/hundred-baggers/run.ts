@@ -11,7 +11,17 @@ export async function loadHb(): Promise<HbReport | null> {
   const { kvGet } = await import('../kv');
   const r = (await kvGet<HbReport>(HB_KEY).catch(() => null)) || null;
   // zzz1184 — data flags are laid over every read (a run stored before them gets them too)
-  if (r) { const { hbFlags } = await import('./core'); for (const g of r.markets) for (const p of g.picks) if (p.data) p.flags = hbFlags(p.data); }
+  if (r) {
+    const { hbFlags, hbApplyCaps, hbHundredXMath } = await import('./core');
+    for (const g of r.markets) {
+      for (const p of g.picks) if (p.data) { p.flags = hbFlags(p.data); Object.assign(p, hbApplyCaps(p)); p.math100 = hbHundredXMath(p.data, g.market); }
+      // zzz1186 — a pick that fails the hard gates (stored before they existed, or its figures changed) leaves the list, said so
+      const { hbGateFails } = await import('../screener/ai-candidates');
+      g.removed = g.picks.filter((p) => p.data && hbGateFails(p.data, g.market).length).map((p) => ({ ticker: p.ticker, why: hbGateFails(p.data!, g.market).join(', ') }));
+      g.picks = g.picks.filter((p) => !p.data || !hbGateFails(p.data, g.market).length);
+      g.picks.sort((a, b) => b.total - a.total);   // ranked on the figure-checked total
+    }
+  }
   return r;
 }
 

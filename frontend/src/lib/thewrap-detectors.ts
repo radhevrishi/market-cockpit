@@ -136,6 +136,12 @@ export function detectOrderBook(text: string): DetectorSignal | null {
   if (!text) return null;
   const trigger = ORDER_TRIGGER_PATTERNS.find(rx => rx.test(text));
   if (!trigger) return null;
+  // zzz1186 — an MoU is an intent to cooperate, not an order: labelled as what it is
+  const MOU_RX = /\bMOU\b|\bmemorandum\s+of\s+understanding\b/i;
+  const onlyMou = !ORDER_TRIGGER_PATTERNS.some((rx) => !rx.source.includes('MOU') && rx.test(text));
+  if (onlyMou && MOU_RX.test(text)) {
+    return { emoji: '🤝', label: 'MOU · not an order', color: '#94A3B8', evidence: 'Memorandum of understanding — intent to cooperate; no contract value or binding order', meta: {} };
+  }
   // Tier-1 PSU customer match — best confidence signal.
   const tier1 = TIER1_PSU_PATTERNS.find(p => p.rx.test(text));
   // Value extraction — common Indian disclosure formats.

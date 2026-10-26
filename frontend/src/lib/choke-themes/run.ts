@@ -3,7 +3,7 @@
 // acceleration and a list of small / mid-cap companies whose OWN figures are turning (stock screener). The server then lays
 // the screener's facts over every candidate, calculates the scenarios, ranks themes by their qualifying candidates and
 // computes "what changed" against the previous stored run. Stored in KV (latest + previous); runs only on the owner's click.
-import { CHOKE_SYSTEM, CHOKE_TOOL, DISCOVERY_CAP, cleanChoke, diffRuns, enrich, type CandFacts, type ChokeRegion, type ChokeReport } from './core';
+import { CHOKE_CHECKLIST, CHOKE_SYSTEM, DISCOVERY_CAP, chokeToolFor, cleanChoke, diffRuns, enrich, type CandFacts, type ChokeRegion, type ChokeReport } from './core';
 import type { Cand } from '../screener/ai-candidates';
 
 export const CHOKE_KEY = 'choke-themes:v1:latest';
@@ -11,7 +11,7 @@ export const CHOKE_PREV_KEY = 'choke-themes:v1:previous';
 export const CHOKE_DAILY_MAX = 6;
 const TTL = 400 * 86_400;
 
-const toFacts = (c: Cand): CandFacts => ({ cap: c.mc, revQ: c.revQ, revA: c.revA, epsQ: c.epsQ, opm: c.opm, pe: c.pe, fcfm: c.fcfm, de: c.de, p1y: c.p1y, p5y: c.p5y });
+const toFacts = (c: Cand): CandFacts => ({ cap: c.mc, revQ: c.revQ, revA: c.revA, epsQ: c.epsQ, opm: c.opm, opmFY: c.opmFY ?? null, pe: c.pe, fcfm: c.fcfm, de: c.de, p1y: c.p1y, p5y: c.p5y });
 async function screenerFacts(): Promise<{ facts: Record<ChokeRegion, Map<string, CandFacts>>; cands: Record<ChokeRegion, Cand[]> }> {
   const { loadCands } = await import('../screener/ai-candidates-load');
   const [us, ind] = await Promise.all([loadCands('US'), loadCands('IN')]);
@@ -23,7 +23,11 @@ export async function loadChoke(): Promise<ChokeReport | null> {
   const { kvGet } = await import('../kv');
   const r = (await kvGet<ChokeReport>(CHOKE_KEY).catch(() => null)) || null;
   if (!r) return null;
-  if (r.version === 2) enrich(r, (await screenerFacts()).facts);
+  if (r.version === 2) {
+    enrich(r, (await screenerFacts()).facts);
+    // zzz1185 — a "what changed" computed against an old-method run is not a comparison: shown only when the previous run is v2
+    if (r.changes?.length) { const prev = await kvGet<ChokeReport>(CHOKE_PREV_KEY).catch(() => null); if (prev?.version !== 2) r.changes = []; }
+  }
   return r;
 }
 
@@ -71,50 +75,77 @@ export async function runChoke(): Promise<{ ok: true; report: ChokeReport } | { 
   const prev = prevRaw || null;
   const infl = { US: industryInflections(sf.cands.US, 'US'), IN: industryInflections(sf.cands.IN, 'IN') };
   // zzz1183 — discovery beyond the familiar names: small / mid caps in the size band whose OWN figures are turning up
-  const turning = (mk: ChokeRegion) => {
-    const [lo, hi] = DISCOVERY_CAP[mk];
-    return sf.cands[mk].filter((c) => c.mc >= lo && c.mc <= hi && c.revQ != null && (c.revQ >= 25 || (c.revA != null && c.revQ >= c.revA + 10)) && (c.opm == null || c.opm > 0))
-      .sort((x, y) => ((y.revQ ?? 0) - (y.revA ?? 0)) - ((x.revQ ?? 0) - (x.revA ?? 0))).slice(0, 110).map((c) => candLine(c, mk));
+  const inBand = (c: Cand, mk: ChokeRegion) => { const [lo, hi] = DISCOVERY_CAP[mk]; return c.mc >= lo && c.mc <= hi; };
+  const turningC = (mk: ChokeRegion) => sf.cands[mk].filter((c) => inBand(c, mk) && c.revQ != null && (c.revQ >= 25 || (c.revA != null && c.revQ >= c.revA + 10)) && (c.opm == null || c.opm > 0))
+    .sort((x, y) => ((y.revQ ?? 0) - (y.revA ?? 0)) - ((x.revQ ?? 0) - (x.revA ?? 0))).slice(0, 130);
+  // zzz1186 — and every in-band company in the bottleneck-prone industries, even before its figures turn (J1 watch names)
+  const SEED_IND: Record<ChokeRegion, RegExp> = {
+    US: /semiconductor|electronic comp|optical|fiber|communications equip|telecommunications equip|electrical|power|generat|turbine|engine|battery|industrial machin|aerospace|defen|ordnance|uranium|nuclear|metal|mining|rare|copper|chemical|computer (storage|peripheral|hardware|communication)|data storage|instrument|laser|refrigerat|hvac|heating|cooling|engineering|construction|shipbuild|space|robot|automation/i,
+    IN: /electrical|electronic|cable|transformer|switchgear|meter|power|defen|explosive|aerospace|forg|casting|engineering|capital goods|compressor|pump|chemical|pharma|api|cdmo|ship|railway|wagon|metal|copper|aluminium|alumin|mining|semiconductor|component|industrial|gas|heavy|machinery|construction/i,
   };
-  const prevText = prev ? prev.regions.map((g) => `${g.region}: ${g.themes.map((t) => `${t.name} [${[...(t.candidates || []), ...(t.leaders || []), ...(t.smallMid || [])].map((l: any) => l.ticker).join(', ')}]`).join('; ')}`).join('\n') : 'none (first run)';
-  const user = [
-    `Today: ${new Date().toISOString().slice(0, 10)}. Stock-screener data as of the latest build.`,
-    `Previous run (${prev?.generatedAt?.slice(0, 10) || 'none'}) — reference only; judge everything again from the evidence:\n${prevText}`,
-    themes.length ? `Themes seen in the owner's daily gainers (last 30 days):\n${themes.join('\n')}` : null,
-    infl.US.length ? `US industries by revenue acceleration (latest quarter vs year):\n${infl.US.join('\n')}` : null,
-    infl.IN.length ? `India industries by revenue acceleration:\n${infl.IN.join('\n')}` : null,
-    'Company data columns: ticker | name | industry | market cap | sales growth latest quarter and last year | EPS growth latest quarter | operating margin | ROCE | debt/equity | P/E | P/S | FCF margin | share move 1y and 5y (context only) | share-count change a year.',
-    `US small / mid caps whose own figures are turning up (discovery leads, not conclusions):\n${turning('US').join('\n')}`,
-    `India small / mid caps whose own figures are turning up:\n${turning('IN').join('\n')}`,
-    news.lines.length ? `Recent news (most important first):\n${news.lines.join('\n')}` : 'No recent news available — say nothing about recent events.',
-    'Write the US first, then India.',
-  ].filter(Boolean).join('\n\n');
+  const seedC = (mk: ChokeRegion, skip: Set<string>) => sf.cands[mk].filter((c) => inBand(c, mk) && c.ind && SEED_IND[mk].test(c.ind) && !skip.has(c.t) && (c.revA != null || c.revQ != null))
+    .sort((x, y) => (y.revQ ?? -99) - (x.revQ ?? -99)).slice(0, 110);
+  const prevFor = (mk: ChokeRegion) => (prev?.regions || []).filter((g) => g.region === mk).map((g) => g.themes.map((t) => `${t.name} [${[...(t.candidates || []), ...(t.leaders || []), ...(t.smallMid || [])].map((l: any) => l.ticker).join(', ')}]`).join('; ')).join('') || 'none';
+  const newsFor = (mk: ChokeRegion) => news.lines.filter((l) => (mk === 'IN' ? !/\[(US|GLOBAL)\]/.test(l) || /india/i.test(l) : !/\[IN\]/.test(l)) ).slice(0, 90);
+  const coverage: NonNullable<ChokeReport['coverage']> = {};
+  const userFor = (mk: ChokeRegion) => {
+    const tc = turningC(mk), skip = new Set(tc.map((c) => c.t)), sc = seedC(mk, skip);
+    coverage[mk] = { universe: sf.cands[mk].length, inBand: sf.cands[mk].filter((c) => inBand(c, mk)).length, turning: tc.length, industry: sc.length, news: newsFor(mk).length };
+    const country = mk === 'US' ? 'the UNITED STATES' : 'INDIA';
+    return [
+      `Today: ${new Date().toISOString().slice(0, 10)}. Research ${country} only. Stock-screener data as of the latest build.`,
+      `Previous run for this country — reference only; judge everything again from the evidence: ${prevFor(mk)}`,
+      themes.length ? `Themes seen in the owner's daily gainers (last 30 days):\n${themes.filter((l) => l.includes(mk === 'IN' ? 'India:' : 'US:')).join('\n')}` : null,
+      infl[mk].length ? `Industries by revenue acceleration (latest quarter vs year):\n${infl[mk].join('\n')}` : null,
+      `CHECKLIST — test each of these bottlenecks against the company lists before you decide (keep only those that qualify; add others you find):\n${CHOKE_CHECKLIST[mk]}`,
+      'Company data columns: ticker | name | industry | market cap | sales growth: latest quarter vs a year earlier, and last fiscal year | EPS growth latest quarter vs a year earlier | operating margin, trailing 12 months (TTM) | ROCE | debt/equity | P/E | P/S | FCF margin | share move 1y and 5y (context only) | share-count change a year.',
+      `Small / mid caps whose own figures are turning up (discovery leads, not conclusions):\n${tc.map((c) => candLine(c, mk)).join('\n')}`,
+      `Other small / mid caps in bottleneck-prone industries (possible J1 / J2 names before the figures turn):\n${sc.map((c) => candLine(c, mk)).join('\n')}`,
+      newsFor(mk).length ? `Recent news (most important first):\n${newsFor(mk).join('\n')}` : 'No recent news available — say nothing about recent events.',
+      'Give 4–6 qualifying themes when the evidence allows (at least 2), each with up to 4 discovery candidates. A large reference leader alone is not a discovery.',
+    ].filter(Boolean).join('\n\n');
+  };
 
   const { strongModel } = await import('../ai-guidance-router');
   const prov = m.provider();
   const cheap = m.activeModel('claude-haiku-4-5-20251001');
   const strong = strongModel(prov, cheap);
-  const body: any = {
-    model: prov === 'anthropic' && strong ? strong : 'claude-haiku-4-5-20251001', max_tokens: 16000, system: CHOKE_SYSTEM,
-    tools: [CHOKE_TOOL], tool_choice: { type: 'tool', name: CHOKE_TOOL.name },
-    messages: [{ role: 'user', content: user }],
-  };
-  try {
+  const callFor = async (mk: ChokeRegion) => {
+    const tool = chokeToolFor(mk);
+    const body: any = {
+      model: prov === 'anthropic' && strong ? strong : 'claude-haiku-4-5-20251001', max_tokens: 16000, system: CHOKE_SYSTEM,
+      tools: [tool], tool_choice: { type: 'tool', name: tool.name }, messages: [{ role: 'user', content: userFor(mk) }],
+    };
     const resp = await m.anthropicMessages('choke-themes', body, { signal: AbortSignal.timeout(300_000), ...(prov === 'openai' && strong ? { openaiModel: strong, reasoningEffort: 'low' } : {}) } as any);
     const j: any = await resp.json().catch(() => null);
     if (!resp.ok) {
       const raw = String(j?.error?.message || `HTTP ${resp.status}`);
-      console.warn('[choke-themes] AI call failed:', raw);
-      return { ok: false, error: resp.status === 402 ? 'AI spend limit reached' : resp.status === 429 ? 'The AI provider is busy or out of credit' : `The AI provider refused the request (${resp.status})`, detail: raw.slice(0, 300) } as any;
+      console.warn('[choke-themes] AI call failed:', mk, raw);
+      throw Object.assign(new Error(resp.status === 402 ? 'AI spend limit reached' : resp.status === 429 ? 'The AI provider is busy or out of credit' : `The AI provider refused the request (${resp.status})`), { detail: raw.slice(0, 300) });
     }
     const d = (j?.content || []).find((c: any) => c?.type === 'tool_use')?.input;
-    const clean = cleanChoke(d);
-    if (!clean) return { ok: false, error: 'The AI answer was incomplete — try again' };
-    enrich(clean, sf.facts);
+    const g = cleanChoke(d)?.regions.find((x) => x.region === mk);
+    if (!g || !g.themes.length) throw new Error('The AI answer was incomplete — try again');
+    return { g, model: j?.model as string | undefined };
+  };
+  try {
+    const res = await Promise.allSettled([callFor('US'), callFor('IN')]);
+    const ok = res.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
+    if (!ok.length) { const e: any = (res[0] as PromiseRejectedResult).reason; return { ok: false, error: String(e?.message || e).slice(0, 200), detail: e?.detail } as any; }
+    // a country whose call failed keeps its previous research (said so in the panel through the run notes)
+    const regions = (['US', 'IN'] as ChokeRegion[]).map((mk, i) => {
+      const r = res[i];
+      if (r.status === 'fulfilled') return r.value.g;
+      return (prev?.version === 2 ? prev.regions.find((x) => x.region === mk) : null) || { region: mk, themes: [], playbook: { strongest: [], confirm: [], milestones: [], disconfirming: [], valuation: [] } };
+    });
+    const clean = { regions, changes: [] as any[] };
+    enrich(clean as any, sf.facts);
+    const failed = (['US', 'IN'] as ChokeRegion[]).filter((_, i) => res[i].status !== 'fulfilled');
     const report: ChokeReport = {
-      version: 2, ...clean, changes: diffRuns(prev, clean), generatedAt: new Date().toISOString(), model: j?.model ?? (strong || cheap),
+      version: 2, ...clean, changes: prev?.version === 2 ? diffRuns(prev, clean) : [], generatedAt: new Date().toISOString(), model: ok[0].model ?? (strong || cheap),
       newsUsed: news.lines.length, asOfNews: news.asOf, marketDataAt: new Date().toISOString(), prevAt: prev?.generatedAt ?? null,
-    };
+      coverage, ...(failed.length ? { keptFromPrevious: failed } : {}),
+    } as any;
     if (prev) await kvSet(CHOKE_PREV_KEY, prev, TTL).catch(() => undefined);
     await kvSet(CHOKE_KEY, report, TTL);
     return { ok: true, report };

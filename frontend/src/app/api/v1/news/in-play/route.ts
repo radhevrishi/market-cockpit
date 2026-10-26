@@ -104,8 +104,9 @@ export async function GET(request: Request) {
           title: s.headline || s.narrative || s.summary || `${s.symbol}: ${s.eventType || 'Signal'}`,
           headline: s.headline || s.narrative || `${s.symbol}: ${s.eventType}`,
           summary: s.narrative || s.summary || s.headline || '',
-          source_name: s.source || 'Intelligence',
-          source: s.source || 'Intelligence',
+          // zzz1186 — the signal's internal pipeline tag ('order' / 'deal') is not a source; say where it came from
+          source_name: s.source === 'order' ? 'Exchange filing' : s.source === 'deal' ? 'Bulk / block deal' : (s.source || 'Intelligence'),
+          source: s.source === 'order' ? 'Exchange filing' : s.source === 'deal' ? 'Bulk / block deal' : (s.source || 'Intelligence'),
           published_at: s.date || s.timestamp || new Date().toISOString(),
           region: 'GLOBAL',
           article_type: s.eventType === 'BOTTLENECK' ? 'BOTTLENECK'

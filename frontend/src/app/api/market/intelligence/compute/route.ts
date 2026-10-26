@@ -3453,15 +3453,17 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       client, segment, isNegative: negative, sentiment, buyerSeller: null, premiumDiscount: null,
     });
 
-    let headline = `${fmtCr(valueCr)} ${eventType}`;
-    if (inferenceUsed) headline += ' (est.)';
+    // zzz1186 — an amount guessed from the event type ("₹100 Cr Corporate (est.)" on a trading suspension) is not shown as a
+    // figure: the headline names the event; the size appears only when the filing states it.
+    const eventWord = String(eventType).charAt(0) + String(eventType).slice(1).toLowerCase();
+    let headline = inferenceUsed ? eventWord : `${fmtCr(valueCr)} ${eventType}`;
     if (client) headline += ` from ${client}`;
     const matParts: string[] = [];
-    matParts.push(`${Math.min(100, impactPct).toFixed(1)}% of revenue`);
+    if (!inferenceUsed) matParts.push(`${Math.min(100, impactPct).toFixed(1)}% of revenue`);
     if (pctMcap !== null && pctMcap > 0) matParts.push(`${pctMcap.toFixed(1)}% MCap`);
     if (segment) matParts.push(segment);
     if (timeline) matParts.push(timeline);
-    headline += ` — ${matParts.join(' · ')}`;
+    if (matParts.length) headline += ` — ${matParts.join(' · ')}`;
     const descSnippet = (desc || '').slice(0, 100).replace(/\s+/g, ' ').trim();
     if (descSnippet.length > 20) headline += `. ${descSnippet}`;
 

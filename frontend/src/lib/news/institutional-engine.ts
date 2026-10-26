@@ -691,14 +691,36 @@ const SUBTAG_INSTITUTIONAL_LABELS: Record<string, string> = {
   QUANTUM_CRYOGENICS:     'Quantum infra emerging — pre-commercial signal',
 };
 
+const LABEL_RELEVANCE: Record<string, RegExp> = {
+  COMPUTE_CONSTRAINT: /\b(gpu|accelerator|hbm|cowos|packaging|wafer|chip|semiconductor|foundry|tsmc|nvidia|compute capacity)\b/,
+  FABRICATION_PACKAGING: /\b(cowos|packaging|chiplet|interposer|wafer|foundry|fab|tsmc|substrate)\b/,
+  MEMORY_STORAGE: /\b(hbm|dram|nand|memory|ssd|flash|micron|hynix)\b/,
+  INTERCONNECT_PHOTONICS: /\b(optic|photonic|transceiver|interconnect|laser|fiber|fibre|co-packaged)\b/,
+  COMPUTE_SCALING: /\b(inference|gpu|accelerator|ai (model|demand|cluster)|data cent(er|re)|compute)\b/,
+  POWER_CONSTRAINT: /\b(power|grid|electricity|transformer|substation|utility|gas turbine|mw|gw|energy storage|battery)\b/,
+  POWER_GRID: /\b(power|grid|electricity|transformer|substation|utility|transmission|mw|gw)\b/,
+  THERMAL_COOLING: /\b(cooling|thermal|chiller|liquid cool|heat)\b/,
+  NUCLEAR_ENERGY: /\b(nuclear|uranium|reactor|smr|haleu|enrichment)\b/,
+};
+
 export function generateInstitutionalImpactLabel(args: {
   bottleneck_sub_tag?: string | null;
   bottleneck_category?: string;
   bottleneck_resolution?: string | null;
   article_type: string;
+  /** zzz1186 — headline + description; when given, the label must match it */
+  text?: string;
 }): string {
   const { bottleneck_sub_tag, bottleneck_category, bottleneck_resolution, article_type } = args;
   if (article_type !== 'BOTTLENECK') return '';
+  // zzz1186 — a thematic label is shown only when the article itself is about that theme (an ESS supply deal, a gas plant and
+  // an AI-model acquisition were all labelled "GPU deployment bottleneck … packaging-bound")
+  if (args.text != null) {
+    const t = args.text.toLowerCase();
+    const key = bottleneck_sub_tag || bottleneck_category || '';
+    const need = LABEL_RELEVANCE[key];
+    if (need && !need.test(t)) return '';
+  }
   // Prefer sub-tag specific label
   if (bottleneck_sub_tag && SUBTAG_INSTITUTIONAL_LABELS[bottleneck_sub_tag]) {
     return SUBTAG_INSTITUTIONAL_LABELS[bottleneck_sub_tag];

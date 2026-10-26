@@ -37,6 +37,8 @@ function Detail({ p, m }: { p: HbPick; m: CandMarket }) {
             <span style={{ fontSize: 11, color: C.faint, alignSelf: 'center' }}>stock-screener figures</span>
           </div>
         )}
+        {p.math100 && box('WHAT 100x WOULD TAKE', p.math100)}
+        {(p.caps || []).length > 0 && box(`SCORE CHECKED AGAINST THE FIGURES (AI ${p.aiTotal ?? p.total} → ${p.total})`, (p.caps || []).join(' · '), C.warn)}
         {box('FORWARD METRICS', p.forwardMetrics)}
         {box('MOAT EVIDENCE', p.moat)}
         {box('MEGATREND FIT', p.megatrend)}
@@ -135,6 +137,7 @@ export default function HundredBaggersPage() {
                           </td>
                           <td style={{ padding: '10px', minWidth: 130 }}>
                             <div style={{ fontSize: 18, fontWeight: 900, color: sc, fontVariantNumeric: 'tabular-nums' }}>{p.total}</div>
+                            {p.aiTotal != null && p.aiTotal !== p.total && <div style={{ fontSize: 11, color: C.faint }} title={(p.caps || []).join('\n')}>AI {p.aiTotal} · capped by figures</div>}
                             <Bar v={p.total} max={150} c={sc} />
                           </td>
                           <td style={{ padding: '10px', whiteSpace: 'nowrap' }}>
@@ -158,8 +161,9 @@ export default function HundredBaggersPage() {
               </table>
             </div>
           </div>
+          {(g.removed || []).length > 0 && <div style={{ marginTop: 10, fontSize: 13, lineHeight: 1.55, padding: '10px 12px', border: `1px solid ${tint(C.warn, 50)}`, borderRadius: 10, background: tint(C.warn, 6) }}><b>Removed — fail the hard gates:</b> {(g.removed || []).map((r) => `${r.ticker} (${r.why})`).join(' · ')}. Click Update with AI for a fresh list from companies that pass.</div>}
           {g.note && <div style={{ marginTop: 10, fontSize: 13, lineHeight: 1.55, padding: '10px 12px', border: `1px solid ${C.border}`, borderRadius: 10, background: C.bg }}><b>Versus historic 100-baggers:</b> {g.note}</div>}
-          <p style={{ fontSize: 12, color: C.faint, marginTop: 10 }}>AI research view ({report.model || 'AI'}) from real stock-screener companies and figures; the total is the sum of the 15 scores. Governance screened by the AI from what it knows — check filings before acting. Not investment advice.</p>
+          <p style={{ fontSize: 12, color: C.faint, marginTop: 10 }}>AI research view ({report.model || 'AI'}) from real stock-screener companies and figures; the total is the sum of the 15 scores after each is checked against the figures (a score the figures contradict is capped). Hard gates before the AI sees a company: sales growth ≥15%, operating margin above 5%, no real cash burn, debt/equity ≤0.8, dilution ≤4% a year, return on capital ≥12%, P/S ≤15, P/E ≤80, not up 4x+ in 5 years. Governance screened by the AI from what it knows — check filings before acting. Not investment advice.</p>
         </>
       )}
     </div>

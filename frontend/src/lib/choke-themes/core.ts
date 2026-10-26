@@ -33,7 +33,7 @@ export const EXPOSURE_WHY: Record<Exposure, string> = {
 };
 
 /** Stock-screener figures laid over a candidate (never written by the model). */
-export interface CandFacts { cap: number | null; revQ: number | null; revA: number | null; epsQ: number | null; opm: number | null; pe: number | null; fcfm: number | null; de: number | null; p1y: number | null; p5y: number | null }
+export interface CandFacts { cap: number | null; revQ: number | null; revA: number | null; epsQ: number | null; opm: number | null; /** zzz1186 — last fiscal year (TTM can carry one-offs) */ opmFY?: number | null; pe: number | null; fcfm: number | null; de: number | null; p1y: number | null; p5y: number | null }
 export interface ScenarioIn { years: number; epsCagr: { bear: number; base: number; bull: number }; exitPe: { bear: number; base: number; bull: number }; dilutionPct: number; basis: string }
 export interface ScenarioOut { bear: number; base: number; bull: number; currentPe: number }
 export interface ChokeCandidate {
@@ -62,6 +62,10 @@ export interface ChokeReport {
   regions: ChokeRegionView[]; changes: Array<ChokeChange | string>;
   generatedAt: string; model: string | null; newsUsed: number; asOfNews: string | null;
   marketDataAt?: string | null; prevAt?: string | null;
+  /** zzz1186 — the discovery funnel per country: universe → size band → sent to the AI */
+  coverage?: Partial<Record<ChokeRegion, { universe: number; inBand: number; turning: number; industry: number; news: number }>>;
+  /** zzz1186 — countries whose AI call failed in this run and kept the previous research */
+  keptFromPrevious?: ChokeRegion[];
 }
 
 const CAND_SCHEMA = {
@@ -72,11 +76,11 @@ const CAND_SCHEMA = {
     ticker: { type: 'string', maxLength: 24, description: 'Exact listed ticker (NSE symbol for India, US ticker for the US). Copy from the company data when the company is there.' },
     exposure: { type: 'string', enum: ['DIRECT', 'ENABLER', 'PROXY', 'SPECULATIVE'] },
     jstage: { type: 'string', enum: ['J0', 'J1', 'J2', 'J3', 'J4', 'J5'], description: 'Company J-stage from OPERATING evidence (orders, qualification, commissioning, revenue, margins), never from the share price.' },
-    product: { type: 'string', maxLength: 140, description: 'The exact product / division that is the bottleneck exposure, and its revenue share if disclosed, else "share not separately disclosed".' },
-    inflection: { type: 'string', maxLength: 220, description: 'The evidence that the earnings turn is beginning, labelled: "Reported:" for filed figures, "Guidance:" for management targets, "Inference:" for your reading. Use the company data figures given. An MoU, tender, qualification, order, shipment and revenue are NOT the same thing — say which one it is.' },
-    milestone: { type: 'string', maxLength: 160, description: 'Next measurable milestone and its expected timing.' },
-    invalidation: { type: 'string', maxLength: 160, description: 'What would prove the thesis wrong.' },
-    concern: { type: 'string', maxLength: 160, description: 'Funding, dilution, working-capital, governance or valuation concern; "None found in available disclosures" when none (never certify governance as clean).' },
+    product: { type: 'string', maxLength: 200, description: 'The exact product / division that is the bottleneck exposure, and its revenue share if disclosed, else "share not separately disclosed".' },
+    inflection: { type: 'string', maxLength: 420, description: 'The evidence that the earnings turn is beginning, labelled: "Reported:" for filed figures, "Guidance:" for management targets, "Inference:" for your reading. Use the company data figures given. An MoU, tender, qualification, order, shipment and revenue are NOT the same thing — say which one it is.' },
+    milestone: { type: 'string', maxLength: 260, description: 'Next measurable milestone and its expected timing.' },
+    invalidation: { type: 'string', maxLength: 260, description: 'What would prove the thesis wrong.' },
+    concern: { type: 'string', maxLength: 260, description: 'Funding, dilution, working-capital, governance or valuation concern; "None found in available disclosures" when none (never certify governance as clean).' },
     scenario: {
       type: ['object', 'null'], additionalProperties: false, required: ['years', 'eps_cagr', 'exit_pe', 'dilution_pct', 'basis'],
       description: 'Only for a profitable company with representative earnings; null otherwise. The server calculates the return multiples from these.',
@@ -113,12 +117,12 @@ export const CHOKE_TOOL = {
                   emoji: { type: 'string', maxLength: 12 },
                   keywords: { type: 'array', minItems: 4, maxItems: 12, items: { type: 'string', maxLength: 40 }, description: 'Short search terms that find this bottleneck in news headlines.' },
                   why: { type: 'string', maxLength: 320, description: 'The structural driver in 2 short sentences.' },
-                  necessity: { type: 'string', maxLength: 200, description: 'Why customers cannot do without it.' },
-                  constraint: { type: 'string', maxLength: 200, description: 'The supply constraint: few qualified suppliers, long qualification, certification, IP, scarce skills…' },
-                  value_capture: { type: 'string', maxLength: 200, description: 'How suppliers keep the benefit: pricing, recurring revenue, utilisation, mix, switching costs.' },
-                  breakers: { type: 'string', maxLength: 200, description: 'What could remove the bottleneck: new capacity, substitution, insourcing, redesign, more qualified suppliers, regulation.' },
-                  unknowns: { type: 'string', maxLength: 200, description: 'The important unknowns / evidence gaps.' },
-                  evidence: { type: ['string', 'null'], maxLength: 200, description: 'A recent development from the news list that is about THIS bottleneck, or null.' },
+                  necessity: { type: 'string', maxLength: 300, description: 'Why customers cannot do without it.' },
+                  constraint: { type: 'string', maxLength: 300, description: 'The supply constraint: few qualified suppliers, long qualification, certification, IP, scarce skills…' },
+                  value_capture: { type: 'string', maxLength: 300, description: 'How suppliers keep the benefit: pricing, recurring revenue, utilisation, mix, switching costs.' },
+                  breakers: { type: 'string', maxLength: 300, description: 'What could remove the bottleneck: new capacity, substitution, insourcing, redesign, more qualified suppliers, regulation.' },
+                  unknowns: { type: 'string', maxLength: 340, description: 'The important unknowns / evidence gaps.' },
+                  evidence: { type: ['string', 'null'], maxLength: 280, description: 'A recent development from the news list that is about THIS bottleneck, or null.' },
                   candidates: { type: 'array', minItems: 0, maxItems: 6, items: CAND_SCHEMA, description: 'Small & mid-cap discovery candidates (US $300M–$10B, India ₹500–25,000 crore), DIRECT and ENABLER first, J2 / J3 first. Empty when none qualify — say so in unknowns.' },
                   reference: { type: 'array', minItems: 0, maxItems: 3, items: CAND_SCHEMA, description: 'Large reference leaders (above the discovery band), kept separate.' },
                 },
@@ -127,11 +131,11 @@ export const CHOKE_TOOL = {
             playbook: {
               type: 'object', additionalProperties: false, required: ['strongest', 'confirm', 'milestones', 'disconfirming', 'valuation'],
               properties: {
-                strongest: { type: 'array', maxItems: 5, items: { type: 'string', maxLength: 160 }, description: 'The strongest evidence-backed themes / candidates and why.' },
-                confirm: { type: 'array', maxItems: 5, items: { type: 'string', maxLength: 160 }, description: 'Candidates that need further confirmation, and what would confirm them.' },
-                milestones: { type: 'array', maxItems: 6, items: { type: 'string', maxLength: 160 }, description: 'Upcoming milestones to watch (company + event + timing).' },
-                disconfirming: { type: 'array', maxItems: 5, items: { type: 'string', maxLength: 160 }, description: 'Evidence that would weaken the theses.' },
-                valuation: { type: 'array', maxItems: 5, items: { type: 'string', maxLength: 160 }, description: 'Valuation conditions to monitor and evidence-based conditions for staged entry (never "buy because it fell").' },
+                strongest: { type: 'array', maxItems: 5, items: { type: 'string', maxLength: 280 }, description: 'The strongest evidence-backed themes / candidates and why.' },
+                confirm: { type: 'array', maxItems: 5, items: { type: 'string', maxLength: 280 }, description: 'Candidates that need further confirmation, and what would confirm them.' },
+                milestones: { type: 'array', maxItems: 6, items: { type: 'string', maxLength: 280 }, description: 'Upcoming milestones to watch (company + event + timing).' },
+                disconfirming: { type: 'array', maxItems: 5, items: { type: 'string', maxLength: 280 }, description: 'Evidence that would weaken the theses.' },
+                valuation: { type: 'array', maxItems: 5, items: { type: 'string', maxLength: 280 }, description: 'Valuation conditions to monitor and evidence-based conditions for staged entry (never "buy because it fell").' },
               },
             },
           },
@@ -145,7 +149,7 @@ export const CHOKE_SYSTEM = `You are an expert equity analyst. Research the US a
 "Which specific small or mid-cap company can convert a hard-to-replace product or capability into materially higher earnings and cash, and what evidence shows the conversion is beginning?"
 Horizons: the bottleneck may last 10+ years; the company thesis is about 3–7 years; the inflection evidence is recent results and milestones over the next 2–8 quarters.
 
-A THEME qualifies only when you can show the mechanism: necessity (customers need it) + supply constraint (few qualified suppliers, long qualification, certification, IP, scarce skills, specialist production) + value capture (pricing, recurring revenue, utilisation, mix, switching costs). "Large market", "government spending", "China+1", "AI exposure" and "import substitution" are leads, not conclusions. Name the specific bottleneck, not a broad sector. Say what could remove it. Show only qualifying themes — 1 to 8; fewer is better than filler. Broad solar, rail or defence exposure does not qualify by itself; a specific qualified supplier inside a mature sector can.
+A THEME qualifies only when you can show the mechanism: necessity (customers need it) + supply constraint (few qualified suppliers, long qualification, certification, IP, scarce skills, specialist production) + value capture (pricing, recurring revenue, utilisation, mix, switching costs). "Large market", "government spending", "China+1", "AI exposure" and "import substitution" are leads, not conclusions. Name the specific bottleneck, not a broad sector. Say what could remove it. Show only qualifying themes — 1 to 8; fewer is better than filler, but search properly: work through the company lists given (at least 20 names per country) and the cross-border shifts before concluding; aim for 4–6 themes per country when the evidence allows, each with up to 4 candidates (J1 watch names included, marked as such). Broad solar, rail or defence exposure does not qualify by itself; a specific qualified supplier inside a mature sector can.
 
 CROSS-BORDER DEMAND SHIFTS are a major source of real J-curves — look for them actively: Europe+1 (Europe moving supply away from China / Russia), European rearmament (ammunition, explosives, forgings, propellants, components), US reshoring and tariffs, China+1, the India–EU / India–UK trade agreements, Western energy-security and grid build-outs buying from India. The narrative alone is not evidence; a specific supplier with QUALIFIED foreign customers, signed export orders and export revenue rising in its own figures is — those are often small and mid caps at J1–J3 in sectors that look mature at home.
 
@@ -153,6 +157,8 @@ CANDIDATES: prefer DIRECT and ENABLER exposure, J2 / J3 first; J1 only as an ear
 Governance: exclude companies with known auditor resignations or qualifications, regulator enforcement, pledge problems, promoter or board disputes or chronic dilution; separate allegations from findings; never call governance clean — write what you checked against.
 SCENARIOS: only for a profitable company whose current earnings are representative; give EPS growth a year and exit P/E for bear / base / bull and the expected dilution — the system calculates the return; never assume 5–20x because a company is small. Otherwise scenario = null.
 PLAYBOOK per country: strongest evidence-backed ideas, what needs confirmation, upcoming milestones, disconfirming evidence, valuation conditions. Never recommend buying because a price fell.
+FIGURES: always give the period of a figure ("latest quarter vs a year earlier", "trailing 12 months", "last fiscal year"); stock-screener figures are not reconciled to filings — when a TTM figure looks distorted by a one-off (a settlement, licence or asset sale), say so and use the fiscal-year figure. Separate what is verified: (1) the financial turn in reported figures, (2) that the company really supplies the bottleneck product, (3) the scarcity / value-capture economics, (4) governance, funding and valuation — never present one as proof of another. A named customer is not required when confidentiality prevents it; an official statement of the customer category and commercial status is evidence.
+GEOGRAPHY: each country's candidates are companies LISTED in that country; a foreign company may appear only as a reference or as the demand driver, never as a candidate.
 Plain, simple English. Short sentences. Label facts "Reported:", targets "Guidance:", your reading "Inference:". This is research, not advice.`;
 
 // ── helpers laid over the AI's answer (all pure) ────────────────────────────────────────────────────────────────────────
@@ -173,8 +179,8 @@ function cleanCand(c: any): ChokeCandidate | null {
   } : null;
   return {
     name, ticker, exposure: EXPOSURES.includes(c?.exposure) ? c.exposure : 'SPECULATIVE', jstage: JS.includes(c?.jstage) ? c.jstage : 'J0',
-    product: str(c?.product, 140) || 'Not disclosed', inflection: str(c?.inflection, 220) || 'Insufficient evidence', milestone: str(c?.milestone, 160) || 'Not disclosed',
-    invalidation: str(c?.invalidation, 160) || 'Not stated', concern: str(c?.concern, 160) || 'Not stated', scenario,
+    product: str(c?.product, 200) || 'Not disclosed', inflection: str(c?.inflection, 420) || 'Insufficient evidence', milestone: str(c?.milestone, 260) || 'Not disclosed',
+    invalidation: str(c?.invalidation, 260) || 'Not stated', concern: str(c?.concern, 260) || 'Not stated', scenario,
   };
 }
 
@@ -183,17 +189,17 @@ export function cleanChoke(d: any): Pick<ChokeReport, 'regions' | 'changes'> | n
   const regions: ChokeRegionView[] = [];
   for (const code of ['US', 'IN'] as ChokeRegion[]) {
     const g = (Array.isArray(d?.regions) ? d.regions : []).find((x: any) => x?.region === code);
-    if (!g) return null;
+    if (!g) { regions.push({ region: code, themes: [], playbook: { strongest: [], confirm: [], milestones: [], disconfirming: [], valuation: [] } }); continue; }   // zzz1186 — each country is researched in its own call
     const themes: ChokeTheme[] = (Array.isArray(g.themes) ? g.themes : []).map((t: any) => ({
       name: str(t?.name, 90), emoji: str(t?.emoji, 12),
       keywords: (Array.isArray(t?.keywords) ? t.keywords : []).map((k: any) => str(k, 40)).filter(Boolean).slice(0, 12),
-      why: str(t?.why, 320), necessity: str(t?.necessity, 200), constraint: str(t?.constraint, 200), valueCapture: str(t?.value_capture, 200),
-      breakers: str(t?.breakers, 200), unknowns: str(t?.unknowns, 200), evidence: t?.evidence ? str(t.evidence, 200) : null,
+      why: str(t?.why, 320), necessity: str(t?.necessity, 300), constraint: str(t?.constraint, 300), valueCapture: str(t?.value_capture, 300),
+      breakers: str(t?.breakers, 300), unknowns: str(t?.unknowns, 340), evidence: t?.evidence ? str(t.evidence, 280) : null,
       candidates: (Array.isArray(t?.candidates) ? t.candidates : []).map(cleanCand).filter(Boolean).slice(0, 6) as ChokeCandidate[],
       reference: (Array.isArray(t?.reference) ? t.reference : []).map(cleanCand).filter(Boolean).slice(0, 3) as ChokeCandidate[],
     })).filter((t: ChokeTheme) => t.name && t.why).slice(0, 8);
     const pb = g.playbook || {};
-    const list = (a: any, n: number) => (Array.isArray(a) ? a : []).map((x: any) => str(x, 160)).filter(Boolean).slice(0, n);
+    const list = (a: any, n: number) => (Array.isArray(a) ? a : []).map((x: any) => str(x, 280)).filter(Boolean).slice(0, n);
     regions.push({ region: code, themes, playbook: { strongest: list(pb.strongest, 5), confirm: list(pb.confirm, 5), milestones: list(pb.milestones, 6), disconfirming: list(pb.disconfirming, 5), valuation: list(pb.valuation, 5) } });
   }
   if (!regions.some((g) => g.themes.length)) return null;
@@ -279,15 +285,42 @@ export function enrich(r: Pick<ChokeReport, 'regions'>, facts: Record<ChokeRegio
 }
 
 /** "What changed" from the two stored runs: themes added / dropped, candidates added / dropped, J-stage moves. Pure. */
+const THEME_STOP = new Set(['and', 'for', 'the', 'of', 'in', 'to', 'a', 'an', 'with', 'from', 'on']);
+const themeWords = (x: string) => new Set(x.toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(' ').map((w) => w.replace(/s$/, '')).filter((w) => w.length > 1 && !THEME_STOP.has(w)));
+/** Two theme names describe the same bottleneck when most of their words match (punctuation, plurals and small rewording ignored). Pure. */
+export function sameTheme(a: string, b: string): boolean {
+  const x = themeWords(a), y = themeWords(b);
+  if (!x.size || !y.size) return a.trim().toLowerCase() === b.trim().toLowerCase();
+  let inter = 0; for (const w of x) if (y.has(w)) inter++;
+  return inter / Math.min(x.size, y.size) >= 0.75 || inter / (x.size + y.size - inter) >= 0.6;
+}
+
+/** zzz1186 — the tool for ONE country's call (each country is researched separately so neither is squeezed). */
+export function chokeToolFor(region: ChokeRegion) {
+  const t: any = JSON.parse(JSON.stringify(CHOKE_TOOL));
+  const r = t.input_schema.properties.regions;
+  r.minItems = 1; r.maxItems = 1; r.items.properties.region.enum = [region];
+  r.items.properties.themes.minItems = 2;
+  t.description = `Record the evidence-backed choke-point themes for ${region === 'US' ? 'the United States' : 'India'}, each with candidate companies on an operating J-curve.`;
+  return t;
+}
+
+/** zzz1186 — bottlenecks the model must CHECK one by one against the company list (a checklist, not conclusions). */
+export const CHOKE_CHECKLIST: Record<ChokeRegion, string> = {
+  US: 'AI memory and storage (HBM, DRAM, NAND / enterprise SSD, HDD, controllers); optical interconnect (transceivers, lasers, co-packaged optics, fibre); advanced packaging, test and substrates (probe cards, test sockets, ABF, hybrid bonding); data-centre power (switchgear, transformers, gas turbines and engines, fuel cells, batteries / ESS, power semis, 800V DC); cooling (liquid cooling, chillers); grid and transmission equipment and contractors; nuclear fuel and SMRs (enrichment, HALEU, components); critical minerals (rare-earth magnets, gallium, tungsten, antimony, copper); defence and munitions (energetics, drones, counter-drone, space, shipbuilding); semicap sub-systems; industrial automation and robotics components; specialty chemicals and electronic materials; GLP-1 / biologics CDMO and medical consumables; aviation aftermarket (engines, MRO, castings).',
+  IN: 'Power equipment (transformers, switchgear, conductors, cables, meters); electronics manufacturing and components (EMS, PCBs, ODM, semiconductor OSAT / ATMP); defence (munitions, explosives, propellants, electronics, forgings, shipbuilding, drones) and Europe+1 defence exports; castings and forgings exported to Europe / US (aerospace, industrial, rail, wind); specialty chemicals and CDMO / API for global pharma; data-centre build (power, cooling, construction); nuclear and grid capex suppliers; capital goods for railways / metro (only specific qualified suppliers); copper / aluminium value-added products; rare-earth magnets and critical minerals; aviation MRO and aerospace components; industrial gases and engineered products for export.',
+};
+
 export function diffRuns(prev: Pick<ChokeReport, 'regions'> | null, next: Pick<ChokeReport, 'regions'>): ChokeChange[] {
   if (!prev) return [];
   const out: ChokeChange[] = [];
   for (const g of next.regions) {
     const p = prev.regions.find((x) => x.region === g.region);
     if (!p) continue;
-    const pNames = new Set(p.themes.map((t) => t.name)), nNames = new Set(g.themes.map((t) => t.name));
-    for (const t of g.themes) if (!pNames.has(t.name)) out.push({ region: g.region, kind: 'ADDED', what: `theme: ${t.name}`, from: null, to: null });
-    for (const t of p.themes) if (!nNames.has(t.name)) out.push({ region: g.region, kind: 'DROPPED', what: `theme: ${t.name}`, from: null, to: null });
+    // zzz1186 — the same theme reworded ("High-density, point-of-load …" vs "High-density point-of-load …") is not a change
+    const same = (x: string) => p.themes.some((t) => sameTheme(t.name, x)), was = (x: string) => g.themes.some((t) => sameTheme(t.name, x));
+    for (const t of g.themes) if (!same(t.name)) out.push({ region: g.region, kind: 'ADDED', what: `theme: ${t.name}`, from: null, to: null });
+    for (const t of p.themes) if (!was(t.name)) out.push({ region: g.region, kind: 'DROPPED', what: `theme: ${t.name}`, from: null, to: null });
     const cands = (v: ChokeRegionView) => {
       const m = new Map<string, { stage: string | null; theme: string }>();
       for (const t of v.themes) {

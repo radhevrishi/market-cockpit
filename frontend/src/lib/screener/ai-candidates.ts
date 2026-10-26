@@ -4,7 +4,7 @@
 export type CandMarket = 'US' | 'IN';
 export interface Cand {
   t: string; n: string; ind: string | null; mc: number;           // $ M (US) / ₹ Cr (India)
-  revQ: number | null; revA: number | null; epsQ: number | null; opm: number | null; gm: number | null; roce: number | null; roe: number | null;
+  revQ: number | null; revA: number | null; epsQ: number | null; opm: number | null; opmFY?: number | null; gm: number | null; roce: number | null; roe: number | null;
   de: number | null; pe: number | null; ps: number | null; fcfm: number | null; p1y: number | null; p5y: number | null; bb: number | null; fs: number | null;
 }
 const n = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -13,7 +13,7 @@ export function toCand(r: any): Cand | null {
   if (!r?.t || typeof r.mc !== 'number' || r.mc <= 0) return null;
   return {
     t: String(r.t).toUpperCase(), n: String(r.n || r.t).slice(0, 48), ind: r.ind ?? r.sec ?? null, mc: r.mc,
-    revQ: n(r.revQYoY), revA: n(r.revAYoY), epsQ: n(r.epsQYoY), opm: n(r.opmTTM ?? r.opmFY), gm: n(r.gmFY), roce: n(r.roceTTM ?? r.roceFY), roe: n(r.roeTTM ?? r.roeFY),
+    revQ: n(r.revQYoY), revA: n(r.revAYoY), epsQ: n(r.epsQYoY), opm: n(r.opmTTM ?? r.opmFY), opmFY: n(r.opmFY), gm: n(r.gmFY), roce: n(r.roceTTM ?? r.roceFY), roe: n(r.roeTTM ?? r.roeFY),
     de: n(r.de ?? r.deFY), pe: n(r.pe), ps: n(r.ps), fcfm: n(r.fcfmTTM), p1y: n(r.perf1Y), p5y: n(r.perf5Y), bb: n(r.bb), fs: n(r.fs),
   };
 }
@@ -22,28 +22,45 @@ const r0 = (v: number | null, suf = '%') => (v == null ? '—' : `${Math.round(v
 export const capText = (mc: number, m: CandMarket) => (m === 'US' ? (mc >= 1000 ? `$${(mc / 1000).toFixed(1)}B` : `$${Math.round(mc)}M`) : `₹${Math.round(mc).toLocaleString('en-IN')} Cr`);
 /** One compact line per company for the prompt. */
 export const candLine = (c: Cand, m: CandMarket) =>
-  `${c.t} | ${c.n} | ${c.ind || '—'} | cap ${capText(c.mc, m)} | sales q ${r0(c.revQ)} yr ${r0(c.revA)} | EPS q ${r0(c.epsQ)} | op margin ${r0(c.opm)} | ROCE ${r0(c.roce)} | D/E ${c.de == null ? '—' : c.de.toFixed(1)} | P/E ${c.pe == null ? '—' : Math.round(c.pe)} | P/S ${c.ps == null ? '—' : c.ps.toFixed(1)} | FCF margin ${r0(c.fcfm)} | 1y ${r0(c.p1y)} 5y ${r0(c.p5y)} | share count ${c.bb == null ? '—' : `${c.bb > 0 ? 'down' : 'up'} ${Math.abs(c.bb).toFixed(1)}%`}`;
+  `${c.t} | ${c.n} | ${c.ind || '—'} | cap ${capText(c.mc, m)} | sales q ${r0(c.revQ)} yr ${r0(c.revA)} | EPS q ${r0(c.epsQ)} | op margin TTM ${r0(c.opm)}${c.opmFY != null && c.opm != null && Math.abs(c.opm - c.opmFY) >= 15 ? ` (last FY ${r0(c.opmFY)} — TTM likely includes one-offs)` : ''} | ROCE ${r0(c.roce)} | D/E ${c.de == null ? '—' : c.de.toFixed(1)} | P/E ${c.pe == null ? '—' : Math.round(c.pe)} | P/S ${c.ps == null ? '—' : c.ps.toFixed(1)} | FCF margin ${r0(c.fcfm)} | 1y ${r0(c.p1y)} 5y ${r0(c.p5y)} | share count ${c.bb == null ? '—' : `${c.bb > 0 ? 'down' : 'up'} ${Math.abs(c.bb).toFixed(1)}%`}`;
 
 /** $500M–$5B (USA) / ₹4,250–42,500 Cr (India, at ~₹85/$). */
 export const HB_CAP: Record<CandMarket, [number, number]> = { US: [500, 5000], IN: [4250, 42500] };
+
+/** zzz1186 — the owner's conditions as hard gates (the AI is not trusted to apply them): in the size band, growing,
+ *  profitable at the operating level, self-funding, modest debt, no chronic dilution, returns on capital, not priced for
+ *  perfection, not already a multi-bagger. Returns the reasons a company fails (empty = passes). Pure. */
+export function hbGateFails(c: Cand, m: CandMarket): string[] {
+  const [lo, hi] = HB_CAP[m], f: string[] = [];
+  if (c.mc < lo || c.mc > hi) f.push('outside the size band');
+  if ((c.revA ?? c.revQ ?? -1) < 15) f.push('sales growth under 15%');
+  if (c.opm != null && c.opm <= 5) f.push('operating margin 5% or less');
+  if (c.fcfm != null && c.fcfm < -5) f.push(`burns cash (FCF margin ${Math.round(c.fcfm)}%)`);
+  if (c.de != null && c.de > 0.8) f.push(`debt/equity ${c.de.toFixed(1)}`);
+  if (c.bb != null && c.bb < -4) f.push(`share count up ${Math.abs(c.bb).toFixed(1)}% a year`);
+  const roc = c.roce ?? c.roe; if (roc != null && roc < 12) f.push(`return on capital ${Math.round(roc)}%`);
+  if (c.ps != null && c.ps > 15) f.push(`P/S ${c.ps.toFixed(1)}`);
+  if (c.pe != null && c.pe > 80) f.push(`P/E ${Math.round(c.pe)}`);
+  if (c.p1y != null && c.p1y > 250) f.push('up more than 3.5x in a year');
+  if (c.p5y != null && c.p5y > 300) f.push(`already up ${Math.round(c.p5y / 100 + 1)}x in 5 years`);
+  return f;
+}
 
 /** The 100-bagger shortlist the AI chooses from: in the size band, growing, returns on capital, not over-indebted,
  *  not heavily diluting, not already priced for perfection — ranked by a simple growth × quality × runway score. Pure. */
 export function hundredBaggerShortlist(all: Cand[], m: CandMarket, max = 140): Cand[] {
   const [lo, hi] = HB_CAP[m];
-  const ok = all.filter((c) => c.mc >= lo && c.mc <= hi
-    && (c.revA ?? c.revQ ?? -1) >= 12
-    && (c.de == null || c.de <= 1.2)
-    && (c.bb == null || c.bb >= -8)                       // share count up no more than 8% a year
-    && (c.ps == null || c.ps <= 25)                       // not priced for perfection
-    && (c.p1y == null || c.p1y <= 400)
-    && (c.p5y == null || c.p5y <= 500));               // zzz1180 — already up 6x+ in 5 years is not early DNA
+  // zzz1186 — the owner's conditions as hard gates (the AI is not trusted to apply them): growing, profitable at the operating
+  // level, self-funding (no real cash burn), modest debt, no chronic dilution, returns on capital, not priced for perfection,
+  // not already a multi-bagger.
+  const ok = all.filter((c) => !hbGateFails(c, m).length);
   const sc = (c: Cand) => {
     const g = Math.min(60, Math.max(c.revA ?? 0, (c.revQ ?? 0) * 0.8));
     const q = Math.min(40, Math.max(0, c.roce ?? c.roe ?? 0)) + Math.min(25, Math.max(0, c.opm ?? 0)) * 0.6 + Math.min(20, Math.max(0, c.fcfm ?? 0)) * 0.5;
     const accel = c.revQ != null && c.revA != null && c.revQ > c.revA + 5 ? 8 : 0;
     const val = c.ps != null && c.ps > 12 ? -10 : 0;
-    return g + q + accel + val + (c.fs != null ? c.fs : 4);
+    const hidden = c.mc <= lo + (hi - lo) * 0.4 ? 6 : c.mc >= lo + (hi - lo) * 0.75 ? -8 : 0;   // "hidden": the smaller half of the band first
+    return g + q + accel + val + hidden + (c.fs != null ? c.fs : 4);
   };
   return ok.sort((a, b) => sc(b) - sc(a)).slice(0, max);
 }
