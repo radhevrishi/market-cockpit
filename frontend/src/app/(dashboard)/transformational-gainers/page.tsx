@@ -54,6 +54,26 @@ export default function TransformationalGainersPage() {
   }, [days]);
   useEffect(() => { load(); }, [load]);
 
+  // zzz1166 — the first visit of a day fills the board from every gainers session still stored (≈ the last 10 days, India + USA):
+  // stored research only, no AI. The daily job does the same on its own; this makes a new board useful at once.
+  const [filling, setFilling] = useState<string | null>(null);
+  useEffect(() => {
+    if (state !== 'ok' || !data) return;
+    const stamp = `mc:transformational:backfill:${new Date().toISOString().slice(0, 10)}`;
+    try { if (localStorage.getItem(stamp)) return; localStorage.setItem(stamp, '1'); } catch { /* run once anyway */ }
+    (async () => {
+      const dates: string[] = [];
+      for (let i = 0; i <= 14; i++) { const d = new Date(Date.now() - i * 86_400_000); if (d.getUTCDay() % 6 !== 0) dates.push(d.toISOString().slice(0, 10)); }
+      let saved = 0, n = 0;
+      for (const m of ['IN', 'US']) for (const d of dates) {
+        n++; setFilling(`Filling the board from stored gainers research… ${n}/${dates.length * 2}`);
+        try { const r = await fetch(`/api/v1/ai-gainers/research?market=${m}&date=${d}&archive=1&lite=1`, { cache: 'no-store' }); const j = await r.json().catch(() => null); saved += Number(j?.archived || 0); } catch { /* next */ }
+      }
+      setFilling(null);
+      if (saved > 0) load();
+    })();
+  }, [state, data, load]);
+
   const newSet = useMemo(() => new Set(data?.newCompanies || []), [data]);
   const rank: Record<MbLabel, number> = { HIGH: 3, MEDIUM: 2, LOW: 1, UNLIKELY: 0 };
   const filtered = useMemo(() => (data?.items || []).filter((x) =>
@@ -135,6 +155,7 @@ export default function TransformationalGainersPage() {
         </button>
       </div>
       {aiNote && <div style={{ fontSize: 12, color: R.dim, marginBottom: 8 }}>{aiNote}</div>}
+      {filling && <div style={{ fontSize: 12, color: R.cyan, marginBottom: 8 }}>{filling}</div>}
 
       {state === 'loading' && <div style={{ color: R.dim, fontSize: 13 }}>Loading…</div>}
       {state === 'error' && <div style={{ color: R.red, fontSize: 13 }}>Could not load: {err} <button type="button" style={chip(false)} onClick={load}>Retry</button></div>}

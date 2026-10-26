@@ -3696,3 +3696,18 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   `push_subscription`, `push_vapid` (keys made once when VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY are not set), `price_alert.arm_gen`
   (Rearm → dedupe key `once:gN`). Push server: `lib/push/{contract,server}.ts`, `/api/v1/push` (protected). `notify.push`
   missing = on. 52-week / 50-day figures under a full lookback say "since listing, N sessions" (`FIGS_VERSION` 2).
+
+## 30 · 26 Oct 2026 — Transformational Gainers (zzz1166)
+
+- `/transformational-gainers` (nav + home favourite): events from AI Daily Gainers that can change future earnings, 60 days, India + USA.
+  Rule in `lib/transformational/core.ts` (pure): STRONG event ids (orders, capacity commissioned, approvals, new segment, strategic deals,
+  guidance raised, turnaround) or a filed earnings inflection (rev ≥ 25% + profit ≥ 40%, rev ≥ 15% + margin +3pp, rev ≥ 50%) or two
+  non-results MEDIUM events. Themes = keyword table `THEMES` (★ structural); board marks themes / companies first seen this week.
+- Multibagger chance: `multibaggerOf` (rules, 0–100 → HIGH/MEDIUM/LOW/UNLIKELY with + / − reasons) on the board AND on every gainers card
+  (`components/transformational/TgCardBadge.tsx` in ResearchCard). AI second opinion `lib/transformational/ai.ts` (tool
+  `record_multibagger_view`, feature `transformational-mb`) via POST `/api/v1/transformational/ai` — ≤ 12 a call, ≤ 60 a day, stored once.
+- Storage: Postgres migration 10 `transformational_event` (data refreshed on each sighting, `ai` never overwritten); KV fallback.
+- Filled by: GET `/api/v1/ai-gainers/research` (`archiveView`, throttled 10 min; `archive=1&lite=1` forces), app job
+  `transformational-archive` (14:47 + 23:47 UTC weekdays: last 14 days' stored sessions, then AI auto read), the gainers page after an AI
+  sweep, and the board's first visit of a day (backfill from stored sessions). Research states keep ~10 days, so history starts there.
+- ResearchView has NO `items` array — read `top3/queue/portfolio/watch/needsReading/context` (`viewItems`).
