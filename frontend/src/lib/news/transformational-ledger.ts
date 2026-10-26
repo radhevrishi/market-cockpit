@@ -15,7 +15,7 @@
 // out at read time and pruned opportunistically.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { dedupeContracts } from './transformational-dedup';   // zzz894
+import { dedupeContracts, normName, showableContract } from './transformational-dedup';   // zzz894
 import { kvGet, kvSet } from '@/lib/kv';
 import type {
   StrategicVisibilitySignal,
@@ -139,6 +139,29 @@ export interface ReadOptions {
   window_days?: number;             // override default 90
 }
 
+/** Every ticker the stock screener lists (US + India), memory-cached by the snapshot cache. Empty when not ready in 4 s. */
+const NAME_CACHE: { at: number; names: Map<string, string>; capUsdM: Map<string, number> } = { at: 0, names: new Map(), capUsdM: new Map() };
+async function listedTickers(): Promise<Set<string>> {
+  const out = new Set<string>();
+  const names = new Map<string, string>();
+  const caps = new Map<string, number>();
+  try {
+    const { getSnapshot } = await import('../screener/snapshot-cache');
+    await Promise.all((['US', 'IN'] as const).map(async (m) => {
+      const snap: any = await Promise.race([getSnapshot(m), new Promise((r) => setTimeout(() => r(null), 4000))]);
+      for (const r of (snap?.rows || [])) {
+        if (!r?.t) continue;
+        const t = String(r.t).toUpperCase(); out.add(t);
+        if (typeof r.mc === 'number' && r.mc > 0) caps.set(t, m === 'US' ? r.mc : r.mc / 8.5);   // $ M (₹ Cr ÷ ~8.5)
+        const n = normName(String(r.n || ''));
+        if (n.trim().split(' ').length >= 2 && n.trim().length >= 8 && !names.has(n)) names.set(n, t);
+      }
+    }));
+  } catch { /* fall back to the shape test */ }
+  if (names.size) { NAME_CACHE.names = names; NAME_CACHE.capUsdM = caps; NAME_CACHE.at = Date.now(); }
+  return out;
+}
+
 export async function readTransformational(opts: ReadOptions = {}): Promise<{
   window_days: number;
   total: number;
@@ -174,7 +197,10 @@ export async function readTransformational(opts: ReadOptions = {}): Promise<{
 
   // zzz894 — one row per CONTRACT (same company + same money / capacity, or mostly the same title, within 15 days),
   // and only signed commitments (tenders invited, talks, forecasts, financing are left out). See transformational-dedup.ts.
-  const { items: deduped } = dedupeContracts(items, (it) => strategicRankScore(it.strategic_visibility));
+  // zzz1177 — only key contracts: a signed contract / order / PPA naming a real listed company (stock screener), value only when stated
+  const listed = await listedTickers();
+  const shown = items.map((it) => showableContract(it as any, (t) => (listed.size ? listed.has(t) : /^[A-Z][A-Z0-9&-]{2,}$/.test(t)), NAME_CACHE.names, (t) => NAME_CACHE.capUsdM.get(t) ?? null)).filter(Boolean) as TransformationalItem[];
+  const { items: deduped } = dedupeContracts(shown, (it) => strategicRankScore(it.strategic_visibility));
   // zzz894: the count is the contracts shown (after duplicates and non-contracts are removed), not raw ledger rows
   return { window_days: window, total: deduped.length, items: deduped };
 }

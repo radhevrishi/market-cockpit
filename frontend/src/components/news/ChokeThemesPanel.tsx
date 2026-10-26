@@ -12,6 +12,8 @@ const C = {
   red: 'var(--mc-bearish)', green: 'var(--mc-bullish)', accent: 'var(--mc-accent)', warn: 'var(--mc-warn)',
 };
 const tint = (c: string, p: number) => `color-mix(in srgb, ${c} ${p}%, transparent)`;
+const STAGE_C: Record<string, string> = { EARLY: 'var(--mc-bullish)', BUILDING: 'var(--mc-accent)', CROWDED: 'var(--mc-warn)' };
+const STAGE_WHY: Record<string, string> = { EARLY: 'Inflection starting, not yet consensus — shares have not run', BUILDING: 'Proven and accelerating — partly priced', CROWDED: 'Consensus — largely priced; kept only for a real new bottleneck' };
 
 function Chip({ l, region, small }: { l: ChokeLeader; region: ChokeRegion; small?: boolean }) {
   const cap = fmtChokeCap(l.cap, region);
@@ -24,6 +26,7 @@ function Chip({ l, region, small }: { l: ChokeLeader; region: ChokeRegion; small
       <b style={{ color: C.text }}>{sym}</b>
       <span style={{ color: C.dim }}> {l.name}</span>
       {cap && <span style={{ color: C.faint }}> · {cap}</span>}
+      {l.p1y != null && <span style={{ color: l.p1y >= 0 ? C.green : C.red }}> · 1y {l.p1y >= 0 ? '+' : ''}{Math.round(l.p1y)}%</span>}
       {!home && <span style={{ color: C.faint }}> · {l.ticker.split(',').slice(1).join(',').trim()}</span>}
       {bad && <span style={{ color: C.warn, fontWeight: 800 }}> ⚠</span>}
     </>
@@ -41,9 +44,12 @@ function ThemeCard({ t, i, region, sm }: { t: ChokeTheme; i: number; region: Cho
     <div style={{ border: `1px solid ${C.border}`, borderRadius: 12, background: C.bg, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
         <span style={{ flexShrink: 0, width: 26, height: 26, borderRadius: 8, background: tint(C.accent, 14), color: C.accent, fontWeight: 900, fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
-        <div style={{ fontWeight: 900, fontSize: 15, lineHeight: 1.3 }}>🔥 {t.name} <span style={{ whiteSpace: 'nowrap' }}>{t.emoji}</span></div>
+        <div style={{ fontWeight: 900, fontSize: 15, lineHeight: 1.3, flex: 1 }}>🔥 {t.name} <span style={{ whiteSpace: 'nowrap' }}>{t.emoji}</span></div>
+        {t.stage && <span title={STAGE_WHY[t.stage]} style={{ flexShrink: 0, fontSize: 11, fontWeight: 900, padding: '3px 8px', borderRadius: 6, color: STAGE_C[t.stage], border: `1px solid ${STAGE_C[t.stage]}`, background: tint(STAGE_C[t.stage], 10) }}>{t.stage}</span>}
       </div>
+      {t.notPricedIn && <div style={{ fontSize: 13, lineHeight: 1.5, padding: '6px 9px', borderRadius: 8, background: tint(C.accent, 6), border: `1px solid ${tint(C.accent, 25)}` }}><b>What the market misses:</b> {t.notPricedIn}</div>}
       <div style={{ fontSize: 13, lineHeight: 1.55 }}><span style={{ fontWeight: 800, color: C.faint, fontSize: 11, letterSpacing: 0.5 }}>WHY </span>{t.why}</div>
+      {t.signals && <div style={{ fontSize: 12, lineHeight: 1.5, color: C.dim }}><span style={{ fontWeight: 800, color: C.faint, fontSize: 11, letterSpacing: 0.5 }}>SIGNALS TO WATCH </span>{t.signals}</div>}
       {!sm && (
         <div>
           <div style={{ fontWeight: 800, color: C.faint, fontSize: 11, letterSpacing: 0.5, marginBottom: 4 }}>LEADERS</div>

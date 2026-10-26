@@ -70,3 +70,48 @@ export function dedupeContracts<T extends DedupItem>(items: T[], rank: (it: T) =
   }
   return { items: out, duplicates, notContracts };
 }
+
+// ── zzz1177 — ONLY KEY CONTRACTS (owner, 26 Oct: "earlier it showed only key information, not basic news") ──────────────
+// The 2025 seed contracts aged out of the window and what remained was general news the classifier had let through:
+// "Nepal floods expose vulnerabilities…" credited with $167.8B, "Cabinet nod sought…", rows with no company, tickers read from
+// units ("GW", "MW", "III"), and a default $5.0B on PPAs that state no value. A row is shown only when it (1) reads as a signed
+// contract / award / order / PPA / lease, (2) names a real listed company (checked against the stock screener), and (3) its
+// value is shown only when the headline states money. Applied when the ledger is read, so stored rows follow today's rule.
+export const CONTRACT_WORDS = /\b(?:signs?|signed|inks?|inked|wins?|won|bags?|bagged|secures?|secured|awarded|awards?|orders?|contracts?|PPA|power purchase agreement|agreement|deal|lease|LoA|letter of award|selected as|successful bidder|L1 bidder|offtake|commissions?|framework)\b/i;
+const NEWS_NOT_CONTRACT = /\b(?:sought|expose[sd]?|vulnerabilit\w*|caution|bets?|explainer|analysis|opinion|why|how|what|could|would|may|might|proposal|proposed|draft|consultation|nod sought|seeks?|to extend|extension of|plans?|mulls?|weighs?)\b/i;
+const UNIT_TICKERS = new Set(['GW', 'MW', 'KW', 'GWH', 'MWH', 'KWH', 'III', 'II', 'IV', 'AI', 'US', 'IN', 'UK', 'EU', 'CR', 'RS', 'INR', 'USD', 'EPC', 'PPA', 'LOA', 'MOU', 'JV', 'CEO', 'FY', 'Q1', 'Q2', 'Q3', 'Q4', 'REL', 'KPI', 'BESS', 'HAM', 'EV', 'MT', 'KM', 'TPA']);
+const HAS_MONEY = /(?:\$|₹|\bRs\.?|\bINR\b|\bUSD\b|\bEUR\b|€|£)\s*[\d,.]+|\b[\d,.]+\s*(?:crore|cr\b|lakh crore|billion|bn\b|million|mn\b)/i;
+
+export interface ShowableItem extends DedupItem { strategic_visibility?: any; sv_formatted_line?: string | null }
+
+const SUFFIX = /\b(?:ltd|limited|inc|incorporated|corp|corpn|corporation|co|company|plc|holdings?|group|the|n ?v|s ?a|ag|llc|lp)\b/g;
+export const normName = (s: string) => ` ${String(s || '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9 ]+/g, ' ').replace(SUFFIX, ' ').replace(/\s+/g, ' ').trim()} `;
+
+/** Company name (2+ words, from the stock screener) → ticker; the longest name found in the headline wins. */
+export function tickerFromName(title: string, names: Map<string, string>): string | null {
+  const t = normName(title);
+  let best: { n: string; t: string } | null = null;
+  for (const [n, tk] of names) if (t.includes(n) && (!best || n.length > best.n.length)) best = { n, t: tk };
+  return best?.t ?? null;
+}
+
+/** The row as it should be shown, or null when it is general news rather than a key contract. Pure. */
+export function showableContract<T extends ShowableItem>(it: T, isListed: (ticker: string) => boolean, names?: Map<string, string>, capUsdM?: (ticker: string) => number | null): T | null {
+  const title = String(it.title || '');
+  if (!CONTRACT_WORDS.test(title) || NEWS_NOT_CONTRACT.test(title) || isNotAContract(title)) return null;
+  let tickers = [it.primary_ticker, ...(it.ticker_symbols || [])].map((t) => String(t || '').toUpperCase().trim())
+    .filter((t, i, a) => t && a.indexOf(t) === i && !UNIT_TICKERS.has(t) && isListed(t));
+  if (!tickers.length && names) { const byName = tickerFromName(title, names); if (byName) tickers = [byName]; }
+  if (!tickers.length) return null;
+  const out: any = { ...it, primary_ticker: tickers[0], ticker_symbols: tickers };
+  // a stated value under 2% of the company's market value does not transform it (Coal India's ₹2,831 Cr order is ~1%)
+  const v = HAS_MONEY.test(title) ? Number(it.strategic_visibility?.contract_value_usd_m) : NaN;
+  const cap = capUsdM ? capUsdM(tickers[0]) : null;
+  if (Number.isFinite(v) && v > 0 && cap != null && cap > 0) {
+    if (v / cap < 0.02) return null;
+    out.contract_to_mcap_pct = Math.round((v / cap) * 1000) / 10;
+  }
+  if (!HAS_MONEY.test(title) && out.strategic_visibility) out.strategic_visibility = { ...out.strategic_visibility, contract_value_usd_m: null, value_not_stated: true };
+  else if (out.strategic_visibility?.contract_value_usd_m != null) out.strategic_visibility = { ...out.strategic_visibility, contract_value_usd_m: Math.round(out.strategic_visibility.contract_value_usd_m) };
+  return out as T;
+}

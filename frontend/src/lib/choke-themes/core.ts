@@ -3,8 +3,9 @@
 // "Update with AI" on the News page; otherwise the last run is shown as it was. Pure types + formatting (no imports).
 
 export type ChokeRegion = 'US' | 'IN';
-export interface ChokeLeader { name: string; ticker: string; note: string | null; /** zzz1175 — market cap from the stock screener ($ M US / ₹ Cr India), when known */ cap?: number | null; /** zzz1176 — false = the ticker is not in the stock screener (wrong, renamed or foreign) */ found?: boolean | null }
-export interface ChokeTheme { name: string; emoji: string; why: string; leaders: ChokeLeader[]; smallMid: ChokeLeader[]; bear: string; bull: string; evidence: string | null }
+export interface ChokeLeader { name: string; ticker: string; note: string | null; /** zzz1175 — market cap from the stock screener ($ M US / ₹ Cr India), when known */ cap?: number | null; /** zzz1176 — false = the ticker is not in the stock screener (wrong, renamed or foreign) */ found?: boolean | null; /** zzz1178 — 1-year share move % (stock screener) */ p1y?: number | null }
+export type ChokeStage = 'EARLY' | 'BUILDING' | 'CROWDED';
+export interface ChokeTheme { name: string; emoji: string; stage?: ChokeStage; notPricedIn?: string; signals?: string; why: string; leaders: ChokeLeader[]; smallMid: ChokeLeader[]; bear: string; bull: string; evidence: string | null }
 export interface ChokePlaybook { dominant: string[]; accumulation: string; smallMid: string }
 export interface ChokeRegionView { region: ChokeRegion; themes: ChokeTheme[]; playbook: ChokePlaybook }
 export interface ChokeReport {
@@ -27,10 +28,13 @@ export const CHOKE_TOOL = {
             themes: {
               type: 'array', minItems: 6, maxItems: 8,
               items: {
-                type: 'object', additionalProperties: false, required: ['name', 'emoji', 'why', 'leaders', 'small_mid', 'bear', 'bull', 'evidence'],
+                type: 'object', additionalProperties: false, required: ['name', 'emoji', 'stage', 'not_priced_in', 'signals', 'why', 'leaders', 'small_mid', 'bear', 'bull', 'evidence'],
                 properties: {
                   name: { type: 'string', maxLength: 90, description: 'Short theme name, at most 8 words.' },
                   emoji: { type: 'string', maxLength: 12, description: 'One to three emoji for the theme.' },
+                  stage: { type: 'string', enum: ['EARLY', 'BUILDING', 'CROWDED'], description: 'EARLY = inflection starting, not yet consensus, shares have not run; BUILDING = proven and accelerating, partly priced; CROWDED = consensus and largely priced (include at most one CROWDED theme, and only for a real new bottleneck).' },
+                  not_priced_in: { type: 'string', maxLength: 260, description: 'What the market is still missing or under-pricing — why this is not yet a consensus trade.' },
+                  signals: { type: 'string', maxLength: 260, description: 'The hard inflection signals to watch or already visible (pricing turning, supply sold out, lead times, utilisation, inventory drawdown, revenue acceleration in the industry data given).' },
                   why: { type: 'string', maxLength: 420, description: '2–3 lines: the structural driver (macro, geopolitics, technology, policy) and where the choke point is.' },
                   leaders: {
                     type: 'array', minItems: 2, maxItems: 4,
@@ -79,6 +83,12 @@ export const CHOKE_TOOL = {
 
 export const CHOKE_SYSTEM = `You are an expert equity analyst. Identify the 6–8 strongest high-growth, choke-point investment themes for the next 10+ years, for the US and for India SEPARATELY — their structural drivers differ.
 
+THE GOAL IS TO BE EARLY, NOT TO LIST CONSENSUS. The owner wants to find the next memory-supercycle-type theme (Micron and SanDisk before their 10x–50x runs) — not themes that already played out. A theme deserves a place when:
+- a hard bottleneck is forming: demand is outrunning supply that takes years to add (capacity sold out, lead times stretching, pricing turning up, inventory drawing down);
+- the industry data given shows quarterly revenue accelerating above the yearly trend and margins rising — while shares have NOT yet run a lot over 5 years;
+- the market still treats it as cyclical, boring or a niche (state what it is missing).
+Leave out themes whose main run is behind them — e.g. generic solar modules or panel makers, generic EV makers, generic renewable developers — unless something genuinely NEW (a new bottleneck, a new technology layer) has started; then name exactly that new piece, not the old theme. Rank EARLY themes first, then BUILDING; at most one CROWDED theme.
+
 Rules:
 - Only themes that are mission-critical, monopoly-driven or policy-backed. Exclude weak or themeless sectors (housing, staples, generic emerging-market exposure).
 - Leaders: 2–4 true choke-point companies per theme. Exclude any company with audit issues, auditor resignations, promoter-family disputes, board conflicts, regulator actions on governance, or weak governance credibility. Only clean balance sheets, trustworthy management, proven execution. If you are unsure about a company's governance, leave it out.
@@ -98,7 +108,9 @@ export function chokeAsText(r: ChokeReport): string {
     out.push(g.region === 'US' ? '🇺🇸 UNITED STATES' : '🇮🇳 INDIA', '');
     for (const t of g.themes) {
       out.push(`🔥 ${t.name} ${t.emoji}`.trim());
+      if (t.stage) out.push(`Stage: ${t.stage}${t.notPricedIn ? ` — not priced in: ${t.notPricedIn}` : ''}`);
       out.push(`Why: ${t.why}`);
+      if (t.signals) out.push(`Signals: ${t.signals}`);
       out.push(`Leaders: ${t.leaders.map((l) => `${l.name} (${l.ticker})`).join(', ')}.`);
       if (t.smallMid.length) out.push(`Small & mid caps: ${t.smallMid.map((l) => `${l.name} (${l.ticker})`).join(', ')}.`);
       out.push(`Asymmetry: Bear: ${t.bear} Bull: ${t.bull}`, '');
@@ -121,6 +133,8 @@ export function cleanChoke(d: any): Pick<ChokeReport, 'regions' | 'changes'> | n
     const people = (a: any, n: number): ChokeLeader[] => (Array.isArray(a) ? a : []).map((l: any) => ({ name: str(l?.name, 60), ticker: str(l?.ticker, 24), note: l?.note ? str(l.note, 120) : null })).filter((l: ChokeLeader) => l.name && l.ticker).slice(0, n);
     const themes: ChokeTheme[] = (Array.isArray(g.themes) ? g.themes : []).map((t: any) => ({
       name: str(t?.name, 90), emoji: str(t?.emoji, 12), why: str(t?.why, 420),
+      stage: (['EARLY', 'BUILDING', 'CROWDED'].includes(t?.stage) ? t.stage : undefined) as ChokeStage | undefined,
+      notPricedIn: t?.not_priced_in ? str(t.not_priced_in, 260) : undefined, signals: t?.signals ? str(t.signals, 260) : undefined,
       leaders: people(t?.leaders, 4), smallMid: people(t?.small_mid, 3),
       bear: str(t?.bear, 200), bull: str(t?.bull, 200), evidence: t?.evidence ? str(t.evidence, 200) : null,
     })).filter((t: ChokeTheme) => t.name && t.why && t.leaders.length >= 1).slice(0, 8);
@@ -137,12 +151,13 @@ const homeTicker = (t: string, region: ChokeRegion) => { const m = /^([A-Z0-9&.-
 /** Stock-screener market caps on every leader; a "small & mid" name that is in fact large is dropped (the AI's size guess is
  *  checked), a small & mid name already listed as a leader is not repeated, and a home ticker the screener does not know is
  *  marked (wrong, renamed or delisted — check it). Pure. */
-export function withCaps(r: Pick<ChokeReport, 'regions'>, caps: Record<ChokeRegion, Map<string, number>>): void {
+export function withCaps(r: Pick<ChokeReport, 'regions'>, caps: Record<ChokeRegion, Map<string, number>>, perf?: Record<ChokeRegion, Map<string, number>>): void {
   for (const g of r.regions) {
     const known = (caps[g.region]?.size ?? 0) > 0;
     const cap = (l: ChokeLeader) => {
       const t = homeTicker(l.ticker, g.region); const v = t ? caps[g.region]?.get(t) : undefined;
       l.cap = v ?? null; l.found = !t ? null : known ? v != null : null;   // a foreign listing is not checked
+      l.p1y = t ? perf?.[g.region]?.get(t) ?? null : null;
       return l;
     };
     for (const t of g.themes) {

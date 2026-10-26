@@ -973,6 +973,14 @@ export default function NewsFeedPage() {
                         {a.strategic_visibility.visibility_years}y
                       </span>
                     )}
+                    {(a as any).contract_to_mcap_pct != null && (
+                      <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--mc-text-2)' }} title="Contract value ÷ the company's market value">
+                        ≈{(a as any).contract_to_mcap_pct}% of mkt cap
+                      </span>
+                    )}
+                    {(a.strategic_visibility as any).value_not_stated && (
+                      <span style={{ fontSize: 12, color: 'var(--mc-text-4)' }}>value not stated</span>
+                    )}
                     {a.strategic_visibility.flags.includes('STRATEGIC_CHOKEPOINT') && (
                       <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--mc-state-persistent)' }}>🔒</span>
                     )}
