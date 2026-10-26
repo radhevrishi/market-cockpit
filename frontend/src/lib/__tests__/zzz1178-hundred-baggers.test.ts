@@ -28,7 +28,7 @@ test('picks must come from the shortlist; the total is the sum of the 15 scores 
 test('themes: industry acceleration data and the "be early, not consensus" rule', () => {
   const lines = industryInflections([row('M1', { ind: 'Memory', revQYoY: 90, revAYoY: 10 }), row('M2', { ind: 'Memory', revQYoY: 70, revAYoY: 5 }), row('M3', { ind: 'Memory', revQYoY: 60, revAYoY: 8 }), row('M4', { ind: 'Memory', revQYoY: 50, revAYoY: 0 }), row('S1', { ind: 'Solar', revQYoY: 2, revAYoY: 5 }), row('S2', { ind: 'Solar' }), row('S3', { ind: 'Solar' }), row('S4', { ind: 'Solar' })], 'US');
   assert.match(lines[0], /^Memory .*100% of companies accelerating/);
-  assert.match(CHOKE_SYSTEM, /Micron and SanDisk/); assert.match(CHOKE_SYSTEM, /solar/i);
+  assert.match(CHOKE_SYSTEM, /OPERATING evidence/); assert.match(CHOKE_SYSTEM, /solar/i);
   assert.ok(isStrictSchema(toStrictSchema(CHOKE_TOOL.input_schema as any) as any));
   assert.ok(isStrictSchema(toStrictSchema(HB_TOOL.input_schema as any) as any));
 });

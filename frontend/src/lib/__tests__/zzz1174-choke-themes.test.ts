@@ -1,55 +1,36 @@
-// zzz1174 — Choke-Point Themes on the News page: AI only on click, last run shown otherwise, the owner's exact format.
+// zzz1174 → zzz1183 — Choke-Point Themes v2: schema, wiring, AI on click only, text copy.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { CHOKE_TOOL, cleanChoke, chokeAsText, withCaps, type ChokeReport } from '../choke-themes/core';
+import { CHOKE_TOOL, CHOKE_SYSTEM, cleanChoke, chokeAsText, type ChokeReport } from '../choke-themes/core';
 import { isStrictSchema, toStrictSchema } from '../ai-schemas';
 
-const theme = (n: string) => ({ name: n, emoji: '🌍⚡', why: 'Decoupling from China.', leaders: [{ name: 'MP Materials', ticker: 'MP', note: null }, { name: 'Lynas', ticker: 'LYC, ASX', note: 'ex-China refining' }], small_mid: [{ name: 'Energy Fuels', ticker: 'UUUU', note: null }, { name: 'Big Co', ticker: 'BIG', note: null }], bear: '-70% in a liquidity bear.', bull: '5–10x into the 2030s.', evidence: null });
-const region = (r: string) => ({ region: r, themes: [1, 2, 3, 4, 5, 6].map((i) => theme(`Theme ${r}${i}`)), playbook: { dominant: ['A', 'B', 'C'], accumulation: 'Tranches at -30%, -50%, -70%.', small_mid: 'UUUU first.' } });
+export const cand = (ticker: string, over: any = {}) => ({ name: `${ticker} Ltd`, ticker, exposure: 'DIRECT', jstage: 'J2', product: 'HV bushings', inflection: 'Reported: export orders up', milestone: 'Q3 results', invalidation: 'orders slip', concern: 'None found in available disclosures', scenario: null, ...over });
+export const theme = (name: string, cands: any[], ref: any[] = []) => ({ name, emoji: '⚡', keywords: ['a', 'b', 'c', 'd'], why: 'Driver.', necessity: 'n', constraint: 'c', value_capture: 'v', breakers: 'b', unknowns: 'u', evidence: null, candidates: cands, reference: ref });
+const pb = { strongest: ['x'], confirm: [], milestones: [], disconfirming: [], valuation: [] };
 
-test('schema is strict-able; both countries required, US first', () => {
+test('schema is strict-able; no theme quota (1–8); the prompt asks for company evidence, not sector stories', () => {
   assert.ok(isStrictSchema(toStrictSchema(CHOKE_TOOL.input_schema as any) as any));
-  const c = cleanChoke({ regions: [region('IN'), region('US')], changes: [] })!;
-  assert.deepEqual(c.regions.map((g) => g.region), ['US', 'IN']);
-  assert.equal(cleanChoke({ regions: [region('US')], changes: [] }), null, 'India missing = not stored');
+  const themes = (CHOKE_TOOL.input_schema as any).properties.regions.items.properties.themes;
+  assert.equal(themes.minItems, 1);
+  assert.match(CHOKE_SYSTEM, /Which specific small or mid-cap company/); assert.match(CHOKE_SYSTEM, /Europe\+1/);
+  assert.match(CHOKE_SYSTEM, /a past rally does not end a J-curve/); assert.doesNotMatch(CHOKE_SYSTEM, /-30%, -50%, -70%/);
+  const c = cleanChoke({ regions: [{ region: 'IN', themes: [theme('T', [cand('A')])], playbook: pb }, { region: 'US', themes: [], playbook: pb }] })!;
+  assert.deepEqual(c.regions.map((g) => g.region), ['US', 'IN']); assert.equal(c.regions[0].themes.length, 0, 'a region may have no qualifying theme');
 });
 
-test('text copy follows the format: 🔥 Theme → Why → Leaders → Asymmetry, then 🎯 Investor Playbook', () => {
-  const r: ChokeReport = { ...cleanChoke({ regions: [region('US'), region('IN')], changes: [] })!, generatedAt: '2026-10-26T18:00:00Z', model: 'x', newsUsed: 10, asOfNews: null };
-  const t = chokeAsText(r);
-  assert.match(t, /🔥 Theme US1 🌍⚡\nWhy: Decoupling from China\.\nLeaders: MP Materials \(MP\), Lynas \(LYC, ASX\)\.\nSmall & mid caps: Energy Fuels \(UUUU\), Big Co \(BIG\)\.\nAsymmetry: Bear: -70%/);
-  assert.ok(t.indexOf('🎯 Investor Playbook — US') < t.indexOf('🇮🇳 INDIA'));
+test('text copy: mechanism, candidates with stage, reference leaders, playbook', () => {
+  const c = cleanChoke({ regions: [{ region: 'US', themes: [theme('Power delivery', [cand('VICR')], [cand('NVDA', { exposure: 'PROXY', jstage: 'J4' })])], playbook: pb }, { region: 'IN', themes: [], playbook: pb }] })!;
+  const t = chokeAsText({ version: 2, ...c, generatedAt: '', model: null, newsUsed: 0, asOfNews: null } as ChokeReport);
+  assert.match(t, /🔥 Power delivery ⚡\nWhy: Driver\.\nNecessity: n/); assert.match(t, /• VICR Ltd \(VICR\) — DIRECT, J2 · early inflection/);
+  assert.match(t, /Reference leaders: NVDA Ltd \(NVDA\)/); assert.match(t, /No qualifying themes in this run/);
 });
 
-test('wiring: protected API, POST runs the AI, page mounts the panel, no AI on load', () => {
+test('wiring: protected API, POST starts a background run, GET never calls the AI, panel mounted', () => {
   const src = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8');
   assert.match(src('../site-auth.ts'), /'\/api\/v1\/choke-themes'/);
   const route = src('../../app/api/v1/choke-themes/route.ts');
   assert.match(route, /export async function POST\(\)[\s\S]*runChoke\(\)/);
-  assert.doesNotMatch(route.split('export async function POST')[0], /runChoke\(/, 'GET never calls the AI');
+  assert.doesNotMatch(route.split('export async function POST')[0], /runChoke\(/);
   assert.match(src('../../app/(dashboard)/news/page.tsx'), /<ChokeThemesPanel \/>/);
-  assert.match(src('../choke-themes/run.ts'), /CHOKE_DAILY_MAX = 6/);
-});
-
-test('small & mid caps: listed per theme; a "small" pick that is really large is dropped by the stock-screener cap', () => {
-  const c = cleanChoke({ regions: [region('US'), region('IN')], changes: [] })!;
-  withCaps(c, { US: new Map([['UUUU', 1500], ['BIG', 250_000], ['MP', 9000]]), IN: new Map() });
-  const t = c.regions[0].themes[0];
-  assert.deepEqual(t.smallMid.map((l) => l.ticker), ['UUUU']);
-  assert.equal(t.leaders[0].cap, 9000); assert.equal(t.leaders[1].cap, null, 'an ASX listing is not matched to a US ticker');
-  const txt = chokeAsText({ ...c, generatedAt: '', model: null, newsUsed: 0, asOfNews: null });
-  assert.match(txt, /Small & mid caps: Energy Fuels \(UUUU\)\./); assert.match(txt, /Small & mid caps first: UUUU first\./);
-});
-
-test('zzz1176: trillion caps read $5.2T; a leader is not repeated as a small & mid pick; unknown home tickers are marked', async () => {
-  const { fmtChokeCap } = await import('../choke-themes/core');
-  assert.equal(fmtChokeCap(5_213_000, 'US'), '$5.2T'); assert.equal(fmtChokeCap(8_500, 'US'), '$8.5B');
-  const c = cleanChoke({ regions: [region('US'), region('IN')], changes: [] })!;
-  c.regions[0].themes[0].smallMid.push({ name: 'MP again', ticker: 'MP', note: null });
-  c.regions[1].themes[0].leaders.push({ name: 'Kalpataru', ticker: 'KALPATPOWR', note: null });
-  withCaps(c, { US: new Map([['UUUU', 1500], ['MP', 9000]]), IN: new Map([['KPIL', 20000]]) });
-  assert.ok(!c.regions[0].themes[0].smallMid.some((l) => l.ticker === 'MP'));
-  assert.equal(c.regions[1].themes[0].leaders.find((l) => l.ticker === 'KALPATPOWR')?.found, false);
-  assert.equal(c.regions[0].themes[0].leaders.find((l) => l.ticker === 'LYC, ASX')?.found, null, 'foreign listing not checked');
 });

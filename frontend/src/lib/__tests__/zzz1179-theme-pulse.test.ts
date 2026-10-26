@@ -37,32 +37,6 @@ test('news archive: rows from the feed, table + hourly job', () => {
   assert.ok(migrationsValid() && MIGRATIONS.find((m) => m.name === 'news_archive'));
   assert.ok(APP_JOBS.find((j) => j.name === 'news-archive'));
   const panel = readFileSync(new URL('../../components/news/ChokeThemesPanel.tsx', import.meta.url), 'utf8');
-  assert.match(panel, /\/api\/v1\/choke-themes\/pulse/); assert.match(panel, /📊 Live strength/);
+  assert.match(panel, /\/api\/v1\/choke-themes\/pulse/); assert.match(panel, /Rank: market & news pulse/);
 });
 
-test('zzz1180: J-curve data check — a theme whose companies already ran 3x+ in 5 years is flagged and moved last; prompt judges from scratch', async () => {
-  const { cleanChoke, jcurveCheck, CHOKE_SYSTEM } = await import('../choke-themes/core');
-  const th = (name: string, tk: string) => ({ name, emoji: '', jcurve: 'INFLECTING', stage: 'EARLY', not_priced_in: '', signals: '', keywords: [], why: 'x', leaders: [{ name: tk, ticker: tk, note: null }], small_mid: [], bear: '', bull: '', evidence: null });
-  const reg = (r: string, a: string, b: string) => ({ region: r, themes: [th('Rail EPC', a), th('Memory', b), th('T3', 'Z3'), th('T4', 'Z4')], playbook: { dominant: [], accumulation: '', small_mid: '' } });
-  const c = cleanChoke({ regions: [reg('US', 'A', 'B'), reg('IN', 'RVNL', 'NEWCO')], changes: [] })!;
-  jcurveCheck(c, { US: new Map(), IN: new Map([['RVNL', 900], ['NEWCO', 40]]) }, { US: new Map(), IN: new Map([['RVNL', 10]]) });
-  const india = c.regions[1].themes;
-  assert.equal(india[india.length - 1].name, 'Rail EPC'); assert.equal(india[india.length - 1].alreadyRan, true); assert.equal(india[india.length - 1].ran5y, 900);
-  assert.equal(india.find((t) => t.name === 'Memory')!.alreadyRan, false);
-  assert.match(CHOKE_SYSTEM, /J-CURVE TEST/); assert.match(CHOKE_SYSTEM, /FROM SCRATCH/);
-  const run = readFileSync(new URL('../choke-themes/run.ts', import.meta.url), 'utf8');
-  assert.doesNotMatch(run, /keep what still holds/); assert.match(run, /ALREADY multiplied/);
-});
-
-test('zzz1181: runs start in the background (no 502 on a long request); a theme that ran and is unwinding is flagged', async () => {
-  const src = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8');
-  for (const f of ['../../app/api/v1/choke-themes/route.ts', '../../app/api/v1/hundred-baggers/route.ts']) assert.match(src(f), /startJob\(KEY/);
-  assert.match(src('../../components/news/ChokeThemesPanel.tsx'), /startAndPoll/);
-  const { cleanChoke, jcurveCheck } = await import('../choke-themes/core');
-  const th = (name: string, tk: string) => ({ name, emoji: '', jcurve: 'INFLECTING', stage: 'EARLY', not_priced_in: '', signals: '', keywords: [], why: 'x', leaders: [{ name: tk, ticker: tk, note: null }], small_mid: [], bear: '', bull: '', evidence: null });
-  const reg = (r: string) => ({ region: r, themes: [th('Rail', 'IRCON'), th('B', 'B'), th('C', 'C'), th('D', 'D')], playbook: { dominant: [], accumulation: '', small_mid: '' } });
-  const c = cleanChoke({ regions: [reg('US'), reg('IN')], changes: [] })!;
-  jcurveCheck(c, { US: new Map(), IN: new Map([['IRCON', 97]]) }, { US: new Map(), IN: new Map([['IRCON', -42]]) });
-  const rail = c.regions[1].themes.find((t) => t.name === 'Rail')!;
-  assert.equal(rail.unwinding, true); assert.equal(rail.alreadyRan, true);
-});

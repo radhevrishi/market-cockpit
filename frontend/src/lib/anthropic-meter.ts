@@ -404,7 +404,10 @@ export function toOpenAIRequest(body: MessagesBody, model: string, reasoningEffo
   const out: Record<string, any> = { model, messages, max_completion_tokens: reasoning ? body.max_tokens * 2 + 4000 : body.max_tokens };
   // gpt-5 models take reasoning_effort and refuse a non-default temperature;
   // older models take temperature and ignore reasoning.
-  if (reasoning) out.reasoning_effort = reasoningEffort;
+  // zzz1183 — GPT-6 on /v1/chat/completions refuses function tools together with reasoning_effort (live error, 26 Oct:
+  // "use /v1/responses or set reasoning_effort to 'none'"). Tool calls to GPT-6+ go with 'none'.
+  const gpt6Tools = /^gpt-(?:[6-9]|\d{2})/.test(model) && !!body.tools?.length;
+  if (reasoning) out.reasoning_effort = gpt6Tools ? 'none' : reasoningEffort;
   else if (typeof body.temperature === 'number') out.temperature = body.temperature;
   if (body.tools?.length) {
     // zzz1050: Structured Outputs — a tool whose schema is strict-valid (every property required, objects closed) is sent with
@@ -556,6 +559,10 @@ async function openaiMessages(feature: string, body: MessagesBody, opts: MeterOp
     track(feature, opts.run, model, startedAt, null, 0, 'failed', `HTTP ${resp.status}: ${message}`);
     // zzz1182 — a stronger model the account cannot use (wrong name, not yet enabled) falls back once to gpt-5, so a model
     // switch never breaks the guidance escalation or the research panels
+    // zzz1183 — a model that refuses the reasoning setting is asked once more without it
+    if (resp.status === 400 && /reasoning_effort/i.test(message) && opts.reasoningEffort !== 'none') {
+      return openaiMessages(feature, body, { ...opts, reasoningEffort: 'none' });
+    }
     if (opts.openaiModel && opts.openaiModel !== STRONG_FALLBACK && [400, 403, 404].includes(resp.status)
         && /model/i.test(message) && /(not exist|not found|does not have access|invalid|unknown|unsupported)/i.test(message)) {
       return openaiMessages(feature, body, { ...opts, openaiModel: STRONG_FALLBACK });

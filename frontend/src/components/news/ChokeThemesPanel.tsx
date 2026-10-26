@@ -1,12 +1,14 @@
 'use client';
-// zzz1174 — 🔥 Choke-Point Themes on the News page. Shows the LAST AI run (static until the owner clicks); the button runs the
-// AI once with the latest news and saves the result for every device. US first, then India, each with its Investor Playbook.
-// zzz1176 — clearer layout: ranked theme cards, ticker chips with market cap that open the chart, ⚠ on tickers the stock
-// screener does not know, red / green bear and bull boxes, a playbook with the -30 / -50 / -70% tranche ladder.
-import { useCallback, useEffect, useState } from 'react';
+// zzz1174 → zzz1183 — 🔥 Choke-Point Themes on the News page (v2: company J-curves). Shows the LAST SUCCESSFUL AI run (static
+// until the owner clicks; a failed update keeps it and says so). Per theme: the bottleneck mechanism (necessity, supply
+// constraint, value capture, what could remove it), small / mid-cap candidates with exposure, J-stage, exact product,
+// inflection evidence, next milestone and concern — expandable to the stock-screener facts and the CALCULATED scenarios —
+// reference leaders apart, and the live pulse (news / squeeze / company proof / crowding, no AI). Playbook without
+// price-fall buying rules. "What changed" is computed from the stored runs.
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import { pollJob, startAndPoll } from '@/lib/ai-panel-client';
 import type { ThemePulse } from '@/lib/choke-themes/pulse';
-import { chokeAsText, fmtChokeCap, SMALL_MID_MAX, type ChokeLeader, type ChokeReport, type ChokeRegion, type ChokeTheme } from '@/lib/choke-themes/core';
+import { chokeAsText, fmtChokeCap, EXPOSURE_WHY, J_WHY, J_WORD, type ChokeCandidate, type ChokeChange, type ChokeReport, type ChokeRegion, type ChokeTheme, type JStage } from '@/lib/choke-themes/core';
 
 const OPEN_KEY = 'mc:choke-themes:open:v1';
 const C = {
@@ -14,32 +16,17 @@ const C = {
   red: 'var(--mc-bearish)', green: 'var(--mc-bullish)', accent: 'var(--mc-accent)', warn: 'var(--mc-warn)',
 };
 const tint = (c: string, p: number) => `color-mix(in srgb, ${c} ${p}%, transparent)`;
-const JC: Record<string, { w: string; c: string }> = { PRE_INFLECTION: { w: 'J-curve: before the turn', c: 'var(--mc-bullish)' }, INFLECTING: { w: 'J-curve: turning now', c: 'var(--mc-bullish)' }, MID_RUN: { w: 'J-curve: mid-run', c: 'var(--mc-warn)' }, LATE: { w: 'J-curve: late', c: 'var(--mc-bearish)' } };
-const STAGE_C: Record<string, string> = { EARLY: 'var(--mc-bullish)', BUILDING: 'var(--mc-accent)', CROWDED: 'var(--mc-warn)' };
-const STAGE_WHY: Record<string, string> = { EARLY: 'Inflection starting, not yet consensus — shares have not run', BUILDING: 'Proven and accelerating — partly priced', CROWDED: 'Consensus — largely priced; kept only for a real new bottleneck' };
-
-function Chip({ l, region, small }: { l: ChokeLeader; region: ChokeRegion; small?: boolean }) {
-  const cap = fmtChokeCap(l.cap, region);
-  const bad = l.found === false;
-  const c = bad ? C.warn : small ? C.green : C.accent;
-  const home = !/,\s*[A-Za-z]+$/.test(l.ticker) || /,\s*(NYSE|NASDAQ|NSE|BSE)$/i.test(l.ticker);
-  const sym = l.ticker.replace(/,.*$/, '').trim();
-  const inner = (
-    <>
-      <b style={{ color: C.text }}>{sym}</b>
-      <span style={{ color: C.dim }}> {l.name}</span>
-      {cap && <span style={{ color: C.faint }}> · {cap}</span>}
-      {l.p1y != null && <span style={{ color: l.p1y >= 0 ? C.green : C.red }}> · 1y {l.p1y >= 0 ? '+' : ''}{Math.round(l.p1y)}%</span>}
-      {!home && <span style={{ color: C.faint }}> · {l.ticker.split(',').slice(1).join(',').trim()}</span>}
-      {bad && <span style={{ color: C.warn, fontWeight: 800 }}> ⚠</span>}
-    </>
-  );
-  const style: React.CSSProperties = { display: 'inline-block', fontSize: 13.5, padding: '3px 8px', borderRadius: 999, border: `1px solid ${tint(c, 45)}`, background: tint(c, 8), textDecoration: 'none', lineHeight: 1.4 };
-  const title = [l.note, bad ? 'Not found in the stock screener — the ticker may be wrong, renamed or delisted. Check before acting.' : null].filter(Boolean).join(' · ');
-  return home
-    ? <a href={`/charts?m=${region}&t=${encodeURIComponent(sym)}`} target="_blank" rel="noopener noreferrer" title={title || 'Open chart'} style={style}>{inner}</a>
-    : <span title={title} style={style}>{inner}</span>;
-}
+const J_C: Record<JStage, string> = { J0: C.faint, J1: C.warn, J2: C.green, J3: C.green, J4: C.accent, J5: C.red };
+const EXPO_C: Record<string, string> = { DIRECT: C.green, ENABLER: C.accent, PROXY: C.warn, SPECULATIVE: C.faint };
+const CHECK: Record<string, { w: string; c: string; why: string }> = {
+  CONFIRMS: { w: '✓ figures confirm', c: C.green, why: 'The stock-screener figures (sales growth / acceleration) back the stage' },
+  MIXED: { w: '≈ figures mixed', c: C.warn, why: 'The figures neither clearly back nor contradict the stage' },
+  CONTRADICTS: { w: '✗ figures contradict', c: C.red, why: 'Sales are shrinking while an inflection is claimed' },
+  NO_DATA: { w: '? no figures', c: C.faint, why: 'No stock-screener figures — evidence confidence is lower' },
+};
+const pc = (v: number | null | undefined) => (v == null ? '—' : `${v > 0 ? '+' : ''}${Math.round(v)}%`);
+const tag = (text: string, c: string, title?: string) => <span title={title} style={{ display: 'inline-block', fontSize: 12, fontWeight: 900, padding: '2px 7px', borderRadius: 5, color: c, border: `1px solid ${c}`, background: tint(c, 10), whiteSpace: 'nowrap' }}>{text}</span>;
+const label = (t: string) => <div style={{ fontWeight: 800, color: C.faint, fontSize: 12, letterSpacing: 0.5, marginBottom: 3 }}>{t}</div>;
 
 const TREND = { RISING: { a: '↑', c: 'var(--mc-bullish)', w: 'rising' }, STEADY: { a: '→', c: 'var(--mc-text-3)', w: 'steady' }, COOLING: { a: '↓', c: 'var(--mc-bearish)', w: 'cooling' } } as const;
 const strengthColor = (v: number) => (v >= 60 ? C.green : v >= 35 ? C.accent : C.faint);
@@ -95,49 +82,136 @@ function PulseView({ p }: { p: ThemePulse }) {
   );
 }
 
-function ThemeCard({ t, i, region, sm, pulse }: { t: ChokeTheme; i: number; region: ChokeRegion; sm: boolean; pulse?: ThemePulse | null }) {
-  const [showPulse, setShowPulse] = useState(false);
-  const smallList = [...(t.smallMid || []), ...(sm ? t.leaders.filter((l) => l.cap != null && l.cap <= SMALL_MID_MAX[region]) : [])];
+
+function CandDetail({ c, region }: { c: ChokeCandidate; region: ChokeRegion }) {
+  const f = c.facts;
   return (
-    <div style={{ border: `1px solid ${C.border}`, borderRadius: 12, background: C.bg, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-        <span style={{ flexShrink: 0, width: 26, height: 26, borderRadius: 8, background: tint(C.accent, 14), color: C.accent, fontWeight: 900, fontSize: 14.5, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
-        <div style={{ fontWeight: 900, fontSize: 17, lineHeight: 1.3, flex: 1 }}>🔥 {t.name} <span style={{ whiteSpace: 'nowrap' }}>{t.emoji}</span></div>
-        {pulse && <StrengthBadge p={pulse} />}
-        {t.jcurve && <span title="Where the theme sits on the J-curve (AI's call)" style={{ flexShrink: 0, fontSize: 12, fontWeight: 900, padding: '3px 8px', borderRadius: 6, color: JC[t.jcurve].c, border: `1px solid ${JC[t.jcurve].c}`, background: tint(JC[t.jcurve].c, 10) }}>{JC[t.jcurve].w}</span>}
-        {t.stage && <span title={STAGE_WHY[t.stage]} style={{ flexShrink: 0, fontSize: 12, fontWeight: 900, padding: '3px 8px', borderRadius: 6, color: STAGE_C[t.stage], border: `1px solid ${STAGE_C[t.stage]}`, background: tint(STAGE_C[t.stage], 10) }}>{t.stage}</span>}
+    <div style={{ padding: '10px 12px', background: C.bg2, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(300px, 100%), 1fr))', gap: 12, fontSize: 14, lineHeight: 1.5 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div>{label('INFLECTION EVIDENCE')}{c.inflection}</div>
+        <div>{label('NEXT MILESTONE')}{c.milestone}</div>
+        <div>{label('WHAT WOULD PROVE IT WRONG')}<span style={{ color: C.red }}>{c.invalidation}</span></div>
+        <div>{label('FUNDING / VALUATION / GOVERNANCE')}{c.concern}</div>
+        {c.secondary?.length ? <div style={{ color: C.dim }}>Also exposed to: {c.secondary.join(', ')}</div> : null}
       </div>
-      {t.alreadyRan && <div style={{ fontSize: 14, fontWeight: 800, color: C.red, padding: '6px 9px', borderRadius: 8, background: tint(C.red, 8), border: `1px solid ${tint(C.red, 35)}` }}>{t.unwinding ? <>⚠ Ran and now unwinding — its companies are up {t.ran5y}% in 5 years but {t.ran1y}% in the last year (median). The J-curve is behind it.</> : t.ran5y != null && t.ran5y >= 200 ? <>⚠ Already ran — its companies are up {Math.round(t.ran5y / 100 + 1)}x in 5 years (median{t.ran1y != null ? `; ${t.ran1y >= 0 ? '+' : ''}${t.ran1y}% in 1 year` : ''}). Not early — the J-curve is behind it.</> : <>⚠ The AI places it mid-run or late on the J-curve — not early.</>}</div>}
-      {!t.alreadyRan && t.ran5y != null && <div style={{ fontSize: 13.5, color: C.dim }}>J-curve check: theme companies {t.ran5y >= 0 ? 'up' : 'down'} {Math.abs(t.ran5y)}% in 5 years (median){t.ran1y != null ? `, ${t.ran1y >= 0 ? '+' : ''}${t.ran1y}% in 1 year` : ''} — not yet a big run.</div>}
-      {t.notPricedIn && <div style={{ fontSize: 14.5, lineHeight: 1.5, padding: '6px 9px', borderRadius: 8, background: tint(C.accent, 6), border: `1px solid ${tint(C.accent, 25)}` }}><b>What the market misses:</b> {t.notPricedIn}</div>}
-      <div style={{ fontSize: 14.5, lineHeight: 1.55 }}><span style={{ fontWeight: 800, color: C.faint, fontSize: 12, letterSpacing: 0.5 }}>WHY </span>{t.why}</div>
-      {t.signals && <div style={{ fontSize: 13.5, lineHeight: 1.5, color: C.dim }}><span style={{ fontWeight: 800, color: C.faint, fontSize: 12, letterSpacing: 0.5 }}>SIGNALS TO WATCH </span>{t.signals}</div>}
-      {!sm && (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div>
-          <div style={{ fontWeight: 800, color: C.faint, fontSize: 12, letterSpacing: 0.5, marginBottom: 4 }}>LEADERS</div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>{t.leaders.map((l) => <Chip key={l.ticker} l={l} region={region} />)}</div>
+          {label('STOCK-SCREENER FIGURES')}
+          {f ? (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, fontSize: 13 }}>
+              {[['Mkt cap', fmtChokeCap(f.cap, region) || '—'], ['Sales qtr', pc(f.revQ)], ['Sales yr', pc(f.revA)], ['EPS qtr', pc(f.epsQ)], ['Op margin', f.opm == null ? '—' : `${Math.round(f.opm)}%`], ['P/E', f.pe == null || f.pe <= 0 ? '—' : String(Math.round(f.pe))], ['FCF margin', f.fcfm == null ? '—' : `${Math.round(f.fcfm)}%`], ['D/E', f.de == null ? '—' : f.de.toFixed(1)]].map(([k, v]) => (
+                <span key={k} style={{ border: `1px solid ${C.border}`, borderRadius: 6, padding: '2px 7px', background: C.bg }}><span style={{ color: C.faint }}>{k}</span> <b>{v}</b></span>
+              ))}
+            </div>
+          ) : <span style={{ color: C.faint }}>{c.found === false ? '⚠ Ticker not found in the stock screener — check the identity before acting.' : 'No figures.'}</span>}
+          {f && <div style={{ fontSize: 12.5, color: C.faint, marginTop: 4 }}>Price context only (not the stage): 1y {pc(f.p1y)} · 5y {pc(f.p5y)}</div>}
+        </div>
+        <div>
+          {label(`SCENARIO${c.scenario ? ` · ${c.scenario.years} YEARS` : ''} (CALCULATED)`)}
+          {c.multiples && c.scenario ? (
+            <>
+              <table style={{ borderCollapse: 'collapse', fontSize: 13, width: '100%' }}>
+                <thead><tr>{['', 'EPS growth / yr', 'Exit P/E', 'Share price'].map((h) => <th key={h} style={{ textAlign: 'left', color: C.faint, fontWeight: 700, padding: '2px 6px' }}>{h}</th>)}</tr></thead>
+                <tbody>{(['bear', 'base', 'bull'] as const).map((k) => (
+                  <tr key={k}><td style={{ padding: '2px 6px', fontWeight: 800, color: k === 'bear' ? C.red : k === 'bull' ? C.green : C.text }}>{k}</td><td style={{ padding: '2px 6px' }}>{pc(c.scenario!.epsCagr[k])}</td><td style={{ padding: '2px 6px' }}>{Math.round(c.scenario!.exitPe[k])}</td><td style={{ padding: '2px 6px', fontWeight: 900 }}>{c.multiples![k]}×</td></tr>
+                ))}</tbody>
+              </table>
+              <div style={{ fontSize: 12.5, color: C.dim, marginTop: 4 }}>Price multiple = (1 + EPS growth)^{c.scenario.years} × (1 − {c.scenario.dilutionPct}% dilution) × exit P/E ÷ today’s P/E {c.multiples.currentPe}. No dividends. Assumptions: {c.scenario.basis}</div>
+            </>
+          ) : <span style={{ color: C.faint }}>{c.scenarioNote || 'Scenario not estimated — insufficient evidence'}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CandTable({ list, region, title }: { list: ChokeCandidate[]; region: ChokeRegion; title: string }) {
+  const [open, setOpen] = useState<string | null>(null);
+  if (!list.length) return null;
+  return (
+    <div>
+      {label(title)}
+      <div style={{ overflowX: 'auto', border: `1px solid ${C.border}`, borderRadius: 8 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5 }}>
+          <thead><tr style={{ background: C.bg2 }}>{['Company', 'Exposure', 'J-stage', 'Product', 'Inflection evidence', 'Next milestone'].map((h) => <th key={h} style={{ textAlign: 'left', padding: '6px 8px', fontSize: 12, color: C.faint, whiteSpace: 'nowrap' }}>{h}</th>)}</tr></thead>
+          <tbody>
+            {list.map((c) => {
+              const k = c.ticker; const isOpen = open === k; const sym = c.ticker.replace(/,.*$/, '').trim();
+              const chk = CHECK[c.dataCheck || 'NO_DATA'];
+              return (
+                <Fragment key={k}>
+                  <tr onClick={() => setOpen(isOpen ? null : k)} style={{ cursor: 'pointer', borderTop: `1px solid ${C.border}`, verticalAlign: 'top' }}>
+                    <td style={{ padding: '7px 8px', minWidth: 140 }}>
+                      <a href={`/charts?m=${region}&t=${encodeURIComponent(sym)}`} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ fontWeight: 900, color: C.text }}>{sym}</a>{c.found === false && <span title="Not found in the stock screener" style={{ color: C.warn }}> ⚠</span>}
+                      <div style={{ color: C.dim, fontSize: 12.5 }}>{c.name}{c.facts?.cap != null ? ` · ${fmtChokeCap(c.facts.cap, region)}` : ''}</div>
+                      {c.sizeNote && <div style={{ color: C.warn, fontSize: 12 }}>{c.sizeNote}</div>}
+                    </td>
+                    <td style={{ padding: '7px 8px' }}>{tag(c.exposure, EXPO_C[c.exposure], EXPOSURE_WHY[c.exposure])}</td>
+                    <td style={{ padding: '7px 8px', whiteSpace: 'nowrap' }}>{tag(J_WORD[c.jstage], J_C[c.jstage], J_WHY[c.jstage])}<div style={{ marginTop: 3 }}><span title={chk.why} style={{ fontSize: 12, color: chk.c, fontWeight: 700 }}>{chk.w}</span></div></td>
+                    <td style={{ padding: '7px 8px', minWidth: 160 }}>{c.product}</td>
+                    <td style={{ padding: '7px 8px', minWidth: 220 }}>{c.inflection}</td>
+                    <td style={{ padding: '7px 8px', minWidth: 160 }}>{c.milestone}<div style={{ color: C.faint, fontSize: 12 }}>{isOpen ? '▲ less' : '▼ evidence, figures, scenario'}</div></td>
+                  </tr>
+                  {isOpen && <tr><td colSpan={6} style={{ padding: 0 }}><CandDetail c={c} region={region} /></td></tr>}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function ThemeCard({ t, i, region, pulse }: { t: ChokeTheme; i: number; region: ChokeRegion; pulse?: ThemePulse | null }) {
+  const [showPulse, setShowPulse] = useState(false);
+  const mech = ([['NECESSITY', t.necessity], ['SUPPLY CONSTRAINT', t.constraint], ['VALUE CAPTURE', t.valueCapture], ['WHAT COULD REMOVE IT', t.breakers]] as const).filter(([, v]) => v);
+  return (
+    <div style={{ border: `1px solid ${t.qualifies ? tint(C.green, 45) : C.border}`, borderRadius: 12, background: C.bg, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <span style={{ flexShrink: 0, width: 28, height: 28, borderRadius: 8, background: tint(C.accent, 14), color: C.accent, fontWeight: 900, fontSize: 15, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
+        <div style={{ fontWeight: 900, fontSize: 17.5, lineHeight: 1.3, flex: 1, minWidth: 200 }}>🔥 {t.name} <span style={{ whiteSpace: 'nowrap' }}>{t.emoji}</span></div>
+        {t.qualifies ? tag('✓ evidence-backed candidates', C.green, 'At least one DIRECT / ENABLER company at J2 / J3 whose figures do not contradict it') : tag('watch — no confirmed inflection yet', C.warn, 'No DIRECT / ENABLER candidate at J2 / J3 backed by its figures')}
+        {pulse && <StrengthBadge p={pulse} />}
+      </div>
+      <div style={{ fontSize: 15, lineHeight: 1.55 }}>{t.why}</div>
+      {mech.length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(240px, 100%), 1fr))', gap: 8 }}>
+          {mech.map(([k, v]) => <div key={k} style={{ fontSize: 14, lineHeight: 1.5, padding: '7px 9px', borderRadius: 8, background: k === 'WHAT COULD REMOVE IT' ? tint(C.red, 6) : C.bg2, border: `1px solid ${C.border}` }}>{label(k)}{v}</div>)}
         </div>
       )}
-      <div>
-        <div style={{ fontWeight: 800, color: C.faint, fontSize: 12, letterSpacing: 0.5, marginBottom: 4 }}>SMALL & MID CAPS <span style={{ fontWeight: 400 }}>({region === 'US' ? 'under $10B' : 'under ₹25,000 Cr'})</span></div>
-        {smallList.length
-          ? <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>{smallList.map((l) => <Chip key={l.ticker} l={l} region={region} small />)}</div>
-          : <div style={{ fontSize: 13.5, color: C.faint }}>None that pass the size and governance filter.</div>}
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(200px, 100%), 1fr))', gap: 6 }}>
-        <div style={{ borderRadius: 8, padding: '7px 9px', background: tint(C.red, 7), border: `1px solid ${tint(C.red, 30)}`, fontSize: 13.5, lineHeight: 1.45 }}>
-          <div style={{ fontWeight: 900, color: C.red, marginBottom: 2 }}>▼ BEAR</div>{t.bear}
+      <CandTable list={t.candidates || []} region={region} title={`DISCOVERY CANDIDATES · SMALL & MID (${region === 'US' ? '$300M–$10B' : '₹500–25,000 Cr'})`} />
+      {!(t.candidates || []).length && <div style={{ fontSize: 14, color: C.warn }}>No qualifying small / mid-cap candidates in this run.</div>}
+      <CandTable list={t.reference || []} region={region} title="REFERENCE LEADERS (LARGER — CONTEXT, NOT DISCOVERY)" />
+      {(t.unknowns || t.evidence) && (
+        <div style={{ fontSize: 13.5, color: C.dim, lineHeight: 1.5, borderTop: `1px dashed ${C.border}`, paddingTop: 7 }}>
+          {t.evidence && <div>📰 <b>Recent:</b> {t.evidence}</div>}
+          {t.unknowns && <div>❓ <b>Unknowns:</b> {t.unknowns}</div>}
         </div>
-        <div style={{ borderRadius: 8, padding: '7px 9px', background: tint(C.green, 7), border: `1px solid ${tint(C.green, 30)}`, fontSize: 13.5, lineHeight: 1.45 }}>
-          <div style={{ fontWeight: 900, color: C.green, marginBottom: 2 }}>▲ BULL</div>{t.bull}
-        </div>
-      </div>
-      {t.evidence && <div style={{ fontSize: 13.5, color: C.dim, borderTop: `1px dashed ${C.border}`, paddingTop: 7 }}>📰 <b>Recent:</b> {t.evidence}</div>}
+      )}
       <button type="button" onClick={() => setShowPulse((v) => !v)} disabled={pulse === undefined}
         style={{ alignSelf: 'flex-start', cursor: pulse === undefined ? 'wait' : 'pointer', fontSize: 13.5, fontWeight: 800, padding: '6px 12px', borderRadius: 8, border: `1px solid ${C.accent}`, color: C.accent, background: tint(C.accent, showPulse ? 14 : 6) }}>
-        {pulse === undefined ? '📊 Live pulse · loading…' : pulse === null ? '📊 Live pulse · not available' : `📊 Live pulse · ${pulse.news7} news this week ${TREND[pulse.trend].a} · ${showPulse ? 'hide' : 'open'}`}
+        {pulse === undefined ? '📊 Market & news pulse · loading…' : pulse === null ? '📊 Market & news pulse · not available' : `📊 Market & news pulse · ${pulse.news7} news this week ${TREND[pulse.trend].a} · ${showPulse ? 'hide' : 'open'}`}
       </button>
       {showPulse && pulse && <PulseView p={pulse} />}
+    </div>
+  );
+}
+
+function Changes({ changes }: { changes: Array<ChokeChange | string> }) {
+  if (!changes.length) return null;
+  const KC: Record<string, string> = { ADDED: C.green, DROPPED: C.red, CHANGED: C.accent };
+  return (
+    <div style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 12px', marginBottom: 12, background: C.bg2 }}>
+      <div style={{ fontWeight: 900, fontSize: 15.5, marginBottom: 6 }}>🔄 What changed since the last run <span style={{ fontWeight: 400, fontSize: 13, color: C.faint }}>(computed from the two stored runs)</span></div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {changes.map((x, k) => typeof x === 'string'
+          ? <div key={k} style={{ fontSize: 14 }}>{x}</div>
+          : <div key={k} style={{ display: 'flex', gap: 8, alignItems: 'baseline', fontSize: 14, lineHeight: 1.5 }}>
+              {tag(x.kind, KC[x.kind])}<span>{x.region === 'US' ? '🇺🇸' : '🇮🇳'}</span>
+              <span>{x.what}{x.from || x.to ? <span style={{ color: C.dim }}> {x.from ?? '—'} → {x.to ?? '—'}</span> : null}</span>
+            </div>)}
+      </div>
     </div>
   );
 }
@@ -147,143 +221,102 @@ export default function ChokeThemesPanel() {
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [failed, setFailed] = useState<{ at: string; error: string } | null>(null);
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<ChokeRegion>('US');
-  const [sm, setSm] = useState(false);   // zzz1175 — small & mid caps only
-  const [pulses, setPulses] = useState<Record<string, ThemePulse> | null | undefined>(undefined);   // zzz1179
-  const [order, setOrder] = useState<'ai' | 'strength'>('ai');
+  const [pulses, setPulses] = useState<Record<string, ThemePulse> | null | undefined>(undefined);
+  const [order, setOrder] = useState<'evidence' | 'strength'>('evidence');
 
   useEffect(() => {
-    try { if (new URLSearchParams(window.location.search).get('choke') === '1') { setOpen(true); setTimeout(() => document.getElementById('choke-themes')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 400); } } catch { /* optional */ }
+    try { if (new URLSearchParams(window.location.search).get('choke') === '1') { setOpen(true); setTimeout(() => document.getElementById('choke-themes')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 400); } else setOpen(localStorage.getItem(OPEN_KEY) === '1'); } catch { /* optional */ }
   }, []);
-  useEffect(() => { try { if (new URLSearchParams(window.location.search).get('choke') !== '1') setOpen(localStorage.getItem(OPEN_KEY) === '1'); setSm(localStorage.getItem(OPEN_KEY + ':sm') === '1'); } catch { /* optional */ } }, []);
-  useEffect(() => { try { localStorage.setItem(OPEN_KEY + ':sm', sm ? '1' : '0'); } catch { /* optional */ } }, [sm]);
   const toggle = () => setOpen((v) => { try { localStorage.setItem(OPEN_KEY, v ? '0' : '1'); } catch { /* optional */ } return !v; });
 
+  const finish = useCallback((res: { report: any; error: string | null }) => {
+    if (res.report) setReport(res.report);
+    if (res.error) { setFailed({ at: new Date().toISOString(), error: res.error }); setMsg(null); } else { setFailed(null); setMsg(null); }
+    setBusy(false);
+  }, []);
   useEffect(() => {
     fetch('/api/v1/choke-themes', { cache: 'no-store' }).then((r) => r.json()).then((j) => {
       if (j?.report) setReport(j.report);
-      if (j?.job?.state === 'running') { setBusy(true); setMsg('An AI run is in progress…'); pollJob<any>('/api/v1/choke-themes', j.job.startedAt, (s) => setMsg(`The AI is reading the latest news and updating the themes — ${s} s…`)).then(finish); }
+      const job = j?.job;
+      if (job?.state === 'running') { setBusy(true); setMsg('An AI run is in progress…'); pollJob<any>('/api/v1/choke-themes', job.startedAt, (s) => setMsg(`The AI is researching — ${s} s…`)).then(finish); }
+      else if (job?.state === 'error' && job.startedAt && (!j?.report || Date.parse(job.startedAt) > Date.parse(j.report.generatedAt))) setFailed({ at: job.finishedAt || job.startedAt, error: job.error || 'failed' });
     }).catch(() => undefined).finally(() => setLoaded(true));
-  }, []);
-
-  // zzz1179 — the live pulse of every theme (no AI): loaded once the panel is open and whenever a new AI run lands
+  }, [finish]);
   useEffect(() => {
-    if (!open || !report) return;
+    if (!open || !report || report.version !== 2) return;
     setPulses(undefined);
     fetch('/api/v1/choke-themes/pulse', { cache: 'no-store' }).then((r) => r.json()).then((j) => setPulses(j?.ok ? (j.pulses || {}) : null)).catch(() => setPulses(null));
   }, [open, report?.generatedAt]);   // eslint-disable-line react-hooks/exhaustive-deps
 
-  // zzz1181 — the run continues on the server; the page checks its state every 5 s (a long request was cut with HTTP 502)
-  const finish = useCallback((res: { report: any; error: string | null }) => {
-    if (res.report) setReport(res.report);
-    setMsg(res.error ? `${res.error} — the previous run is still shown.` : null);
-    setBusy(false);
-  }, []);
   const run = useCallback(async () => {
-    setBusy(true); setMsg('The AI is reading the latest news and updating the themes — usually 1–3 minutes. You can leave this page; the result is saved.'); setOpen(true);
-    try { finish(await startAndPoll<any>('/api/v1/choke-themes', (s) => setMsg(`The AI is reading the latest news and updating the themes — ${s} s…`))); }
-    catch (e: any) { finish({ report: null, error: `Update failed: ${String(e?.message || e)}` }); }
+    setBusy(true); setFailed(null); setOpen(true); setMsg('The AI is researching companies on a J-curve — usually 2–4 minutes. You can leave this page; the result is saved.');
+    try { finish(await startAndPoll<any>('/api/v1/choke-themes', (s) => setMsg(`The AI is researching — ${s} s…`))); }
+    catch (e: any) { finish({ report: null, error: String(e?.message || e) }); }
   }, [finish]);
 
   const copy = () => { if (report) navigator.clipboard?.writeText(chokeAsText(report)).then(() => setMsg('Copied as text.')).catch(() => undefined); };
+  const v2 = report?.version === 2;
   const g = report?.regions.find((x) => x.region === tab) || null;
-  const when = report ? new Date(report.generatedAt).toLocaleString(undefined, { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : null;
-  const ageDays = report ? Math.floor((Date.now() - Date.parse(report.generatedAt)) / 86_400_000) : 0;
+  const fmt = (iso: string) => new Date(iso).toLocaleString(undefined, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
   const btn = (on = false): React.CSSProperties => ({ cursor: 'pointer', fontSize: 13.5, fontWeight: 800, padding: '6px 12px', borderRadius: 8, border: `1px solid ${on ? C.accent : C.border}`, color: on ? C.accent : C.text, background: on ? tint(C.accent, 10) : 'transparent' });
-  const unknown = g ? g.themes.flatMap((t) => [...t.leaders, ...(t.smallMid || [])]).filter((l) => l.found === false).map((l) => l.ticker) : [];
+  const themes = g ? (order === 'strength' && pulses ? [...g.themes].sort((a, b) => (pulses[`${g.region}|${b.name}`]?.strength ?? -1) - (pulses[`${g.region}|${a.name}`]?.strength ?? -1)) : g.themes) : [];
 
   return (
     <div id="choke-themes" style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: '12px 14px', marginBottom: 10 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <button type="button" onClick={toggle} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.text, fontSize: 17, fontWeight: 900, padding: 0 }}>
-          {open ? '▾' : '▸'} 🔥 Choke-Point Themes <span style={{ fontWeight: 600, color: C.dim, fontSize: 14.5 }}>· 10+ years · 🇺🇸 US + 🇮🇳 India</span>
+        <button type="button" onClick={toggle} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.text, fontSize: 17.5, fontWeight: 900, padding: 0 }}>
+          {open ? '▾' : '▸'} 🔥 Choke-Point Themes <span style={{ fontWeight: 600, color: C.dim, fontSize: 14.5 }}>· companies on an earnings J-curve · 🇺🇸 US + 🇮🇳 India</span>
         </button>
-        <span style={{ fontSize: 13.5, color: ageDays >= 14 ? C.warn : C.faint }}>
-          {!loaded ? 'loading…' : report ? `AI update ${when}${ageDays >= 1 ? ` (${ageDays}d ago)` : ''} · ${report.newsUsed} news items read` : 'not run yet — click Update with AI'}
+        <span style={{ fontSize: 13.5, color: C.faint }}>
+          {!loaded ? 'loading…' : report ? `Last successful research: ${fmt(report.generatedAt)}${report.marketDataAt ? ` · market data ${fmt(report.marketDataAt)}` : ''} · ${report.newsUsed} news items` : 'not run yet'}
         </span>
         <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
           {report && <button type="button" style={btn()} onClick={copy} title="Copy the whole report as text">⧉ Copy</button>}
-          <button type="button" disabled={busy} onClick={run} style={{ ...btn(true), opacity: busy ? 0.6 : 1 }}
-            title="Runs the AI once on the latest news and saves the result. Nothing runs unless you click (at most 6 a day).">
-            {busy ? '🤖 Updating…' : '🤖 Update with AI'}
-          </button>
+          <button type="button" disabled={busy} onClick={run} style={{ ...btn(true), opacity: busy ? 0.6 : 1 }} title="Runs the AI research once and saves the result. Nothing runs unless you click (at most 6 a day).">{busy ? '🤖 Researching…' : '🤖 Update with AI'}</button>
         </span>
       </div>
-      {msg && <div style={{ fontSize: 13.5, color: busy ? C.accent : C.dim, marginTop: 6 }}>{msg}</div>}
+      {msg && <div style={{ fontSize: 14, color: busy ? C.accent : C.dim, marginTop: 6 }}>{msg}</div>}
+      {failed && <div style={{ fontSize: 14, color: C.warn, marginTop: 6 }} title={failed.error}>⚠ Last update attempt failed ({fmt(failed.at)}): {failed.error}. {report ? `Showing the last successful research from ${fmt(report.generatedAt)} — it is stale.` : ''}</div>}
 
-      {open && report && g && (
+      {open && report && !v2 && (
+        <div style={{ marginTop: 12, fontSize: 14.5, padding: '10px 12px', borderRadius: 10, border: `1px solid ${C.warn}`, background: tint(C.warn, 6) }}>
+          The stored run used the old method (sector stories, price-based J-curve). Click <b>🤖 Update with AI</b> for the new company-level view: candidates with J-stage, evidence, next milestone and calculated scenarios.
+          <div style={{ marginTop: 6, color: C.dim }}>Old themes: {report.regions.map((r) => `${r.region === 'US' ? '🇺🇸' : '🇮🇳'} ${r.themes.map((t) => t.name).join(' · ')}`).join('   ')}</div>
+        </div>
+      )}
+
+      {open && report && v2 && g && (
         <div style={{ marginTop: 12 }}>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
-            {(['US', 'IN'] as ChokeRegion[]).map((r) => <button key={r} type="button" style={btn(tab === r)} onClick={() => setTab(r)}>{r === 'US' ? '🇺🇸 United States' : '🇮🇳 India'} <span style={{ color: C.faint }}>{report.regions.find((x) => x.region === r)?.themes.length}</span></button>)}
+            {(['US', 'IN'] as ChokeRegion[]).map((r) => { const rg = report.regions.find((x) => x.region === r); return <button key={r} type="button" style={btn(tab === r)} onClick={() => setTab(r)}>{r === 'US' ? '🇺🇸 United States' : '🇮🇳 India'} <span style={{ color: C.faint }}>{rg?.themes.filter((t) => t.qualifies).length}/{rg?.themes.length}</span></button>; })}
             <span style={{ width: 1, height: 22, background: C.border, margin: '0 6px' }} />
-            <button type="button" style={btn(!sm)} onClick={() => setSm(false)}>All leaders</button>
-            <button type="button" style={btn(sm)} onClick={() => setSm(true)} title="US under $10B, India under ₹25,000 Cr (checked against the stock screener)">🔎 Small & mid caps</button>
-            <span style={{ width: 1, height: 22, background: C.border, margin: '0 6px' }} />
-            <button type="button" style={btn(order === 'ai')} onClick={() => setOrder('ai')} title="The AI's ranking">AI rank</button>
-            <button type="button" style={btn(order === 'strength')} onClick={() => setOrder('strength')} title="Live strength from news, bottleneck talk, company numbers and contracts">📊 Live strength</button>
+            <button type="button" style={btn(order === 'evidence')} onClick={() => setOrder('evidence')} title="Themes ranked by the quality of their evidence-backed candidates">Rank: evidence</button>
+            <button type="button" style={btn(order === 'strength')} onClick={() => setOrder('strength')} title="Market & news pulse (news, squeeze talk, company figures, contracts) — not investment quality">Rank: market & news pulse</button>
           </div>
-          {report.changes.length > 0 && (() => {
-            const kind = (x: string) => (/\bdrop|remov|cut\b/i.test(x) ? { c: C.red, w: 'DROPPED' } : /\badd|new\b/i.test(x) ? { c: C.green, w: 'ADDED' } : { c: C.accent, w: 'CHANGED' });
-            const rows = report.changes.map((x) => { const m = /^\s*(US|IN|India)\s*:\s*/i.exec(x); return { region: m ? (/^US$/i.test(m[1]) ? 'US' : 'IN') : null, text: m ? x.slice(m[0].length) : x }; });
-            return (
-              <div style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 12px', marginBottom: 12, background: C.bg2 }}>
-                <div style={{ fontWeight: 900, fontSize: 15.5, marginBottom: 6 }}>🔄 What changed since the last run</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {rows.map((r, k) => { const kd = kind(r.text); return (
-                    <div key={k} style={{ display: 'flex', gap: 8, alignItems: 'baseline', fontSize: 14.5, lineHeight: 1.5 }}>
-                      <span style={{ flexShrink: 0, fontSize: 12, fontWeight: 900, padding: '1px 7px', borderRadius: 5, color: kd.c, border: `1px solid ${kd.c}`, background: tint(kd.c, 10) }}>{kd.w}</span>
-                      {r.region && <span style={{ flexShrink: 0 }}>{r.region === 'US' ? '🇺🇸' : '🇮🇳'}</span>}
-                      <span>{r.text}</span>
-                    </div>
-                  ); })}
-                </div>
-              </div>
-            );
-          })()}
-          {pulses && (() => {
-            const rows = g.themes.map((t) => ({ t, p: pulses[`${g.region}|${t.name}`] })).filter((x) => x.p);
-            const strong = [...rows].sort((a, b) => b.p!.strength - a.p!.strength).slice(0, 3);
-            const rising = rows.filter((x) => x.p!.trend === 'RISING').map((x) => x.t.name);
-            const cooling = rows.filter((x) => x.p!.trend === 'COOLING').map((x) => x.t.name);
-            if (!rows.length) return null;
-            return (
-              <div style={{ fontSize: 13.5, lineHeight: 1.6, padding: '7px 10px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.bg2, marginBottom: 10 }}>
-                <b>📊 Live now:</b> strongest {strong.map((x) => `${x.t.name.split(/[,(:]/)[0].trim()} ${x.p!.strength}${TREND[x.p!.trend].a}`).join(' · ')}
-                {rising.length > 0 && <span style={{ color: C.green }}> · rising: {rising.map((n) => n.split(/[,(:]/)[0].trim()).join(', ')}</span>}
-                {cooling.length > 0 && <span style={{ color: C.red }}> · cooling: {cooling.map((n) => n.split(/[,(:]/)[0].trim()).join(', ')}</span>}
-                <span style={{ color: C.faint }}> · from news, squeeze talk, company numbers and contracts — no AI, updates every hour</span>
-              </div>
-            );
-          })()}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(380px, 100%), 1fr))', gap: 10 }}>
-            {(order === 'strength' && pulses ? [...g.themes].sort((a, b) => (pulses[`${g.region}|${b.name}`]?.strength ?? -1) - (pulses[`${g.region}|${a.name}`]?.strength ?? -1)) : g.themes)
-              .map((t, i) => <ThemeCard key={t.name} t={t} i={i} region={g.region} sm={sm} pulse={pulses === undefined ? undefined : pulses === null ? null : (pulses[`${g.region}|${t.name}`] ?? null)} />)}
+          <Changes changes={report.changes || []} />
+          {themes.length === 0 && <div style={{ fontSize: 15, padding: 12, border: `1px dashed ${C.border}`, borderRadius: 10 }}>No theme qualified for {g.region === 'US' ? 'the US' : 'India'} in this run — better no list than filler.</div>}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {themes.map((t, i) => <ThemeCard key={t.name} t={t} i={i} region={g.region} pulse={pulses === undefined ? undefined : pulses === null ? null : (pulses[`${g.region}|${t.name}`] ?? null)} />)}
           </div>
 
           <div style={{ marginTop: 12, border: `1px solid ${tint(C.accent, 35)}`, borderRadius: 12, padding: 14, background: tint(C.accent, 4) }}>
             <div style={{ fontWeight: 900, fontSize: 17, marginBottom: 8 }}>🎯 Investor Playbook — {g.region === 'US' ? '🇺🇸 US' : '🇮🇳 India'}</div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(300px, 100%), 1fr))', gap: 14 }}>
-              <div>
-                <div style={{ fontWeight: 800, color: C.faint, fontSize: 12, letterSpacing: 0.5, marginBottom: 4 }}>LIKELY TO LEAD THE NEXT BULL CYCLE</div>
-                <ol style={{ margin: 0, paddingLeft: 20, fontSize: 14.5, lineHeight: 1.6 }}>{g.playbook.dominant.map((d) => <li key={d}>{d}</li>)}</ol>
-                {g.playbook.smallMid && <div style={{ fontSize: 14.5, lineHeight: 1.55, marginTop: 8 }}><b>Small & mid caps first:</b> {g.playbook.smallMid}</div>}
-              </div>
-              <div>
-                <div style={{ fontWeight: 800, color: C.faint, fontSize: 12, letterSpacing: 0.5, marginBottom: 6 }}>ACCUMULATION (2–3 YEAR BEAR ASSUMED)</div>
-                <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
-                  {[['−30%', 'Tranche 1'], ['−50%', 'Tranche 2'], ['−70%', 'Tranche 3']].map(([d, n], k) => (
-                    <div key={d} style={{ flex: 1, textAlign: 'center', borderRadius: 8, padding: '6px 4px', background: tint(C.red, 6 + k * 5), border: `1px solid ${tint(C.red, 25 + k * 10)}` }}>
-                      <div style={{ fontWeight: 900, color: C.red, fontSize: 15.5 }}>{d}</div><div style={{ fontSize: 12, color: C.dim }}>{n}</div>
-                    </div>
-                  ))}
+              {([['STRONGEST EVIDENCE', g.playbook.strongest, C.green], ['NEEDS CONFIRMATION', g.playbook.confirm, C.warn], ['UPCOMING MILESTONES', g.playbook.milestones, C.accent], ['WOULD WEAKEN THE THESIS', g.playbook.disconfirming, C.red], ['VALUATION TO WATCH', g.playbook.valuation, C.text]] as const).filter(([, a]) => a?.length).map(([h, a, c]) => (
+                <div key={h}>
+                  <div style={{ fontWeight: 900, color: c, fontSize: 12.5, letterSpacing: 0.5, marginBottom: 4 }}>{h}</div>
+                  <ul style={{ margin: 0, paddingLeft: 18, fontSize: 14.5, lineHeight: 1.55 }}>{a.map((x) => <li key={x}>{x}</li>)}</ul>
                 </div>
-                <div style={{ fontSize: 14.5, lineHeight: 1.55 }}>{g.playbook.accumulation}</div>
-              </div>
+              ))}
             </div>
+            <div style={{ fontSize: 13, color: C.dim, marginTop: 8 }}>Entry is a matter of evidence, not of price falls: reassess when a milestone is met or missed, and size by the strength of the evidence.</div>
           </div>
-          {unknown.length > 0 && <div style={{ fontSize: 13.5, color: C.warn, marginTop: 8 }}>⚠ Not found in the stock screener: {unknown.join(', ')} — the ticker may be wrong, renamed or delisted. Check before acting.</div>}
-          <div style={{ fontSize: 13.5, color: C.faint, marginTop: 8 }}>AI research view from the latest news and your gainers themes ({report.model || 'AI'}). Market caps from the stock screener. Governance screened by the AI from what it knows — check filings before acting. Not investment advice.</div>
+          <div style={{ fontSize: 13, color: C.faint, marginTop: 8, lineHeight: 1.5 }}>
+            J-stages and exposure classes are the AI analyst’s classifications under this method — not tested forecasts. Figures from the stock screener; scenarios calculated here from the stated assumptions. Screened using available disclosures and the AI’s knowledge as of {fmt(report.generatedAt)} — governance is not certified; check filings before acting. The market & news pulse is separate from the fundamental view. Model: {report.model || 'AI'}. Not investment advice.
+          </div>
         </div>
       )}
     </div>

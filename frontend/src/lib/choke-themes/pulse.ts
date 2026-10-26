@@ -49,7 +49,7 @@ const clamp = (v: number) => Math.max(0, Math.min(100, Math.round(v)));
 const median = (a: Array<number | null>) => { const v = a.filter((x): x is number => x != null).sort((x, y) => x - y); return v.length ? v[Math.floor(v.length / 2)] : null; };
 
 export function themePulse(t: ChokeTheme, region: ChokeRegion, news: PulseNews[], cos: Map<string, PulseCo>, events: PulseEvent[], now = Date.now()): ThemePulse {
-  const tickers = new Set([...t.leaders, ...(t.smallMid || [])].map((l) => homeT(l.ticker)));
+  const tickers = new Set([...(t.candidates || []), ...(t.reference || []), ...(t.leaders || []), ...(t.smallMid || [])].map((l: any) => homeT(String(l.ticker))));
   const terms = themeTerms(t);
   const day = 86_400_000;
   const matched: Array<PulseNews & { why: string; age: number; squeeze: boolean }> = [];
