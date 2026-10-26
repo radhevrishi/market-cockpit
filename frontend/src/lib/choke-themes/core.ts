@@ -5,7 +5,7 @@
 export type ChokeRegion = 'US' | 'IN';
 export interface ChokeLeader { name: string; ticker: string; note: string | null; /** zzz1175 — market cap from the stock screener ($ M US / ₹ Cr India), when known */ cap?: number | null; /** zzz1176 — false = the ticker is not in the stock screener (wrong, renamed or foreign) */ found?: boolean | null; /** zzz1178 — 1-year share move % (stock screener) */ p1y?: number | null }
 export type ChokeStage = 'EARLY' | 'BUILDING' | 'CROWDED';
-export interface ChokeTheme { name: string; emoji: string; stage?: ChokeStage; notPricedIn?: string; signals?: string; why: string; leaders: ChokeLeader[]; smallMid: ChokeLeader[]; bear: string; bull: string; evidence: string | null }
+export interface ChokeTheme { name: string; emoji: string; keywords?: string[]; stage?: ChokeStage; notPricedIn?: string; signals?: string; why: string; leaders: ChokeLeader[]; smallMid: ChokeLeader[]; bear: string; bull: string; evidence: string | null }
 export interface ChokePlaybook { dominant: string[]; accumulation: string; smallMid: string }
 export interface ChokeRegionView { region: ChokeRegion; themes: ChokeTheme[]; playbook: ChokePlaybook }
 export interface ChokeReport {
@@ -28,13 +28,14 @@ export const CHOKE_TOOL = {
             themes: {
               type: 'array', minItems: 6, maxItems: 8,
               items: {
-                type: 'object', additionalProperties: false, required: ['name', 'emoji', 'stage', 'not_priced_in', 'signals', 'why', 'leaders', 'small_mid', 'bear', 'bull', 'evidence'],
+                type: 'object', additionalProperties: false, required: ['name', 'emoji', 'stage', 'not_priced_in', 'signals', 'keywords', 'why', 'leaders', 'small_mid', 'bear', 'bull', 'evidence'],
                 properties: {
                   name: { type: 'string', maxLength: 90, description: 'Short theme name, at most 8 words.' },
                   emoji: { type: 'string', maxLength: 12, description: 'One to three emoji for the theme.' },
                   stage: { type: 'string', enum: ['EARLY', 'BUILDING', 'CROWDED'], description: 'EARLY = inflection starting, not yet consensus, shares have not run; BUILDING = proven and accelerating, partly priced; CROWDED = consensus and largely priced (include at most one CROWDED theme, and only for a real new bottleneck).' },
                   not_priced_in: { type: 'string', maxLength: 260, description: 'What the market is still missing or under-pricing — why this is not yet a consensus trade.' },
                   signals: { type: 'string', maxLength: 260, description: 'The hard inflection signals to watch or already visible (pricing turning, supply sold out, lead times, utilisation, inventory drawdown, revenue acceleration in the industry data given).' },
+                  keywords: { type: 'array', minItems: 4, maxItems: 12, items: { type: 'string', maxLength: 40 }, description: 'Short search terms that find this theme in news headlines (e.g. "HBM", "high bandwidth memory", "NAND", "DRAM prices"). Lower case is fine.' },
                   why: { type: 'string', maxLength: 420, description: '2–3 lines: the structural driver (macro, geopolitics, technology, policy) and where the choke point is.' },
                   leaders: {
                     type: 'array', minItems: 2, maxItems: 4,
@@ -134,6 +135,7 @@ export function cleanChoke(d: any): Pick<ChokeReport, 'regions' | 'changes'> | n
     const themes: ChokeTheme[] = (Array.isArray(g.themes) ? g.themes : []).map((t: any) => ({
       name: str(t?.name, 90), emoji: str(t?.emoji, 12), why: str(t?.why, 420),
       stage: (['EARLY', 'BUILDING', 'CROWDED'].includes(t?.stage) ? t.stage : undefined) as ChokeStage | undefined,
+      keywords: (Array.isArray(t?.keywords) ? t.keywords : []).map((k: any) => str(k, 40)).filter(Boolean).slice(0, 12),
       notPricedIn: t?.not_priced_in ? str(t.not_priced_in, 260) : undefined, signals: t?.signals ? str(t.signals, 260) : undefined,
       leaders: people(t?.leaders, 4), smallMid: people(t?.small_mid, 3),
       bear: str(t?.bear, 200), bull: str(t?.bull, 200), evidence: t?.evidence ? str(t.evidence, 200) : null,

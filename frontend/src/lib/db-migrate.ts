@@ -352,6 +352,26 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX IF NOT EXISTS transformational_event_session_idx ON transformational_event (session_date DESC);
       CREATE INDEX IF NOT EXISTS transformational_event_ticker_idx ON transformational_event (market, ticker, session_date DESC);`,
   },
+  {
+    // zzz1179 — a rolling archive of the news feed (the live feed holds only a few days): theme pulse, momentum, history
+    id: 11, name: 'news_archive',
+    sql: `
+      CREATE TABLE IF NOT EXISTS news_archive (
+        id            TEXT PRIMARY KEY,
+        published_at  TIMESTAMPTZ NOT NULL,
+        title         TEXT NOT NULL,
+        summary       TEXT,
+        source        TEXT,
+        url           TEXT,
+        region        TEXT,
+        tickers       TEXT[] NOT NULL DEFAULT '{}',
+        importance    REAL,
+        bottleneck    TEXT,
+        sentiment     TEXT,
+        first_seen    TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS news_archive_published_idx ON news_archive (published_at DESC);`,
+  },
 ] as const;
 
 const LOCK_ID = 88_301_883;   // advisory-lock id for migrations

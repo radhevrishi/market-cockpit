@@ -4,6 +4,7 @@
 // zzz1176 — clearer layout: ranked theme cards, ticker chips with market cap that open the chart, ⚠ on tickers the stock
 // screener does not know, red / green bear and bull boxes, a playbook with the -30 / -50 / -70% tranche ladder.
 import { useCallback, useEffect, useState } from 'react';
+import type { ThemePulse } from '@/lib/choke-themes/pulse';
 import { chokeAsText, fmtChokeCap, SMALL_MID_MAX, type ChokeLeader, type ChokeReport, type ChokeRegion, type ChokeTheme } from '@/lib/choke-themes/core';
 
 const OPEN_KEY = 'mc:choke-themes:open:v1';
@@ -38,13 +39,69 @@ function Chip({ l, region, small }: { l: ChokeLeader; region: ChokeRegion; small
     : <span title={title} style={style}>{inner}</span>;
 }
 
-function ThemeCard({ t, i, region, sm }: { t: ChokeTheme; i: number; region: ChokeRegion; sm: boolean }) {
+const TREND = { RISING: { a: '↑', c: 'var(--mc-bullish)', w: 'rising' }, STEADY: { a: '→', c: 'var(--mc-text-3)', w: 'steady' }, COOLING: { a: '↓', c: 'var(--mc-bearish)', w: 'cooling' } } as const;
+const strengthColor = (v: number) => (v >= 60 ? C.green : v >= 35 ? C.accent : C.faint);
+
+function StrengthBadge({ p }: { p: ThemePulse }) {
+  const c = strengthColor(p.strength); const tr = TREND[p.trend];
+  return (
+    <span title={`Live strength ${p.strength}/100 · news ${p.trend.toLowerCase()} · ${p.reasons.join(' · ')}`} style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, fontWeight: 900, padding: '3px 8px', borderRadius: 6, color: c, border: `1px solid ${c}`, background: tint(c, 10) }}>
+      {p.strength}<span style={{ fontWeight: 600, opacity: 0.8 }}>/100</span><span style={{ color: tr.c }}>{tr.a}</span>
+    </span>
+  );
+}
+
+function PulseView({ p }: { p: ThemePulse }) {
+  const bar = (label: string, v: number, c: string, hint: string, invert = false) => (
+    <div title={hint} style={{ display: 'grid', gridTemplateColumns: '110px minmax(0,1fr) 30px', gap: 8, alignItems: 'center', fontSize: 12 }}>
+      <span style={{ color: C.dim }}>{label}</span>
+      <div style={{ height: 7, borderRadius: 4, background: tint(c, 15) }}><div style={{ height: 7, borderRadius: 4, width: `${v}%`, background: c }} /></div>
+      <b style={{ textAlign: 'right', color: invert && v >= 50 ? C.warn : C.text }}>{v}</b>
+    </div>
+  );
+  return (
+    <div style={{ borderTop: `1px dashed ${C.border}`, paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+        {bar('News heat', p.heat, C.accent, 'Important news in the last 7 days, and whether it is rising versus the 3 weeks before')}
+        {bar('Bottleneck', p.bottleneck, C.red, 'Share of the last 30 days of news that speaks of a squeeze: sold out, shortage, lead times, price hikes, allocation, record backlog')}
+        {bar('Company proof', p.proof, C.green, 'Theme companies with revenue accelerating, growth level, margins, plus filed transformational events and key contracts (60 days)')}
+        {bar('Crowding', p.crowding, C.warn, 'How far the theme’s shares already ran in a year — high means much is priced in (it lowers the strength)', true)}
+      </div>
+      <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: C.dim, lineHeight: 1.5 }}>{p.reasons.map((r) => <li key={r}>{r}</li>)}</ul>
+      {p.events.length > 0 && (
+        <div>
+          <div style={{ fontWeight: 800, color: C.faint, fontSize: 11, letterSpacing: 0.5, marginBottom: 4 }}>FILED EVENTS & KEY CONTRACTS (60 DAYS)</div>
+          {p.events.map((e) => <div key={`${e.ticker}${e.date}${e.headline}`} style={{ fontSize: 12, lineHeight: 1.45, padding: '2px 0' }}><span style={{ color: C.faint }}>{e.date}</span> <b>{e.ticker}</b> <span style={{ color: e.kind === 'CONTRACT' ? C.green : C.accent, fontWeight: 700 }}>{e.kind === 'CONTRACT' ? 'contract' : String(e.strength).toLowerCase()}</span> — {e.headline}</div>)}
+        </div>
+      )}
+      <div>
+        <div style={{ fontWeight: 800, color: C.faint, fontSize: 11, letterSpacing: 0.5, marginBottom: 4 }}>LATEST NEWS ({p.news60} IN 60 DAYS · ⚡ = SQUEEZE)</div>
+        {p.news.length === 0 && <div style={{ fontSize: 12, color: C.faint }}>No matching news yet — the archive grows every hour.</div>}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 320, overflowY: 'auto' }}>
+          {p.news.map((n) => (
+            <div key={n.title + n.date} style={{ fontSize: 12, lineHeight: 1.45 }}>
+              <span style={{ color: C.faint, fontVariantNumeric: 'tabular-nums' }}>{n.date}</span>{' '}
+              {n.squeeze && <span title="Speaks of a squeeze" style={{ color: C.red, fontWeight: 900 }}>⚡ </span>}
+              {n.url && /^https?:\/\//.test(n.url) ? <a href={n.url} target="_blank" rel="noopener noreferrer" style={{ color: C.text, fontWeight: 600 }}>{n.title}</a> : <span style={{ fontWeight: 600 }}>{n.title}</span>}
+              {n.tickers.length > 0 && <span style={{ color: C.accent, fontWeight: 700 }}> · {n.tickers.join(', ')}</span>}
+              {n.source && <span style={{ color: C.faint }}> · {n.source}</span>}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ThemeCard({ t, i, region, sm, pulse }: { t: ChokeTheme; i: number; region: ChokeRegion; sm: boolean; pulse?: ThemePulse | null }) {
+  const [showPulse, setShowPulse] = useState(false);
   const smallList = [...(t.smallMid || []), ...(sm ? t.leaders.filter((l) => l.cap != null && l.cap <= SMALL_MID_MAX[region]) : [])];
   return (
     <div style={{ border: `1px solid ${C.border}`, borderRadius: 12, background: C.bg, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
         <span style={{ flexShrink: 0, width: 26, height: 26, borderRadius: 8, background: tint(C.accent, 14), color: C.accent, fontWeight: 900, fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
         <div style={{ fontWeight: 900, fontSize: 15, lineHeight: 1.3, flex: 1 }}>🔥 {t.name} <span style={{ whiteSpace: 'nowrap' }}>{t.emoji}</span></div>
+        {pulse && <StrengthBadge p={pulse} />}
         {t.stage && <span title={STAGE_WHY[t.stage]} style={{ flexShrink: 0, fontSize: 11, fontWeight: 900, padding: '3px 8px', borderRadius: 6, color: STAGE_C[t.stage], border: `1px solid ${STAGE_C[t.stage]}`, background: tint(STAGE_C[t.stage], 10) }}>{t.stage}</span>}
       </div>
       {t.notPricedIn && <div style={{ fontSize: 13, lineHeight: 1.5, padding: '6px 9px', borderRadius: 8, background: tint(C.accent, 6), border: `1px solid ${tint(C.accent, 25)}` }}><b>What the market misses:</b> {t.notPricedIn}</div>}
@@ -71,6 +128,11 @@ function ThemeCard({ t, i, region, sm }: { t: ChokeTheme; i: number; region: Cho
         </div>
       </div>
       {t.evidence && <div style={{ fontSize: 12, color: C.dim, borderTop: `1px dashed ${C.border}`, paddingTop: 7 }}>📰 <b>Recent:</b> {t.evidence}</div>}
+      <button type="button" onClick={() => setShowPulse((v) => !v)} disabled={pulse === undefined}
+        style={{ alignSelf: 'flex-start', cursor: pulse === undefined ? 'wait' : 'pointer', fontSize: 12, fontWeight: 800, padding: '6px 12px', borderRadius: 8, border: `1px solid ${C.accent}`, color: C.accent, background: tint(C.accent, showPulse ? 14 : 6) }}>
+        {pulse === undefined ? '📊 Live pulse · loading…' : pulse === null ? '📊 Live pulse · not available' : `📊 Live pulse · ${pulse.news7} news this week ${TREND[pulse.trend].a} · ${showPulse ? 'hide' : 'open'}`}
+      </button>
+      {showPulse && pulse && <PulseView p={pulse} />}
     </div>
   );
 }
@@ -83,6 +145,8 @@ export default function ChokeThemesPanel() {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<ChokeRegion>('US');
   const [sm, setSm] = useState(false);   // zzz1175 — small & mid caps only
+  const [pulses, setPulses] = useState<Record<string, ThemePulse> | null | undefined>(undefined);   // zzz1179
+  const [order, setOrder] = useState<'ai' | 'strength'>('ai');
 
   useEffect(() => { try { setOpen(localStorage.getItem(OPEN_KEY) === '1'); setSm(localStorage.getItem(OPEN_KEY + ':sm') === '1'); } catch { /* optional */ } }, []);
   useEffect(() => { try { localStorage.setItem(OPEN_KEY + ':sm', sm ? '1' : '0'); } catch { /* optional */ } }, [sm]);
@@ -91,6 +155,13 @@ export default function ChokeThemesPanel() {
   useEffect(() => {
     fetch('/api/v1/choke-themes', { cache: 'no-store' }).then((r) => r.json()).then((j) => { if (j?.report) setReport(j.report); }).catch(() => undefined).finally(() => setLoaded(true));
   }, []);
+
+  // zzz1179 — the live pulse of every theme (no AI): loaded once the panel is open and whenever a new AI run lands
+  useEffect(() => {
+    if (!open || !report) return;
+    setPulses(undefined);
+    fetch('/api/v1/choke-themes/pulse', { cache: 'no-store' }).then((r) => r.json()).then((j) => setPulses(j?.ok ? (j.pulses || {}) : null)).catch(() => setPulses(null));
+  }, [open, report?.generatedAt]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const run = useCallback(async () => {
     setBusy(true); setMsg('The AI is reading the latest news and updating the themes — about 1–2 minutes…'); setOpen(true);
@@ -136,14 +207,33 @@ export default function ChokeThemesPanel() {
             <span style={{ width: 1, height: 22, background: C.border, margin: '0 6px' }} />
             <button type="button" style={btn(!sm)} onClick={() => setSm(false)}>All leaders</button>
             <button type="button" style={btn(sm)} onClick={() => setSm(true)} title="US under $10B, India under ₹25,000 Cr (checked against the stock screener)">🔎 Small & mid caps</button>
+            <span style={{ width: 1, height: 22, background: C.border, margin: '0 6px' }} />
+            <button type="button" style={btn(order === 'ai')} onClick={() => setOrder('ai')} title="The AI's ranking">AI rank</button>
+            <button type="button" style={btn(order === 'strength')} onClick={() => setOrder('strength')} title="Live strength from news, bottleneck talk, company numbers and contracts">📊 Live strength</button>
           </div>
           {report.changes.length > 0 && (
             <div style={{ fontSize: 12, color: C.dim, background: tint(C.accent, 6), border: `1px solid ${tint(C.accent, 25)}`, borderRadius: 8, padding: '7px 10px', marginBottom: 10, lineHeight: 1.5 }}>
               <b style={{ color: C.text }}>What changed since the last run:</b> {report.changes.join(' · ')}
             </div>
           )}
+          {pulses && (() => {
+            const rows = g.themes.map((t) => ({ t, p: pulses[`${g.region}|${t.name}`] })).filter((x) => x.p);
+            const strong = [...rows].sort((a, b) => b.p!.strength - a.p!.strength).slice(0, 3);
+            const rising = rows.filter((x) => x.p!.trend === 'RISING').map((x) => x.t.name);
+            const cooling = rows.filter((x) => x.p!.trend === 'COOLING').map((x) => x.t.name);
+            if (!rows.length) return null;
+            return (
+              <div style={{ fontSize: 12, lineHeight: 1.6, padding: '7px 10px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.bg2, marginBottom: 10 }}>
+                <b>📊 Live now:</b> strongest {strong.map((x) => `${x.t.name.split(/[,(:]/)[0].trim()} ${x.p!.strength}${TREND[x.p!.trend].a}`).join(' · ')}
+                {rising.length > 0 && <span style={{ color: C.green }}> · rising: {rising.map((n) => n.split(/[,(:]/)[0].trim()).join(', ')}</span>}
+                {cooling.length > 0 && <span style={{ color: C.red }}> · cooling: {cooling.map((n) => n.split(/[,(:]/)[0].trim()).join(', ')}</span>}
+                <span style={{ color: C.faint }}> · from news, squeeze talk, company numbers and contracts — no AI, updates every hour</span>
+              </div>
+            );
+          })()}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(380px, 100%), 1fr))', gap: 10 }}>
-            {g.themes.map((t, i) => <ThemeCard key={t.name} t={t} i={i} region={g.region} sm={sm} />)}
+            {(order === 'strength' && pulses ? [...g.themes].sort((a, b) => (pulses[`${g.region}|${b.name}`]?.strength ?? -1) - (pulses[`${g.region}|${a.name}`]?.strength ?? -1)) : g.themes)
+              .map((t, i) => <ThemeCard key={t.name} t={t} i={i} region={g.region} sm={sm} pulse={pulses === undefined ? undefined : pulses === null ? null : (pulses[`${g.region}|${t.name}`] ?? null)} />)}
           </div>
 
           <div style={{ marginTop: 12, border: `1px solid ${tint(C.accent, 35)}`, borderRadius: 12, padding: 14, background: tint(C.accent, 4) }}>

@@ -489,6 +489,11 @@ export const APP_JOBS: readonly AppJob[] = [
   { name: 'conviction-catalyst-brief', crons: ['29 4 * * 1-5'], timeoutMs: 4 * MIN, workflow: 'owner-briefs.yml', does: 'POST /api/v1/cron/conviction-catalyst-brief (rules + stored research; AI only for new names, ≤ $0.05 a run)', run: async (ctx) => (await import('./owner-briefs/job')).ownerBriefJob(ctx, '/api/v1/cron/conviction-catalyst-brief', false) },
   // zzz1051 — document search: index new company documents (Postgres full text) and add meaning vectors within SEARCH_EMBED_DAILY_USD
   // (default $0.10 a UTC day). In-process; paid calls are never retried by the scheduler.
+  // zzz1179 — the news feed keeps a few days; this keeps 180 (theme pulse, momentum). Reads the saved feed only, no outside fetch.
+  { name: 'news-archive', crons: ['41 * * * *'], timeoutMs: 4 * MIN, workflow: BRIDGE, does: 'in-process: lib/news/archive archiveNews (saved news feed → Postgres news_archive, 180 days)', run: async () => {
+    const r = await (await import('./news/archive')).archiveNews();
+    return r.ok ? { ok: true, status: 200 } : { ok: false, status: 503, error: r.error || null };
+  } },
   { name: 'doc-search-index', crons: ['33 * * * *'], timeoutMs: 12 * MIN, workflow: BRIDGE, does: 'in-process: lib/doc-search/store runIndexJob (new documents → passages; embeddings within the daily ceiling); by hand: POST /api/v1/search?index=1', run: async () => {
     const r = await (await import('./doc-search/store')).runIndexJob({ budgetMs: 9 * MIN });
     console.log('[doc-search-index]', JSON.stringify({ ...r, byLevel: r.byLevel }));
