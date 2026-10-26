@@ -10,7 +10,7 @@
 import type { ChokeRegion, ChokeTheme } from './core';
 
 export interface PulseNews { id: string; publishedAt: string; title: string; summary: string | null; source: string | null; url: string | null; region: string | null; tickers: string[]; importance: number | null; bottleneck: string | null; sentiment: string | null }
-export interface PulseCo { t: string; revQ: number | null; revA: number | null; opm: number | null; p1y: number | null }
+export interface PulseCo { t: string; revQ: number | null; revA: number | null; opm: number | null; p1y: number | null; p5y?: number | null }
 export interface PulseEvent { ticker: string; date: string; headline: string; kind: string; strength: string }
 export interface PulseItem { title: string; date: string; source: string | null; url: string | null; tickers: string[]; squeeze: boolean; why: string }
 export interface ThemePulse {
@@ -75,7 +75,9 @@ export function themePulse(t: ChokeTheme, region: ChokeRegion, news: PulseNews[]
   const proof = clamp(theseCos.length
     ? (accel.length / theseCos.length) * 40 + Math.max(0, Math.min(30, (mRevQ ?? 0) * 0.6)) + Math.max(0, Math.min(10, (mOpm ?? 0) / 3)) + Math.min(20, ev60.length * 7)
     : Math.min(20, ev60.length * 7));
-  const crowding = clamp(mP1y == null ? 0 : mP1y <= 20 ? 0 : (mP1y - 20) / 2.3);
+  // zzz1180 — crowding reads the 5-year run too: a theme already up 3x+ in 5 years is priced, whatever the last year did
+  const mP5y = median(theseCos.map((c) => c.p5y ?? null));
+  const crowding = clamp(Math.max(mP1y == null ? 0 : mP1y <= 20 ? 0 : (mP1y - 20) / 2.3, mP5y == null ? 0 : mP5y <= 60 ? 0 : (mP5y - 60) / 2.4));
   const strength = clamp(0.3 * heat + 0.3 * bottleneck + 0.4 * proof - Math.max(0, crowding - 40) * 0.25);
   const trend: ThemePulse['trend'] = ratePrev === 0 ? (heat7 > 0 ? 'RISING' : 'STEADY') : heat7 >= ratePrev * 1.3 ? 'RISING' : heat7 <= ratePrev * 0.7 ? 'COOLING' : 'STEADY';
 
@@ -84,7 +86,7 @@ export function themePulse(t: ChokeTheme, region: ChokeRegion, news: PulseNews[]
   if (n30.length) reasons.push(`${sq.length} of ${n30.length} items in 30 days speak of a squeeze (sold out, shortage, lead times, price hikes, backlog)`);
   if (theseCos.length) reasons.push(`${accel.length} of ${theseCos.length} theme companies have revenue accelerating${mRevQ != null ? `; median quarterly sales growth ${Math.round(mRevQ)}%` : ''}`);
   if (ev60.length) reasons.push(`${ev60.length} filed transformational event${ev60.length === 1 ? '' : 's'} in 60 days (${[...new Set(ev60.map((e) => e.ticker))].slice(0, 5).join(', ')})`);
-  if (mP1y != null) reasons.push(`theme shares ${mP1y >= 0 ? 'up' : 'down'} ${Math.abs(Math.round(mP1y))}% in a year (median)${crowding >= 50 ? ' — much is priced in' : ''}`);
+  if (mP1y != null || mP5y != null) reasons.push(`theme shares${mP1y != null ? ` ${mP1y >= 0 ? '+' : ''}${Math.round(mP1y)}% in 1 year` : ''}${mP5y != null ? `, ${mP5y >= 0 ? '+' : ''}${Math.round(mP5y)}% in 5 years` : ''} (median)${crowding >= 50 ? ' — much is priced in' : ''}`);
 
   const top = matched.sort((a, b) => b.publishedAt.localeCompare(a.publishedAt)).slice(0, 20)
     .map((a) => ({ title: a.title, date: a.publishedAt.slice(0, 10), source: a.source, url: a.url, tickers: a.tickers.filter((x) => tickers.has(x)).slice(0, 4), squeeze: a.squeeze, why: a.why }));

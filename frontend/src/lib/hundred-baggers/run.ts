@@ -29,7 +29,7 @@ export async function runHb(): Promise<{ ok: true; report: HbReport } | { ok: fa
   const prevText = prev ? prev.markets.map((g) => `${g.market}: ${g.picks.map((p) => p.ticker).join(', ')}`).join('\n') : 'none (first run)';
   const user = [
     `Today: ${new Date().toISOString().slice(0, 10)}.`,
-    `Previous picks (${prev?.generatedAt?.slice(0, 10) || 'none'}) — keep what still holds, replace what weakened:\n${prevText}`,
+    `Previous picks (${prev?.generatedAt?.slice(0, 10) || 'none'}) — for reference only; judge every company again from scratch:\n${prevText}`,
     'Columns: ticker | name | industry | market cap | sales growth latest quarter and last year | EPS growth latest quarter | operating margin | ROCE | debt/equity | P/E | P/S | FCF margin | share move 1y and 5y | share count change a year (up = dilution).',
     `USA shortlist (${shortlist.US.length}):\n${shortlist.US.map((c) => candLine(c, 'US')).join('\n')}`,
     `India shortlist (${shortlist.IN.length}):\n${shortlist.IN.map((c) => candLine(c, 'IN')).join('\n')}`,

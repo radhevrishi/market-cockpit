@@ -36,7 +36,8 @@ export function hundredBaggerShortlist(all: Cand[], m: CandMarket, max = 140): C
     && (c.de == null || c.de <= 1.2)
     && (c.bb == null || c.bb >= -8)                       // share count up no more than 8% a year
     && (c.ps == null || c.ps <= 25)                       // not priced for perfection
-    && (c.p1y == null || c.p1y <= 400));
+    && (c.p1y == null || c.p1y <= 400)
+    && (c.p5y == null || c.p5y <= 500));               // zzz1180 — already up 6x+ in 5 years is not early DNA
   const sc = (c: Cand) => {
     const g = Math.min(60, Math.max(c.revA ?? 0, (c.revQ ?? 0) * 0.8));
     const q = Math.min(40, Math.max(0, c.roce ?? c.roe ?? 0)) + Math.min(25, Math.max(0, c.opm ?? 0)) * 0.6 + Math.min(20, Math.max(0, c.fcfm ?? 0)) * 0.5;

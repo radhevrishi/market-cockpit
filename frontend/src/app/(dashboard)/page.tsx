@@ -4257,6 +4257,8 @@ const FAVS: Array<{ href: string; label: string; color: string; ext?: boolean }>
   { href: '/ai-gainers', label: '📊 AI Daily Gainers', color: '#A78BFA' },
   // zzz1166 — transformational events from the gainers, 60 days, themes + multibagger chance.
   { href: '/transformational-gainers', label: '🧬 Transformational Gainers', color: '#A78BFA' },
+  { href: '/hundred-baggers', label: '🚀 Future 100-baggers', color: '#F59E0B' },   // zzz1180
+  { href: '/news?choke=1', label: '🔥 Choke-Point Themes', color: '#EF4444' },   // zzz1180 — opens the panel on the News page
   // zzz843 — positive guidance raises, verified and quantified.
   { href: '/guidance-upgrades', label: '📈 Guidance Upgrades', color: '#10B981' },
   // zzz846 — management growth guidance 30%+, verified.

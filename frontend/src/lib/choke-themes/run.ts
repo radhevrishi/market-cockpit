@@ -2,7 +2,7 @@
 // One call to the stronger model (the guidance router's choice, priced and metered like every call), grounded in the
 // last 14 days of the news feed and the Transformational Gainers themes, compared with the previous run. Stored in KV
 // (latest + previous); nothing runs on a schedule — the News page shows the last run until the owner clicks again.
-import { CHOKE_SYSTEM, CHOKE_TOOL, cleanChoke, withCaps, type ChokeRegion, type ChokeReport } from './core';
+import { CHOKE_SYSTEM, CHOKE_TOOL, cleanChoke, jcurveCheck, withCaps, type ChokeRegion, type ChokeReport } from './core';
 
 export const CHOKE_KEY = 'choke-themes:v1:latest';
 export const CHOKE_PREV_KEY = 'choke-themes:v1:previous';
@@ -11,6 +11,7 @@ const TTL = 400 * 86_400;
 
 /** ticker → market cap ($ M US / ₹ Cr India) from the stock screener (memory-cached on the server). */
 const PERF: Record<ChokeRegion, Map<string, number>> = { US: new Map(), IN: new Map() };
+const PERF5: Record<ChokeRegion, Map<string, number>> = { US: new Map(), IN: new Map() };
 async function screenerCaps(): Promise<Record<ChokeRegion, Map<string, number>>> {
   const caps: Record<ChokeRegion, Map<string, number>> = { US: new Map(), IN: new Map() };
   try {
@@ -20,6 +21,7 @@ async function screenerCaps(): Promise<Record<ChokeRegion, Map<string, number>>>
       for (const row of (snap?.rows || [])) {
         if (row?.t && typeof row.mc === 'number') caps[mk].set(String(row.t).toUpperCase(), row.mc);
         if (row?.t && typeof row.perf1Y === 'number') PERF[mk].set(String(row.t).toUpperCase(), row.perf1Y);
+        if (row?.t && typeof row.perf5Y === 'number') PERF5[mk].set(String(row.t).toUpperCase(), row.perf5Y);
       }
     }));
   } catch { /* caps unknown */ }
@@ -33,6 +35,7 @@ export async function loadChoke(): Promise<ChokeReport | null> {
   if (!r) return null;
   for (const g of r.regions) for (const t of g.themes) t.smallMid = t.smallMid || [];
   withCaps(r, await screenerCaps(), PERF);
+  jcurveCheck(r, PERF5, PERF);
   return r;
 }
 
@@ -78,13 +81,19 @@ export async function runChoke(): Promise<{ ok: true; report: ChokeReport } | { 
   const { loadCands } = await import('../screener/ai-candidates-load');
   const [news, themes, prev, usC, inC] = await Promise.all([newsLines(), gainerThemes(), loadChoke(), loadCands('US'), loadCands('IN')]);
   const infl = { US: industryInflections(usC, 'US'), IN: industryInflections(inC, 'IN') };
+  // zzz1180 — the companies that ALREADY multiplied (5-year move ≥ 3x, mid/small caps first): themes built on these are not early
+  const ranList = (cs: any[], mk: 'US' | 'IN') => cs.filter((c) => c.p5y != null && c.p5y >= 200 && c.mc >= (mk === 'US' ? 300 : 1000)).sort((a, b) => b.p5y - a.p5y).slice(0, 80)
+    .map((c) => `${c.t} (${c.ind || '—'}) ${Math.round(c.p5y / 100 + 1)}x in 5y`).join('; ');
+  const ran = { US: ranList(usC, 'US'), IN: ranList(inC, 'IN') };
   const prevText = prev ? prev.regions.map((g) => `${g.region}: ${g.themes.map((t) => `${t.name} [${t.leaders.map((l) => l.ticker).join(', ')}]`).join('; ')}`).join('\n') : 'none (first run)';
   const user = [
     `Today: ${new Date().toISOString().slice(0, 10)}.`,
-    `Previous run (${prev?.generatedAt?.slice(0, 10) || 'none'}):\n${prevText}`,
+    `Previous run (${prev?.generatedAt?.slice(0, 10) || 'none'}) — ONLY to list what changed; judge every theme again from scratch:\n${prevText}`,
     themes.length ? `Themes seen in the owner's daily gainers (last 30 days):\n${themes.join('\n')}` : null,
     infl.US.length ? `US industries ranked by revenue ACCELERATION (stock-screener data, latest quarter vs year; 5-year share move shows how crowded):\n${infl.US.join('\n')}` : null,
     infl.IN.length ? `India industries ranked by revenue ACCELERATION (same data):\n${infl.IN.join('\n')}` : null,
+    ran.US ? `US companies that ALREADY multiplied in 5 years — a theme led by these is late, not early:\n${ran.US}` : null,
+    ran.IN ? `India companies that ALREADY multiplied in 5 years — a theme led by these is late, not early:\n${ran.IN}` : null,
     news.lines.length ? `Recent news (most important first):\n${news.lines.join('\n')}` : 'No recent news available — use your own knowledge and say nothing about recent events.',
     'Write the US themes first, then India.',
   ].filter(Boolean).join('\n\n');
@@ -108,6 +117,7 @@ export async function runChoke(): Promise<{ ok: true; report: ChokeReport } | { 
     // zzz1175 — real market caps from the stock screener; a "small & mid" pick that is really large is dropped
     const caps = await screenerCaps();
     withCaps(clean, caps, PERF);
+    jcurveCheck(clean, PERF5, PERF);
     const report: ChokeReport = { ...clean, generatedAt: new Date().toISOString(), model: j?.model ?? (strong || cheap), newsUsed: news.lines.length, asOfNews: news.asOf };
     if (prev) await kvSet(CHOKE_PREV_KEY, prev, TTL).catch(() => undefined);
     await kvSet(CHOKE_KEY, report, TTL);
