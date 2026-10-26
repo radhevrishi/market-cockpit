@@ -152,6 +152,22 @@ export default function TransformationalGainersPage() {
       {collecting && data && <div style={{ fontSize: 12, color: R.amber, marginTop: 6, fontWeight: 700 }}>⏳ Collecting history: available since {data.historyFrom} — the {days}-day window fills one session a day (complete about {new Date(Date.parse(`${data.historyFrom}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10)}).</div>}
       {filling && <div style={{ fontSize: 12, color: R.cyan, marginTop: 6 }}>{filling}</div>}
 
+      {/* zzz1171 — India / USA tabs at the top (also in the side panel), with company counts */}
+      {data && (
+        <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+          {(['ALL', 'IN', 'US'] as Mkt[]).map((m) => {
+            const n = new Set((data.items || []).filter((x) => m === 'ALL' || x.market === m).map((x) => `${x.market}:${x.ticker}`)).size;
+            const on = mkt === m;
+            return (
+              <button key={m} type="button" onClick={() => setMkt(m)}
+                style={{ cursor: 'pointer', fontSize: 14, fontWeight: 800, padding: '8px 16px', borderRadius: 8, border: `1px solid ${on ? R.cyan : R.border}`, color: on ? R.cyan : R.text, background: on ? tint(R.cyan, 12) : R.bg }}>
+                {m === 'ALL' ? '🌐 India + USA' : m === 'IN' ? '🇮🇳 India' : '🇺🇸 USA'} <span style={{ color: R.faint, fontWeight: 700 }}>{n}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* KPI strip */}
       <div className="tg-kpis">
         {[
