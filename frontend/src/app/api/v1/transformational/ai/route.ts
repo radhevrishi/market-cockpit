@@ -3,7 +3,8 @@
 //   { auto: true, market, sinceDays }    → the strongest events without an AI read yet (after "Research again with AI")
 // Each event is read once (the answer is stored); at most 12 a call and 60 a day.
 import { NextRequest, NextResponse } from 'next/server';
-import { loadItems, saveAi } from '@/lib/transformational/store';
+import { saveAi } from '@/lib/transformational/store';
+import { loadReviewed } from '@/lib/transformational/reviewed';
 import { aiMultibagger, AI_DAILY_MAX, AI_PER_CALL_MAX } from '@/lib/transformational/ai';
 import type { TgItem, TgMarket } from '@/lib/transformational/core';
 
@@ -20,10 +21,10 @@ export async function POST(req: NextRequest) {
   const ids: string[] = Array.isArray(body?.ids) ? body.ids.map(String).slice(0, AI_PER_CALL_MAX) : [];
   const sinceDays = Math.max(1, Math.min(60, Number(body?.sinceDays) || 3));
   try {
-    const all = await loadItems(ids.length ? 75 : sinceDays, market);
+    const all = await loadReviewed(ids.length ? 75 : sinceDays, market);
     let pick: TgItem[];
     if (ids.length) pick = all.filter((x) => ids.includes(x.id) && !(x.ai && !body?.again));
-    else pick = all.filter((x) => !x.ai && x.strength !== 'NOTABLE').sort((a, b) => b.mb.score - a.mb.score);
+    else pick = all.filter((x) => !x.ai && x.strength !== 'NOTABLE').sort((a, b) => b.mb.score - a.mb.score);   // reviewed: clean text + screener figures
     const { kvGet, kvIncrByFloat } = await import('@/lib/kv');
     const used = Number(await kvGet<number>(dayKey()).catch(() => 0)) || 0;
     const room = Math.max(0, Math.min(AI_PER_CALL_MAX, AI_DAILY_MAX - used));

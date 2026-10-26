@@ -9,12 +9,12 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import NavLink from '@/components/NavLink';
 import { R, tint } from '@/components/special-situations/radar-tokens';
 import { MbChip, MB_COLOR } from '@/components/transformational/MbChip';
-import { MB_WORD, OTHER_THEME, tgKindWord, type MbLabel, type TgBoard, type TgItem, type TgStrength } from '@/lib/transformational/core';
+import { MB_WORD, OTHER_THEME, chanceOf, tgKindWord, type MbLabel, type TgBoard, type TgItem, type TgStrength } from '@/lib/transformational/core';
 
 type Mkt = 'ALL' | 'IN' | 'US';
 const STRENGTH_COLOR: Record<TgStrength, string> = { TRANSFORMATIONAL: R.green, INFLECTION: R.cyan, NOTABLE: R.amber };
 const STRENGTH_WORD: Record<TgStrength, string> = { TRANSFORMATIONAL: 'Transformational', INFLECTION: 'Inflection', NOTABLE: 'Notable' };
-const FILTER_KEY = 'mc:transformational:filters:v1';
+const FILTER_KEY = 'mc:transformational:filters:v2';
 
 const fmtCap = (x: TgItem) => (x.marketCap == null ? 'size n/a' : x.market === 'IN' ? `₹${Math.round(x.marketCap).toLocaleString('en-IN')} Cr` : x.marketCap >= 1000 ? `$${(x.marketCap / 1000).toFixed(1)}B` : `$${Math.round(x.marketCap)}M`);
 const isSmallMid = (x: TgItem) => x.marketCap != null && (x.market === 'IN' ? x.marketCap < 25_000 : x.marketCap < 10_000);
@@ -34,12 +34,12 @@ export default function TransformationalGainersPage() {
   const [smallMid, setSmallMid] = useState(true);
   const [onlyNew, setOnlyNew] = useState(false);
   const [q, setQ] = useState('');
-  const [sort, setSort] = useState<'newest' | 'chance'>('newest');
+  const [sort, setSort] = useState<'newest' | 'chance'>('chance');
   const [aiBusy, setAiBusy] = useState<string | null>(null);
   const [aiNote, setAiNote] = useState<string | null>(null);
 
   useEffect(() => {
-    try { const s = JSON.parse(localStorage.getItem(FILTER_KEY) || 'null'); if (s) { setMkt(s.mkt || 'ALL'); setSmallMid(s.smallMid !== false); setSort(s.sort || 'newest'); } } catch { /* defaults */ }
+    try { const s = JSON.parse(localStorage.getItem(FILTER_KEY) || 'null'); if (s) { setMkt(s.mkt || 'ALL'); setSmallMid(s.smallMid !== false); setSort(s.sort === 'newest' ? 'newest' : 'chance'); } } catch { /* defaults */ }
   }, []);
   useEffect(() => { try { localStorage.setItem(FILTER_KEY, JSON.stringify({ mkt, smallMid, sort })); } catch { /* optional */ } }, [mkt, smallMid, sort]);
 
@@ -62,7 +62,7 @@ export default function TransformationalGainersPage() {
   const rank: Record<MbLabel, number> = { HIGH: 3, MEDIUM: 2, LOW: 1, UNLIKELY: 0 };
   const filtered = useMemo(() => (data?.items || []).filter((x) =>
     (mkt === 'ALL' || x.market === mkt) && (!theme || x.theme === theme) && (!strength || x.strength === strength)
-    && (!mbMin || rank[x.mb.label] >= rank[mbMin] || (x.ai && rank[x.ai.label] >= rank[mbMin]))
+    && (!mbMin || rank[chanceOf(x).label] >= rank[mbMin])
     && (!smallMid || isSmallMid(x) || x.marketCap == null) && (!onlyNew || newSet.has(`${x.market}:${x.ticker}`))
     && (!q || `${x.ticker} ${x.company} ${x.headline} ${x.theme}`.toLowerCase().includes(q.toLowerCase()))), [data, mkt, theme, strength, mbMin, smallMid, onlyNew, q, newSet]);
 
@@ -72,14 +72,16 @@ export default function TransformationalGainersPage() {
       const k = `${x.market}:${x.ticker}`;
       const g = m.get(k) || { key: k, market: x.market, ticker: x.ticker, company: x.company, items: [], best: x };
       g.items.push(x);
-      if (x.mb.score > g.best.mb.score) g.best = x;
+      if (chanceOf(x).score > chanceOf(g.best).score) g.best = x;
       m.set(k, g);
     }
     const arr = [...m.values()];
     for (const g of arr) g.items.sort((a, b) => b.sessionDate.localeCompare(a.sessionDate));
     return sort === 'chance'
-      ? arr.sort((a, b) => (b.best.ai?.probabilityPct ?? -1) - (a.best.ai?.probabilityPct ?? -1) || b.best.mb.score - a.best.mb.score)
-      : arr.sort((a, b) => b.items[0].sessionDate.localeCompare(a.items[0].sessionDate) || b.best.mb.score - a.best.mb.score);
+      // zzz1169 — one ranking: the rules read blended with the AI read when there is one (an AI-read 8% no longer ranks above
+      // an unread HIGH)
+      ? arr.sort((a, b) => chanceOf(b.best).score - chanceOf(a.best).score || b.items[0].sessionDate.localeCompare(a.items[0].sessionDate))
+      : arr.sort((a, b) => b.items[0].sessionDate.localeCompare(a.items[0].sessionDate) || chanceOf(b.best).score - chanceOf(a.best).score);
   }, [filtered, sort]);
 
   const themes = useMemo(() => (data?.themes || []).filter((t) => mkt === 'ALL' || (data?.items || []).some((x) => x.theme === t.theme && x.market === mkt)), [data, mkt]);
@@ -103,7 +105,7 @@ export default function TransformationalGainersPage() {
   const kpi = useMemo(() => {
     const cos = groups.length;
     const trans = groups.filter((g) => g.items.some((x) => x.strength === 'TRANSFORMATIONAL')).length;
-    const high = groups.filter((g) => g.items.some((x) => x.mb.label === 'HIGH' || x.ai?.label === 'HIGH')).length;
+    const high = groups.filter((g) => chanceOf(g.best).label === 'HIGH').length;
     const fresh = groups.filter((g) => newSet.has(g.key)).length;
     const newThemes = themes.filter((t) => t.isNew).length;
     return { cos, trans, high, fresh, themes: themes.length, newThemes };
@@ -148,18 +150,19 @@ export default function TransformationalGainersPage() {
       {/* KPI strip */}
       <div className="tg-kpis">
         {[
-          { k: 'Companies', v: kpi.cos, c: R.text, sub: `${filtered.length} events` },
-          { k: 'Transformational', v: kpi.trans, c: R.green, sub: 'lasting change to earnings' },
-          { k: 'High multibagger chance', v: kpi.high, c: R.green, sub: 'rules or AI' },
-          { k: 'New this week', v: kpi.fresh, c: R.violet, sub: 'first seen in 7 days', on: onlyNew, click: () => setOnlyNew((v) => !v) },
-          { k: 'Themes', v: kpi.themes, c: R.cyan, sub: `${kpi.newThemes} new this week` },
-          { k: 'Window', v: `${days}d`, c: R.text, sub: data ? `${data.from} → ${data.to}` : '' },
+          { k: 'Companies', v: kpi.cos, c: R.text, sub: `${filtered.length} events · click: clear filters`, on: false,
+            click: () => { setTheme(null); setStrength(null); setMbMin(null); setOnlyNew(false); setQ(''); setMkt('ALL'); } },
+          { k: 'Transformational', v: kpi.trans, c: R.green, sub: 'lasting change to earnings', on: strength === 'TRANSFORMATIONAL', click: () => setStrength((v) => (v === 'TRANSFORMATIONAL' ? null : 'TRANSFORMATIONAL')) },
+          { k: 'High multibagger chance', v: kpi.high, c: R.green, sub: 'rules + AI combined', on: mbMin === 'HIGH', click: () => setMbMin((v) => (v === 'HIGH' ? null : 'HIGH')) },
+          { k: 'New this week', v: kpi.fresh, c: R.violet, sub: data?.historyFrom ? `first seen in 7 days · history from ${data.historyFrom}` : 'first seen in 7 days', on: onlyNew, click: () => setOnlyNew((v) => !v) },
+          { k: 'Themes', v: kpi.themes, c: R.cyan, sub: theme ? `showing: ${theme === OTHER_THEME ? 'Other' : theme} · click: all` : `${kpi.newThemes} new this week · pick one on the left`, on: !!theme, click: () => setTheme(null) },
+          { k: 'Window', v: `${days}d`, c: R.text, sub: `${data ? `${data.from} → ${data.to}` : ''} · click: change`, on: days !== 60, click: () => setDays((d) => ({ 60: 30, 30: 14, 14: 7, 7: 60 } as Record<number, number>)[d] || 60) },
         ].map((t) => (
-          <div key={t.k} onClick={t.click} style={{ cursor: t.click ? 'pointer' : 'default', border: `1px solid ${t.on ? t.c : R.border}`, borderRadius: 10, padding: '10px 12px', background: R.bg }}>
-            <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.5, textTransform: 'uppercase', color: R.faint }}>{t.k}</div>
+          <button type="button" key={t.k} onClick={t.click} style={{ cursor: 'pointer', textAlign: 'left', font: 'inherit', color: 'inherit', border: `1px solid ${t.on ? t.c : R.border}`, boxShadow: t.on ? `0 0 0 1px ${t.c}` : 'none', borderRadius: 10, padding: '10px 12px', background: t.on ? tint(t.c === R.text ? R.cyan : t.c, 8) : R.bg }}>
+            <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.5, textTransform: 'uppercase', color: R.faint }}>{t.k}{t.on ? ' ✓' : ''}</div>
             <div style={{ fontSize: 24, fontWeight: 900, color: t.c, lineHeight: 1.15, fontVariantNumeric: 'tabular-nums' }}>{t.v}</div>
             <div style={{ fontSize: 11, color: R.dim }}>{t.sub}</div>
-          </div>
+          </button>
         ))}
       </div>
 
@@ -227,7 +230,7 @@ export default function TransformationalGainersPage() {
                 <div style={{ overflowX: 'auto' }}>
                   <table className="tg-table">
                     <thead><tr>
-                      <th>Company</th><th className="tg-hide-sm">Theme</th><th>What changed</th><th className="tg-hide-sm">Growth (filed)</th><th>Multibagger chance</th><th className="tg-hide-sm">Move</th><th className="tg-hide-sm">Session</th>
+                      <th>Company</th><th className="tg-hide-sm">Theme</th><th>What changed</th><th className="tg-hide-sm">Growth (latest quarter)</th><th>Multibagger chance</th><th className="tg-hide-sm">Move</th><th className="tg-hide-sm">Session</th>
                     </tr></thead>
                     <tbody>
                       {groups.map((g) => {
@@ -253,7 +256,8 @@ export default function TransformationalGainersPage() {
                               <td className="tg-hide-sm" style={{ whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>
                                 <div>Sales <b style={{ color: (f.revenueYoY ?? 0) >= 25 ? R.green : R.text }}>{pct(f.revenueYoY)}</b></div>
                                 <div>Profit <b style={{ color: (f.patYoY ?? 0) >= 40 ? R.green : R.text }}>{pct(f.patYoY)}</b></div>
-                                <div>Margin <b style={{ color: (dm ?? 0) >= 3 ? R.green : R.text }}>{dm == null ? '—' : `${dm >= 0 ? '+' : ''}${dm.toFixed(1)}pt`}</b></div>
+                                {dm != null && <div>Margin <b style={{ color: dm >= 3 ? R.green : R.text }}>{`${dm >= 0 ? '+' : ''}${dm.toFixed(1)}pt`}</b></div>}
+                                <div style={{ fontSize: 11, color: R.faint }}>{x.factsSource === 'screener' ? `stock screener${x.factsPeriod ? ` · ${x.factsPeriod}` : ''} · profit = EPS growth` : x.factsSource === 'filing' ? 'from the results filing' : 'no results figures yet'}</div>
                               </td>
                               <td style={{ minWidth: 190 }} onClick={(e) => e.stopPropagation()}><MbChip mb={x.mb} ai={x.ai} compact /></td>
                               <td className="tg-hide-sm" style={{ whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>

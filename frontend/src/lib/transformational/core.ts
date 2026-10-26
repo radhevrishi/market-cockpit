@@ -36,6 +36,9 @@ export interface TgItem {
   dilution: boolean;
   mb: MbView;
   ai?: AiMb | null;
+  /** zzz1169 — the company's industry (stock-screener), and where the growth figures came from */
+  industry?: string | null;
+  factsSource?: 'filing' | 'screener' | null; factsPeriod?: string | null;
 }
 
 // ── the signals ────────────────────────────────────────────────────────────
@@ -75,7 +78,7 @@ export const THEMES: Array<{ name: string; re: RegExp; structural: boolean }> = 
   { name: 'Pharma CDMO / API / healthcare', re: /\b(?:CDMO|CRAMS|API|ANDA|USFDA|FDA|drug|pharma\w*|biolog\w+|clinical|hospitals?|healthcare|health care|diagnostic\w*|medical devices?|vaccines?|peptides?|GLP-?1|formulations?|therapeutics?|biotech\w*)\b/i, structural: true },
   { name: 'Specialty chemicals & materials', re: /\b(?:specialty chemicals?|chemicals?|fluoro\w*|polymers?|resins?|pigments?|agrochem\w*|catalysts?|carbon black|graphite|rare earths?|lithium)\b/i, structural: true },
   { name: 'Auto / EV components', re: /\b(?:auto(?:motive)? components?|EVs?|electric vehicles?|wheels?|forgings?|castings?|two-?wheelers?|tractors?|commercial vehicles?|OEMs?)\b/i, structural: false },
-  { name: 'Capital goods / industrial machinery', re: /\b(?:capital goods|machinery|machine tools?|pumps?|valves?|compressors?|engineering|fabrication|heavy equipment|cranes?)\b/i, structural: true },
+  { name: 'Capital goods / industrial machinery', re: /\b(?:capital goods|machinery|electrical equipment|machine tools?|pumps?|valves?|compressors?|engineering|fabrication|heavy equipment|cranes?)\b/i, structural: true },
   { name: 'Infrastructure / construction / EPC', re: /\b(?:EPC|construction|infrastructure|highways?|roads?|bridges?|tunnel\w*|water (?:supply|treatment)|irrigation|smart cit\w+)\b/i, structural: true },
   { name: 'Telecom / networking', re: /\b(?:telecom|5G|network(?:ing)?|fib(?:re|er) optic|broadband|towers?)\b/i, structural: true },
   { name: 'Software / IT services / SaaS', re: /\b(?:software|SaaS|cloud|IT services|digital|cyber ?security|subscription|ARR)\b/i, structural: false },
@@ -88,25 +91,31 @@ export const THEMES: Array<{ name: string; re: RegExp; structural: boolean }> = 
   { name: 'Financials / lending', re: /\b(?:bank|NBFC|lending|loans?|AUM|insurance|asset management|broking|fintech|microfinance)\b/i, structural: false },
   { name: 'Real estate', re: /\b(?:real estate|realty|residential|housing|pre-?sales|land parcels?|REIT)\b/i, structural: false },
   { name: 'Logistics / shipping', re: /\b(?:logistics|shipping|ports?|tankers?|vessels?|freight|warehous\w+|containers?)\b/i, structural: false },
+  { name: 'Hotels / travel / leisure', re: /\b(?:hotels?|resorts?|hospitality|tourism|travel|leisure|casinos?|cruise)\b/i, structural: false },
   { name: 'Textiles', re: /\b(?:textiles?|yarn|spinning|fabrics?|garments?)\b/i, structural: false },
 ];
 export const STRUCTURAL_THEMES = new Set(THEMES.filter((t) => t.structural).map((t) => t.name));
 export const OTHER_THEME = 'Other / not classified yet';
 
-/** The theme a set of texts points to: the theme with the most words, ties to the earlier (more specific) one. Pure. */
+/** The theme: the company's industry decides when it names a table theme (it says what the company IS); otherwise the event
+ *  text (the theme with the most words, ties to the earlier, more specific one); otherwise the industry itself as a new theme. */
 export function themeOf(texts: Array<string | null | undefined>, industry?: string | null): { theme: string; why: string | null } {
-  // the company's industry counts twice: it says what the company IS, the filing says what happened
-  const hay = [industry, industry, ...texts].filter(Boolean).join(' \n ').slice(0, 6000);
-  let best: { name: string; n: number; word: string } | null = null;
-  for (const t of THEMES) {
-    const g = new RegExp(t.re.source, 'gi');
-    const hits = hay.match(g);
-    if (hits && hits.length && (!best || hits.length > best.n)) best = { name: t.name, n: hits.length, word: hits[0] };
-  }
-  if (best) return { theme: best.name, why: `the filing / industry says "${best.word}"` };
-  // zzz1167 — no table theme: the company's own industry becomes the theme (a NEW theme the table did not know), never "Other"
   const ind = String(industry || '').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
-  return ind ? { theme: ind.slice(0, 60), why: 'the company\'s industry (screener)' } : { theme: OTHER_THEME, why: null };
+  const best = (hay: string) => {
+    let b: { name: string; n: number; word: string } | null = null;
+    for (const t of THEMES) {
+      const hits = hay.match(new RegExp(t.re.source, 'gi'));
+      if (hits && hits.length && (!b || hits.length > b.n)) b = { name: t.name, n: hits.length, word: hits[0] };
+    }
+    return b;
+  };
+  // zzz1169 — industry first: a resort owner is not "telecom", an inspection-tool maker is not "oil & gas"
+  const byInd = ind ? best(ind) : null;
+  if (byInd) return { theme: byInd.name, why: `the company's industry: ${ind}` };
+  if (ind) return { theme: ind.slice(0, 60), why: 'the company\'s industry (screener)' };
+  const byText = best(texts.filter(Boolean).join(' \n ').slice(0, 6000));
+  if (byText) return { theme: byText.name, why: `the filing says "${byText.word}"` };
+  return { theme: OTHER_THEME, why: null };
 }
 
 // ── the multibagger read (rules; the AI read is separate and labelled as such) ──
@@ -124,6 +133,8 @@ export function multibaggerOf(x: Pick<TgItem, 'market' | 'marketCap' | 'strength
   else if (x.strength === 'INFLECTION') { s += 12; plus.push('earnings are turning up now'); }
   else s += 4;
   const f = x.facts;
+  // zzz1169 — no figures at all: the read rests on the event alone
+  if (f.revenueYoY == null && f.patYoY == null && f.marginNow == null) { s -= 6; minus.push('no growth figures known yet — the read rests on the event alone'); }
   if (f.revenueYoY != null) { if (f.revenueYoY >= 40) { s += 12; plus.push(`revenue +${Math.round(f.revenueYoY)}% a year`); } else if (f.revenueYoY >= 25) { s += 8; plus.push(`revenue +${Math.round(f.revenueYoY)}% a year`); } else if (f.revenueYoY < 10) { s -= 4; minus.push(`revenue growth only ${Math.round(f.revenueYoY)}%`); } }
   if (f.patYoY != null && f.patYoY >= 60) { s += 8; plus.push(`profit +${Math.round(f.patYoY)}%`); }
   if (f.marginNow != null && f.marginPrior != null) { const d = f.marginNow - f.marginPrior; if (d >= 3) { s += 6; plus.push(`margin up ${d.toFixed(1)} points (operating leverage)`); } else if (d <= -2) { s -= 4; minus.push(`margin down ${Math.abs(d).toFixed(1)} points`); } }
@@ -157,7 +168,7 @@ function hitsOf(it: AnyItem): Hit[] {
   const cats: any[] = it.market === 'US' ? (it.usCard?.catalysts || []) : (it.inCard?.catalysts || []);
   for (const c of cats) {
     if (!c || c.routine || c.direction === 'negative' || c.direction === 'neutral') continue;
-    if (typeof c.ageDays === 'number' && c.ageDays > 21) continue;
+    if (typeof c.ageDays === 'number' && c.ageDays > 10) continue;   // zzz1169: an event older than ~2 weeks is not why the share moved
     const id = String(c.id || '');
     const kind = STRONG[id] ?? MEDIUM[id];
     if (!kind) continue;
@@ -218,7 +229,7 @@ export function transformationalFrom(items: AnyItem[], market: TgMarket, session
     const filedGrowth = (usOfficialEarnings || inOfficialEarnings) && ((facts.revenueYoY ?? 0) >= 15 || (facts.patYoY ?? 0) >= 30);
     const core = strongAny.length > 0 || !!infl || medOff.length >= 2;
     if (!core && !medOff.length && !filedGrowth) continue;
-    const lead = strongOff[0] || (infl ? null : strongAny[0]) || medOff[0] || null;
+    const lead = strongOff[0] || (infl ? null : (strongAny[0] || medOff[0])) || null;
     const kind: TgKind = lead ? lead.kind : (facts.revenueYoY != null && facts.patYoY == null && /turn|profit/i.test(String(it.headline || '')) ? 'TURNAROUND' : 'RESULTS');
     const evidence: 'official' | 'press' = strongOff.length || infl || medOff.length || filedGrowth ? 'official' : 'press';
     const durationYears = it.persistence === 'YEARS' || it.potentialDuration?.value === 'YEARS';
@@ -248,14 +259,102 @@ export function transformationalFrom(items: AnyItem[], market: TgMarket, session
     // zzz1168 — kept: a filed STRONG event, an inflection or two medium events from the company; anything weaker (press-only,
     // one medium event, plain growth) only with a clear multibagger read (≥ 55)
     const firm = strongOff.length > 0 || !!infl || medOff.length >= 2;
-    if (!firm && out[out.length - 1].mb.score < 55) out.pop();
+    if (!firm && out[out.length - 1].mb.score < 55) { out.pop(); continue; }
+    const rev = reviewItem({ ...out[out.length - 1], industry: it.industry ?? it.sector ?? null, factsSource: (usOfficialEarnings || inOfficialEarnings) && (facts.revenueYoY != null || facts.patYoY != null) ? 'filing' : null });
+    if (rev) out[out.length - 1] = rev; else out.pop();
   }
   return out;
 }
 
+// ── zzz1169: the review every item passes (at save time AND when the board is read, so stored rows follow today's rule) ──
+
+const JUNK_HEAD: RegExp[] = [
+  /^\s*(?:contacts?|investor relations|media contact)\b/i, /\bvice president,? investor relations\b/i, /@\w+\.\w{2,}/, /\+\d[\d ()-]{8,}/,
+  /^\s*\d{2,6}\s+[A-Z][\w.]+(?:\s+[A-Z][\w.]+)*\s+(?:Ave|Avenue|St|Street|Road|Rd|Blvd|Drive|Dr)\b/i,
+  /^\s*(?:news release|press release|for immediate release|financial news brief)\b[\s:.,-]*$/i,
+  /\b(?:voting (?:and support )?agreement|consolidated financial (?:report|statements)|form 51-102f3|material change report)\b/i,
+  /\breply to clarification\b|\bclarification sought\b|\bnewspaper publication\b|\bregd\.? office\b/i,
+  /^\s*see\s+[“"]?non-gaap/i, /^\s*results filed for the/i, /\bsign-on (?:cash )?payment\b|\bover the following decade\b/i,
+  /^\s*(?:results|partnership|equity raise|licence \/ approval|acquisition|older context.*)\s*$/i,
+];
+const OLDER = /^\s*older context \((\d+)d\):\s*/i;
+export const isJunkText = (s: string | null | undefined): boolean => { const t = String(s || '').replace(OLDER, '').trim(); return t.length < 18 || JUNK_HEAD.some((r) => r.test(t)); };
+
+/** What the row should say happened: the first plain sentence among the headline, what changed and the source sentence. */
+export function bestHeadline(x: Pick<TgItem, 'headline' | 'whatChanged' | 'quote' | 'signals'>): string {
+  for (const c of [x.headline, x.whatChanged, x.quote]) {
+    const t = String(c || '').replace(OLDER, '').replace(/\s+/g, ' ').trim();
+    if (!isJunkText(t)) return t.slice(0, 300);
+  }
+  return x.signals.filter((g) => !/^Earnings inflection/.test(g)).slice(0, 3).join(' · ') || String(x.headline || '').slice(0, 300);
+}
+
+/** Order / contract value in the item's units (₹ crore India, $ million USA), when the sentence states one. */
+export function orderValue(text: string, market: TgMarket): number | null {
+  const t = String(text || '').replace(/,/g, '');
+  if (market === 'IN') {
+    const m = /(?:rs\.?|inr|₹)\s*([\d.]+)\s*(crores?|cr\b|lakhs?|lacs?|million|mn|billion|bn)?/i.exec(t);
+    if (!m) return null;
+    const v = Number(m[1]); const u = String(m[2] || 'cr').toLowerCase();
+    if (!Number.isFinite(v) || v <= 0) return null;
+    return /lakh|lac/.test(u) ? v / 100 : /million|mn/.test(u) ? v / 10 : /billion|bn/.test(u) ? v * 100 : v;
+  }
+  const m = /\$\s*([\d.]+)\s*(billion|bn|million|mn|m\b)/i.exec(t);
+  if (!m) return null;
+  const v = Number(m[1]);
+  return Number.isFinite(v) && v > 0 ? (/^b/i.test(m[2]) ? v * 1000 : v) : null;
+}
+
+const TARGET_RE = /\b(?:voting and support agreement|to be acquired by|agreed to be acquired|will be acquired|acquired by an? (?:affiliate|entity|fund)|go(?:ing)?[- ]private|take[- ]private|takeover bid|definitive agreement to be acquired)\b/i;
+const NOT_ORDER_RE = /\b(?:refund|high court|supreme court|tribunal|nclt order|arbitration|tax (?:demand|relief)|court relief|penalty)\b/i;
+
+export interface SnapFacts { revQYoY?: number | null; epsQYoY?: number | null; q?: string | null; ind?: string | null; sec?: string | null }
+
+/** Cleans one item and re-reads it under the current rule; null = not one of the most important events. Pure. */
+export function reviewItem(x0: TgItem, snap?: SnapFacts | null): TgItem | null {
+  const x: TgItem = { ...x0, facts: { ...x0.facts }, signals: [...x0.signals] };
+  const texts = `${x.headline} \n ${x.whatChanged || ''} \n ${x.quote || ''} \n ${x.signals.join(' ; ')}`;
+  const inflect = x.signals.some((g) => /^Earnings inflection/.test(g));
+  // being acquired: the upside is capped at the deal price — never a multibagger
+  if (x.kind === 'STRATEGIC' && (TARGET_RE.test(texts) || (/merger agreement|takeover/i.test(texts) && (x.movePct ?? 0) >= 20))) return null;
+  // an event filed > 10 days before the session was not why the share moved (it was listed when it was new)
+  const lag = x.eventDate ? (Date.parse(`${x.sessionDate}T00:00:00Z`) - Date.parse(`${x.eventDate}T00:00:00Z`)) / 86_400_000 : 0;
+  if ((lag > 10 || /^\s*older context \((?:1[1-9]|[2-9]\d)d\)/i.test(x.headline)) && !inflect) return null;
+  if (x.kind === 'ORDERS' && !inflect) {
+    if (NOT_ORDER_RE.test(`${x.headline} ${x.quote || ''}`)) return null;   // a court relief or tax refund is not an order
+    const v = orderValue(`${x.quote || ''} ${x.headline}`, x.market);
+    if (v != null && x.marketCap != null && x.marketCap > 0 && v / x.marketCap < 0.03) return null;   // < 3% of the company's value
+  }
+  x.headline = bestHeadline(x);
+  x.whatChanged = x.whatChanged && !isJunkText(x.whatChanged) ? x.whatChanged.replace(OLDER, '') : null;
+  if (x.quote && isJunkText(x.quote)) x.quote = null;
+  // facts: filed figures first; else the stock screener's latest quarter (from the company's results)
+  if (snap) {
+    x.industry = x.industry || snap.ind || snap.sec || null;
+    if (x.facts.revenueYoY == null && x.facts.patYoY == null && (snap.revQYoY != null || snap.epsQYoY != null)) {
+      x.facts.revenueYoY = snap.revQYoY ?? null; x.facts.patYoY = snap.epsQYoY ?? null;
+      x.factsSource = 'screener'; x.factsPeriod = snap.q ?? null;
+    }
+  }
+  if (!x.factsSource && (x.facts.revenueYoY != null || x.facts.patYoY != null)) x.factsSource = 'filing';
+  const th = themeOf([x.headline, x.quote], x.industry || null);
+  if (th.theme !== OTHER_THEME || x.theme === OTHER_THEME || x.industry) { x.theme = th.theme; x.themeWhy = th.why; }
+  x.mb = multibaggerOf(x);
+  if (x.strength === 'NOTABLE' && x.mb.score < 55) return null;
+  return x;
+}
+
+// ── zzz1169: one ranking — the rules read, blended with the AI read when there is one ──
+const AI_POINTS: Record<MbLabel, number> = { HIGH: 78, MEDIUM: 55, LOW: 32, UNLIKELY: 12 };
+export function chanceOf(x: Pick<TgItem, 'mb' | 'ai'>): { score: number; label: MbLabel; from: 'rules' | 'rules + AI' } {
+  if (!x.ai) return { score: x.mb.score, label: x.mb.label, from: 'rules' };
+  const s = Math.round((x.mb.score + AI_POINTS[x.ai.label]) / 2);
+  return { score: s, label: s >= 65 ? 'HIGH' : s >= 45 ? 'MEDIUM' : s >= 25 ? 'LOW' : 'UNLIKELY', from: 'rules + AI' };
+}
+
 // ── the 60-day board: themes, new names, ordering ────────────────────────────
 export interface TgThemeRow { theme: string; structural: boolean; companies: number; events: number; firstSeen: string; lastSeen: string; isNew: boolean; tickers: string[] }
-export interface TgBoard { items: TgItem[]; themes: TgThemeRow[]; newCompanies: string[]; days: number; from: string; to: string }
+export interface TgBoard { items: TgItem[]; themes: TgThemeRow[]; newCompanies: string[]; days: number; from: string; to: string; historyFrom: string | null }
 
 const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
 
@@ -263,7 +362,7 @@ const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) 
 export function buildBoard(all: TgItem[], today: string, days = 60): TgBoard {
   const from = addDays(today, -days), recent = addDays(today, -7);
   const items = all.filter((x) => x.sessionDate >= from && x.sessionDate <= today)
-    .sort((a, b) => b.sessionDate.localeCompare(a.sessionDate) || b.mb.score - a.mb.score);
+    .sort((a, b) => b.sessionDate.localeCompare(a.sessionDate) || chanceOf(b).score - chanceOf(a).score);
   const firstByTicker = new Map<string, string>();
   for (const x of all) { const k = `${x.market}:${x.ticker}`; const f = firstByTicker.get(k); if (!f || x.sessionDate < f) firstByTicker.set(k, x.sessionDate); }
   const th = new Map<string, TgThemeRow & { set: Set<string> }>();
@@ -276,5 +375,6 @@ export function buildBoard(all: TgItem[], today: string, days = 60): TgBoard {
   const themes = [...th.values()].map(({ set, ...r }) => ({ ...r, companies: set.size, tickers: [...set].map((k) => k.split(':')[1]), isNew: r.firstSeen >= recent && r.theme !== OTHER_THEME }))
     .sort((a, b) => b.companies - a.companies || b.events - a.events);
   const newCompanies = [...new Set(items.filter((x) => (firstByTicker.get(`${x.market}:${x.ticker}`) || '') >= recent).map((x) => `${x.market}:${x.ticker}`))];
-  return { items, themes, newCompanies, days, from, to: today };
+  const historyFrom = all.reduce<string | null>((m, x) => (!m || x.sessionDate < m ? x.sessionDate : m), null);
+  return { items, themes, newCompanies, days, from, to: today, historyFrom };
 }
