@@ -9,7 +9,10 @@ const TTL = 400 * 86_400;
 
 export async function loadHb(): Promise<HbReport | null> {
   const { kvGet } = await import('../kv');
-  return (await kvGet<HbReport>(HB_KEY).catch(() => null)) || null;
+  const r = (await kvGet<HbReport>(HB_KEY).catch(() => null)) || null;
+  // zzz1184 — data flags are laid over every read (a run stored before them gets them too)
+  if (r) { const { hbFlags } = await import('./core'); for (const g of r.markets) for (const p of g.picks) if (p.data) p.flags = hbFlags(p.data); }
+  return r;
 }
 
 export async function runHb(): Promise<{ ok: true; report: HbReport } | { ok: false; error: string }> {

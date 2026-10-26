@@ -40,3 +40,19 @@ test('wiring: protected API, nav entry after News Feed, page default export only
   const pg = src('../../app/(dashboard)/hundred-baggers/page.tsx');
   assert.doesNotMatch(pg, /^export (?!default)/m);
 });
+
+test('zzz1184: data flags (cash burn, debt, dilution, acquisition-boosted quarter, already ran, rich P/E); scenario calculated; no promised multiple in the class', async () => {
+  const { hbFlags, HB_CLASS_WORD } = await import('../hundred-baggers/core');
+  const f = hbFlags(row('R', { fcfmTTM: -55, de: 1.0, bb: -6, revQYoY: 188, revAYoY: 69, perf5Y: 500, pe: 80 }));
+  for (const re of [/cash burn/, /D\/E 1\.0/, /dilution/, /acquisition or a low base/, /6x in 5 years/, /P\/E 80/]) assert.ok(f.some((x) => re.test(x)), String(re));
+  assert.deepEqual(hbFlags(row('CLEAN')), []);
+  assert.doesNotMatch(HB_CLASS_WORD.SECULAR_COMPOUNDER, /×|x\b/);
+  const sl = { US: ['A', 'B', 'C'].map((t) => row(t, { pe: 25 })), IN: ['X', 'Y', 'Z'].map((t) => row(t)) } as Record<'US' | 'IN', Cand[]>;
+  const scores = Object.fromEntries(HB_FACTORS.map(([k]) => [k, 6]));
+  const pick = (t: string, scenario: any = null) => ({ ticker: t, thesis: '', scores, forward_metrics: '', moat: '', megatrend: '', valuation: '', risks: '', classification: 'SECULAR_COMPOUNDER', missing: '', scenario });
+  const sc = { years: 5, eps_cagr: { bear: 5, base: 20, bull: 30 }, exit_pe: { bear: 15, base: 25, bull: 30 }, dilution_pct: 0, basis: 'b' };
+  const out = cleanHb({ markets: [{ market: 'US', note: '', picks: [pick('A', sc), pick('B'), pick('C')] }, { market: 'IN', note: '', picks: [pick('X'), pick('Y'), pick('Z')] }] }, sl)!;
+  const a = out[0].picks.find((p) => p.ticker === 'A')!;
+  assert.equal(a.multiples!.base, Math.round(1.2 ** 5 * 100) / 100);
+  assert.equal(out[0].picks.find((p) => p.ticker === 'B')!.multiples, null);
+});

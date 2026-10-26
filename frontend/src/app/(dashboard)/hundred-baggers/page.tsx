@@ -43,6 +43,15 @@ function Detail({ p, m }: { p: HbPick; m: CandMarket }) {
         {box('VALUATION', p.valuation)}
         {box('MAIN RISKS', p.risks, C.red)}
         {box('MISSING VS HISTORIC 100-BAGGERS', p.missing, C.warn)}
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 800, color: C.faint, letterSpacing: 0.5 }}>SCENARIO (CALCULATED)</div>
+          {p.multiples && p.scenario ? (
+            <div style={{ fontSize: 13, lineHeight: 1.5 }}>
+              {(['bear', 'base', 'bull'] as const).map((k) => <div key={k}><b style={{ color: k === 'bear' ? C.red : k === 'bull' ? C.green : C.text }}>{k}</b>: EPS +{p.scenario!.epsCagr[k]}% a year for {p.scenario!.years}y, exit P/E {p.scenario!.exitPe[k]} → <b>{p.multiples![k]}×</b></div>)}
+              <div style={{ color: C.dim, fontSize: 12 }}>(1 + EPS growth)^years × (1 − {p.scenario.dilutionPct}% dilution) × exit P/E ÷ today’s P/E {p.multiples.currentPe}; no dividends. Assumes: {p.scenario.basis}</div>
+            </div>
+          ) : <div style={{ fontSize: 13, color: C.faint }}>{p.scenarioNote || 'Not estimated in this run — click Update with AI.'}</div>}
+        </div>
       </div>
     </div>
   );
@@ -54,7 +63,7 @@ export default function HundredBaggersPage() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [mkt, setMkt] = useState<CandMarket>('US');
-  const [open, setOpen] = useState<string | null>(null);
+  const [openSet, setOpenSet] = useState<Set<string>>(new Set());   // zzz1184 — several rows open; expand all / collapse all
   const [cls, setCls] = useState<'ALL' | 'SECULAR_COMPOUNDER' | 'CYCLE_PLAYER'>('ALL');
 
   useEffect(() => { fetch('/api/v1/hundred-baggers', { cache: 'no-store' }).then((r) => r.json()).then((j) => {
@@ -84,7 +93,7 @@ export default function HundredBaggersPage() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 900, margin: 0 }}>🚀 Future 100-baggers</h1>
-          <div style={{ fontSize: 13, color: C.dim, marginTop: 2 }}>Hidden small-to-mid caps ($500M–$5B) with the early DNA of NVIDIA, Tesla, Amazon, Infosys, Asian Paints, Deepak Nitrite · scored on 15 factors (/150)</div>
+          <div style={{ fontSize: 13, color: C.dim, marginTop: 2 }}>Hidden small-to-mid caps ($500M–$5B) with the early DNA of NVIDIA, Tesla, Amazon, Infosys, Asian Paints, Deepak Nitrite · scored on 15 factors (/150) · return scenarios calculated, not promised</div>
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <span style={{ fontSize: 12, color: C.faint }}>{!loaded ? 'loading…' : report ? `AI update ${when} · chose from ${report.shortlist.US} US + ${report.shortlist.IN} India screened companies` : 'not run yet'}</span>
@@ -99,22 +108,25 @@ export default function HundredBaggersPage() {
       {report && g && (
         <>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', margin: '14px 0 10px' }}>
-            {(['US', 'IN'] as CandMarket[]).map((m) => <button key={m} type="button" style={btn(mkt === m)} onClick={() => { setMkt(m); setOpen(null); }}>{m === 'US' ? '🇺🇸 Top 10 USA' : '🇮🇳 Top 10 India'}</button>)}
+            {(['US', 'IN'] as CandMarket[]).map((m) => <button key={m} type="button" style={btn(mkt === m)} onClick={() => { setMkt(m); setOpenSet(new Set()); }}>{m === 'US' ? '🇺🇸 Top 10 USA' : '🇮🇳 Top 10 India'}</button>)}
             <span style={{ width: 1, height: 24, background: C.border, margin: '0 6px' }} />
-            {([['ALL', 'All'], ['SECULAR_COMPOUNDER', 'Secular Compounders'], ['CYCLE_PLAYER', 'Cycle Players']] as const).map(([k, l]) => <button key={k} type="button" style={btn(cls === k, k === 'CYCLE_PLAYER' ? C.warn : C.green)} onClick={() => setCls(k)}>{l}</button>)}
+            {([['ALL', 'All'], ['SECULAR_COMPOUNDER', 'Secular compounders'], ['CYCLE_PLAYER', 'Cycle players']] as const).map(([k, l]) => <button key={k} type="button" style={btn(cls === k, k === 'CYCLE_PLAYER' ? C.warn : C.green)} onClick={() => setCls(k)}>{l}</button>)}
+            <span style={{ width: 1, height: 24, background: C.border, margin: '0 6px' }} />
+            {(() => { const keys = picks.map((p) => `${mkt}:${p.ticker}`); const all = keys.length > 0 && keys.every((k) => openSet.has(k));
+              return <button type="button" style={btn(all)} onClick={() => setOpenSet(all ? new Set() : new Set(keys))}>{all ? '▲ Collapse all' : '▼ Expand all'}</button>; })()}
           </div>
           <div style={{ border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden', background: C.bg }}>
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                 <thead><tr style={{ background: C.bg2 }}>
-                  {['#', 'Company', 'Score /150', 'Class', 'Thesis', ''].map((h) => <th key={h} style={{ textAlign: 'left', padding: '9px 10px', fontSize: 11, letterSpacing: 0.5, textTransform: 'uppercase', color: C.faint, borderBottom: `2px solid ${C.border}`, whiteSpace: 'nowrap' }}>{h}</th>)}
+                  {['#', 'Company', 'Score /150', 'Class', 'Base case (calculated)', 'Thesis', ''].map((h) => <th key={h} style={{ textAlign: 'left', padding: '9px 10px', fontSize: 11, letterSpacing: 0.5, textTransform: 'uppercase', color: C.faint, borderBottom: `2px solid ${C.border}`, whiteSpace: 'nowrap' }}>{h}</th>)}
                 </tr></thead>
                 <tbody>
                   {picks.map((p, i) => {
-                    const k = `${mkt}:${p.ticker}`; const isOpen = open === k; const sc = scoreColor(p.total);
+                    const k = `${mkt}:${p.ticker}`; const isOpen = openSet.has(k); const sc = scoreColor(p.total);
                     return (
                       <Fragment key={k}>
-                        <tr onClick={() => setOpen(isOpen ? null : k)} style={{ cursor: 'pointer', borderBottom: `1px solid ${C.border}` }}>
+                        <tr onClick={() => setOpenSet((s0) => { const n = new Set(s0); if (n.has(k)) n.delete(k); else n.add(k); return n; })} style={{ cursor: 'pointer', borderBottom: `1px solid ${C.border}` }}>
                           <td style={{ padding: '10px', fontWeight: 900, color: C.faint, width: 30 }}>{i + 1}</td>
                           <td style={{ padding: '10px', minWidth: 180 }}>
                             <a href={`/charts?m=${mkt}&t=${encodeURIComponent(p.ticker)}`} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ fontWeight: 900, fontSize: 14, color: C.text, textDecoration: 'none' }}>{p.ticker} ↗</a>
@@ -128,13 +140,17 @@ export default function HundredBaggersPage() {
                           <td style={{ padding: '10px', whiteSpace: 'nowrap' }}>
                             <span style={{ fontSize: 11, fontWeight: 900, padding: '3px 8px', borderRadius: 6, color: p.classification === 'CYCLE_PLAYER' ? C.warn : C.green, border: `1px solid ${p.classification === 'CYCLE_PLAYER' ? C.warn : C.green}`, background: tint(p.classification === 'CYCLE_PLAYER' ? C.warn : C.green, 10) }}>{HB_CLASS_WORD[p.classification]}</span>
                           </td>
+                          <td style={{ padding: '10px', whiteSpace: 'nowrap' }} title={p.scenarioNote || ''}>
+                            {p.multiples && p.scenario ? <><div style={{ fontSize: 16, fontWeight: 900 }}>{p.multiples.base}×</div><div style={{ fontSize: 12, color: C.faint }}>{p.scenario.years}y · bear {p.multiples.bear}× · bull {p.multiples.bull}×</div></> : <span style={{ fontSize: 12, color: C.faint }}>not estimated</span>}
+                          </td>
                           <td style={{ padding: '10px', lineHeight: 1.45, minWidth: 260 }}>
                             {p.thesis}
+                            {(p.flags || []).length > 0 && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>{(p.flags || []).map((f) => <span key={f} style={{ fontSize: 12, fontWeight: 700, color: C.warn, border: `1px solid ${tint(C.warn, 50)}`, background: tint(C.warn, 8), borderRadius: 5, padding: '1px 6px' }}>⚠ {f}</span>)}</div>}
                             <div style={{ fontSize: 12, color: C.faint, marginTop: 3 }}>TAM {p.scores.tam} · Moat {p.scores.moat} · Founder {p.scores.founder} · Optionality {p.scores.optionality} · Valuation {p.scores.valuation}</div>
                           </td>
                           <td style={{ padding: '10px', fontSize: 12, color: C.faint, whiteSpace: 'nowrap' }}>{isOpen ? '▲ less' : '▼ more'}</td>
                         </tr>
-                        {isOpen && <tr><td colSpan={6} style={{ padding: 0, borderBottom: `1px solid ${C.border}` }}><Detail p={p} m={mkt} /></td></tr>}
+                        {isOpen && <tr><td colSpan={7} style={{ padding: 0, borderBottom: `1px solid ${C.border}` }}><Detail p={p} m={mkt} /></td></tr>}
                       </Fragment>
                     );
                   })}
