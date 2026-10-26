@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
     const all = await loadReviewed(ids.length ? 75 : sinceDays, market);
     let pick: TgItem[];
     if (ids.length) pick = all.filter((x) => ids.includes(x.id) && !(x.ai && !body?.again));
-    else pick = all.filter((x) => !x.ai && x.strength !== 'NOTABLE').sort((a, b) => b.mb.score - a.mb.score);   // reviewed: clean text + screener figures
+    else pick = all.filter((x) => !x.ai && !x.needsCheck && x.strength !== 'NOTABLE').sort((a, b) => b.mb.score - a.mb.score);   // reviewed: clean text + screener figures
     const { kvGet, kvIncrByFloat } = await import('@/lib/kv');
     const used = Number(await kvGet<number>(dayKey()).catch(() => 0)) || 0;
     const room = Math.max(0, Math.min(AI_PER_CALL_MAX, AI_DAILY_MAX - used));

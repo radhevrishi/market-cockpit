@@ -9,7 +9,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import NavLink from '@/components/NavLink';
 import { R, tint } from '@/components/special-situations/radar-tokens';
 import { MbChip, MB_COLOR } from '@/components/transformational/MbChip';
-import { MB_WORD, OTHER_THEME, chanceOf, tgKindWord, type MbLabel, type TgBoard, type TgItem, type TgStrength } from '@/lib/transformational/core';
+import { MB_NAME, MB_WORD, OTHER_THEME, chanceOf, tgKindWord, type MbLabel, type TgBoard, type TgItem, type TgStrength } from '@/lib/transformational/core';
 
 type Mkt = 'ALL' | 'IN' | 'US';
 const STRENGTH_COLOR: Record<TgStrength, string> = { TRANSFORMATIONAL: R.green, INFLECTION: R.cyan, NOTABLE: R.amber };
@@ -108,9 +108,13 @@ export default function TransformationalGainersPage() {
     const high = groups.filter((g) => chanceOf(g.best).label === 'HIGH').length;
     const fresh = groups.filter((g) => newSet.has(g.key)).length;
     const newThemes = themes.filter((t) => t.isNew).length;
-    return { cos, trans, high, fresh, themes: themes.length, newThemes };
+    const aiCos = groups.filter((g) => g.items.some((x) => x.ai)).length;
+    return { cos, trans, high, fresh, themes: themes.length, newThemes, aiCos };
   }, [groups, newSet, themes]);
   const [openKey, setOpenKey] = useState<string | null>(null);
+  const [showCheck, setShowCheck] = useState(false);
+  const shortHistory = data ? new Date(Date.parse(`${data.to}T00:00:00Z`) - 14 * 86_400_000).toISOString().slice(0, 10) : '';
+  const collecting = !!(data?.historyFrom && data.historyFrom > data.from);
   const maxThemeCos = Math.max(1, ...themes.map((t) => t.companies));
   const sectionTitle: React.CSSProperties = { fontSize: 11, fontWeight: 800, letterSpacing: 0.6, textTransform: 'uppercase', color: R.faint, margin: '0 0 6px' };
 
@@ -145,6 +149,7 @@ export default function TransformationalGainersPage() {
         </div>
       </div>
       {aiNote && <div style={{ fontSize: 12, color: R.dim, marginTop: 6 }}>{aiNote}</div>}
+      {collecting && data && <div style={{ fontSize: 12, color: R.amber, marginTop: 6, fontWeight: 700 }}>⏳ Collecting history: available since {data.historyFrom} — the {days}-day window fills one session a day (complete about {new Date(Date.parse(`${data.historyFrom}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10)}).</div>}
       {filling && <div style={{ fontSize: 12, color: R.cyan, marginTop: 6 }}>{filling}</div>}
 
       {/* KPI strip */}
@@ -153,8 +158,8 @@ export default function TransformationalGainersPage() {
           { k: 'Companies', v: kpi.cos, c: R.text, sub: `${filtered.length} events · click: clear filters`, on: false,
             click: () => { setTheme(null); setStrength(null); setMbMin(null); setOnlyNew(false); setQ(''); setMkt('ALL'); } },
           { k: 'Transformational', v: kpi.trans, c: R.green, sub: 'lasting change to earnings', on: strength === 'TRANSFORMATIONAL', click: () => setStrength((v) => (v === 'TRANSFORMATIONAL' ? null : 'TRANSFORMATIONAL')) },
-          { k: 'High multibagger chance', v: kpi.high, c: R.green, sub: 'rules + AI combined', on: mbMin === 'HIGH', click: () => setMbMin((v) => (v === 'HIGH' ? null : 'HIGH')) },
-          { k: 'New this week', v: kpi.fresh, c: R.violet, sub: data?.historyFrom ? `first seen in 7 days · history from ${data.historyFrom}` : 'first seen in 7 days', on: onlyNew, click: () => setOnlyNew((v) => !v) },
+          { k: `High ${MB_NAME.toLowerCase()}`, v: kpi.high, c: R.green, sub: `rules + AI · AI reviewed ${kpi.aiCos} of ${kpi.cos}`, on: mbMin === 'HIGH', click: () => setMbMin((v) => (v === 'HIGH' ? null : 'HIGH')) },
+          { k: 'New this week', v: kpi.fresh, c: R.violet, sub: data?.historyFrom && data.historyFrom > shortHistory ? `history only since ${data.historyFrom} — 'new' settles after 2 weeks` : 'first seen in 7 days', on: onlyNew, click: () => setOnlyNew((v) => !v) },
           { k: 'Themes', v: kpi.themes, c: R.cyan, sub: theme ? `showing: ${theme === OTHER_THEME ? 'Other' : theme} · click: all` : `${kpi.newThemes} new this week · pick one on the left`, on: !!theme, click: () => setTheme(null) },
           { k: 'Window', v: `${days}d`, c: R.text, sub: `${data ? `${data.from} → ${data.to}` : ''} · click: change`, on: days !== 60, click: () => setDays((d) => ({ 60: 30, 30: 14, 14: 7, 7: 60 } as Record<number, number>)[d] || 60) },
         ].map((t) => (
@@ -188,12 +193,12 @@ export default function TransformationalGainersPage() {
               <div><div style={sectionTitle}>Strength</div><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 {(['TRANSFORMATIONAL', 'INFLECTION', 'NOTABLE'] as TgStrength[]).map((x) => <button key={x} type="button" style={chip(strength === x, STRENGTH_COLOR[x])} onClick={() => setStrength((v) => (v === x ? null : x))}>{STRENGTH_WORD[x]}</button>)}
               </div></div>
-              <div><div style={sectionTitle}>Multibagger chance at least</div><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <div><div style={sectionTitle}>{MB_NAME} at least</div><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 {(['HIGH', 'MEDIUM', 'LOW'] as MbLabel[]).map((x) => <button key={x} type="button" style={chip(mbMin === x, MB_COLOR[x])} onClick={() => setMbMin((v) => (v === x ? null : x))}>{MB_WORD[x]}</button>)}
               </div></div>
               <div><div style={sectionTitle}>Sort</div><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 <button type="button" style={chip(sort === 'newest')} onClick={() => setSort('newest')}>Newest</button>
-                <button type="button" style={chip(sort === 'chance')} onClick={() => setSort('chance')}>Multibagger chance</button>
+                <button type="button" style={chip(sort === 'chance')} onClick={() => setSort('chance')}>{MB_NAME}</button>
               </div></div>
             </div>
             <div style={{ border: `1px solid ${R.border}`, borderRadius: 10, padding: 12, background: R.bg }}>
@@ -230,7 +235,7 @@ export default function TransformationalGainersPage() {
                 <div style={{ overflowX: 'auto' }}>
                   <table className="tg-table">
                     <thead><tr>
-                      <th>Company</th><th className="tg-hide-sm">Theme</th><th>What changed</th><th className="tg-hide-sm">Growth (latest quarter)</th><th>Multibagger chance</th><th className="tg-hide-sm">Move</th><th className="tg-hide-sm">Session</th>
+                      <th>Company</th><th className="tg-hide-sm">Theme</th><th>What changed</th><th className="tg-hide-sm">Growth (latest quarter)</th><th>{MB_NAME}</th><th className="tg-hide-sm">Move</th><th className="tg-hide-sm">Session</th>
                     </tr></thead>
                     <tbody>
                       {groups.map((g) => {
@@ -252,11 +257,13 @@ export default function TransformationalGainersPage() {
                                 <div style={{ fontSize: 11, fontWeight: 800, color: R.faint, textTransform: 'uppercase', letterSpacing: 0.4 }}>{tgKindWord(x.kind)}{g.items.length > 1 ? ` · ${g.items.length} events` : ''}</div>
                                 <div className="tg-clamp" style={{ fontWeight: 700, lineHeight: 1.4 }}>{x.headline}</div>
                                 <div className="tg-clamp" style={{ fontSize: 12, color: R.dim, marginTop: 2 }}>{x.signals.slice(0, 3).join(' · ')}</div>
+                                {x.orderToRevenuePct != null && <div style={{ fontSize: 12, fontWeight: 700, color: x.orderToRevenuePct >= 25 ? R.green : R.dim, marginTop: 2 }}>Order ≈ {x.orderToRevenuePct}% of a year’s revenue</div>}
                               </td>
                               <td className="tg-hide-sm" style={{ whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>
                                 <div>Sales <b style={{ color: (f.revenueYoY ?? 0) >= 25 ? R.green : R.text }}>{pct(f.revenueYoY)}</b></div>
                                 <div>Profit <b style={{ color: (f.patYoY ?? 0) >= 40 ? R.green : R.text }}>{pct(f.patYoY)}</b></div>
                                 {dm != null && <div>Margin <b style={{ color: dm >= 3 ? R.green : R.text }}>{`${dm >= 0 ? '+' : ''}${dm.toFixed(1)}pt`}</b></div>}
+                                {x.factsNote && <div style={{ fontSize: 11, color: R.amber }}>{x.factsNote}</div>}
                                 <div style={{ fontSize: 11, color: R.faint }}>{x.factsSource === 'screener' ? `stock screener${x.factsPeriod ? ` · ${x.factsPeriod}` : ''} · profit = EPS growth` : x.factsSource === 'filing' ? 'from the results filing' : 'no results figures yet'}</div>
                               </td>
                               <td style={{ minWidth: 190 }} onClick={(e) => e.stopPropagation()}><MbChip mb={x.mb} ai={x.ai} compact /></td>
@@ -303,7 +310,24 @@ export default function TransformationalGainersPage() {
                 </div>
               </div>
             )}
-            <p style={{ fontSize: 11, color: R.faint, marginTop: 10 }}>Company data only. Not investment advice. Price is context, never the reason an event is listed. Multibagger chance is a research prompt from the filed facts.</p>
+            {data.needsCheck?.length > 0 && (
+              <div style={{ marginTop: 12, border: `1px solid ${R.border}`, borderRadius: 10, background: R.bg, padding: '10px 12px' }}>
+                <button type="button" onClick={() => setShowCheck((v) => !v)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: R.amber, fontWeight: 800, fontSize: 13, padding: 0 }}>
+                  {showCheck ? '▲' : '▼'} Needs verification ({data.needsCheck.length}) — the shown text does not back the label, so these are not ranked
+                </button>
+                {showCheck && <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {data.needsCheck.filter((x) => mkt === 'ALL' || x.market === mkt).map((x) => (
+                    <div key={x.id} style={{ fontSize: 12, borderTop: `1px dashed ${R.border}`, paddingTop: 6 }}>
+                      <b>{x.ticker}</b> <span style={{ color: R.dim }}>{x.market === 'IN' ? '🇮🇳' : '🇺🇸'} {x.company} · labelled {tgKindWord(x.kind)} · {x.sessionDate}</span>
+                      <div style={{ color: R.amber }}>⚠ {x.needsCheck}</div>
+                      <div style={{ color: R.dim }} className="tg-clamp">{x.headline}</div>
+                      {x.sourceUrl && /^https?:\/\//.test(x.sourceUrl) && <a href={x.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: R.cyan }}>open the filing ↗</a>}
+                    </div>
+                  ))}
+                </div>}
+              </div>
+            )}
+            <p style={{ fontSize: 11, color: R.faint, marginTop: 10 }}>Company data only. Not investment advice. Price is context, never the reason an event is listed. {MB_NAME} is a research priority from the filed facts — not a tested probability.</p>
           </section>
         </div>
       )}

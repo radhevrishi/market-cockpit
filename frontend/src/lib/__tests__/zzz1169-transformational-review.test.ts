@@ -52,7 +52,7 @@ test('figures from the stock screener fill the growth column, labelled; no figur
   assert.equal(r.facts.revenueYoY, 48); assert.equal(r.factsSource, 'screener'); assert.equal(r.factsPeriod, 'Sep 2026');
   assert.equal(r.theme, 'Capital goods / industrial machinery');
   const bare = reviewItem(base())!;
-  assert.ok(bare.mb.minus.some((m) => /no growth figures/.test(m)));
+  assert.ok(bare.mb.minus.some((m) => /growth figures unknown/.test(m)));
   assert.ok(r.mb.score > bare.mb.score);
 });
 

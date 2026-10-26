@@ -33,6 +33,7 @@ How to think (the investor's own method):
 3. Prefer bottleneck / qualified suppliers in a structural theme over generic volume.
 4. Size matters: a small company with a large event has more room. A large company rarely becomes a multibagger.
 5. Against: profit not backed by cash, dilution, press-only claims, a share that already ran a lot, a cyclical peak, a one-off.
+Missing figures are UNKNOWN, not bad — do not mark a company down only because a figure is missing; say what to check instead.
 Rules: never invent figures; quote only facts given; plain simple English; short sentences.`;
 
 function userText(x: TgItem): string {
@@ -47,7 +48,9 @@ function userText(x: TgItem): string {
     x.whatChanged ? `What changed: ${x.whatChanged}` : null,
     x.quote ? `Sentence from the source: "${x.quote}"` : null,
     `Signals: ${x.signals.join('; ') || 'none'}`,
-    `Figures: revenue YoY ${f.revenueYoY ?? 'n/a'}%, profit YoY ${f.patYoY ?? 'n/a'}%, margin ${f.marginPrior ?? 'n/a'}% → ${f.marginNow ?? 'n/a'}%, cash ÷ profit ${f.cfoToPat ?? 'n/a'}, guidance ${f.guidance ?? 'not stated'}`,
+    `Figures${x.factsSource === 'screener' ? ` (latest quarter${x.factsPeriod ? ` ${x.factsPeriod}` : ''}, profit = EPS growth)` : ''}: revenue YoY ${f.revenueYoY ?? 'n/a'}%, profit YoY ${f.patYoY ?? 'n/a'}%, margin ${f.marginPrior ?? 'n/a'}% → ${f.marginNow ?? 'n/a'}%, cash ÷ profit ${f.cfoToPat ?? 'n/a'}, guidance ${f.guidance ?? 'not stated'}`,
+    x.factsNote ? `Figures note: ${x.factsNote}` : null,
+    x.orderToRevenuePct != null ? `Order size: about ${x.orderToRevenuePct}% of one year's revenue` : null,
     `Multi-year runway stated: ${x.durationYears ? 'yes' : 'no'} · materiality: ${x.materiality ?? 'unknown'} · dilution: ${x.dilution ? 'yes' : 'no'}`,
     `Share price: move ${x.movePct ?? 'n/a'}% (${x.moveWindow}), 1 month ${x.returns.m1 ?? 'n/a'}%, 3 months ${x.returns.m3 ?? 'n/a'}%`,
   ];
