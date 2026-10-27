@@ -337,7 +337,7 @@ describe('zzz921 workflow', () => {
     // never from the schedule
     assert.match(wf, /GITHUB_EVENT_NAME" = "workflow_dispatch" \]; then\s+RECOLLECT_TICKERS=/);
     // zzz933: scheduled runs cut to save GitHub minutes (3 a day in results months, 2 otherwise)
-    assert.match(wf, /- cron: '50 3,13,21 \* 1,2,4,5,7,8,10,11 \*'/);
+    assert.match(wf, /- cron: '50 13,21 \* 1,2,4,5,7,8,10,11 \*'/);   // zzz1194: 2 runs a day (cost)
     assert.match(wf, /- cron: '50 13,21 \* 3,6,9,12 \*'/);
   });
   test('a re-collect does not refresh the scheduled job heartbeat', () => {

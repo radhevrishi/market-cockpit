@@ -35,7 +35,7 @@ on:
   schedule:
     # every 2 h from 15:20 to 23:20 IST (09:50–17:50 UTC), when results and call transcripts land, plus an early-morning and a late-night sweep for filings made after hours (zzz863)
     # zzz933 (GitHub minutes): results-season months (Jan Feb Apr May Jul Aug Oct Nov) 3 runs a day, quiet months 2 — was 7 a day
-    - cron: '50 3,13,21 * 1,2,4,5,7,8,10,11 *'
+    - cron: '50 13,21 * 1,2,4,5,7,8,10,11 *'   # zzz1194 (cost): 2 runs a day, was 3 (03:50 UTC removed — the 21:50 run already reads the night's filings)
     - cron: '50 13,21 * 3,6,9,12 *'
   workflow_dispatch:
     inputs:

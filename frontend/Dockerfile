@@ -25,6 +25,9 @@ RUN npm run verify
 
 EXPOSE 3000
 
+# zzz1194 (cost): the build needs a 4 GB heap, the running site does not. Railway bills memory by the GB-hour and Node grows its
+# heap towards the limit before it collects; 1.5 GB keeps the running app well under the build's 4 GB.
+ENV NODE_OPTIONS=--max-old-space-size=1536
 ENV NODE_ENV=production
 ENV PORT=3000
 # zzz855 — run the custom server (server.js: Next + br/gzip compression)

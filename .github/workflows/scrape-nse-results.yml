@@ -10,7 +10,7 @@ name: Scrape NSE Financial Results list (every 2h, 7 days)
 on:
   schedule:
     # every 2 h, 09:20–23:20 IST (03:50–17:50 UTC): results land after market hours and late evenings (Saturdays too)
-    - cron: '50 3,5,7,9,11,13,15,17 * * *'
+    - cron: '50 5,10,13,16 * * *'   # zzz1194 (cost): 4 runs a day, was 8 — results are filed in the Indian afternoon / evening
   workflow_dispatch:
     inputs:
       days:

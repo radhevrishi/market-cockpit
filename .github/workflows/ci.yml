@@ -5,10 +5,10 @@ name: CI (tests, types, build)
 #   2. the type-check ratchet (no new type errors; see frontend/scripts/tsc-gate.mjs),
 #   3. a production `next build`.
 # Turn on Railway → service → Settings → "Wait for CI" so a red run blocks the deploy.
+# zzz1194 (cost, 27 Oct): no run on every push to main — that was ~40% of the month's Actions minutes (226 runs × ~7 min), and the
+# Railway build already runs the same three checks (`npm run verify` in frontend/Dockerfile) before any deploy goes live.
+# Pull requests and a manual run still use it.
 on:
-  push:
-    branches: [main]
-    paths: ['frontend/**', '.github/workflows/ci.yml']
   pull_request:
     paths: ['frontend/**', '.github/workflows/ci.yml']
   workflow_dispatch:
