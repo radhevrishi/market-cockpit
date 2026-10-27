@@ -50,7 +50,8 @@ const MANUAL_OR_RETIRED = /^manual-|-manual$|^test-|-test$|^validation|smoke-tes
 // work moved to the Cloudflare Worker (workers/mc-movers) because GitHub cron
 // starvation fired only ~2 of ~75 expected runs a day. It is not broken; it is
 // retired, and the health view should say neither.
-const RETIRED = new Set<string>(['refresh-movers-live']);
+// zzz1189 — Super Investors and the unused commodity scraper were removed (zzz935 / zzz936): their old heartbeats are retired.
+const RETIRED = new Set<string>(['refresh-movers-live', 'refresh-super-investors', 'scrape-super-investors', 'scrape-commodity-prices']);
 
 // zzz885: two workflows send the same evening alert under different names; the job is healthy if EITHER ran.
 // zzz905: jobs that run less than daily, with the hours after which silence means trouble (monthly + a few days' slack).

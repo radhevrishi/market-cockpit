@@ -50,10 +50,10 @@ function weekdaysSince(from: string, today: string): string[] {
   return out;
 }
 
-interface FeedBundle { items: FeedFiling[]; latest: number; days_fetched: number; days_failed: string[]; fetched_at: string }
+interface FeedBundle { items: FeedFiling[]; latest: number; days_fetched: number; days_failed: string[]; fetched_at: string; docs?: number }
 
 async function loadWindowFeed(from: string, today: string): Promise<{ bundle: FeedBundle; cached: boolean }> {
-  const key = `thesis:recent-reporters:feed:v1:${from}:${today}`;
+  const key = `thesis:recent-reporters:feed:v2:${from}:${today}`;
   try {
     const hit = await kvGet<FeedBundle>(key);
     if (hit && Array.isArray(hit.items)) return { bundle: hit, cached: true };
@@ -74,7 +74,22 @@ async function loadWindowFeed(from: string, today: string): Promise<{ bundle: Fe
   latest.forEach(push);
   const failed: string[] = [];
   perDay.forEach((arr, i) => { if (!arr.length) failed.push(days[i]); arr.forEach(push); });
-  const bundle: FeedBundle = { items, latest: latest.length, days_fetched: days.length - failed.length, days_failed: failed, fetched_at: new Date().toISOString() };
+  // zzz1189 — a second source: the company documents the GitHub India collector stored (results releases, results presentations and
+  // call transcripts, filed in the window). The worker's feed often answers nothing from this host in results season, and then no
+  // holding was "reported" and the book got no new evidence.
+  let docs = 0;
+  try {
+    const { listDocs } = await import('@/lib/guidance-docs-store');
+    const rows = await listDocs({ market: 'IN', sinceDays: Math.max(1, Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1) });
+    const SUBJ: Record<string, string> = { RESULTS_RELEASE: 'Financial Results (company document)', PRESENTATION: 'Financial Results — investor presentation', TRANSCRIPT: 'Financial Results — earnings call transcript' };
+    for (const r of rows) {
+      if (!r.ticker || !SUBJ[r.kind]) continue;
+      const before = items.length;
+      push({ symbol: r.ticker, subject: SUBJ[r.kind], filing_date: String(r.filedAt || '').slice(0, 10), attachment_url: r.url } as FeedFiling);
+      if (items.length > before) docs++;
+    }
+  } catch { /* the exchange feed alone */ }
+  const bundle: FeedBundle = { items, latest: latest.length, days_fetched: days.length - failed.length, days_failed: failed, fetched_at: new Date().toISOString(), docs };
   // An entirely empty feed is not cached: it is far more likely to be the
   // worker being down than ten weekdays with no results on the exchange.
   if (items.length) { try { await kvSet(key, bundle, FEED_TTL_S); } catch { /* best-effort */ } }

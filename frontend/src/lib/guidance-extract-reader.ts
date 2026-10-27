@@ -158,6 +158,10 @@ export function actualsFromDocs(results: GuidanceExtractResult[]): Map<string, P
 /**
  * Production loader: document-stated actuals first, then the India results cache (enrich:v18:<SYM>, dated quarterly series). Bounded; never throws.
  */
+/** zzz1189 — the India stock-screener rows, registered by the server at start (instrumentation): this module is also bundled for the
+ *  browser, so it cannot import the snapshot reader itself. */
+let screenerRowsSource: (() => Promise<any[]>) | null = null;
+export function setScreenerRowsSource(fn: () => Promise<any[]>): void { screenerRowsSource = fn; }
 export async function loadPriorActuals(results: GuidanceExtractResult[], io?: ExtractIo): Promise<Map<string, PriorActual>> {
   const out = actualsFromDocs(results);
   try {
@@ -175,10 +179,13 @@ export async function loadPriorActuals(results: GuidanceExtractResult[], io?: Ex
         (want.get(t) || want.set(t, new Set()).get(t)!).add(pp);
       }
     }
-    const tickers = Array.from(want.keys()).slice(0, 150);
+    // zzz1189 — every India company that needs a base, not the first 150 (most of a results season's guidance was left as "growth not
+    // established"), read in chunks of 150
+    const tickers = Array.from(want.keys()).slice(0, 1500);
     if (!tickers.length) return out;
     const kv = io ?? await defaultIo();
-    const rows = await kv.mget<any>(tickers.map((t) => `enrich:v18:${t}`));
+    const rows: any[] = [];
+    for (let i = 0; i < tickers.length; i += 150) rows.push(...((await kv.mget<any>(tickers.slice(i, i + 150).map((t) => `enrich:v18:${t}`))) || []));
     tickers.forEach((t, i) => {
       const e = rows?.[i]; if (!e || typeof e !== 'object') return;
       for (const pp of Array.from(want.get(t) || [])) {
@@ -189,6 +196,25 @@ export async function loadPriorActuals(results: GuidanceExtractResult[], io?: Ex
         }
       }
     });
+    // zzz1189 — a company without a results-cache entry: the stock screener's figures (yearly profit; sales = market cap ÷ P/S, the
+    // trailing twelve months) stand in for the last completed year — labelled as such, used only for that one base year
+    if (!io) {
+      const missing = tickers.filter((t) => Array.from(want.get(t) || []).some((pp) => !out.has(actualKey('IN', t, 'REVENUE', pp)) || !out.has(actualKey('IN', t, 'PAT', pp))));
+      if (missing.length) {
+        const snapRows: any[] = screenerRowsSource ? ((await Promise.race([screenerRowsSource().catch(() => []), new Promise((r) => setTimeout(() => r([]), 4000))])) as any[]) : [];
+        const by = new Map<string, any>((snapRows || []).map((r) => [String(r.t).toUpperCase(), r]));
+        const lastFy = (() => { const d = new Date(); const y = d.getUTCFullYear() % 100; return `FY${String(d.getUTCMonth() >= 3 ? y : y - 1).padStart(2, '0')}`; })();
+        for (const t of missing) {
+          const r = by.get(t); if (!r) continue;
+          for (const pp of Array.from(want.get(t) || [])) {
+            if (pp !== lastFy) continue;
+            const sales = typeof r.mc === 'number' && typeof r.ps === 'number' && r.ps > 0 ? Math.round(r.mc / r.ps) : null;
+            if (sales && !out.has(actualKey('IN', t, 'REVENUE', pp))) out.set(actualKey('IN', t, 'REVENUE', pp), { market: 'IN', ticker: t, metric: 'REVENUE', period: pp, value: sales, unit: '₹ Cr', source: 'stock screener (trailing twelve months sales, standing in for the last completed year)' });
+            if (typeof r.niFY === 'number' && r.niFY > 0 && !out.has(actualKey('IN', t, 'PAT', pp))) out.set(actualKey('IN', t, 'PAT', pp), { market: 'IN', ticker: t, metric: 'PAT', period: pp, value: r.niFY, unit: '₹ Cr', source: 'stock screener (last full year net profit)' });
+          }
+        }
+      }
+    }
   } catch { /* best effort: no actual = growth not established */ }
   return out;
 }

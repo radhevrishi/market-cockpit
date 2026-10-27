@@ -497,6 +497,25 @@ export async function discoverEvidence(
     });
   }
 
+  // ── Source 1b (zzz1189): the company documents the GitHub India collector stored — results releases, presentations and call
+  // transcripts read from the exchanges by a host that reaches them. In results season the exchange feed often does not answer this
+  // host, and with nothing else readable the name was marked "could not be read".
+  try {
+    const { listDocs } = await import('../guidance-docs-store');
+    const t = ticker.toUpperCase().replace(/-(BE|SM|ST|BZ|E1)$/, '');
+    const rows = (await listDocs({ market: 'IN', sinceDays: 200 })).filter((r) => String(r.ticker || '').toUpperCase() === t);
+    const KIND: Record<string, DocKind> = { RESULTS_RELEASE: 'results', PRESENTATION: 'investor_presentation', TRANSCRIPT: 'transcript' };
+    const found: DocCandidate[] = rows.filter((r) => KIND[r.kind]).map((r) => ({
+      url: r.url, kind: KIND[r.kind], tier: (r.kind === 'TRANSCRIPT' ? 2 : 1) as SourceTier, source: 'company documents (exchange filings collected)',
+      period: null, dateIso: String(r.filedAt || '').slice(0, 10) || null, label: `${r.kind === 'RESULTS_RELEASE' ? 'Results' : r.kind === 'PRESENTATION' ? 'Investor presentation' : 'Call transcript'} ${String(r.filedAt || '').slice(0, 10)}`,
+    }));
+    const known = new Set(candidates.map((c) => c.url));
+    candidates.push(...found.filter((c) => !known.has(c.url)));
+    attempts.push({ source: 'company documents (exchange filings collected)', outcome: found.length ? 'found' : 'empty', detail: found.length ? `${found.length} document(s) for ${t}` : `none stored for ${t}`, found: found.length });
+  } catch (e: any) {
+    attempts.push({ source: 'company documents (exchange filings collected)', outcome: 'error', detail: String(e?.message || e), found: 0 });
+  }
+
   // ── Source 2: the screener.in company page (full concall history).
   let scripHint: string | null = null;
   try {

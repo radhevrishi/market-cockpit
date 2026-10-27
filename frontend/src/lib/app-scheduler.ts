@@ -391,7 +391,7 @@ async function gainersJob(ctx: JobCtx, market: 'US'): Promise<JobOutcome> {
   return { ok: true, status: 200 };
 }
 
-async function portfolioJob(ctx: JobCtx, days = 4): Promise<JobOutcome> {
+async function portfolioJob(ctx: JobCtx, days = 7): Promise<JobOutcome> {
   const st = await ctx.call('/api/v1/book/state', { timeoutMs: 30_000 });
   if (!st.ok || !st.json) return fail(st, 'book/state');
   const all: string[] = (st.json?.book?.tickers || []).filter((t: any) => t.held || t.benched).map((t: any) => String(t.ticker).toUpperCase());
@@ -475,7 +475,7 @@ export const APP_JOBS: readonly AppJob[] = [
   } },
   // zzz1166 — Transformational Gainers: each stored gainers session (≤ 14 days back) is saved to the 60-day board, then the
   // strongest new events get the AI multibagger read (≤ 12 a call, ≤ 60 a day in total).
-  { name: 'transformational-archive', crons: ['17 3 * * 2-6', '23 12 * * 1-5', '43 13 * * 1-5', '47 23 * * 1-5'],   // zzz1188 — + 17:53 / 19:13 IST: today's India gainers (swept 16:20 IST) reach the board the same evening
+  { name: 'transformational-archive', crons: ['17 3 * * 2-6', '23 12 * * 1-5', '43 13 * * 1-5', '27 17 * * 1-5', '47 23 * * 1-5'],   // zzz1188/1189 — + 17:53 / 19:13 / 22:57 IST: today's India gainers (swept from 16:20 IST, sometimes finishing late evening) reach the board the same day
     timeoutMs: 12 * MIN, workflow: 'daily-research.yml', does: 'GET /api/v1/ai-gainers/research?archive=1&lite=1 for the stored sessions of the last 14 days (IN + US), then POST /api/v1/transformational/ai {auto} per market', run: transformationalJob },
   // zzz913 — Daily Gainers Brief (was a Claude scheduled task). Logic in lib/gainers-brief.ts (loaded lazily: no import edit here).
   { name: 'gainers-in-backup', crons: ['41 11 * * 1-5'], timeoutMs: 40 * MIN, workflow: 'daily-research.yml', does: 'GET /api/v1/ai-gainers/research?market=IN; only when GitHub’s gainers-in sweep is missing or stalled: GET /api/v1/ai-gainers?market=IN, POST /api/v1/ai-gainers/research rounds (no re-process)', run: async (ctx) => (await import('./gainers-brief')).gainersInBackupJob(ctx) },

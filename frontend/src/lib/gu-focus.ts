@@ -79,22 +79,31 @@ function relMid(c: any): number | null {
   return b != null && a != null && b > 0 ? Math.round(((a - b) / b) * 1000) / 10 : null;
 }
 export function raiseLine(e: GuidanceEvent): { text: string; pct: number | null; smallBaseOnly: boolean; pp: boolean; ppDelta: number | null; detail: RaiseDetail } | null {
-  const ups = (e.changes || []).filter((c: any) => c?.direction === 'UP' && c?.before && c?.after);
-  if (!ups.length) return null;
+  // zzz1189 — a change is compared only like for like (same unit and currency, a believable size: First Industrial's "$0.08 →
+  // 94.5–96.5 occupancy" read as +119,275%), and an "other" measure (occupancy, interest income, investment volume) never leads:
+  // it is listed as "+ N more"; a filing whose only raises are such measures is a small raise, not table A.
+  const same = (a: any, b: any) => String(a ?? '') === String(b ?? '');
+  const comparable = (c: any) => same(c.before?.unit, c.after?.unit) && (!c.before?.currency || !c.after?.currency || same(c.before.currency, c.after.currency))
+    && !!c.before?.isGrowthRate === !!c.after?.isGrowthRate && (num(c.percentageChange) == null || (num(c.percentageChange) as number) <= 400);
+  const all = (e.changes || []).filter((c: any) => c?.direction === 'UP' && c?.before && c?.after && comparable(c));
+  if (!all.length) return null;
+  const core = all.filter((c: any) => c.metric !== 'OTHER');
+  const onlyOther = !core.length;
+  const ups = onlyOther ? all : [...core, ...all.filter((c: any) => c.metric === 'OTHER')];
   const pctOf = (c: any) => num(c.percentageChange) ?? num(c.percentagePointChange);
   // zzz881: only the floor moved (top end the same, Planet Labs EBITDA $0–10M → $3–10M) or the old figure started at zero: not a strong raise
   const weak = (c: any) => isSmallEpsBase(c) || (num(c.before?.high) != null && num(c.before?.high) === num(c.after?.high)) || (num(c.before?.low) != null && (num(c.before?.low) as number) <= 0);
   const strength = (c: any): number => (weak(c) ? -1 : num(c.percentageChange) ?? (num(c.percentagePointChange) != null ? relMid(c) ?? 0 : -1));
-  const c: any = ups.slice().sort((a: any, b: any) => strength(b) - strength(a) || (pctOf(b) ?? 0) - (pctOf(a) ?? 0))[0];
+  const c: any = (onlyOther ? ups : core).slice().sort((a: any, b: any) => strength(b) - strength(a) || (pctOf(b) ?? 0) - (pctOf(a) ?? 0))[0];
   const pct = pctOf(c);
   const isPp = num(c.percentageChange) == null && num(c.percentagePointChange) != null;
-  const small = weak(c);
+  const small = weak(c) || onlyOther;
   const sign = pct == null ? '' : ` (${pct >= 0 ? '+' : ''}${Math.round(pct * 10) / 10}${isPp ? ' pp' : '%'})`;
   const others = ups.filter((u: any) => u !== c);
   const smallOther = others.find((u: any) => isSmallEpsBase(u));
   const more = others.length ? ` + ${others.length} more${smallOther ? ` (incl. EPS +${Math.round(pctOf(smallOther) ?? 0)}% from a small base)` : ''}` : '';
   const mWord = (() => { const l = metricLabelOf({ metric: c.metric, raw: c.after?.raw }); const base = METRIC_WORD[c.metric] || String(c.metric).toLowerCase(); return l === 'Other' || l === METRIC_LABEL[c.metric as GuMetric] ? base : l.charAt(0).toLowerCase() + l.slice(1); })();
-  const smallNote = !small ? '' : isSmallEpsBase(c) ? ` — from a small base of ${c.before?.currency || ''}${num(c.before?.midpoint) ?? '?'} a share` : ' — only the low end moved, or it started from zero';
+  const smallNote = !small ? '' : onlyOther ? ' — not a revenue / profit / EPS / cash-flow measure' : isSmallEpsBase(c) ? ` — from a small base of ${c.before?.currency || ''}${num(c.before?.midpoint) ?? '?'} a share` : ' — only the low end moved, or it started from zero';
   return {
     // zzz895: a % figure for a money metric is a growth rate — say so ('net profit growth', not 'net profit')
     // zzz1117 (G05) — the measure's own words ("core revenue", an "other" measure's name) instead of a bare "other"

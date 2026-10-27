@@ -6,7 +6,7 @@ import { pillStyle } from './GuPanel';
 import { useGuUniverse, universeStatusLine } from './useGuUniverse';
 import { setHeldKeys } from '@/lib/gu-held-store';
 import { ageText } from '@/lib/gu-client-cache';
-import { buildFocusList, holdInconsistentGrowth, focusGrowthHorizon, type FocusVerdict } from '@/lib/gu-focus';
+import { buildFocusList, holdInconsistentGrowth, focusGrowthHorizon, sizeOf, type FocusVerdict } from '@/lib/gu-focus';
 import { INDIA_LARGE_CAPS } from '@/lib/india-large-caps';
 import type { GuidanceEvent } from '@/lib/guidance-upgrades-types';
 import type { FocusRow } from '@/lib/gu-focus';
@@ -161,6 +161,7 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
   // zzz906: the first 20 of each ranked list; "+ Show all" opens the rest (owner request, 6 Oct)
   const [allA, setAllA] = useState(false);
   const [allB, setAllB] = useState(false);
+  const [allC, setAllC] = useState(false);
   const raisedAll = useMemo(() => inMk.filter((r) => r.raised && !r.smallRaise), [inMk]);
   const growthAll = useMemo(() => inMk.filter((r) => !(r.raised && !r.smallRaise) && r.growth), [inMk]);
   // zzz923: the Next Sky Gold score, for every name in the two focus tables (one batched fetch for those names only)
@@ -329,6 +330,43 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
           </React.Fragment>))}
           {growthAll.length > FOCUS_STEP && <MoreRow shown={growthRows.length} total={growthAll.length} open={allB} onToggle={() => setAllB((v) => !v)} cols={COLS_B.length - hiddenIn(COLS_B)} />}
         </FocusTable>
+        {(() => {
+          // zzz1189 — "nothing latest here": the newest guidance of the last 14 days at ANY growth (this results season's calls), so a
+          // fresh 20–25% guide is seen the day it is read, not only when it clears 30% or is a raise. Newest first; A / B names left out.
+          const inAB = new Set([...raisedAll, ...growthAll].map((r) => `${r.market}:${(r.ticker || r.company).toUpperCase()}`));
+          const since = new Date(Date.now() - 14 * 86_400_000).toISOString().slice(0, 10);
+          const seen = new Set<string>();
+          const rows = (data?.records || []).map((r: any) => ({ r, d: String(r.sourceDate || r.record?.sources?.[0]?.date || '').slice(0, 10) }))
+            .filter(({ r, d }) => d >= since && (mk === 'ALL' || r.record?.market === mk))
+            .filter(({ r }) => { const m = r.record?.market === 'US' ? 'US' : 'IN'; const k = `${m}:${String(r.record?.ticker || r.record?.company || '').toUpperCase()}`; if (inAB.has(k) || seen.has(k)) return false; seen.add(k); return !smid || sizeOf(m, r.record?.ticker || null, { caps: capsAll, indiaLarge: INDIA_LARGE_CAPS }).size !== 'LARGE'; })
+            .sort((a, b) => b.d.localeCompare(a.d));
+          if (!rows.length) return null;
+          const shown = allC ? rows : rows.slice(0, FOCUS_STEP);
+          return (
+            <div data-gu-newest style={{ display: 'grid', gap: 6, marginTop: 6 }}>
+              <div style={{ fontSize: 15, fontWeight: 900 }}>C. Newest guidance — last 14 days, any growth ({rows.length})</div>
+              <div style={{ fontSize: 12, color: R.dim }}>Guidance read from company documents in the last two weeks (this season's results calls and presentations), newest first. Not a raise and under 30%, so not in A or B — but current.</div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                  <thead><tr>{['#', 'Company', 'Guidance', 'Period', 'Source', 'Reported'].map((h) => <th key={h} style={{ ...td, textAlign: 'left', fontSize: 11, color: R.dim, fontWeight: 800 }}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {shown.map(({ r, d }, i) => (
+                      <tr key={`${r.entityKey || r.record?.id}-${i}`}>
+                        <td style={{ ...td, color: R.dim }}>{i + 1}</td>
+                        <td style={td}><b>{r.record?.company}</b><div style={{ fontSize: 11.5, color: R.dim }}>{FLAG[(r.record?.market === 'US' ? 'US' : 'IN') as 'IN' | 'US']} {r.record?.ticker || ''}</div></td>
+                        <td style={td}><b style={{ color: R.green }}>{r.display}</b>{(r.alsoDisplay || []).slice(0, 2).map((a: any, j: number) => <div key={j} style={{ fontSize: 11.5, color: R.dim }}>{a.display}</div>)}</td>
+                        <td style={{ ...td, whiteSpace: 'nowrap' }}>{r.period || ''}</td>
+                        <td style={{ ...td, fontSize: 12 }}>{r.sourceUrl && /^https?:\/\//i.test(r.sourceUrl) ? <a href={r.sourceUrl} target="_blank" rel="noopener noreferrer">{r.sourceName || 'Company document'}</a> : (r.sourceName || 'Company document')}</td>
+                        <td style={{ ...td, whiteSpace: 'nowrap' }}>{reportedLabel(d)}</td>
+                      </tr>
+                    ))}
+                    {rows.length > FOCUS_STEP && <MoreRow shown={shown.length} total={rows.length} open={allC} onToggle={() => setAllC((v) => !v)} cols={6} />}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })()}
         {heldShown.length > 0 && (
           <div data-gu-held style={{ fontSize: 12, color: R.dim, display: 'grid', gap: 2 }}>
             <b style={{ color: R.amber }}>Held back for review ({heldShown.length}) — a growth worked out from company numbers that does not match the revenue the company reports:</b>
