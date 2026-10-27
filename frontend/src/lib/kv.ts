@@ -21,7 +21,7 @@ import { gzipSync, gunzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
 import { MemoryKvStore } from './kv-memory';
 import { VERSIONED_SET_LUA, parseVersionedResult, type VersionedValue } from './kv-versioned';
-import { KvReadCache, KvUsage, readThrough } from './kv-read-cache';
+import { KvReadCache, KvUsage, readThrough, isCacheableKey } from './kv-read-cache';
 
 let redis: Redis | null = null;
 let redisAvailable: boolean | null = null;
@@ -59,8 +59,15 @@ function restCreds(): { url: string; token: string } | null {
 
 // In-memory fallback store
 // Versioned key avoids treating legacy non-expiring Map entries as fresh.
-const MEM_STORE: MemoryKvStore = (globalThis as any).__MC_KV_STORE_V2__ || new MemoryKvStore();
-(globalThis as any).__MC_KV_STORE_V2__ = MEM_STORE;
+// zzz1196 — bounded when Redis is configured (it holds everything; this copy only answers during a Redis outage): rebuildable
+// market data up to KV_MEM_FALLBACK_MB (default 48 MB), personal state / locks always kept (isCacheableKey = false for those).
+const MEM_STORE: MemoryKvStore = (globalThis as any).__MC_KV_STORE_V3__ || new MemoryKvStore(Date.now, {
+  maxBytes: restCreds() ? Math.max(8, Number(process.env.KV_MEM_FALLBACK_MB) || 48) * 1024 * 1024 : undefined,
+  pinned: (k) => !isCacheableKey(k),
+});
+(globalThis as any).__MC_KV_STORE_V3__ = MEM_STORE;
+/** zzz1196: the fallback store's size, for the memory samples. */
+export function kvMemStoreSize() { return MEM_STORE.size(); }
 
 // ── zzz1049: memory read cache + command counters ────────────────────────────
 const READ_CACHE: KvReadCache = (globalThis as any).__MC_KV_READ_CACHE__ || new KvReadCache({

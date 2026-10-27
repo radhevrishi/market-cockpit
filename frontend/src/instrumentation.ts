@@ -13,6 +13,7 @@ export async function register() {
   try { const [m, runs] = await Promise.all([import('./lib/anthropic-meter'), import('./lib/ai-runs')]); m.setRunRecorder((r) => { try { void runs.trackRun(runs.buildRunRecord(r as any)); } catch { /* best-effort */ } }); } catch (e) { console.warn('[ai-runs] recorder not set', e); }
   // zzz1189 — guidance growth bases fall back to the stock screener's India figures (the reader is also in browser bundles, so it is handed the source)
   try { const [g, sc] = await Promise.all([import('./lib/guidance-extract-reader'), import('./lib/screener/snapshot-cache')]); g.setScreenerRowsSource(async () => ((await sc.getSnapshot('IN')) as any)?.rows || []); } catch (e) { console.warn('[guidance] screener source not set', e); }
+  try { (await import('./lib/mem-sampler')).startMemSampler(); } catch (e) { console.warn('[mem-sampler] not started', e); }   // zzz1196
   try { (await import('./lib/app-scheduler')).startAppScheduler(); } catch (e) { console.warn('[app-scheduler] not started', e); }
   // zzz905: register the KV reader so every server path's holiday check uses the collected NSE calendar (refreshes 12-hourly)
   try { void (await import('./lib/nse-holidays-server')).warmNseHolidays(); } catch (e) { console.warn('[nse-holidays] warm skipped', e); }

@@ -367,8 +367,9 @@ describe('source checks: what changed and what must not', () => {
       assert.match(s, /getSnapshot\(/, p);
       assert.doesNotMatch(s, /FROM screener_snapshot/, p);
     }
-    assert.match(read('lib/screener/us-build.ts'), /noteSnapshotWritten\('US'\)/);
-    assert.match(read('lib/screener/in-build.ts'), /noteSnapshotWritten\('IN'\)/);
+    assert.match(read('lib/screener/us-build.ts'), /publishSnapshot\('US'/);   // zzz1197: publishSnapshot calls noteSnapshotWritten
+    assert.match(read('lib/screener/in-build.ts'), /publishSnapshot\('IN'/);
+    assert.match(read('lib/screener/snapshot-publish.ts'), /noteSnapshotWritten\(m\)/);
   });
   test('quote route: per-symbol memo, shared NSE calls and an NSE deadline with Yahoo in parallel', () => {
     const s = read('app/api/market/quote/route.ts');

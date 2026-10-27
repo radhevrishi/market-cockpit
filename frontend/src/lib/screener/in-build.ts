@@ -21,8 +21,8 @@ import { rowPatternFields, rowScanFields, resolveInQuote, priceSourceNote, rowTv
 import type { NseDay } from './tech';
 import { deliveryFigures } from '../accumulation';
 import { tvSectorOf } from './tv-sectors';
-import { noteSnapshotWritten } from './snapshot-cache';   // zzz1053
-import { rowsJson, type ScreenRow } from './types';
+import { publishSnapshot } from './snapshot-publish';   // zzz1197 (was noteSnapshotWritten, zzz1053)
+import { type ScreenRow } from './types';
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -310,8 +310,7 @@ export async function buildInSnapshot(opts: { fundBudgetMs?: number } = {}): Pro
   notes.push(deliveryNote(bhav));   // zzz1046a
   { const n = rows.filter((r) => r.pxAlt != null).length; if (n) notes.push(`${n} companies show the completed ${rows.find((r) => r.pxAlt != null)?.pxAt} close from the daily bars: NSE's price file for that day is not out yet (it usually comes out in the evening); change today is measured from NSE's ${latest.date} close`); }   // zzz1043
   const sources = ['NSE company list', 'NSE daily price files', 'screener.in company pages', 'Yahoo daily prices', 'Yahoo company profile'];
-  await dbQuery(`INSERT INTO screener_snapshot (market, built_at, rows, meta) VALUES ('IN', now(), $1, $2) ON CONFLICT (market) DO UPDATE SET built_at = now(), rows = EXCLUDED.rows, meta = EXCLUDED.meta`,
-    [rowsJson(rows), JSON.stringify({ notes, sources })]);
-  noteSnapshotWritten('IN');   // zzz1053: the shared snapshot cache re-reads it on the next request
+  const pub = await publishSnapshot('IN', rows, { notes, sources });   // zzz1197: unchanged rows are not re-written
+  if (!pub.published) notes.push('No change since the last build: the published snapshot was kept');
   return { ok: true, rows: rows.length, notes, ms: Date.now() - t0 };
 }

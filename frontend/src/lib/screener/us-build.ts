@@ -15,8 +15,8 @@ import { refreshTech, type TechStored } from './tech-fetch';
 import { usSessionOpen } from './tech';
 import { rowPatternFields, rowScanFields, resolveUsQuote, priceSourceNote, rowTvFields, applyRsRating, applyTraderSetups, ruleOf40 } from './pine';
 import { tvSectorOf } from './tv-sectors';
-import { noteSnapshotWritten } from './snapshot-cache';   // zzz1053
-import { rowsJson, type ScreenRow, type ScreenSnapshot } from './types';
+import { publishSnapshot } from './snapshot-publish';   // zzz1197 (was noteSnapshotWritten, zzz1053)
+import { type ScreenRow, type ScreenSnapshot } from './types';
 
 const SEC_UA = process.env.SEC_USER_AGENT || 'market-cockpit research radhev.232@gmail.com';
 const BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
@@ -366,8 +366,7 @@ export async function buildUsSnapshot(now = new Date()): Promise<{ ok: boolean; 
   notes.push(r40TtmDiffNote(r40TtmDiff(rows)));   // zzz1045e — who would join / leave a Rule of 40 ≥ 40 screen on the TTM figure
   if (noSec) notes.push(`${noSec} listed companies have no quarterly SEC figures (foreign companies filing 20-F / 40-F, which file no quarterly figures in SEC's data; new listings) — their company-figure filters fail`);
   const snap: ScreenSnapshot = { market: 'US', builtAt: new Date().toISOString(), rows, notes, sources: ['Nasdaq stock list', 'SEC filings (XBRL frames)', 'Yahoo daily prices', 'Yahoo company profile'] };
-  await dbQuery(`INSERT INTO screener_snapshot (market, built_at, rows, meta) VALUES ('US', now(), $1, $2) ON CONFLICT (market) DO UPDATE SET built_at = now(), rows = EXCLUDED.rows, meta = EXCLUDED.meta`,
-    [rowsJson(rows), JSON.stringify({ notes, sources: snap.sources })]);
-  noteSnapshotWritten('US');   // zzz1053: the shared snapshot cache re-reads it on the next request
+  const pub = await publishSnapshot('US', rows, { notes, sources: snap.sources });   // zzz1197: unchanged rows are not re-written
+  if (!pub.published) notes.push('No change since the last build: the published snapshot was kept');
   return { ok: true, rows: rows.length, notes, ms: Date.now() - t0 };
 }

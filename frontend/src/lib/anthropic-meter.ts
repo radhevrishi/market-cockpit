@@ -332,11 +332,34 @@ type RunRecorderInput = { job: string; model: string | null; startedAt: string; 
 // zzz1193 — on globalThis: instrumentation and the routes are separate server bundles (a module variable is not shared)
 export function setRunRecorder(f: ((r: RunRecorderInput) => void) | null): void { (globalThis as any).__mcAiRunRecorder = f; }
 
-export interface GateResult { allowed: boolean; spent: number; cap: number; message?: string }
+export interface GateResult { allowed: boolean; spent: number; cap: number; message?: string; reservation?: Reservation }
 
 const totalKey = (month: string) => `anthropic:spend-total:${METER_VERSION}:${month}`;
+// zzz1197 — cost audit item 5: the gate used to read what was spent and let the call go; ten calls arriving together all saw the
+// same remaining allowance. Now each metered call RESERVES its worst-case cost (prompt size + max output) in an atomic counter
+// before it is sent, and gives the reservation back when the answer (or a refusal) is in — the real cost is then recorded as
+// before. A call that never answered (timeout / network) keeps its reservation for the rest of the month (it may have been
+// billed). If the budget store cannot take the reservation, new paid work waits (existing results are untouched).
+// Rollback: AI_RESERVE_OFF=1.
+const reservedKey = (month: string) => `anthropic:spend-reserved:${METER_VERSION}:${month}`;
+export interface Reservation { usd: number; month: string; settled: boolean }
+/** Worst-case cost of a call: every character of the request at ~3 characters a token, plus the full output allowance. Pure. */
+export function estimateCallUsd(model: string, body: { max_tokens?: number; system?: any; messages?: any; tools?: any }): number {
+  let chars = 0;
+  try { chars = JSON.stringify([body.system ?? '', body.messages ?? [], body.tools ?? []]).length; } catch { chars = 0; }
+  return costOf(model, { input_tokens: Math.min(400_000, Math.ceil(chars / 3)), output_tokens: Math.max(0, Number(body.max_tokens) || 4096) });
+}
+/** Pure: may a reservation stand? `reservedAfter` = the counter after adding this call. */
+export function reservationFits(spent: number, reservedAfter: number, cap: number): boolean { return spent + Math.max(0, reservedAfter) <= cap; }
+/** Gives a reservation back (once). The actual cost is recorded separately by record(). */
+export async function settleReservation(r: Reservation | undefined): Promise<void> {
+  if (!r || r.settled || !(r.usd > 0)) return;
+  r.settled = true;
+  await kvIncrByFloat(reservedKey(r.month), -r.usd, SHARD_TTL_S).catch(() => null);
+}
 let lastSpent: { month: string; usd: number } | null = null;
-export async function spendGate(): Promise<GateResult> {
+/** `estUsd` > 0 reserves that much before the call (zzz1197); callers then MUST settleReservation(gate.reservation). */
+export async function spendGate(estUsd = 0): Promise<GateResult> {
   const cap = monthlyCapUsd();
   let spent = 0;
   const month = monthOf();
@@ -350,6 +373,16 @@ export async function spendGate(): Promise<GateResult> {
   }
   if (spent >= cap) {
     return { allowed: false, spent, cap, message: `Monthly AI cap reached ($${spent.toFixed(2)} of $${cap}) — raise AI_MONTHLY_CAP_USD in Railway to continue` };
+  }
+  if (estUsd > 0 && isRedisAvailable() && process.env.AI_RESERVE_OFF !== '1') {
+    const after = await kvIncrByFloat(reservedKey(month), estUsd, SHARD_TTL_S).catch(() => null);
+    if (after == null) return { allowed: false, spent, cap, message: 'The AI budget store is not answering — new AI work waits until it is back (nothing already found is lost)' };
+    const reservation: Reservation = { usd: estUsd, month, settled: false };
+    if (!reservationFits(spent, after, cap)) {
+      await settleReservation(reservation);
+      return { allowed: false, spent, cap, message: `Monthly AI cap reached with calls in progress ($${spent.toFixed(2)} spent + $${Math.max(0, after - estUsd).toFixed(2)} in progress of $${cap})` };
+    }
+    return { allowed: true, spent, cap, reservation };
   }
   return { allowed: true, spent, cap };
 }
@@ -476,7 +509,7 @@ export async function anthropicMessages(feature: string, body: MessagesBody, opt
     return new Response(JSON.stringify({ error: { type: 'no_key', message: 'No ANTHROPIC_API_KEY is configured' } }), { status: 401, headers: { 'content-type': 'application/json' } });
   }
   const startedAt = new Date();
-  const gate = await spendGate();
+  const gate = await spendGate(estimateCallUsd(body.model, body));
   if (!gate.allowed) {
     await record(feature, 0, null, true);
     track(feature, opts.run, body.model, startedAt, null, 0, 'cap_reached', gate.message);
@@ -491,12 +524,14 @@ export async function anthropicMessages(feature: string, body: MessagesBody, opt
       signal: opts.signal,
     });
   } catch (e: any) {
+    // zzz1197: no answer — the reservation stays (it may have been billed)
     // No answer at all (timeout, DNS, reset). Recorded as a failure so the
     // data watch can tell "nobody asked" from "everybody asked and was refused".
     await record(feature, 0, null, false, { status: 0, message: String(e?.message || e) });
     track(feature, opts.run, body.model, startedAt, null, 0, 'failed', String(e?.message || e));
     throw e;
   }
+  await settleReservation(gate.reservation);   // zzz1197: an answer (or a refusal) is in — the real cost is recorded below
   if (resp.ok) {
     // The clone is read for accounting; the caller reads the original.
     let usage: Usage | null = null; let answer: any = null;
@@ -531,13 +566,13 @@ async function openaiMessages(feature: string, body: MessagesBody, opts: MeterOp
     return new Response(JSON.stringify({ error: { type: 'unpriced_model', message: `model ${opts.openaiModel} has no price in the meter, so it is not used` } }), { status: 400, headers: { 'content-type': 'application/json' } });
   }
   const startedAt = new Date();
-  const gate = await spendGate();
+  const req = toOpenAIRequest(body, model, opts.reasoningEffort || process.env.OPENAI_REASONING_EFFORT || 'minimal');
+  const gate = await spendGate(estimateCallUsd(model, { ...body, max_tokens: Number(req.max_completion_tokens) || body.max_tokens }));
   if (!gate.allowed) {
     await record(feature, 0, null, true);
     track(feature, opts.run, model, startedAt, null, 0, 'cap_reached', gate.message);
     return new Response(JSON.stringify({ error: { type: 'spend_cap', message: gate.message } }), { status: 402, headers: { 'content-type': 'application/json' } });
   }
-  const req = toOpenAIRequest(body, model, opts.reasoningEffort || process.env.OPENAI_REASONING_EFFORT || 'minimal');
   let resp: Response;
   try {
     resp = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -551,6 +586,7 @@ async function openaiMessages(feature: string, body: MessagesBody, opts: MeterOp
     track(feature, opts.run, model, startedAt, null, 0, 'failed', String(e?.message || e));
     throw e;
   }
+  await settleReservation(gate.reservation);   // zzz1197: answered — give the reservation back; the real cost is recorded below
   if (!resp.ok) {
     // OpenAI's error body is `{ error: { message, type, code } }` — the same
     // shape callers already parse, so it is passed through untouched.

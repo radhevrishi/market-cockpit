@@ -8,6 +8,7 @@
 import { NextResponse } from 'next/server';
 import { internalBase } from '@/lib/internal-base';
 import { kvUsageSnapshot } from '@/lib/kv';
+import { memoryReport } from '@/lib/mem-sampler';
 
 export const runtime = 'nodejs';
 export const maxDuration = 15;
@@ -77,7 +78,8 @@ const MEMO_MS = 90_000;   // zzz1049: 30 s → 90 s (each build fires eleven pro
 // zzz1049 — Upstash commands sent by this process, per hour and per key family (memory counter; always live, never memoised)
 // zzz1194 — the running process's memory (Railway bills memory by the GB-hour): rss = what the host counts, heap = JavaScript objects
 const procMem = () => { try { const m = process.memoryUsage(); const mb = (v: number) => Math.round(v / 1048576); return { rssMb: mb(m.rss), heapUsedMb: mb(m.heapUsed), heapTotalMb: mb(m.heapTotal), externalMb: mb(m.external), uptimeH: Math.round(process.uptime() / 360) / 10 }; } catch { return null; } };
-const withKv = (body: any) => ({ ...body, kvUsage: kvUsageSnapshot(), processMemory: procMem() });
+const withKv = (body: any) => ({ ...body, kvUsage: kvUsageSnapshot(), processMemory: procMem(), memory: memReport() });
+const memReport = () => { try { return memoryReport(); } catch { return null; } };
 /** Optional extras must never hold the status answer up: give each at most `ms`. */
 function capped<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
   return Promise.race([p, new Promise<T>((r) => setTimeout(() => r(fallback), ms))]);

@@ -686,7 +686,9 @@ async function runOne(d: DueSlot, base: string, secret: string): Promise<void> {
   const log = (m: string) => console.log(`[app-scheduler] ${job.name} ${slotIso}Z: ${m}`);
   let out: JobOutcome;
   try {
-    out = await job.run({ slot: d.slot, deadline: t0 + job.timeoutMs, call: makeCall(base, secret, t0 + job.timeoutMs, log), sleep, log });
+    // zzz1196: memory before / after each heavy job (system-status → memory.heavyJobs)
+    const { withJobMemory } = await import('./mem-sampler');
+    out = await withJobMemory(job.name, () => job.run({ slot: d.slot, deadline: t0 + job.timeoutMs, call: makeCall(base, secret, t0 + job.timeoutMs, log), sleep, log }));
   } catch (e: any) {
     out = { ok: false, status: 0, error: `job threw: ${String(e?.message || e).slice(0, 200)}` };
   }
