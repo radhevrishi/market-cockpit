@@ -42,6 +42,7 @@ export const PROTECTED_API_PREFIXES = [
   '/api/v1/ai-verify',           // zzz854 — AI verification queue (paid AI; cron uses the x-cron-secret header)
   '/api/v1/guidance-docs',       // zzz857 — company guidance documents (collector ingest uses the x-cron-secret header)
   '/api/v1/results-pdf',         // zzz879 — India results PDF backup (paid AI; cron uses the x-cron-secret header)
+  '/api/v1/guidance-ai-check',   // zzz1193 — guidance AI check (POST is paid AI, on the owner's click)
   '/api/v1/guidance-extract',    // zzz857 — AI guidance extractor (paid AI; cron uses the x-cron-secret header)
   // zzz882 security audit: paid-AI and job-starting routes that were open to anyone
   '/api/v1/us/ai-summary',       // paid AI + fetches a filing URL

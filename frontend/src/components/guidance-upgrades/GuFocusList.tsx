@@ -17,6 +17,8 @@ import { sortByReported, reportedLabel } from '@/lib/gu-focus-sort';
 import { FvCells, FV_HEAD, FV_COLS } from './GuFairValue';
 import { opportunityScore, type Opportunity } from '@/lib/gu-opportunity';
 import { OppCells, OppHead, OppBreakdownRow, OPP_COLS } from './GuOpportunity';
+import { GuAiCheckPanel, useGuAiCheck } from './GuAiCheck';
+import { aiFocusRows, type AiCheckTarget } from '@/lib/gu-ai-check';
 
 /** zzz1142 (evening verification E1) — every header and cell carries its column's NAME (`data-c`), and Compact hides columns by name
  *  (price, EPS estimate, source), never by position: a "no fair value" cell spanning two columns shifted the positions, so Compact hid
@@ -48,6 +50,7 @@ function CompanyCell({ r, td }: { r: FocusRow; td: React.CSSProperties }) {
     <td style={td} className="gu-co">
       <b>{r.company}</b>
       <div style={{ fontSize: 11.5, color: R.dim }}>{FLAG[r.market]} {r.ticker || ''}{r.capText ? ` · ${r.capText}` : ' · size not known'}</div>
+      {r.aiAdded && <div title={r.aiQuote ? `“${r.aiQuote}”` : undefined} style={{ fontSize: 11, fontWeight: 800, color: R.violet }}>🤖 added by AI check</div>}
     </td>
   );
 }
@@ -121,6 +124,8 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
   const hiddenIn = (ids: readonly string[]) => (cols === 'compact' ? ids.filter((c) => COMPACT_HIDDEN.includes(c)).length : 0);
   const setCols = (v: 'compact' | 'all') => { setCols0(v); try { localStorage.setItem('mc:gu-focus-cols:v1', v); } catch { /* blocked */ } };
   const uni = useGuUniverse({ market: 'ALL', view: 'active' });
+  const aic = useGuAiCheck();   // zzz1193
+  const aiAddSig = useMemo(() => aic.results.filter((x) => x.decision === 'ADD' && x.ticker).map((x) => `${x.market}:${x.ticker!.toUpperCase()}`).sort().join(','), [aic.results]);
   const { data } = uni;
   const uniLine = universeStatusLine(uni, ageText);   // zzz1113 (G07)
   const [mk, setMk] = useState<Mk>('ALL');
@@ -131,7 +136,7 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
   // the names to read figures for: the listed rows sized by the graded caps only (so reading figures never changes what is asked)
   const skySig = useMemo(() => buildFocusList(data?.summary?.highGrowthGroups, events, new Date(), Infinity, { caps, indiaLarge: INDIA_LARGE_CAPS })
     .filter((r) => (!smid || r.size !== 'LARGE') && ((r.raised && !r.smallRaise) || r.growth)).map(skyKey).filter(Boolean).sort().join(','), [data, events, caps, smid]);
-  const skyKeys = useMemo(() => (skySig ? skySig.split(',') : []), [skySig]);
+  const skyKeys = useMemo(() => Array.from(new Set([...(skySig ? skySig.split(',') : []), ...(aiAddSig ? aiAddSig.split(',') : [])])), [skySig, aiAddSig]);
   // zzz925: India company names go with the request, so a BSE-only company (BMW Industries, filed as "BMW") is found on screener.in by name
   const skyNames = useMemo(() => {
     const m: Record<string, string> = {};
@@ -146,7 +151,22 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
     for (const [k, f] of Object.entries(facts)) if (k.startsWith('IN:') && f?.mcap && f.mcap > 0) inCaps[k.slice(3)] = f.mcap;
     return { IN: { ...inCaps, ...(caps?.IN || {}) }, US: { ...skyCaps.US, ...(caps?.US || {}) } };
   }, [facts, caps, skyCaps]);
-  const built = useMemo(() => buildFocusList(focusGrowthHorizon(data?.summary?.highGrowthGroups, horizon), events, new Date(), Infinity, { caps: capsAll, indiaLarge: INDIA_LARGE_CAPS }), [data, events, capsAll, horizon]);   // zzz906: no cut-off before filtering (a small raise like Yasho fell outside the old top 80)
+  const built0 = useMemo(() => buildFocusList(focusGrowthHorizon(data?.summary?.highGrowthGroups, horizon), events, new Date(), Infinity, { caps: capsAll, indiaLarge: INDIA_LARGE_CAPS }), [data, events, capsAll, horizon]);
+  // zzz1193 — guidance the AI check read and checked (sentence found in the document, growth recomputed) joins the tables; a company the
+  // page already lists with a growth keeps the page's own figure; a listed company without one takes the AI's growth
+  const built = useMemo(() => {
+    const ai = aiFocusRows(aic.results.filter((x) => horizon === 'ALL' || (horizon === 'ANNUAL') === ((x.years ?? 1) <= 1)), new Set(built0.filter((r) => r.growth).map((r) => r.key)), (m, t) => sizeOf(m, t, { caps: capsAll, indiaLarge: INDIA_LARGE_CAPS }), new Date());
+    if (!ai.length) return built0;
+    const byKey = new Map(built0.map((r) => [r.key, r]));
+    const out = built0.slice();
+    for (const a of ai) {
+      const cur = byKey.get(a.key);
+      if (!cur) { out.push(a); continue; }
+      const i = out.indexOf(cur);
+      out[i] = { ...cur, growth: a.growth, growthPct: a.growthPct, growthPeriod: a.growthPeriod, growthTrust: a.growthTrust, growthType: a.growthType, growthMetric: a.growthMetric, growthMetrics: a.growthMetrics, growthCohort: a.growthCohort, growthDate: a.growthDate, growthSource: a.growthSource, growthSourceUrl: a.growthSourceUrl, growthVerifiedDaysAgo: a.growthVerifiedDaysAgo, aiAdded: true, aiQuote: a.aiQuote };
+    }
+    return out;
+  }, [built0, aic.results, capsAll, horizon]);   // zzz906: no cut-off before filtering (a small raise like Yasho fell outside the old top 80)
   // zzz925: a growth worked out from company numbers must agree with the revenue the company reports (Pinnacle West "+189%" was divided
   // by a part-year base): such a growth is held back for review and listed under the tables, never ranked
   const { rows: everyone, held } = useMemo(() => holdInconsistentGrowth(built, (r) => (r.ticker ? facts[`${r.market}:${r.ticker.toUpperCase()}`]?.salesBase : null)), [built, facts]);
@@ -171,10 +191,10 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
     for (const r of listed) {
       const k = skyKey(r);
       if (k && !(k in facts) && !skyFailed) { m.set(r.key, null); continue; }   // figures not read yet
-      m.set(r.key, skyGoldScore(guidanceOfRow(r), k ? facts[k] ?? null : null));
+      m.set(r.key, skyGoldScore(guidanceOfRow(r), k ? facts[k] ?? null : null, aic.evidence.get(r.key) ?? null));
     }
     return m;
-  }, [listed, facts, skyFailed]);
+  }, [listed, facts, skyFailed, aic.evidence]);
   // zzz927: fair value per listed row (the auto-valuation method on the figures read for the score; no model call, no extra request)
   const fvs = useMemo(() => {
     const m = new Map<string, FvResult | null>();
@@ -231,6 +251,24 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
   const smallRaises = inMk.filter((r) => r.raised && r.smallRaise).length;
   const top = inMk.filter((r) => r.verdict === 'TOP FOCUS').length;
   const td: React.CSSProperties = { textAlign: 'left', padding: '8px', fontSize: 13, borderBottom: `1px solid ${tint(R.grey, 18)}`, verticalAlign: 'top' };
+  // zzz1193 — what the AI check reads. "New": guidance of the last 30 days the page could not place in A / B — amount-only targets
+  // first (no growth worked out), then the newest — skipping names checked in the last 3 days. "Evidence": the highest-scored focus names
+  // without an AI reading of their plan (or one older than 30 days).
+  const checkedAt = new Map(aic.results.map((x) => [x.key, Date.parse(x.checkedAt)]));
+  const aiNewTargets: AiCheckTarget[] = (() => {
+    const inAB = new Set([...raisedAll, ...growthAll].map((r) => r.key));
+    const since = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10);
+    const seen = new Set<string>();
+    const cands = (data?.records || []).map((r: any) => ({ r, d: String(r.sourceDate || r.record?.sources?.[0]?.date || '').slice(0, 10), noGrowth: /growth not established|no % stated/i.test(String(r.display || '')) }))
+      .filter(({ r, d }) => d >= since && (mk === 'ALL' || r.record?.market === mk))
+      .map(({ r, d, noGrowth }) => ({ market: (r.record?.market === 'US' ? 'US' : 'IN') as 'IN' | 'US', ticker: r.record?.ticker || null, company: String(r.record?.company || r.record?.ticker || ''), d, noGrowth }))
+      .filter((c) => { const k = `${c.market}|${String(c.ticker || '').toUpperCase() || c.company.toLowerCase().replace(/[^a-z0-9]+/g, '')}`; if (!c.company || inAB.has(k) || seen.has(k)) return false; seen.add(k); const t = checkedAt.get(k); return !(t && Date.now() - t < 3 * 86_400_000) && (!smid || sizeOf(c.market, c.ticker, { caps: capsAll, indiaLarge: INDIA_LARGE_CAPS }).size !== 'LARGE'); })
+      .sort((a, b) => Number(b.noGrowth) - Number(a.noGrowth) || b.d.localeCompare(a.d));
+    return cands.slice(0, 12).map(({ market, ticker, company }) => ({ market, ticker, company }));
+  })();
+  const aiEvidenceTargets: AiCheckTarget[] = bySky([...raisedAll, ...growthAll], scores)
+    .filter((r) => { const t = checkedAt.get(r.key); return !(t && Date.now() - t < 30 * 86_400_000 && aic.evidence.has(r.key)); })
+    .slice(0, 12).map((r) => ({ market: r.market, ticker: r.ticker, company: r.company, growthText: r.growth }));
   return (
     <section data-gu-focus aria-label="Focus list" className={cols === 'compact' ? 'gu-cols-compact' : undefined} style={{ border: `2px solid ${tint(R.green, 55)}`, borderRadius: 10, padding: '12px 14px', display: 'grid', gap: 8 }}>
       <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
@@ -267,7 +305,7 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
           Default rank uses an additive guidance signal score: guided growth (up to 100 points), raise size (up to 60), a bonus for both a meaningful raise and growth (60), recent raises (up to 20), and verified growth or a raise (10). Ties use company name. It is not a ranking by business quality or expected return; Opportunity and Sky Gold have separate sorts.
         </div>
         <div style={{ fontSize: 12, color: R.dim }}>
-          <b>Sky Gold score</b> (from the “Identify Next SKY GOLD” framework): is the big plan backed by the business today? 7 main checks — a clear target from the company, sales already growing 20%+, the target reachable from the current pace, margins steady, ROCE 20%+, cash following profit, debt under control. Each main check missed holds the score down: 80+ (STRONG) needs 6 of 7 met with real figures and 65+ (GOOD) needs 5 of 7 (with 4 met the score stays at 62 or below, with 3 at 52); a growth worked out from company numbers counts as only half a clear target; supporting checks (raise, specific plan, profit faster than sales, own cash, orders, estimates, valuation, small base) add points; red flags (guidance cut, slower-paying customers, new shares, promoters selling, other income) take points off. A figure not known never counts as met; too few figures shows “not enough data”. Click a score for every check. Bands: 80+ STRONG · 65–79 GOOD · 50–64 MIXED · under 50 WEAK.
+          <b>Sky Gold score</b> (from the “Identify Next SKY GOLD” framework): is the big plan backed by the business today? 7 main checks — a clear target from the company, sales already growing 20%+, the target reachable from the current pace, margins steady, ROCE 20%+, cash following profit, debt under control. Each main check missed holds the score down: 80+ (STRONG) needs 6 of 7 met with real figures and 65+ (GOOD) needs 5 of 7 (with 4 met the score stays at 62 or below, with 3 at 52); a growth worked out from company numbers counts as only half a clear target; supporting checks (raise, specific plan, profit faster than sales, own cash, orders, estimates, valuation, small base) add points; red flags (guidance cut, slower-paying customers, new shares, promoters selling, other income) take points off. Also: guidance older than 60 days counts less (re-check it at the next results); a price far ahead of the guided growth (P/E ÷ growth above 2.5, or P/E over 100) holds the score at 64 — the framework's last gate, “valuation does not already price the full target”. After the 🤖 AI check has read the company's document, two more checks count — capacity / orders / customers covering the plan, and whether earlier guidance was delivered — and a target pushed out, or an aspirational plan nothing yet covers, is a red flag. A figure not known never counts as met; too few figures shows “not enough data”. Click a score for every check. Bands: 80+ STRONG · 65–79 GOOD · 50–64 MIXED · under 50 WEAK.
         </div>
         <div style={{ fontSize: 12, color: R.dim }}>
           <b>Reported</b> is the date of the announcement or document the row comes from — click its header to sort newest or oldest first. <b>Fair value</b> uses the same method as the Auto-Valuation page on the company's own public figures: next-year sales or profit grown at the guided growth, times the sector's usual multiples (P/E, EV/EBITDA, P/S blended), with a bear and a bull case on hover. It needs no AI. A dash means a figure is missing or looks wrong (reason on hover); banks, lenders and insurers show a dash because they are valued on book value. “check” means upside above +150%, methods that disagree, or growth that was capped. An estimate, not advice.
@@ -277,6 +315,7 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
         </div>
         </div>
       </details>
+      <GuAiCheckPanel ai={aic} newTargets={aiNewTargets} evidenceTargets={aiEvidenceTargets} market={mk === 'US' ? 'US' : 'IN'} />
       {skyFailed && <div style={{ fontSize: 12, color: R.amber }}>The company figures could not be read just now (the server may be restarting) — trying again automatically; scores use the guidance checks until then.</div>}
       {uniLine && (
         <div role={uniLine.tone === 'info' ? 'status' : 'alert'} style={{ fontSize: 12.5, color: uniLine.tone === 'error' ? R.red : uniLine.tone === 'warn' ? R.amber : R.dim, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -314,7 +353,7 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
             <tr>
               <td style={{ ...td, color: R.dim }}>{i + 1}</td>
               <CompanyCell r={r} td={td} />
-              <td style={td}><b style={{ color: r.growthTrust === 'derived' ? R.amber : R.green }}>{r.growth}</b><div style={{ fontSize: 11.5, color: R.dim }}>{r.growthPeriod || ''}{r.growthTrust === 'derived' ? <b style={{ color: R.amber }}> · worked out by us from company numbers — not a stated target</b> : ' · stated by company'}</div></td>
+              <td style={td}><b style={{ color: r.growthTrust === 'derived' ? R.amber : R.green }}>{r.growth}</b><div style={{ fontSize: 11.5, color: R.dim }}>{r.growthPeriod || ''}{r.growthTrust === 'derived' ? <b style={{ color: R.amber }}> · worked out by us from company numbers — not a stated target</b> : ' · stated by company'}{r.aiAdded ? <span title={r.aiQuote ? `“${r.aiQuote}”` : undefined} style={{ color: R.violet, fontWeight: 700 }}> · read by the AI check (hover for the sentence)</span> : null}</div></td>
               <td data-c="source" style={{ ...td, fontSize: 12 }}>
                 {r.growthSourceUrl && /^https?:\/\//i.test(r.growthSourceUrl) ? <a href={r.growthSourceUrl} target="_blank" rel="noopener noreferrer">{r.growthSource || 'Company document'}</a> : r.growthSource || 'Company document'}
                 <div style={{ fontSize: 11.5, color: r.growthFreshness === 'STALE' ? R.amber : R.dim }}>{r.growthTrust === 'derived' ? 'Derived from company figures' : 'Source verified'}{r.growthFreshness === 'STALE' ? ' · recheck required' : ''}</div>

@@ -14,6 +14,7 @@
 // data → no number ("not enough data").
 // Pure, unit-tested. Price is read only as the P/E printed by screener.in for the valuation check. NOT part of lib/thesis.
 import type { SkyFacts } from './gu-skygold-facts';
+import type { AiEvidence } from './gu-ai-check';
 
 export type SkyStatus = 'pass' | 'partial' | 'fail' | 'unknown';
 export type SkyBand = 'STRONG' | 'GOOD' | 'MIXED' | 'WEAK';
@@ -38,6 +39,8 @@ export interface SkyGuidance {
   multiYear: boolean;                  // a multi-year plan (CAGR) rather than one year
   raised: boolean; smallRaise: boolean;
   cutInWindow: boolean;                // a verified guidance cut in the same window
+  /** zzz1193: days since the guidance document (framework: re-check the plan every quarter); absent = not scored */
+  ageDays?: number | null;
 }
 
 // zzz925: tightened (was 5→79, 4→69, 3→59 …): FLAIR and GPT Infra reached GOOD (68, 69) with only 4 of 7 main checks met
@@ -58,7 +61,10 @@ const maxKnown = (...v: Array<number | null | undefined>): number | null => { co
 const PROFIT = new Set(['PAT', 'EPS', 'EBITDA', 'FCF']);
 
 /** Pure: the score for one company. `facts` may be null (not fetched / not found) — the guidance checks still count. */
-export function skyGoldScore(g: SkyGuidance, facts: SkyFacts | null): SkyScore {
+/** zzz1193 — `ai` = the guidance AI check's reading of the company's own document (capacity, orders, customers, track record, deferrals).
+ *  The framework's capacity / demand / credibility groups cannot be read from figures; without the AI check they are simply not scored. */
+export const PRICED_IN_CAP = 64;
+export function skyGoldScore(g: SkyGuidance, facts: SkyFacts | null, ai?: AiEvidence | null): SkyScore {
   const f = facts;
   const money = f?.market === 'US' ? '$' : '₹';
   const unit = f?.market === 'US' ? 'M' : ' Cr';
@@ -179,6 +185,20 @@ export function skyGoldScore(g: SkyGuidance, facts: SkyFacts | null): SkyScore {
       detail: n(b) ? `yearly sales about ${money}${Math.round(b).toLocaleString('en-US')}${unit}` : `sales base ${NK}` });
   }
 
+  // zzz1193 — framework items the numbers cannot show, from the AI check of the company's own document (only when it was run)
+  if (n(g.ageDays)) {
+    const d = g.ageDays;
+    add({ id: 'fresh', label: 'Guidance re-confirmed recently', kind: 'support', weight: 4, status: d <= 60 ? 'pass' : d <= 120 ? 'partial' : 'fail',
+      detail: `guidance from a document ${d} days old${d > 120 ? ' — check it against the latest results' : d > 60 ? ' — re-check at the next results' : ''}` });
+  }
+  if (ai) {
+    const cv: SkyStatus = ai.cover === 'COVERED' ? 'pass' : ai.cover === 'PARTLY' ? 'partial' : ai.cover === 'NOT_COVERED' ? 'fail' : 'unknown';
+    add({ id: 'cover', label: 'Capacity / orders / customers cover the plan', kind: 'support', weight: 7, status: cv,
+      detail: [ai.coverText, ai.capacity ? `capacity: ${ai.capacity}` : null, ai.orders ? `orders: ${ai.orders}` : null, ai.customers ? `customers: ${ai.customers}` : null].filter(Boolean).join(' · ') || 'the document does not say what covers the plan' });
+    const tr: SkyStatus = ai.track === 'DELIVERED' ? 'pass' : ai.track === 'PARTLY' ? 'partial' : ai.track === 'MISSED' ? 'fail' : 'unknown';
+    add({ id: 'track', label: 'Delivered its earlier guidance', kind: 'support', weight: 6, status: tr, detail: ai.trackText || (tr === 'unknown' ? 'track record not stated in the document' : ai.track.toLowerCase()) });
+  }
+
   // ── RED FLAGS (framework: promotional-risk penalty) ─────────────────────────────────────────────────────────────────────
   const flags: SkyFlag[] = [];
   if (g.cutInWindow) flags.push({ id: 'cut', label: 'Guidance cut', points: 10, detail: 'the company lowered its guidance in this window' });
@@ -191,6 +211,8 @@ export function skyGoldScore(g: SkyGuidance, facts: SkyFacts | null): SkyScore {
   if (n(f?.otherIncomePctOfPbt) && f!.otherIncomePctOfPbt! > 30)
     flags.push({ id: 'otherIncome', label: 'Profit leans on other income', points: 5, detail: `other income is ${f!.otherIncomePctOfPbt}% of profit before tax` });
 
+  if (ai?.deferral) flags.push({ id: 'deferral', label: 'Target pushed out / made conditional', points: 6, detail: ai.deferral });
+  if (ai && ai.language === 'ASPIRATIONAL' && ai.cover === 'NOT_COVERED') flags.push({ id: 'powerpoint', label: 'Plan not backed by capacity, orders or customers', points: 8, detail: 'aspirational wording and nothing yet covers the plan — the framework\'s "PowerPoint" plan' });
   const must = checks.filter((c) => c.kind === 'must');
   const mustMet = must.filter((c) => c.status === 'pass').length;
   const mustKnown = must.filter((c) => c.status !== 'unknown').length;
@@ -204,14 +226,20 @@ export function skyGoldScore(g: SkyGuidance, facts: SkyFacts | null): SkyScore {
   const mustCap = MUST_CAPS[Math.max(0, Math.min(7, mustMet))];
   let cap = mustCap, capNote: string | null = mustCap < 100 ? `${mustMet} of ${must.length} main checks met — score held at ${mustCap} or below` : null;
   if (flagPts >= 10 && RED_FLAG_CAP < cap) { cap = RED_FLAG_CAP; capNote = `red flags (${flagPts} points) — score held at ${RED_FLAG_CAP} or below`; }
+  // zzz1193 — the framework's last gate: "valuation does NOT already price the full target". A price far ahead of the guided growth
+  // (P/E ÷ growth above 2.5, or a P/E over 100) holds the score in MIXED, however good the plan is
+  { const pe = f?.pe, G = g.growthPct; const peg = n(pe) && pe > 0 && n(G) && G > 0 ? pe / G : null;
+    if ((peg != null && peg > 2.5) || (n(pe) && pe > 100)) { if (PRICED_IN_CAP < cap) { cap = PRICED_IN_CAP; capNote = `price already pays for the plan (P/E ${Math.round(pe!)}${peg != null ? `, P/E ÷ growth ${Math.round(peg * 10) / 10}` : ''}) — score held at ${PRICED_IN_CAP} or below`; } } }
   score = Math.max(0, Math.min(cap, score));
   return { score, band: bandOf(score), mustMet, mustKnown, mustTotal: must.length, checks, flags, capNote, summary };
 }
 
 /** The guidance half from a focus-list row (gu-focus FocusRow). */
-export function guidanceOfRow(r: { growthPct: number | null; growthTrust: string | null; growthType?: string | null; growthMetric?: string | null; growthMetrics?: string[]; growthCohort?: string | null; raised: string | null; smallRaise?: boolean; cutDate?: string | null }): SkyGuidance {
+export function guidanceOfRow(r: { growthPct: number | null; growthTrust: string | null; growthType?: string | null; growthMetric?: string | null; growthMetrics?: string[]; growthCohort?: string | null; raised: string | null; smallRaise?: boolean; cutDate?: string | null; growthVerifiedDaysAgo?: number | null; raiseDate?: string | null }, now = new Date()): SkyGuidance {
+  const raiseAge = r.raiseDate ? Math.max(0, Math.round((now.getTime() - Date.parse(`${r.raiseDate}T00:00:00Z`)) / 86_400_000)) : null;
+  const ageDays = raiseAge ?? (typeof r.growthVerifiedDaysAgo === 'number' && Number.isFinite(r.growthVerifiedDaysAgo) ? r.growthVerifiedDaysAgo : null);
   return {
     growthPct: r.growthPct, growthTrust: r.growthTrust, growthType: r.growthType ?? null, growthMetric: r.growthMetric ?? null, growthMetrics: r.growthMetrics ?? (r.growthMetric ? [r.growthMetric] : []),
-    multiYear: r.growthCohort === 'MULTI_YEAR_CAGR', raised: !!r.raised, smallRaise: !!r.smallRaise, cutInWindow: !!r.cutDate,
+    multiYear: r.growthCohort === 'MULTI_YEAR_CAGR', raised: !!r.raised, smallRaise: !!r.smallRaise, cutInWindow: !!r.cutDate, ageDays,
   };
 }

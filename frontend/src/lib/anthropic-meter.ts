@@ -315,6 +315,7 @@ export const answeredWithTool = (answer: any, name: string): boolean => Array.is
 function track(feature: string, run: MeterOpts['run'], model: string | null, startedAt: Date, usage: Usage | null, usd: number, outcome: AiRunOutcome, error?: string): void {
   if (run === false || feature === 'health-probe') return;
   const ctx = run || {};
+  const runRecorder: ((r: RunRecorderInput) => void) | null = (globalThis as any).__mcAiRunRecorder || null;
   if (!runRecorder) return;   // registered by the server at start (instrumentation.ts); never in a browser bundle
   try {
     runRecorder({
@@ -328,8 +329,8 @@ function track(feature: string, run: MeterOpts['run'], model: string | null, sta
 /** zzz1050 — the run-record writer, registered by the server (instrumentation.ts → lib/ai-runs). The meter does not import
  *  lib/ai-runs itself: that module reaches Postgres (pg), and the meter is also bundled into client pages. */
 type RunRecorderInput = { job: string; model: string | null; startedAt: string; finishedAt: string; inputTokens: number; outputTokens: number; costUsd: number; outcome: AiRunOutcome; error: string | null; promptVersion: string | null; docId: string | null; ticker: string | null; batchId: string | null };
-let runRecorder: ((r: RunRecorderInput) => void) | null = null;
-export function setRunRecorder(f: ((r: RunRecorderInput) => void) | null): void { runRecorder = f; }
+// zzz1193 — on globalThis: instrumentation and the routes are separate server bundles (a module variable is not shared)
+export function setRunRecorder(f: ((r: RunRecorderInput) => void) | null): void { (globalThis as any).__mcAiRunRecorder = f; }
 
 export interface GateResult { allowed: boolean; spent: number; cap: number; message?: string }
 

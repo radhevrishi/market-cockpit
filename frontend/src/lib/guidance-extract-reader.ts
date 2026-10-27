@@ -160,8 +160,11 @@ export function actualsFromDocs(results: GuidanceExtractResult[]): Map<string, P
  */
 /** zzz1189 — the India stock-screener rows, registered by the server at start (instrumentation): this module is also bundled for the
  *  browser, so it cannot import the snapshot reader itself. */
-let screenerRowsSource: (() => Promise<any[]>) | null = null;
-export function setScreenerRowsSource(fn: () => Promise<any[]>): void { screenerRowsSource = fn; }
+// zzz1193 — kept on globalThis: instrumentation.ts and the API routes are separate server bundles, each with its own copy of this
+// module, so a module variable set at start was never seen by the routes (the fallback never ran in production)
+const SRC_SLOT = '__mcGuidanceScreenerRows';
+export function setScreenerRowsSource(fn: () => Promise<any[]>): void { (globalThis as any)[SRC_SLOT] = fn; }
+function screenerRowsFn(): (() => Promise<any[]>) | null { const f = (globalThis as any)[SRC_SLOT]; return typeof f === 'function' ? f : null; }
 export async function loadPriorActuals(results: GuidanceExtractResult[], io?: ExtractIo): Promise<Map<string, PriorActual>> {
   const out = actualsFromDocs(results);
   try {
@@ -198,6 +201,7 @@ export async function loadPriorActuals(results: GuidanceExtractResult[], io?: Ex
     });
     // zzz1189 — a company without a results-cache entry: the stock screener's figures (yearly profit; sales = market cap ÷ P/S, the
     // trailing twelve months) stand in for the last completed year — labelled as such, used only for that one base year
+    const screenerRowsSource = screenerRowsFn();
     if (screenerRowsSource) {   // zzz1190 — the universe passes its own KV reader, so the fallback keys on the registered source, not on io
       const missing = tickers.filter((t) => Array.from(want.get(t) || []).some((pp) => !out.has(actualKey('IN', t, 'REVENUE', pp)) || !out.has(actualKey('IN', t, 'PAT', pp))));
       if (missing.length) {

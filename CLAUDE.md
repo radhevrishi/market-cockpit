@@ -3724,3 +3724,11 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   `lib/conviction-analytics.ts` (company score with named reasons, theme stance LEAD / EMERGING / CROWDED / SINGLE / WEAK, 2×2,
   shortlist with theme caps, bench risks); component `components/conviction-analytics/ConvictionAnalytics.tsx`. Themes from
   `classifyTheme` + Theme Rotation verdicts; industry from the stock-screener slim `?tickers=` call (SLIM_KEYS now include ind/sec/n).
+- zzz1193 — guidance AI check + Sky Gold gates. `lib/gu-ai-check.ts` (pure: tool schema, `checkAnswer` — quote must be in the document
+  text, an amount target is recomputed against the reported last full year, base must be within 0.6–1.6× reported revenue; `aiFocusRows`;
+  store `gu-ai-check:v1:results`), `lib/gu-ai-check-server.ts` (newest doc: stored text → exchange PDF → screener.in concall link; own daily
+  ceiling `GU_AI_CHECK_DAILY_USD` default $0.20, key `gu-ai-check:day-usd:v1:<day>`), route `/api/v1/guidance-ai-check` (protected;
+  POST starts a background job via ai-panel-job, GET = results). Focus list: "Check new guidance" / "Read plan evidence" / "Add with AI";
+  ADD rows join A/B with "🤖 added by AI check". Sky Gold: `skyGoldScore(g, facts, ai?)` — priced-in cap 64 (P/E÷growth > 2.5 or
+  P/E > 100), 'fresh' check from `ageDays`, AI checks 'cover' / 'track', red flags 'deferral' / 'powerpoint'. The screener fallback and
+  the AI run recorder are now kept on globalThis (instrumentation and routes are separate bundles — module variables are not shared).

@@ -26,6 +26,8 @@ export interface FocusRow {
   growthType?: string | null; growthDerivation?: { previousValue: number; currentLow: number; currentHigh: number; unit: string; basePeriod: string } | null;
   /** zzz929: the old → new figures of the headline raise (metric, period, midpoints) — for the implied-profit change; null when the row has no raise */
   raiseDetail?: RaiseDetail | null;
+  /** zzz1193: the row was added by the guidance AI check (lib/gu-ai-check.ts), with the sentence checked in the document */
+  aiAdded?: boolean; aiQuote?: string | null;
 }
 export interface RaiseDetail { metric: string; period: string; beforeMid: number | null; afterMid: number | null; isGrowthRate: boolean; unit: string | null; currency: string | null; periodKind: string | null; periodYears: number | null }
 export interface FocusSizeIn { caps?: { IN?: Record<string, number>; US?: Record<string, number> } | null; indiaLarge?: ReadonlySet<string> }
