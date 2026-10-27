@@ -204,8 +204,10 @@ export function startVaultSync(intervalMs = 60_000): () => void {
   if (w.__mcVault) return w.__mcVault;
   const tick = () => { void syncVaultOnce(); };
   const first = setTimeout(tick, 4_000);
-  const iv = setInterval(tick, intervalMs);
-  const onHide = () => { if (document.visibilityState === 'hidden') tick(); };
+  // zzz1198 (cost audit item 7): a hidden tab does not poll — it syncs once as it is hidden (pending edits are saved) and
+  // once when it is shown again (picks up other devices). A tab can only be edited while visible, so nothing is missed.
+  const iv = setInterval(() => { if (document.visibilityState !== 'hidden') tick(); }, intervalMs);
+  const onHide = () => { tick(); };
   document.addEventListener('visibilitychange', onHide);
   const stop = () => { clearTimeout(first); clearInterval(iv); document.removeEventListener('visibilitychange', onHide); w.__mcVault = null; };
   w.__mcVault = stop;
