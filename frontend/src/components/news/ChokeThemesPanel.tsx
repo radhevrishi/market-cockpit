@@ -8,7 +8,7 @@
 import { Fragment, useCallback, useEffect, useState } from 'react';
 import { pollJob, startAndPoll } from '@/lib/ai-panel-client';
 import type { ThemePulse } from '@/lib/choke-themes/pulse';
-import { chokeAsText, DISCOVERY_CAP, fmtChokeCap, EXPOSURE_WHY, J_WHY, J_WORD, type ChokeCandidate, type ChokeChange, type ChokeReport, type ChokeRegion, type ChokeTheme, type JStage } from '@/lib/choke-themes/core';
+import { chokeAsText, DISCOVERY_CAP, DRIVER_WORD, fmtChokeCap, EXPOSURE_WHY, J_WHY, J_WORD, type ChokeCandidate, type ChokeChange, type ChokeReport, type ChokeRegion, type ChokeTheme, type JStage } from '@/lib/choke-themes/core';
 
 const OPEN_KEY = 'mc:choke-themes:open:v1';
 const C = {
@@ -165,13 +165,14 @@ function CandTable({ list, region, title }: { list: ChokeCandidate[]; region: Ch
 
 function ThemeCard({ t, i, region, pulse }: { t: ChokeTheme; i: number; region: ChokeRegion; pulse?: ThemePulse | null }) {
   const [showPulse, setShowPulse] = useState(false);
-  const mech = ([['NECESSITY', t.necessity], ['SUPPLY CONSTRAINT', t.constraint], ['TIGHT NOW?', t.tightness === undefined ? '' : (t.tightness || 'No evidence of tight supply right now — a watch, not a choke point.')], ['VALUE CAPTURE', t.valueCapture], ['WHAT COULD REMOVE IT', t.breakers]] as const).filter(([, v]) => v);
+  const mech = ([['NECESSITY', t.necessity], ['SUPPLY CONSTRAINT', t.constraint], ['SUPPLY NOW', t.supply ? `${({ TIGHT: '🔴 Tight', EASING: '🟡 Easing', AMPLE: '⚪ Ample — not a choke point', UNKNOWN: '❔ Not established' } as Record<string, string>)[t.supply]}${t.tightness ? ` — ${t.tightness}` : ''}` : t.tightness === undefined ? '' : (t.tightness || 'Not established')], ['VALUE CAPTURE', t.valueCapture], ['WHAT COULD REMOVE IT', t.breakers]] as const).filter(([, v]) => v);
   return (
     <div style={{ border: `1px solid ${t.qualifies ? tint(C.green, 45) : C.border}`, borderRadius: 12, background: C.bg, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', flexWrap: 'wrap' }}>
         <span style={{ flexShrink: 0, width: 28, height: 28, borderRadius: 8, background: tint(C.accent, 14), color: C.accent, fontWeight: 900, fontSize: 15, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
         <div style={{ fontWeight: 900, fontSize: 17.5, lineHeight: 1.3, flex: 1, minWidth: 200 }}>🔥 {t.name} <span style={{ whiteSpace: 'nowrap' }}>{t.emoji}</span></div>
-        {t.qualifies ? tag('✓ figures support a candidate', C.green, 'At least one DIRECT / ENABLER company at J2 / J3 whose screener figures agree. Verified: the financial turn in screener figures. NOT verified here: that the product is the earnings driver, the scarcity economics, governance.') : tag(t.tightness === null ? 'watch — no evidence supply is tight now' : 'watch — no confirmed inflection yet', C.warn, 'Needs both: evidence supply is tight now, and a DIRECT / ENABLER candidate at J2 / J3 backed by its figures')}
+        {t.qualifies ? tag('✓ figures support a candidate', C.green, 'At least one DIRECT / ENABLER company at J2 / J3 whose screener figures agree. Verified: the financial turn in screener figures. NOT verified here: that the product is the earnings driver, the scarcity economics, governance.') : tag(t.supply === 'AMPLE' ? 'not a choke point — supply ample' : 'watch — no confirmed inflection yet', C.warn, 'Needs a DIRECT / ENABLER candidate at J2 / J3 backed by its figures, in a theme whose supply is not ample')}
+        {t.driver && t.driver !== 'DOMESTIC' && tag(`🌍 ${DRIVER_WORD[t.driver] || t.driver}`, C.accent, 'Where the demand step-up comes from')}
         {pulse && <StrengthBadge p={pulse} />}
       </div>
       <div style={{ fontSize: 15, lineHeight: 1.55 }}>{t.why}</div>

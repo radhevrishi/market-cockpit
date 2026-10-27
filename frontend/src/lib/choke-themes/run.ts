@@ -3,7 +3,7 @@
 // acceleration and a list of small / mid-cap companies whose OWN figures are turning (stock screener). The server then lays
 // the screener's facts over every candidate, calculates the scenarios, ranks themes by their qualifying candidates and
 // computes "what changed" against the previous stored run. Stored in KV (latest + previous); runs only on the owner's click.
-import { CHOKE_CHECKLIST, CHOKE_SYSTEM, DISCOVERY_CAP, chokeToolFor, cleanChoke, diffRuns, enrich, type CandFacts, type ChokeRegion, type ChokeReport } from './core';
+import { CHOKE_CHECKLIST, CROSS_BORDER_CHECKLIST, CHOKE_SYSTEM, DISCOVERY_CAP, chokeToolFor, cleanChoke, diffRuns, enrich, type CandFacts, type ChokeRegion, type ChokeReport } from './core';
 import type { Cand } from '../screener/ai-candidates';
 
 export const CHOKE_KEY = 'choke-themes:v1:latest';
@@ -99,6 +99,7 @@ export async function runChoke(): Promise<{ ok: true; report: ChokeReport } | { 
       themes.length ? `Themes seen in the owner's daily gainers (last 30 days):\n${themes.filter((l) => l.includes(mk === 'IN' ? 'India:' : 'US:')).join('\n')}` : null,
       infl[mk].length ? `Industries by revenue acceleration (latest quarter vs year):\n${infl[mk].join('\n')}` : null,
       `CHECKLIST — test each of these bottlenecks against the company lists before you decide (keep only those that qualify; add others you find):\n${CHOKE_CHECKLIST[mk]}`,
+      `CROSS-BORDER CHECKLIST — test each sub-theme too (these are often the real J-curves in sectors that look mature at home):\n${CROSS_BORDER_CHECKLIST[mk]}`,
       'Company data columns: ticker | name | industry | market cap | sales growth: latest quarter vs a year earlier, and last fiscal year | EPS growth latest quarter vs a year earlier | operating margin, trailing 12 months (TTM) | ROCE | debt/equity | P/E | P/S | FCF margin | share move 1y and 5y (context only) | share-count change a year.',
       `Small / mid caps whose own figures are turning up (discovery leads, not conclusions):\n${tc.map((c) => candLine(c, mk)).join('\n')}`,
       `Other small / mid caps in bottleneck-prone industries (possible J1 / J2 names before the figures turn):\n${sc.map((c) => candLine(c, mk)).join('\n')}`,
@@ -122,7 +123,7 @@ export async function runChoke(): Promise<{ ok: true; report: ChokeReport } | { 
         messages: [{ role: 'user', content: `${base}
 
 RESEARCH STEP (plain text, no form yet). Work like a sector analyst hunting the next Micron / SanDisk-type J-curve in ${mk === 'US' ? 'the US' : 'India'}:
-1. Go through EVERY checklist bottleneck and the cross-border shifts. For each: is supply tight NOW (lead times, allocation, price rises, sold-out capacity, qualification queues)? Say what the evidence is and how recent, or "no evidence".
+1. Go through EVERY checklist bottleneck and EVERY cross-border sub-theme (Europe+1 a–i etc.). For each: is supply tight NOW (lead times, allocation, price rises, sold-out capacity, qualification queues)? Say what the evidence is and how recent — industry facts you know count, labelled Known: with the year — or "no evidence".
 2. For each tight one, list the LISTED small / mid-cap suppliers in this country — from the company lists AND from your own knowledge (exact tickers) — with the product, exposure and the J-stage their own figures show (quarter vs year sales, margin swing).
 3. Say which popular "themes" are NOT J-curves now (already ran, ample supply, mature, one-off order on a low base) and why.
 4. Finish with the 5–7 strongest themes and their best 2–4 candidates each.

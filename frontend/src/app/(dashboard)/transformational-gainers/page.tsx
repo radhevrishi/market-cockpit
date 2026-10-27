@@ -149,6 +149,10 @@ export default function TransformationalGainersPage() {
         </div>
       </div>
       {aiNote && <div style={{ fontSize: 12, color: R.dim, marginTop: 6 }}>{aiNote}</div>}
+      {data && (() => {   // zzz1188 — when today's gainers arrive here
+        const latest = (m: string) => (data.items || []).filter((x: any) => x.market === m).map((x: any) => x.sessionDate).sort().pop() || '—';
+        return <div style={{ fontSize: 12, color: R.dim, marginTop: 6 }}>Latest session on the board: 🇮🇳 {latest('IN')} · 🇺🇸 {latest('US')}. Today's gainers arrive after their AI research: India after the 16:20 IST sweep (board updated ≈17:55 and 19:15 IST), the US after the 17:30 ET sweep — or at once when you run the AI sweep on AI Daily Gainers.</div>;
+      })()}
       {collecting && data && <div style={{ fontSize: 12, color: R.amber, marginTop: 6, fontWeight: 700 }}>⏳ Collecting history: available since {data.historyFrom} — the {days}-day window fills one session a day (complete about {new Date(Date.parse(`${data.historyFrom}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10)}).</div>}
       {filling && <div style={{ fontSize: 12, color: R.cyan, marginTop: 6 }}>{filling}</div>}
 

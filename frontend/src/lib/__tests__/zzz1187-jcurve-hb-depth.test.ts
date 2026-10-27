@@ -17,11 +17,11 @@ test('India discovery band reaches real Indian mid-caps; the prompt defines a J-
   assert.match(CHOKE_SYSTEM, /COMPANIES BEYOND THE LISTS/);
 });
 
-test('a theme without evidence of tight supply is a watch; a 10x past run is flagged and ranked lower', () => {
+test('a theme whose supply is ample is not a choke point; a 10x past run is flagged and ranked lower', () => {
   const c = (ticker: string) => ({ name: ticker, ticker, exposure: 'DIRECT', jstage: 'J2', product: '', inflection: '', milestone: '', invalidation: '', concern: '', scenario: null }) as any;
   const pb = { strongest: [], confirm: [], milestones: [], disconfirming: [], valuation: [] };
   const r = { regions: [{ region: 'IN', playbook: pb, themes: [
-    { name: 'Hoses', emoji: '', keywords: [], why: 'w', tightness: null, candidates: [c('AEROFLEX')], reference: [] },
+    { name: 'Hoses', emoji: '', keywords: [], why: 'w', supply: 'AMPLE', tightness: null, candidates: [c('AEROFLEX')], reference: [] },
     { name: 'Transformers', emoji: '', keywords: [], why: 'w', tightness: 'Lead times above 2 years (2026)', candidates: [c('TARIL')], reference: [] },
   ] }, { region: 'US', playbook: pb, themes: [] }] } as unknown as ChokeReport;
   const f = (p5y: number): CandFacts => ({ cap: 9000, revQ: 60, revA: 24, epsQ: 100, opm: 15, pe: 28, fcfm: 5, de: 0.1, p1y: 20, p5y });
@@ -48,4 +48,17 @@ test('a stored GPU-packaging label on a battery deal is dropped; an unvalued con
   const it = (title: string) => ({ title, primary_ticker: 'NTPC', ticker_symbols: ['NTPC'], strategic_visibility: {} }) as any;
   assert.equal(showableContract(it('NTPC REL signs 1,200 MW solar PPA with PTC India'), () => true, undefined, () => 40_000), null);
   assert.ok(showableContract(it('NTPC REL signs 1,200 MW solar PPA with PTC India'), () => true, undefined, () => 800));
+});
+
+test('zzz1188 — supply UNKNOWN is shown, not thrown out; cross-border driver kept; Europe+1 sub-themes in the checklist', async () => {
+  const { cleanChoke, enrich: en, CROSS_BORDER_CHECKLIST, CHOKE_TOOL } = await import('../choke-themes/core');
+  const th = { name: 'Forgings for European rail', emoji: '', keywords: ['a', 'b', 'c', 'd'], why: 'w', driver: 'EUROPE_PLUS_1', necessity: 'n', constraint: 'c', value_capture: 'v', supply: 'UNKNOWN', tightness: null, breakers: 'b', unknowns: 'u', evidence: null, reference: [],
+    candidates: [{ name: 'F', ticker: 'F', exposure: 'DIRECT', jstage: 'J2', product: 'p', inflection: 'i', milestone: 'm', invalidation: 'x', concern: 'c', scenario: null }] };
+  const r = cleanChoke({ regions: [{ region: 'IN', themes: [th], playbook: {} }] })!;
+  en(r, { IN: new Map([['F', { cap: 3000, revQ: 40, revA: 20, epsQ: 50, opm: 15, pe: 30, fcfm: 5, de: 0.2, p1y: 10, p5y: 100 }]]), US: new Map() });
+  const t = r.regions.find((g) => g.region === 'IN')!.themes[0];
+  assert.equal(t.qualifies, true);
+  assert.equal(t.driver, 'EUROPE_PLUS_1');
+  assert.match(CROSS_BORDER_CHECKLIST.IN, /ammunition/); assert.match(CROSS_BORDER_CHECKLIST.IN, /forgings/);
+  assert.ok((CHOKE_TOOL.input_schema as any).properties.regions.items.properties.themes.items.properties.driver.enum.includes('EUROPE_PLUS_1'));
 });

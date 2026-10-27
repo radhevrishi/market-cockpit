@@ -50,6 +50,9 @@ export interface ChokeTheme {
   evidence: string | null;
   /** zzz1187 — evidence supply is tight now (null = none: a watch, not a choke point) */
   tightness?: string | null;
+  /** zzz1188 — TIGHT / EASING / AMPLE / UNKNOWN, and where the demand comes from (cross-border corridors named) */
+  supply?: 'TIGHT' | 'EASING' | 'AMPLE' | 'UNKNOWN';
+  driver?: string | null;
   candidates: ChokeCandidate[]; reference: ChokeCandidate[];
   // laid over by the server
   qualifies?: boolean; rankScore?: number;
@@ -115,16 +118,18 @@ export const CHOKE_TOOL = {
               type: 'array', minItems: 1, maxItems: 8, description: 'Only themes that qualify — fewer is fine. No filler.',
               items: {
                 type: 'object', additionalProperties: false,
-                required: ['name', 'emoji', 'keywords', 'why', 'necessity', 'constraint', 'value_capture', 'tightness', 'breakers', 'unknowns', 'evidence', 'candidates', 'reference'],
+                required: ['name', 'emoji', 'keywords', 'why', 'driver', 'necessity', 'constraint', 'value_capture', 'supply', 'tightness', 'breakers', 'unknowns', 'evidence', 'candidates', 'reference'],
                 properties: {
                   name: { type: 'string', maxLength: 90, description: 'The SPECIFIC bottleneck (e.g. "High-density power delivery for AI racks"), not a broad sector.' },
                   emoji: { type: 'string', maxLength: 12 },
                   keywords: { type: 'array', minItems: 4, maxItems: 12, items: { type: 'string', maxLength: 40 }, description: 'Short search terms that find this bottleneck in news headlines.' },
+                  driver: { type: 'string', enum: ['DOMESTIC', 'EUROPE_PLUS_1', 'EUROPE_REARMAMENT', 'CHINA_PLUS_1', 'US_RESHORING', 'TRADE_DEAL', 'GLOBAL_AI_BUILDOUT', 'GLOBAL_ENERGY_TRANSITION', 'OTHER_CROSS_BORDER'], description: 'Where the demand step-up comes from. Cross-border corridors are named so they are never lost inside a domestic theme.' },
                   why: { type: 'string', maxLength: 320, description: 'The structural driver in 2 short sentences.' },
                   necessity: { type: 'string', maxLength: 300, description: 'Why customers cannot do without it.' },
                   constraint: { type: 'string', maxLength: 300, description: 'The supply constraint: few qualified suppliers, long qualification, certification, IP, scarce skills…' },
                   value_capture: { type: 'string', maxLength: 300, description: 'How suppliers keep the benefit: pricing, recurring revenue, utilisation, mix, switching costs.' },
-                  tightness: { type: ['string', 'null'], maxLength: 300, description: 'Evidence that supply is TIGHT NOW: extended lead times, allocation, price increases, sold-out capacity, qualification queues, import bans — with its source (news item or your knowledge, dated). null when you have none — then the theme is only a watch.' },
+                  supply: { type: 'string', enum: ['TIGHT', 'EASING', 'AMPLE', 'UNKNOWN'], description: 'The state of supply NOW. TIGHT = long lead times / allocation / price rises / sold-out capacity; AMPLE = plenty of qualified suppliers (then it is not a choke point).' },
+                  tightness: { type: ['string', 'null'], maxLength: 300, description: 'The evidence for the supply state: the news item, or industry facts you know ("Known: transformer lead times 2–3 years in India, 2025"). Industry knowledge is allowed when labelled Known: with its year. null only when you have nothing.' },
                   breakers: { type: 'string', maxLength: 300, description: 'What could remove the bottleneck: new capacity, substitution, insourcing, redesign, more qualified suppliers, regulation.' },
                   unknowns: { type: 'string', maxLength: 340, description: 'The important unknowns / evidence gaps.' },
                   evidence: { type: ['string', 'null'], maxLength: 280, description: 'A recent development from the news list that is about THIS bottleneck, or null.' },
@@ -154,7 +159,7 @@ export const CHOKE_SYSTEM = `You are an expert equity analyst. Research the US a
 "Which specific small or mid-cap company can convert a hard-to-replace product or capability into materially higher earnings and cash, and what evidence shows the conversion is beginning?"
 Horizons: the bottleneck may last 10+ years; the company thesis is about 3–7 years; the inflection evidence is recent results and milestones over the next 2–8 quarters.
 
-A THEME qualifies only when you can show the mechanism: necessity (customers need it) + supply constraint (few qualified suppliers, long qualification, certification, IP, scarce skills, specialist production) + value capture (pricing, recurring revenue, utilisation, mix, switching costs). "Large market", "government spending", "China+1", "AI exposure" and "import substitution" are leads, not conclusions. Name the specific bottleneck, not a broad sector. Say what could remove it. Show only qualifying themes — 1 to 8; fewer is better than filler, but search properly: work through the company lists given (at least 20 names per country) and the cross-border shifts before concluding; aim for 4–6 themes per country when the evidence allows, each with up to 4 candidates (J1 watch names included, marked as such). Broad solar, rail or defence exposure does not qualify by itself; a specific qualified supplier inside a mature sector can.
+A THEME qualifies only when you can show the mechanism: necessity (customers need it) + supply constraint (few qualified suppliers, long qualification, certification, IP, scarce skills, specialist production) + value capture (pricing, recurring revenue, utilisation, mix, switching costs). "Large market", "government spending", "China+1", "AI exposure" and "import substitution" are leads, not conclusions. Name the specific bottleneck, not a broad sector. Say what could remove it. Give EVERY theme its demand driver; at least 2 themes per country should be cross-border (Europe+1, European rearmament, China+1, US reshoring, trade deals) when a listed supplier shows it in orders or export figures. Supply state: use your industry knowledge (labelled Known:, with the year) as well as the news — do not mark supply UNKNOWN when the industry facts are well known. Show only qualifying themes — 1 to 8; fewer is better than filler, but search properly: work through the company lists given (at least 20 names per country) and the cross-border shifts before concluding; aim for 4–6 themes per country when the evidence allows, each with up to 4 candidates (J1 watch names included, marked as such). Broad solar, rail or defence exposure does not qualify by itself; a specific qualified supplier inside a mature sector can.
 
 CROSS-BORDER DEMAND SHIFTS are a major source of real J-curves — look for them actively: Europe+1 (Europe moving supply away from China / Russia), European rearmament (ammunition, explosives, forgings, propellants, components), US reshoring and tariffs, China+1, the India–EU / India–UK trade agreements, Western energy-security and grid build-outs buying from India. The narrative alone is not evidence; a specific supplier with QUALIFIED foreign customers, signed export orders and export revenue rising in its own figures is — those are often small and mid caps at J1–J3 in sectors that look mature at home.
 
@@ -203,6 +208,8 @@ export function cleanChoke(d: any): Pick<ChokeReport, 'regions' | 'changes'> | n
       why: str(t?.why, 320), necessity: str(t?.necessity, 300), constraint: str(t?.constraint, 300), valueCapture: str(t?.value_capture, 300),
       breakers: str(t?.breakers, 300), unknowns: str(t?.unknowns, 340), evidence: t?.evidence ? str(t.evidence, 280) : null,
       tightness: t?.tightness ? str(t.tightness, 300) : null,
+      supply: (['TIGHT', 'EASING', 'AMPLE', 'UNKNOWN'] as const).includes(t?.supply) ? t.supply : (t?.tightness ? 'TIGHT' : 'UNKNOWN'),
+      driver: typeof t?.driver === 'string' ? str(t.driver, 40) : null,
       candidates: (Array.isArray(t?.candidates) ? t.candidates : []).map(cleanCand).filter(Boolean).slice(0, 6) as ChokeCandidate[],
       reference: (Array.isArray(t?.reference) ? t.reference : []).map(cleanCand).filter(Boolean).slice(0, 3) as ChokeCandidate[],
     })).filter((t: ChokeTheme) => t.name && t.why).slice(0, 8);
@@ -292,7 +299,8 @@ export function enrich(r: Pick<ChokeReport, 'regions'>, facts: Record<ChokeRegio
       const score = t.candidates.reduce((s, c) => s + STAGE_W[c.jstage] * EXPO_W[c.exposure] * CHECK_W[c.dataCheck || 'NO_DATA'] * (c.found === false ? 0.3 : 1) * (c.facts?.p5y != null && c.facts.p5y >= 900 ? 0.6 : 1), 0);
       t.rankScore = Math.round(score * 10) / 10;
       // zzz1187 — a choke point needs evidence that supply is tight now (runs before the field existed are judged as before)
-      t.qualifies = t.tightness !== null && t.candidates.some((c) => (c.jstage === 'J2' || c.jstage === 'J3') && (c.exposure === 'DIRECT' || c.exposure === 'ENABLER') && c.dataCheck !== 'CONTRADICTS' && c.found !== false);
+      // zzz1188 — the hard gate is only AMPLE supply (a known non-bottleneck); UNKNOWN is shown as such, not thrown out
+      t.qualifies = t.supply !== 'AMPLE' && t.candidates.some((c) => (c.jstage === 'J2' || c.jstage === 'J3') && (c.exposure === 'DIRECT' || c.exposure === 'ENABLER') && c.dataCheck !== 'CONTRADICTS' && c.found !== false);
       t.candidates.sort((a, b) => STAGE_W[b.jstage] * EXPO_W[b.exposure] - STAGE_W[a.jstage] * EXPO_W[a.exposure]);
     }
     g.themes.sort((a, b) => Number(!!b.qualifies) - Number(!!a.qualifies) || (b.rankScore ?? 0) - (a.rankScore ?? 0));
@@ -321,6 +329,16 @@ export function chokeToolFor(region: ChokeRegion) {
 }
 
 /** zzz1186 — bottlenecks the model must CHECK one by one against the company list (a checklist, not conclusions). */
+export const DRIVER_WORD: Record<string, string> = {
+  DOMESTIC: 'Domestic', EUROPE_PLUS_1: 'Europe+1', EUROPE_REARMAMENT: 'European rearmament', CHINA_PLUS_1: 'China+1', US_RESHORING: 'US reshoring / tariffs',
+  TRADE_DEAL: 'Trade deal', GLOBAL_AI_BUILDOUT: 'Global AI build-out', GLOBAL_ENERGY_TRANSITION: 'Global energy / grid build-out', OTHER_CROSS_BORDER: 'Cross-border',
+};
+/** zzz1188 — Europe+1 and other cross-border corridors, split into sub-themes the research must check one by one. */
+export const CROSS_BORDER_CHECKLIST: Record<ChokeRegion, string> = {
+  IN: 'EUROPE+1 sub-themes (Europe moving supply away from China / Russia and from its own high-energy-cost plants): (a) ammunition, explosives, propellants, shells and fuzes for European rearmament; (b) forgings, castings and machined parts for European rail, wind, aerospace, defence and industrial OEMs; (c) transformers, switchgear, cables and conductors for the European grid build-out; (d) specialty and agro-chemical intermediates replacing closed European capacity; (e) pharma API / CDMO under EU supply-security rules; (f) auto and EV components moved from China; (g) electronics / EMS and PCB assemblies for European OEMs; (h) textiles, leather and engineering goods under the India–EU / India–UK trade deals; (i) shipbuilding, ship repair and marine equipment. Also: China+1 for US buyers, US tariffs on China, Middle-East grid and energy projects.',
+  US: 'Cross-border: European rearmament buying US ammunition, air defence, drones and components; US reshoring and tariffs (domestic capacity for chips, rare-earth magnets, castings, forgings, steel, pharma ingredients); LNG and energy equipment for Europe; US suppliers to the European grid and nuclear build-out; China+1 supply-chain moves.',
+};
+
 export const CHOKE_CHECKLIST: Record<ChokeRegion, string> = {
   US: 'AI memory and storage (HBM, DRAM, NAND / enterprise SSD, HDD, controllers); optical interconnect (transceivers, lasers, co-packaged optics, fibre); advanced packaging, test and substrates (probe cards, test sockets, ABF, hybrid bonding); data-centre power (switchgear, transformers, gas turbines and engines, fuel cells, batteries / ESS, power semis, 800V DC); cooling (liquid cooling, chillers); grid and transmission equipment and contractors; nuclear fuel and SMRs (enrichment, HALEU, components); critical minerals (rare-earth magnets, gallium, tungsten, antimony, copper); defence and munitions (energetics, drones, counter-drone, space, shipbuilding); semicap sub-systems; industrial automation and robotics components; specialty chemicals and electronic materials; GLP-1 / biologics CDMO and medical consumables; aviation aftermarket (engines, MRO, castings).',
   IN: 'Power equipment (transformers, switchgear, conductors, cables, meters); electronics manufacturing and components (EMS, PCBs, ODM, semiconductor OSAT / ATMP); defence (munitions, explosives, propellants, electronics, forgings, shipbuilding, drones) and Europe+1 defence exports; castings and forgings exported to Europe / US (aerospace, industrial, rail, wind); specialty chemicals and CDMO / API for global pharma; data-centre build (power, cooling, construction); nuclear and grid capex suppliers; capital goods for railways / metro (only specific qualified suppliers); copper / aluminium value-added products; rare-earth magnets and critical minerals; aviation MRO and aerospace components; industrial gases and engineered products for export.',
@@ -367,7 +385,8 @@ export function chokeAsText(r: ChokeReport): string {
       out.push(`Why: ${t.why}`);
       if (t.necessity) out.push(`Necessity: ${t.necessity}`);
       if (t.constraint) out.push(`Supply constraint: ${t.constraint}`);
-      if (t.tightness !== undefined) out.push(`Tight now: ${t.tightness || 'no evidence — a watch'}`);
+      if (t.supply || t.tightness !== undefined) out.push(`Supply now: ${t.supply || '—'}${t.tightness ? ` — ${t.tightness}` : ''}`);
+      if (t.driver && t.driver !== 'DOMESTIC') out.push(`Demand driver: ${DRIVER_WORD[t.driver] || t.driver}`);
       if (t.valueCapture) out.push(`Value capture: ${t.valueCapture}`);
       if (t.breakers) out.push(`What could remove it: ${t.breakers}`);
       for (const c of t.candidates || []) {

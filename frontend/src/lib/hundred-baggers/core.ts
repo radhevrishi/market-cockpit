@@ -42,7 +42,7 @@ export const HB_TOOL = {
             market: { type: 'string', enum: ['US', 'IN'] },
             note: { type: 'string', maxLength: 800, description: 'One short paragraph on this list as a whole versus historic 100-baggers.' },
             picks: {
-              type: 'array', minItems: 5, maxItems: 10,
+              type: 'array', minItems: 10, maxItems: 10,
               items: {
                 type: 'object', additionalProperties: false,
                 required: ['ticker', 'thesis', 'scores', 'forward_metrics', 'moat', 'megatrend', 'valuation', 'risks', 'classification', 'missing', 'scenario'],
@@ -82,7 +82,7 @@ export const HB_SYSTEM = `You are an expert equity analyst hunting future 100-ba
 
 Choose ONLY from the shortlist given (real companies with stock-screener figures); copy the ticker exactly. Never invent figures: use the shortlist numbers, and mark anything else as an estimate.
 Prioritise: long future runway, bottleneck / mission-critical roles, structural positioning, early financial inflection.
-Exclude: governance, pledge or audit issues; chronic dilution; promoter / board disputes; stocks already fully priced (very high P/S after a huge run). If unsure about governance, leave it out.
+Exclude companies with KNOWN governance, pledge or audit problems, promoter / board disputes or chronic dilution. Governance you cannot verify is not a reason to leave a company out — name it in the risks as a check to do. Always return 10 picks per market, ranked; the scores and the caps show which are strong and which are weak.
 Think like the owner: a 100-bagger is RARE. It needs all of: a market far bigger than the company today (100x means the company must one day be worth 100 times its value now — say whether that is believable for this business); a durable, rising moat; earnings growth of 25%+ a year that it can sustain for 15–20 years mostly from internally generated cash; high and rising returns on capital reinvested at high rates; a founder / promoter owner-operator with skin in the game and a record of honest capital allocation; no reliance on one customer, one government scheme or one commodity cycle. A cyclical, government-tender-driven or commodity company can be a good stock but is rarely a 100-bagger — classify it CYCLE_PLAYER and score durability low. A well-known, widely-owned mid cap near the top of the band is not "hidden".
 The system checks your scores against the figures and caps any that contradict them (negative free cash flow caps capital allocation, high P/E or a big past run caps valuation runway, low returns cap the moats, slow sales growth caps inflection) — so score from the figures.
 Score 15 factors 0–10 each, honestly — 8+ is rare, and a score must match the figures (negative FCF margin cannot be "strong cash generation"; debt/equity near 1 is not a clean balance sheet).
