@@ -1,21 +1,21 @@
 {
-  "lastSync": "2026-10-26T18:42:45Z",
+  "lastSync": "2026-10-27T09:52:36Z",
   "ok": 19,
   "fail": 0,
   "files": [
     {
       "name": "100-baggers-sales-and-eps-growth.csv",
-      "size": 11635,
+      "size": 11204,
       "displayName": "100 baggers sales and eps growth"
     },
     {
       "name": "capex.csv",
-      "size": 9515,
+      "size": 9095,
       "displayName": "CAPEX"
     },
     {
       "name": "debt-reduction.csv",
-      "size": 11796,
+      "size": 11368,
       "displayName": "Debt Reduction"
     },
     {
@@ -25,22 +25,22 @@
     },
     {
       "name": "future-leaders.csv",
-      "size": 2354,
+      "size": 3210,
       "displayName": "Future Leaders"
     },
     {
       "name": "great-results-and-pullback.csv",
-      "size": 1564,
+      "size": 2008,
       "displayName": "Great Results and Pullback"
     },
     {
       "name": "ipobases.csv",
-      "size": 2749,
+      "size": 2787,
       "displayName": "IPOBASES"
     },
     {
       "name": "lowequitycapital.csv",
-      "size": 4060,
+      "size": 4874,
       "displayName": "Lowequitycapital"
     },
     {
@@ -50,12 +50,12 @@
     },
     {
       "name": "multibagger-like-acutaasatlantadee-dev.csv",
-      "size": 1552,
+      "size": 2002,
       "displayName": "Multibagger like Acutaas,Atlanta,Dee Dev"
     },
     {
       "name": "multibagger2-ignoring-trend.csv",
-      "size": 3707,
+      "size": 3706,
       "displayName": "Multibagger2 Ignoring trend"
     },
     {
@@ -80,17 +80,17 @@
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 19510,
+      "size": 19509,
       "displayName": "Latest Portfolio"
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63350,
+      "size": 63362,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65591,
+      "size": 65605,
       "displayName": "Working watchlist"
     },
     {
