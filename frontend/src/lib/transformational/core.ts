@@ -44,6 +44,8 @@ export interface TgItem {
   /** zzz1170 — an order's value as % of the company's yearly revenue, when both are known */
   orderToRevenuePct?: number | null;
   factsNote?: string | null;
+  /** zzz1190 — what to establish before drawing a conclusion */
+  research?: string[];
 }
 
 // ── the signals ────────────────────────────────────────────────────────────
@@ -334,7 +336,12 @@ const SUPPORT: Record<TgKind, RegExp> = {
 };
 const RAISE_ONLY = /\b(?:preferential (?:basis|issue|allotment)|public offering|QIP|qualified institutions placement|rights issue|equity raise|warrants|valuation report|allotment of (?:equity )?shares)\b/i;
 const EXISTING_REL = /\b(?:is (?:a )?JV with|existing (?:JV|joint venture|partnership)|monthly business update|business updates?)\b/i;
-const GENERIC_DOC = /\b(?:policy enforcement|risk management|overall management|responsibilities include|planning, )/i;
+const GENERIC_DOC = /\b(?:policy enforcement|risk management|overall management|responsibilities include|planning, |incorporation of (?:a )?(?:wholly[- ]owned )?subsidiary)\b/i;
+// zzz1190 — the lead line is a share issue (ONEGLOBAL "in-principle approval to issue shares … preferential allotment", QPOWER
+// "Proposed equity raise", TKNO "Proposed Public Offering"): a capital event, whatever label it got
+const LEAD_RAISE = /\b(?:proposed (?:equity raise|public offering|offering)|in-principle approval .{0,60}(?:shares|allotment)|(?:issue|allot\w*) .{0,40}equity shares|preferential (?:issue|allotment|basis)|private placement|QIP|qualified institutions placement|rights issue|public offering of common stock)\b/i;
+// zzz1190 — the company is the BUYER (PVP "LOI signed for proposed procurement of … LINAC systems"), not receiving an order
+const BUYER_RE = /\b(?:for (?:the )?(?:proposed )?procurement of|to procure|procure(?:ment)? of|proposed purchase of|placed (?:an? )?(?:purchase )?order (?:with|on)|acquisition of (?:equipment|machinery|land))\b/i;
 
 /** Why the text does not back the event, or null when it does. Figures in the filing (an earnings inflection) back themselves. */
 export function evidenceGap(x: Pick<TgItem, 'kind' | 'headline' | 'whatChanged' | 'quote' | 'signals' | 'market' | 'marketCap'>): string | null {
@@ -344,6 +351,13 @@ export function evidenceGap(x: Pick<TgItem, 'kind' | 'headline' | 'whatChanged' 
     if (/revenue\s*[−-]\s*\$/i.test(text)) return 'figures conflict (negative revenue) — check the release';
     for (const m of text.matchAll(/\$\s*([\d.]+)\s*(B|billion)\b/gi)) if (Number(m[1]) * 1000 > x.marketCap * 8) return `figures conflict ($${m[1]}B against a $${(x.marketCap / 1000).toFixed(1)}B company) — check the release`;
   }
+  if (x.market === 'US' && x.marketCap) {
+    const loss = /\b(?:net )?loss(?: of)?\s*(?:was\s*)?\$\s*([\d.]+)\s*(B|billion)\b/i.exec(text);
+    if (loss && Number(loss[1]) * 1000 > x.marketCap * 1.5) return `figures conflict (a $${loss[1]}B loss against a $${(x.marketCap / 1000).toFixed(1)}B company) — likely an extraction or unit error, check the release`;
+    if (/\brevenue(?:s)?\s*(?:of\s*)?\(\s*\$|\brevenue\s+of\s+-/i.test(text)) return 'figures conflict (negative revenue) — check the release';
+  }
+  if (LEAD_RAISE.test(String(x.headline || '')) || (LEAD_RAISE.test(text) && !x.signals.some((g) => /^Earnings inflection/.test(g)) && x.kind === 'APPROVAL')) return 'a share issue (raising money / dilution), not a business event — establish the use of funds, the dilution and what it buys';
+  if (x.kind === 'ORDERS' && BUYER_RE.test(text)) return 'the company is the buyer (a purchase / LOI to procure), not receiving an order — establish whether it is a commitment and which business earns from it';
   if (x.signals.some((g) => /^Earnings inflection/.test(g))) return null;
   if (GENERIC_DOC.test(text)) return 'the quoted text is generic document wording, not an event';
   if (RAISE_ONLY.test(text) && !SUPPORT[x.kind].test(text.replace(RAISE_ONLY, ''))) return 'the text is about raising money (share issue), not the labelled event';
@@ -351,6 +365,29 @@ export function evidenceGap(x: Pick<TgItem, 'kind' | 'headline' | 'whatChanged' 
   if (!SUPPORT[x.kind].test(text)) return `the shown text does not mention the ${KIND_WORD[x.kind].toLowerCase()}`;
   return null;
 }
+
+/** zzz1190 — what must be established before drawing a conclusion (per event type, with the known figures filled in), and the
+ *  one-page investment case. An event label and a multibagger read are not enough to choose between companies. Pure. */
+export function researchNeeded(x: Pick<TgItem, 'kind' | 'orderToRevenuePct' | 'facts' | 'dilution' | 'evidence' | 'durationYears'>): string[] {
+  const out: string[] = [];
+  const otr = x.orderToRevenuePct;
+  switch (x.kind) {
+    case 'ORDERS': out.push(`Order size vs the business: ${otr != null ? `≈${Math.round(otr)}% of a year's revenue` : 'value vs yearly revenue not known'} — compare with the existing order book.`, 'Margin on the order, execution period, and the working capital it ties up.'); break;
+    case 'STRATEGIC': out.push('Deal terms: price, how it is paid (cash / debt / shares), dilution.', 'Incremental earnings per share the deal adds, and when.'); break;
+    case 'CAPACITY': out.push('New capacity vs current revenue; utilisation ramp and demand already contracted.', 'Capex, funding and payback; margin at full utilisation.'); break;
+    case 'APPROVAL': out.push('What revenue the approval unlocks, from when, and from which customers.', 'Competitors already approved; what is still needed (orders, inspections).'); break;
+    case 'NEW_BUSINESS': out.push('Size of the new business vs the company; first revenue date.', 'Who pays, at what margin; investment required.'); break;
+    case 'GUIDANCE': out.push('Old vs new guidance and how much is already delivered.', 'Management\'s record of meeting earlier guidance.'); break;
+    case 'RESULTS': case 'TURNAROUND': out.push('One-offs (other income, tax, exceptional items) in the quarter; is it repeatable?', `Cash conversion${x.facts.cfoToPat != null ? ` (cash ÷ profit ${x.facts.cfoToPat.toFixed(2)})` : ''}, working capital and debt.`); break;
+  }
+  if (x.evidence !== 'official') out.push('Confirm in the company\'s own filing (press only so far).');
+  if (x.dilution) out.push('Dilution: new shares, use of funds and the per-share effect.');
+  return out;
+}
+export const ONE_PAGE_CASE = [
+  'What changed?', 'Why should it increase earnings per share?', 'When should the improvement appear?',
+  'What does the current price already require (earnings, growth, multiple)?', 'What evidence would make me change my mind?', 'How much portfolio loss could this position create (position size × downside)?',
+] as const;
 
 /** Growth from a tiny or negative base (+7,380%, −171%) says nothing about scale: not shown as a number, not scored. */
 const sane = (v: number | null | undefined): number | null => (v == null || !Number.isFinite(v) || Math.abs(v) > 300 ? null : v);
@@ -398,6 +435,7 @@ export function reviewItem(x0: TgItem, snap?: SnapFacts | null): TgItem | null {
   x.mb = multibaggerOf(x);
   if (x.strength === 'NOTABLE' && x.mb.score < 55) return null;
   x.needsCheck = evidenceGap(x);
+  x.research = researchNeeded(x);
   return x;
 }
 

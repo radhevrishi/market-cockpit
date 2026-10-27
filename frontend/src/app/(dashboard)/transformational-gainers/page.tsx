@@ -9,7 +9,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import NavLink from '@/components/NavLink';
 import { R, tint } from '@/components/special-situations/radar-tokens';
 import { MbChip, MB_COLOR } from '@/components/transformational/MbChip';
-import { MB_NAME, MB_WORD, OTHER_THEME, chanceOf, tgKindWord, type MbLabel, type TgBoard, type TgItem, type TgStrength } from '@/lib/transformational/core';
+import { MB_NAME, MB_WORD, ONE_PAGE_CASE, OTHER_THEME, chanceOf, tgKindWord, type MbLabel, type TgBoard, type TgItem, type TgStrength } from '@/lib/transformational/core';
 
 type Mkt = 'ALL' | 'IN' | 'US';
 const STRENGTH_COLOR: Record<TgStrength, string> = { TRANSFORMATIONAL: R.green, INFLECTION: R.cyan, NOTABLE: R.amber };
@@ -300,6 +300,11 @@ export default function TransformationalGainersPage() {
                                   <NavLink href={`/ai-gainers?market=${g.market}`} style={{ color: R.cyan, fontWeight: 700 }}>AI Daily Gainers →</NavLink>
                                   {x.themeWhy && <span style={{ color: R.faint }}>Theme from {x.themeWhy}</span>}
                                 </div>
+                                <details style={{ fontSize: 12.5, marginBottom: 6 }}>
+                                  <summary style={{ cursor: 'pointer', color: R.cyan, fontWeight: 700 }}>📄 One-page investment case — answer before buying</summary>
+                                  <ol style={{ margin: '4px 0 0', paddingLeft: 20, lineHeight: 1.55 }}>{ONE_PAGE_CASE.map((q) => <li key={q}>{q}</li>)}</ol>
+                                  <div style={{ color: R.faint, marginTop: 2 }}>Record the trigger, expected earnings effect, valuation range, position size and what would invalidate the case — so the decision can be checked honestly later.</div>
+                                </details>
                                 {g.items.map((it) => (
                                   <div key={it.id} style={{ padding: '8px 0', borderTop: `1px dashed ${R.border}` }}>
                                     <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'baseline', fontSize: 12, color: R.faint }}>
@@ -318,6 +323,12 @@ export default function TransformationalGainersPage() {
                                     </div>}
                                     {it.quote && <div style={{ fontSize: 12, color: R.faint, marginTop: 5, fontStyle: 'italic', lineHeight: 1.45 }}>“{it.quote}”</div>}
                                     <div style={{ marginTop: 6 }}><MbChip mb={it.mb} ai={it.ai} /></div>
+                                    {(it.research || []).length > 0 && (
+                                      <div style={{ marginTop: 6, fontSize: 12.5, lineHeight: 1.5 }}>
+                                        <b style={{ color: R.amber }}>🔎 Research before concluding:</b>
+                                        <ul style={{ margin: '2px 0 0', paddingLeft: 18 }}>{(it.research || []).map((q) => <li key={q}>{q}</li>)}</ul>
+                                      </div>
+                                    )}
                                   </div>
                                 ))}
                               </td></tr>
