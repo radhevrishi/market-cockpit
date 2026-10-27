@@ -30,19 +30,24 @@ export const HB_CAP: Record<CandMarket, [number, number]> = { US: [500, 5000], I
 /** zzz1186 — the owner's conditions as hard gates (the AI is not trusted to apply them): in the size band, growing,
  *  profitable at the operating level, self-funding, modest debt, no chronic dilution, returns on capital, not priced for
  *  perfection, not already a multi-bagger. Returns the reasons a company fails (empty = passes). Pure. */
+export const HB_FINANCIAL_RE = /insur|bank|savings|finance|lending|reit|real estate investment|capital market|broker|asset manag|mortgage|credit|investment|holding compan|nbfc|stockbrok/i;
 export function hbGateFails(c: Cand, m: CandMarket): string[] {
+  // zzz1187 — gates on what disqualifies (not on what the AI must judge): too strict a set left 52 US names, mostly insurers.
+  // Lenders / insurers are left out (their margins and cash flows are float, not operating cash). Returns on capital and
+  // margins are judged in the score caps, not used to throw out early-stage growers.
   const [lo, hi] = HB_CAP[m], f: string[] = [];
   if (c.mc < lo || c.mc > hi) f.push('outside the size band');
-  if ((c.revA ?? c.revQ ?? -1) < 15) f.push('sales growth under 15%');
-  if (c.opm != null && c.opm <= 5) f.push('operating margin 5% or less');
-  if (c.fcfm != null && c.fcfm < -5) f.push(`burns cash (FCF margin ${Math.round(c.fcfm)}%)`);
-  if (c.de != null && c.de > 0.8) f.push(`debt/equity ${c.de.toFixed(1)}`);
-  if (c.bb != null && c.bb < -4) f.push(`share count up ${Math.abs(c.bb).toFixed(1)}% a year`);
-  const roc = c.roce ?? c.roe; if (roc != null && roc < 12) f.push(`return on capital ${Math.round(roc)}%`);
-  if (c.ps != null && c.ps > 15) f.push(`P/S ${c.ps.toFixed(1)}`);
-  if (c.pe != null && c.pe > 80) f.push(`P/E ${Math.round(c.pe)}`);
+  if (c.ind && HB_FINANCIAL_RE.test(c.ind)) f.push('lender / insurer (float, not operating cash)');
+  const grow = (c.revA != null && c.revA >= 15) || (c.revQ != null && c.revQ >= 25 && (c.revA == null || c.revA >= 5));
+  if (!grow) f.push('sales growth under 15% (or a quarter under 25%)');
+  if (c.opm != null && c.opm <= 0) f.push('loss-making at the operating level');
+  if (c.fcfm != null && c.fcfm < -10) f.push(`burns cash (FCF margin ${Math.round(c.fcfm)}%)`);
+  if (c.de != null && c.de > 1.0) f.push(`debt/equity ${c.de.toFixed(1)}`);
+  if (c.bb != null && c.bb < -5) f.push(`share count up ${Math.abs(c.bb).toFixed(1)}% a year`);
+  if (c.ps != null && c.ps > 20) f.push(`P/S ${c.ps.toFixed(1)}`);
+  if (c.pe != null && c.pe > 100) f.push(`P/E ${Math.round(c.pe)}`);
   if (c.p1y != null && c.p1y > 250) f.push('up more than 3.5x in a year');
-  if (c.p5y != null && c.p5y > 300) f.push(`already up ${Math.round(c.p5y / 100 + 1)}x in 5 years`);
+  if (c.p5y != null && c.p5y > 400) f.push(`already up ${Math.round(c.p5y / 100 + 1)}x in 5 years`);
   return f;
 }
 

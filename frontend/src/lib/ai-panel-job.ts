@@ -4,13 +4,13 @@
 // seconds and shows the new result when it is done. One run at a time per panel. Server-only.
 const running = new Map<string, Promise<void>>();
 export interface JobState { state: 'idle' | 'running' | 'done' | 'error'; startedAt: string | null; finishedAt: string | null; error: string | null }
-const STALE_MS = 8 * 60_000;
+const STALE_MS = 16 * 60_000;   // zzz1187 — a research pass before the answer: runs take up to ~10 minutes
 
 export async function jobState(key: string): Promise<JobState> {
   const { kvGet } = await import('./kv');
   const s = await kvGet<JobState>(`${key}:job`).catch(() => null);
   if (!s) return { state: 'idle', startedAt: null, finishedAt: null, error: null };
-  // a "running" record whose process is gone (restart) stops counting after 8 minutes
+  // a "running" record whose process is gone (restart) stops counting after 16 minutes
   if (s.state === 'running' && !running.has(key) && s.startedAt && Date.now() - Date.parse(s.startedAt) > STALE_MS) return { ...s, state: 'error', error: 'The run was interrupted (server restart) — click again.' };
   return s;
 }

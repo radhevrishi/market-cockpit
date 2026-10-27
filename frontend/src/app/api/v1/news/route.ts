@@ -8,7 +8,7 @@ import { refreshNewsLastGood, makeKvNewsIo, NEWS_SHARED_LASTGOOD_KEY } from '@/l
 const NEWS_BG_REFRESH = { busy: false };   // zzz869: one background refresh per instance
 import { recordXRef } from '@/lib/news/cross-reference';
 import {
-  buildInstitutionalEnvelope, shouldKeepEarnings, generateInstitutionalImpactLabel,
+  buildInstitutionalEnvelope, shouldKeepEarnings, generateInstitutionalImpactLabel, impactLabelFits,
   generateWhyThisMatters, buildConsensusVariant, applySignalDecay, buildCausalChain,
   classifyAnomaly, classifyTickerAnomaly,
 } from '@/lib/news/institutional-engine';
@@ -624,8 +624,11 @@ function classifyArticle(title: string, desc: string): { article_type: string; i
   // ══════════════════════════════════════════════════════════════════
   const isEarningsArticle = /\b(earnings|quarterly results?|q[1-4]\s?(fy|20)|profit (up|down|rise|fall|beat|miss|jump|surge|decline)|revenue (up|down|rise|beat|miss|jump|surge|decline|growth)|results\s+(beat|miss|exceed|top)|beats? expectations?|miss(es|ed)? expectations?|guidance (raise|lower|maintain|reaffirm)|eps |net income|operating income|ebitda|bottom.?line|top.?line)\b/i.test(text);
 
+  // zzz1187 — a masterclass / interview / stock-picks piece that mentions earnings in its text is not a results story
+  const notResults = /\b(masterclass|webinar|podcast|interview|in conversation|how to|wealth creation|stocks? to (buy|watch)|top picks|explained|opinion|column)\b/i.test(title)
+    && !/\b(q[1-4]|results?|profit|revenue|earnings|net income)\b/i.test(title);
   // If it's clearly an earnings article AND not about a core constraint domain, classify as EARNINGS
-  if (isEarningsArticle) {
+  if (isEarningsArticle && !notResults) {
     // Exception: memory/semi companies reporting supply constraints in earnings
     const isCoreConstraintEarnings =
       /(hbm|dram|nand|cowos|packaging capacity|chip shortage|wafer capacity|supply constraint|allocation|lead time)/i.test(text) &&
@@ -2357,7 +2360,7 @@ async function fetchAllNews(): Promise<any[]> {
     return {
       ...a,
       // PATCH 0050: prefer institutional impact label when set
-      impact_statement: a.institutional_impact_label || generateImpact(a.title, a.summary || '', a.article_type, a.region, a.bottleneck_sub_tag),
+      impact_statement: (a.institutional_impact_label && impactLabelFits(a.institutional_impact_label, `${a.title || ''} ${a.summary || ''}`) ? a.institutional_impact_label : '') || generateImpact(a.title, a.summary || '', a.article_type, a.region, a.bottleneck_sub_tag),
       investment_tickers: a.article_type === 'BOTTLENECK' ? getInvestmentTickers(a.title + ' ' + (a.summary || '')) : [],
       signal_confidence: enrichedConfidence,
     };
@@ -2976,8 +2979,14 @@ export async function GET(request: Request) {
           }));
           // zzz1186 — an Indian news SOURCE writing about a foreign company (Samsung–Broadcom) is not an India signal: the India
           // view needs the article itself to be about India
-          const INDIA_TEXT = /\b(india|indian|nse|bse|sebi|rbi|crore|lakh|psu|adani|tata|reliance|mahindra|bharat|hindustan|gujarat|maharashtra|tamil|karnataka|delhi|mumbai)\b|₹/i;
-          for (const t of tagged) if (t.region === 'IN' && !INDIA_TEXT.test(String(t.sample?.title || ''))) t.region = 'GLOBAL';
+          const INDIA_TEXT = /\b(india|indian|nse|bse|sebi|rbi|crore|lakh|psu|adani|tata|reliance|mahindra|bharat|hindustan|ntpc|nhpc|sjvn|bhel|bel|bdl|hal|drdo|isro|npcil|barc|ongc|gail|iocl|coal india|grse|mazagon|cochin shipyard|seci|nhai|rvnl|gujarat|maharashtra|tamil|karnataka|delhi|mumbai|rajasthan|andhra|odisha|uttar|bihar|bengal|kerala|telangana|punjab|haryana|assam|arunachal|chhattisgarh|madhya pradesh|bengaluru|chennai|hyderabad|kolkata|pune)\b|₹/i;
+          // zzz1187 — and the reverse: an article about NTPC / BDL / Rajasthan is India even when it came through a global feed
+          const FOREIGN_TEXT = /\b(samsung|broadcom|nvidia|tsmc|micron|sk hynix|hynix|intel|amd|apple|google|microsoft|amazon|meta|huawei|asml|china|chinese|japan|korea|taiwan|europe|u\.s\.|america|american|germany|france)\b/i;
+          for (const t of tagged) {
+            const ttl = String(t.sample?.title || '');
+            if (t.region === 'IN' && !INDIA_TEXT.test(ttl)) t.region = 'GLOBAL';
+            else if (t.region === 'GLOBAL' && INDIA_TEXT.test(ttl) && !FOREIGN_TEXT.test(ttl)) t.region = 'IN';
+          }
           const inSamples = tagged.filter((t) => t.region === 'IN').map((t) => t.sample);
           const glSamples = tagged.filter((t) => t.region === 'GLOBAL').map((t) => t.sample);
 

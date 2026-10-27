@@ -8,7 +8,7 @@
 import { Fragment, useCallback, useEffect, useState } from 'react';
 import { pollJob, startAndPoll } from '@/lib/ai-panel-client';
 import type { ThemePulse } from '@/lib/choke-themes/pulse';
-import { chokeAsText, fmtChokeCap, EXPOSURE_WHY, J_WHY, J_WORD, type ChokeCandidate, type ChokeChange, type ChokeReport, type ChokeRegion, type ChokeTheme, type JStage } from '@/lib/choke-themes/core';
+import { chokeAsText, DISCOVERY_CAP, fmtChokeCap, EXPOSURE_WHY, J_WHY, J_WORD, type ChokeCandidate, type ChokeChange, type ChokeReport, type ChokeRegion, type ChokeTheme, type JStage } from '@/lib/choke-themes/core';
 
 const OPEN_KEY = 'mc:choke-themes:open:v1';
 const C = {
@@ -165,13 +165,13 @@ function CandTable({ list, region, title }: { list: ChokeCandidate[]; region: Ch
 
 function ThemeCard({ t, i, region, pulse }: { t: ChokeTheme; i: number; region: ChokeRegion; pulse?: ThemePulse | null }) {
   const [showPulse, setShowPulse] = useState(false);
-  const mech = ([['NECESSITY', t.necessity], ['SUPPLY CONSTRAINT', t.constraint], ['VALUE CAPTURE', t.valueCapture], ['WHAT COULD REMOVE IT', t.breakers]] as const).filter(([, v]) => v);
+  const mech = ([['NECESSITY', t.necessity], ['SUPPLY CONSTRAINT', t.constraint], ['TIGHT NOW?', t.tightness === undefined ? '' : (t.tightness || 'No evidence of tight supply right now — a watch, not a choke point.')], ['VALUE CAPTURE', t.valueCapture], ['WHAT COULD REMOVE IT', t.breakers]] as const).filter(([, v]) => v);
   return (
     <div style={{ border: `1px solid ${t.qualifies ? tint(C.green, 45) : C.border}`, borderRadius: 12, background: C.bg, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', flexWrap: 'wrap' }}>
         <span style={{ flexShrink: 0, width: 28, height: 28, borderRadius: 8, background: tint(C.accent, 14), color: C.accent, fontWeight: 900, fontSize: 15, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
         <div style={{ fontWeight: 900, fontSize: 17.5, lineHeight: 1.3, flex: 1, minWidth: 200 }}>🔥 {t.name} <span style={{ whiteSpace: 'nowrap' }}>{t.emoji}</span></div>
-        {t.qualifies ? tag('✓ figures support a candidate', C.green, 'At least one DIRECT / ENABLER company at J2 / J3 whose screener figures agree. Verified: the financial turn in screener figures. NOT verified here: that the product is the earnings driver, the scarcity economics, governance.') : tag('watch — no confirmed inflection yet', C.warn, 'No DIRECT / ENABLER candidate at J2 / J3 backed by its figures')}
+        {t.qualifies ? tag('✓ figures support a candidate', C.green, 'At least one DIRECT / ENABLER company at J2 / J3 whose screener figures agree. Verified: the financial turn in screener figures. NOT verified here: that the product is the earnings driver, the scarcity economics, governance.') : tag(t.tightness === null ? 'watch — no evidence supply is tight now' : 'watch — no confirmed inflection yet', C.warn, 'Needs both: evidence supply is tight now, and a DIRECT / ENABLER candidate at J2 / J3 backed by its figures')}
         {pulse && <StrengthBadge p={pulse} />}
       </div>
       <div style={{ fontSize: 15, lineHeight: 1.55 }}>{t.why}</div>
@@ -180,7 +180,7 @@ function ThemeCard({ t, i, region, pulse }: { t: ChokeTheme; i: number; region: 
           {mech.map(([k, v]) => <div key={k} style={{ fontSize: 14, lineHeight: 1.5, padding: '7px 9px', borderRadius: 8, background: k === 'WHAT COULD REMOVE IT' ? tint(C.red, 6) : C.bg2, border: `1px solid ${C.border}` }}>{label(k)}{v}</div>)}
         </div>
       )}
-      <CandTable list={t.candidates || []} region={region} title={`DISCOVERY CANDIDATES · SMALL & MID (${region === 'US' ? '$300M–$10B' : '₹500–25,000 Cr'})`} />
+      <CandTable list={t.candidates || []} region={region} title={`DISCOVERY CANDIDATES · SMALL & MID (${fmtChokeCap(DISCOVERY_CAP[region][0], region)}–${fmtChokeCap(DISCOVERY_CAP[region][1], region)})`} />
       {!(t.candidates || []).length && <div style={{ fontSize: 14, color: C.warn }}>No qualifying small / mid-cap candidates in this run.</div>}
       <CandTable list={t.reference || []} region={region} title="REFERENCE LEADERS (LARGER — CONTEXT, NOT DISCOVERY)" />
       {(t.unknowns || t.evidence) && (
@@ -317,7 +317,7 @@ export default function ChokeThemesPanel() {
           {(() => {   // zzz1186 — how wide the search was, so a short list is not mistaken for a full sweep
             const cv = report.coverage?.[g.region]; if (!cv) return null;
             const cands = g.themes.reduce((n, t) => n + (t.candidates || []).length, 0), q = g.themes.filter((t) => t.qualifies).length;
-            return <div style={{ fontSize: 13, color: C.dim, marginBottom: 8, lineHeight: 1.5 }}>🔎 Search: {cv.universe.toLocaleString()} listed companies → {cv.inBand.toLocaleString()} in the small / mid band → {cv.turning} with turning figures + {cv.industry} in bottleneck industries sent to the AI with {cv.news} news items → {g.themes.length} themes, {cands} candidates → {q} with figure-supported candidates. Filings are not read one by one; screener figures are not reconciled to filings.</div>;
+            return <div style={{ fontSize: 13, color: C.dim, marginBottom: 8, lineHeight: 1.5 }}>🔎 Search: {cv.universe.toLocaleString()} listed companies → {cv.inBand.toLocaleString()} in the small / mid band → {cv.turning} with turning figures + {cv.industry} in bottleneck industries sent to the AI with {cv.news} news items → {g.themes.length} themes, {cands} candidates → {q} with figure-supported candidates{report.researchUsed?.[g.region] ? ' · a reasoning research pass ran first (lists + the AI’s own knowledge of listed suppliers)' : ''}. Filings are not read one by one; screener figures are not reconciled to filings.</div>;
           })()}
           {themes.length === 0 && <div style={{ fontSize: 15, padding: 12, border: `1px dashed ${C.border}`, borderRadius: 10 }}>No theme qualified for {g.region === 'US' ? 'the US' : 'India'} in this run — better no list than filler.</div>}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

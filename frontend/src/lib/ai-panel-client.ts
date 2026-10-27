@@ -4,7 +4,7 @@ export interface PanelGet<R> { ok: boolean; report: R | null; job?: { state: 'id
 
 export async function pollJob<R>(url: string, startedAt: string | null, onTick?: (secs: number) => void): Promise<{ report: R | null; error: string | null }> {
   const t0 = Date.now();
-  while (Date.now() - t0 < 7 * 60_000) {
+  while (Date.now() - t0 < 15 * 60_000) {
     await new Promise((r) => setTimeout(r, 5000));
     onTick?.(Math.round((Date.now() - (startedAt ? Date.parse(startedAt) : t0)) / 1000));
     const j: PanelGet<R> | null = await fetch(url, { cache: 'no-store' }).then((r) => r.json()).catch(() => null);

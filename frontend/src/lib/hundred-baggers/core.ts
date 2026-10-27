@@ -40,7 +40,7 @@ export const HB_TOOL = {
           type: 'object', additionalProperties: false, required: ['market', 'picks', 'note'],
           properties: {
             market: { type: 'string', enum: ['US', 'IN'] },
-            note: { type: 'string', maxLength: 400, description: 'One short paragraph on this list as a whole versus historic 100-baggers.' },
+            note: { type: 'string', maxLength: 800, description: 'One short paragraph on this list as a whole versus historic 100-baggers.' },
             picks: {
               type: 'array', minItems: 5, maxItems: 10,
               items: {
@@ -90,6 +90,15 @@ Classify: SECULAR_COMPOUNDER (long-runway compounder) or CYCLE_PLAYER (cyclical 
 Read the figures critically: a quarter's sales jump far above the yearly growth is often an acquisition or a low base — say so, do not call it organic growth. Negative FCF margin, rising share count or debt must appear in the risks.
 Scenario: for a company with positive, representative earnings give EPS growth a year and exit P/E for bear / base / bull over 3–10 years plus expected dilution — the system calculates the multiple; otherwise null. Never assume 50–100x; if a 10x needs extreme growth, the numbers will show it.
 For each pick say plainly what is missing versus historic 100-baggers. Rank strongest first. Plain, simple English. This is research, not advice.`;
+
+/** zzz1187 — the tool for ONE market's call (each market researched on its own). */
+export function hbToolFor(m: CandMarket) {
+  const t: any = JSON.parse(JSON.stringify(HB_TOOL));
+  const mk = t.input_schema.properties.markets;
+  mk.minItems = 1; mk.maxItems = 1; mk.items.properties.market.enum = [m];
+  t.description = `Record the 10 strongest future 100-bagger candidates for ${m === 'US' ? 'the USA' : 'India'}, scored on 15 factors.`;
+  return t;
+}
 
 /** zzz1184 — what the figures say that a thesis must not paper over. Pure. */
 export function hbFlags(c: Cand): string[] {
@@ -142,10 +151,10 @@ export function hbApplyCaps(p: Pick<HbPick, 'scores' | 'data' | 'aiScores'>): { 
 }
 
 /** Keeps only picks that name a shortlist company; the total is summed here, never taken from the model. Pure. */
-export function cleanHb(d: any, shortlist: Record<CandMarket, Cand[]>): HbMarketView[] | null {
+export function cleanHb(d: any, shortlist: Record<CandMarket, Cand[]>, only: CandMarket[] = ['US', 'IN']): HbMarketView[] | null {
   const str = (v: unknown, n: number) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
   const out: HbMarketView[] = [];
-  for (const m of ['US', 'IN'] as CandMarket[]) {
+  for (const m of only) {
     const g = (Array.isArray(d?.markets) ? d.markets : []).find((x: any) => x?.market === m);
     if (!g) return null;
     const byT = new Map(shortlist[m].map((c) => [c.t, c]));
@@ -176,7 +185,7 @@ export function cleanHb(d: any, shortlist: Record<CandMarket, Cand[]>): HbMarket
     }
     if (picks.length < 3) return null;
     picks.sort((a, b) => b.total - a.total);
-    out.push({ market: m, picks: picks.slice(0, 10), note: str(g.note, 400) });
+    out.push({ market: m, picks: picks.slice(0, 10), note: str(g.note, 800) });
   }
   return out;
 }

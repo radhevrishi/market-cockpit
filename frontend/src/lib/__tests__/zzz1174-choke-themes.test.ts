@@ -6,7 +6,7 @@ import { CHOKE_TOOL, CHOKE_SYSTEM, cleanChoke, chokeAsText, type ChokeReport } f
 import { isStrictSchema, toStrictSchema } from '../ai-schemas';
 
 export const cand = (ticker: string, over: any = {}) => ({ name: `${ticker} Ltd`, ticker, exposure: 'DIRECT', jstage: 'J2', product: 'HV bushings', inflection: 'Reported: export orders up', milestone: 'Q3 results', invalidation: 'orders slip', concern: 'None found in available disclosures', scenario: null, ...over });
-export const theme = (name: string, cands: any[], ref: any[] = []) => ({ name, emoji: '⚡', keywords: ['a', 'b', 'c', 'd'], why: 'Driver.', necessity: 'n', constraint: 'c', value_capture: 'v', breakers: 'b', unknowns: 'u', evidence: null, candidates: cands, reference: ref });
+export const theme = (name: string, cands: any[], ref: any[] = []) => ({ name, emoji: '⚡', keywords: ['a', 'b', 'c', 'd'], why: 'Driver.', necessity: 'n', constraint: 'c', value_capture: 'v', tightness: 'Lead times extended (test)', breakers: 'b', unknowns: 'u', evidence: null, candidates: cands, reference: ref });
 const pb = { strongest: ['x'], confirm: [], milestones: [], disconfirming: [], valuation: [] };
 
 test('schema is strict-able; no theme quota (1–8); the prompt asks for company evidence, not sector stories', () => {

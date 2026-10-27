@@ -703,6 +703,20 @@ const LABEL_RELEVANCE: Record<string, RegExp> = {
   NUCLEAR_ENERGY: /\b(nuclear|uranium|reactor|smr|haleu|enrichment)\b/,
 };
 
+/** zzz1187 — does a stored thematic label still fit its article? (articles cached before the relevance check carried
+ *  "GPU deployment bottleneck … packaging-bound" on a battery-storage deal). Unknown labels pass. Pure. */
+export function impactLabelFits(label: string | null | undefined, text: string): boolean {
+  if (!label) return true;
+  const t = text.toLowerCase();
+  for (const [key, states] of Object.entries(INSTITUTIONAL_IMPACT_LABELS)) {
+    if (Object.values(states).includes(label)) { const need = LABEL_RELEVANCE[key]; return !need || need.test(t); }
+  }
+  for (const [key, l] of Object.entries(SUBTAG_INSTITUTIONAL_LABELS)) {
+    if (l === label) { const need = LABEL_RELEVANCE[key]; return !need || need.test(t); }
+  }
+  return true;
+}
+
 export function generateInstitutionalImpactLabel(args: {
   bottleneck_sub_tag?: string | null;
   bottleneck_category?: string;

@@ -48,6 +48,8 @@ export interface ChokeTheme {
   name: string; emoji: string; keywords?: string[];
   why: string; necessity: string; constraint: string; valueCapture: string; breakers: string; unknowns: string;
   evidence: string | null;
+  /** zzz1187 — evidence supply is tight now (null = none: a watch, not a choke point) */
+  tightness?: string | null;
   candidates: ChokeCandidate[]; reference: ChokeCandidate[];
   // laid over by the server
   qualifies?: boolean; rankScore?: number;
@@ -64,6 +66,8 @@ export interface ChokeReport {
   marketDataAt?: string | null; prevAt?: string | null;
   /** zzz1186 — the discovery funnel per country: universe → size band → sent to the AI */
   coverage?: Partial<Record<ChokeRegion, { universe: number; inBand: number; turning: number; industry: number; news: number }>>;
+  /** zzz1187 — whether the reasoning research pass ran before the structured answer, per country */
+  researchUsed?: Partial<Record<ChokeRegion, boolean>>;
   /** zzz1186 — countries whose AI call failed in this run and kept the previous research */
   keptFromPrevious?: ChokeRegion[];
 }
@@ -111,7 +115,7 @@ export const CHOKE_TOOL = {
               type: 'array', minItems: 1, maxItems: 8, description: 'Only themes that qualify — fewer is fine. No filler.',
               items: {
                 type: 'object', additionalProperties: false,
-                required: ['name', 'emoji', 'keywords', 'why', 'necessity', 'constraint', 'value_capture', 'breakers', 'unknowns', 'evidence', 'candidates', 'reference'],
+                required: ['name', 'emoji', 'keywords', 'why', 'necessity', 'constraint', 'value_capture', 'tightness', 'breakers', 'unknowns', 'evidence', 'candidates', 'reference'],
                 properties: {
                   name: { type: 'string', maxLength: 90, description: 'The SPECIFIC bottleneck (e.g. "High-density power delivery for AI racks"), not a broad sector.' },
                   emoji: { type: 'string', maxLength: 12 },
@@ -120,10 +124,11 @@ export const CHOKE_TOOL = {
                   necessity: { type: 'string', maxLength: 300, description: 'Why customers cannot do without it.' },
                   constraint: { type: 'string', maxLength: 300, description: 'The supply constraint: few qualified suppliers, long qualification, certification, IP, scarce skills…' },
                   value_capture: { type: 'string', maxLength: 300, description: 'How suppliers keep the benefit: pricing, recurring revenue, utilisation, mix, switching costs.' },
+                  tightness: { type: ['string', 'null'], maxLength: 300, description: 'Evidence that supply is TIGHT NOW: extended lead times, allocation, price increases, sold-out capacity, qualification queues, import bans — with its source (news item or your knowledge, dated). null when you have none — then the theme is only a watch.' },
                   breakers: { type: 'string', maxLength: 300, description: 'What could remove the bottleneck: new capacity, substitution, insourcing, redesign, more qualified suppliers, regulation.' },
                   unknowns: { type: 'string', maxLength: 340, description: 'The important unknowns / evidence gaps.' },
                   evidence: { type: ['string', 'null'], maxLength: 280, description: 'A recent development from the news list that is about THIS bottleneck, or null.' },
-                  candidates: { type: 'array', minItems: 0, maxItems: 6, items: CAND_SCHEMA, description: 'Small & mid-cap discovery candidates (US $300M–$10B, India ₹500–25,000 crore), DIRECT and ENABLER first, J2 / J3 first. Empty when none qualify — say so in unknowns.' },
+                  candidates: { type: 'array', minItems: 0, maxItems: 6, items: CAND_SCHEMA, description: 'Small & mid-cap discovery candidates (US $300M–$10B, India ₹500–50,000 crore), DIRECT and ENABLER first, J2 / J3 first. Empty when none qualify — say so in unknowns.' },
                   reference: { type: 'array', minItems: 0, maxItems: 3, items: CAND_SCHEMA, description: 'Large reference leaders (above the discovery band), kept separate.' },
                 },
               },
@@ -157,6 +162,8 @@ CANDIDATES: prefer DIRECT and ENABLER exposure, J2 / J3 first; J1 only as an ear
 Governance: exclude companies with known auditor resignations or qualifications, regulator enforcement, pledge problems, promoter or board disputes or chronic dilution; separate allegations from findings; never call governance clean — write what you checked against.
 SCENARIOS: only for a profitable company whose current earnings are representative; give EPS growth a year and exit P/E for bear / base / bull and the expected dilution — the system calculates the return; never assume 5–20x because a company is small. Otherwise scenario = null.
 PLAYBOOK per country: strongest evidence-backed ideas, what needs confirmation, upcoming milestones, disconfirming evidence, valuation conditions. Never recommend buying because a price fell.
+WHAT A J-CURVE IS (the pattern before Micron and SanDisk ran 10–50x): a hard-to-add supply meets a demand step-up; prices or utilisation turn first; then quarterly revenue jumps above the yearly trend; then margins swing up faster than revenue; the share price lags the figures. Look for that sequence in the company figures given. A company already up 10x+ with peak margins is J4 / J5 — a reference, not a discovery. NOT choke points: products with ample suppliers (generic hoses, fittings, standard PCBs, commodity APIs, plain EPC contracting), one big order on a low base, a government scheme with many bidders.
+COMPANIES BEYOND THE LISTS: you may name a company LISTED in this country that is not in the lists when you know it is a direct supplier of the bottleneck — give its exact exchange ticker; the system checks it against the full stock screener and marks it if not found. Never invent customers, contracts or figures.
 FIGURES: always give the period of a figure ("latest quarter vs a year earlier", "trailing 12 months", "last fiscal year"); stock-screener figures are not reconciled to filings — when a TTM figure looks distorted by a one-off (a settlement, licence or asset sale), say so and use the fiscal-year figure. Separate what is verified: (1) the financial turn in reported figures, (2) that the company really supplies the bottleneck product, (3) the scarcity / value-capture economics, (4) governance, funding and valuation — never present one as proof of another. A named customer is not required when confidentiality prevents it; an official statement of the customer category and commercial status is evidence.
 GEOGRAPHY: each country's candidates are companies LISTED in that country; a foreign company may appear only as a reference or as the demand driver, never as a candidate.
 Plain, simple English. Short sentences. Label facts "Reported:", targets "Guidance:", your reading "Inference:". This is research, not advice.`;
@@ -195,6 +202,7 @@ export function cleanChoke(d: any): Pick<ChokeReport, 'regions' | 'changes'> | n
       keywords: (Array.isArray(t?.keywords) ? t.keywords : []).map((k: any) => str(k, 40)).filter(Boolean).slice(0, 12),
       why: str(t?.why, 320), necessity: str(t?.necessity, 300), constraint: str(t?.constraint, 300), valueCapture: str(t?.value_capture, 300),
       breakers: str(t?.breakers, 300), unknowns: str(t?.unknowns, 340), evidence: t?.evidence ? str(t.evidence, 280) : null,
+      tightness: t?.tightness ? str(t.tightness, 300) : null,
       candidates: (Array.isArray(t?.candidates) ? t.candidates : []).map(cleanCand).filter(Boolean).slice(0, 6) as ChokeCandidate[],
       reference: (Array.isArray(t?.reference) ? t.reference : []).map(cleanCand).filter(Boolean).slice(0, 3) as ChokeCandidate[],
     })).filter((t: ChokeTheme) => t.name && t.why).slice(0, 8);
@@ -206,7 +214,9 @@ export function cleanChoke(d: any): Pick<ChokeReport, 'regions' | 'changes'> | n
   return { regions, changes: [] };
 }
 
-export const DISCOVERY_CAP: Record<ChokeRegion, [number, number]> = { US: [300, 10_000], IN: [500, 25_000] };   // $ M / ₹ Cr
+// zzz1187 — India's band was ₹25,000 Cr (~$3B) against $10B for the US, which left out India's real mid-caps (HFCL, STL, Syrma,
+// Netweb, PTC Industries …); ₹50,000 Cr (~$6B) is still small / mid in India.
+export const DISCOVERY_CAP: Record<ChokeRegion, [number, number]> = { US: [300, 10_000], IN: [500, 50_000] };   // $ M / ₹ Cr
 export const SMALL_MID_MAX: Record<ChokeRegion, number> = { US: DISCOVERY_CAP.US[1], IN: DISCOVERY_CAP.IN[1] };
 export const homeTicker = (t: string, region: ChokeRegion) => { const m = /^([A-Z0-9&.-]+)(?:\s*[,(]\s*([A-Za-z]+))?/.exec(t.trim().toUpperCase()); if (!m) return null; if (m[2] && !(region === 'US' ? /^(NYSE|NASDAQ|US)$/ : /^(NSE|BSE|IN)$/).test(m[2])) return null; return m[1].replace(/\.NS$|\.BO$/, ''); };
 export const fmtChokeCap = (v: number | null | undefined, region: ChokeRegion): string | null => (v == null ? null : region === 'IN' ? `₹${Math.round(v).toLocaleString('en-IN')} Cr` : v >= 1_000_000 ? `$${(v / 1_000_000).toFixed(1)}T` : v >= 1000 ? `$${(v / 1000).toFixed(v >= 100_000 ? 0 : 1)}B` : `$${Math.round(v)}M`);
@@ -264,7 +274,11 @@ export function enrich(r: Pick<ChokeReport, 'regions'>, facts: Record<ChokeRegio
       const [lo, hi] = DISCOVERY_CAP[g.region];
       const big = t.candidates.filter((c) => c.facts?.cap != null && c.facts.cap > hi);
       t.candidates = t.candidates.filter((c) => !big.includes(c));
-      for (const c of t.candidates) c.sizeNote = c.facts?.cap != null && c.facts.cap < lo ? 'below the discovery size band — thin liquidity' : null;
+      for (const c of t.candidates) {
+        c.sizeNote = c.facts?.cap != null && c.facts.cap < lo ? 'below the discovery size band — thin liquidity' : null;
+        // zzz1187 — a share price already up 10x+ in 5 years is late in the curve (context, not a verdict)
+        if (c.facts?.p5y != null && c.facts.p5y >= 900) c.sizeNote = [c.sizeNote, `share price already up ${Math.round(c.facts.p5y / 100 + 1)}x in 5 years — check it is not late in the curve`].filter(Boolean).join(' · ');
+      }
       t.reference = [...t.reference, ...big].slice(0, 4);
       // one primary theme per company; later appearances become secondary tags
       t.candidates = t.candidates.filter((c) => {
@@ -275,9 +289,10 @@ export function enrich(r: Pick<ChokeReport, 'regions'>, facts: Record<ChokeRegio
         return true;
       });
       // rank: quality and breadth of qualifying candidates (DIRECT / ENABLER at J2 / J3, backed by data)
-      const score = t.candidates.reduce((s, c) => s + STAGE_W[c.jstage] * EXPO_W[c.exposure] * CHECK_W[c.dataCheck || 'NO_DATA'] * (c.found === false ? 0.3 : 1), 0);
+      const score = t.candidates.reduce((s, c) => s + STAGE_W[c.jstage] * EXPO_W[c.exposure] * CHECK_W[c.dataCheck || 'NO_DATA'] * (c.found === false ? 0.3 : 1) * (c.facts?.p5y != null && c.facts.p5y >= 900 ? 0.6 : 1), 0);
       t.rankScore = Math.round(score * 10) / 10;
-      t.qualifies = t.candidates.some((c) => (c.jstage === 'J2' || c.jstage === 'J3') && (c.exposure === 'DIRECT' || c.exposure === 'ENABLER') && c.dataCheck !== 'CONTRADICTS' && c.found !== false);
+      // zzz1187 — a choke point needs evidence that supply is tight now (runs before the field existed are judged as before)
+      t.qualifies = t.tightness !== null && t.candidates.some((c) => (c.jstage === 'J2' || c.jstage === 'J3') && (c.exposure === 'DIRECT' || c.exposure === 'ENABLER') && c.dataCheck !== 'CONTRADICTS' && c.found !== false);
       t.candidates.sort((a, b) => STAGE_W[b.jstage] * EXPO_W[b.exposure] - STAGE_W[a.jstage] * EXPO_W[a.exposure]);
     }
     g.themes.sort((a, b) => Number(!!b.qualifies) - Number(!!a.qualifies) || (b.rankScore ?? 0) - (a.rankScore ?? 0));
@@ -352,6 +367,7 @@ export function chokeAsText(r: ChokeReport): string {
       out.push(`Why: ${t.why}`);
       if (t.necessity) out.push(`Necessity: ${t.necessity}`);
       if (t.constraint) out.push(`Supply constraint: ${t.constraint}`);
+      if (t.tightness !== undefined) out.push(`Tight now: ${t.tightness || 'no evidence — a watch'}`);
       if (t.valueCapture) out.push(`Value capture: ${t.valueCapture}`);
       if (t.breakers) out.push(`What could remove it: ${t.breakers}`);
       for (const c of t.candidates || []) {

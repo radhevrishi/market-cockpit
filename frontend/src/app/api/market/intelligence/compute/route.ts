@@ -3460,12 +3460,14 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     if (client) headline += ` from ${client}`;
     const matParts: string[] = [];
     if (!inferenceUsed) matParts.push(`${Math.min(100, impactPct).toFixed(1)}% of revenue`);
-    if (pctMcap !== null && pctMcap > 0) matParts.push(`${pctMcap.toFixed(1)}% MCap`);
+    if (!inferenceUsed && pctMcap !== null && pctMcap > 0) matParts.push(`${pctMcap.toFixed(1)}% MCap`);
     if (segment) matParts.push(segment);
     if (timeline) matParts.push(timeline);
     if (matParts.length) headline += ` — ${matParts.join(' · ')}`;
     const descSnippet = (desc || '').slice(0, 100).replace(/\s+/g, ' ').trim();
-    if (descSnippet.length > 20) headline += `. ${descSnippet}`;
+    // zzz1187 — with no stated amount the filing's own subject IS the headline ("Suspension of Trading", not "Corporate. …")
+    if (inferenceUsed && descSnippet.length > 8) headline = `${descSnippet}${client ? ` — ${client}` : ''}`;
+    else if (descSnippet.length > 20) headline += `. ${descSnippet}`;
 
     const dateStr = (rawDate || getTodayDate()).slice(0, 10);
     // 3-day dedup bucket: floor(daysSinceEpoch / 3) groups nearby dates

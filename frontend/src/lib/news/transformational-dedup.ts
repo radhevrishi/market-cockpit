@@ -107,6 +107,10 @@ export function showableContract<T extends ShowableItem>(it: T, isListed: (ticke
   // a stated value under 2% of the company's market value does not transform it (Coal India's ₹2,831 Cr order is ~1%)
   const v = HAS_MONEY.test(title) ? Number(it.strategic_visibility?.contract_value_usd_m) : NaN;
   const cap = capUsdM ? capUsdM(tickers[0]) : null;
+  // zzz1187 — with no stated value a contract cannot be shown to transform a large company (NTPC / NHPC PPAs): kept only
+  // for companies under ~$3B, where a named contract is more likely to matter; commissioning your own plant is not a contract
+  if (!HAS_MONEY.test(title) && cap != null && cap > 3000) return null;
+  if (/\bcommission(s|ed|ing)?\b/i.test(title) && !/\b(order|contract|award|ppa|agreement)\b/i.test(title)) return null;
   if (Number.isFinite(v) && v > 0 && cap != null && cap > 0) {
     if (v / cap < 0.02) return null;
     out.contract_to_mcap_pct = Math.round((v / cap) * 1000) / 10;

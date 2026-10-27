@@ -40,7 +40,7 @@ test('100-bagger hard gates: cash burn, debt, dilution, already-ran and slow gro
   assert.deepEqual(hbGateFails(cand({}), 'US'), []);
   assert.ok(hbGateFails(cand({ fcfm: -14, de: 1.0 }), 'IN').length >= 1);   // GENUSPOWER-like
   assert.ok(hbGateFails(cand({ mc: 9000, fcfm: -55 }), 'IN').some((x) => /burns cash/.test(x)));   // RATEGAIN-like
-  assert.ok(hbGateFails(cand({ p5y: 350 }), 'US').some((x) => /already up/.test(x)));
+  assert.ok(hbGateFails(cand({ p5y: 450 }), 'US').some((x) => /already up/.test(x)));
   assert.ok(hbGateFails(cand({ revA: 8, revQ: 9 }), 'US').some((x) => /sales growth/.test(x)));
   assert.ok(hbGateFails(cand({ bb: -6 }), 'US').some((x) => /share count/.test(x)));
 });

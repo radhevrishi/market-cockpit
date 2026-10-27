@@ -76,18 +76,19 @@ export async function runChoke(): Promise<{ ok: true; report: ChokeReport } | { 
   const infl = { US: industryInflections(sf.cands.US, 'US'), IN: industryInflections(sf.cands.IN, 'IN') };
   // zzz1183 — discovery beyond the familiar names: small / mid caps in the size band whose OWN figures are turning up
   const inBand = (c: Cand, mk: ChokeRegion) => { const [lo, hi] = DISCOVERY_CAP[mk]; return c.mc >= lo && c.mc <= hi; };
-  const turningC = (mk: ChokeRegion) => sf.cands[mk].filter((c) => inBand(c, mk) && c.revQ != null && (c.revQ >= 25 || (c.revA != null && c.revQ >= c.revA + 10)) && (c.opm == null || c.opm > 0))
-    .sort((x, y) => ((y.revQ ?? 0) - (y.revA ?? 0)) - ((x.revQ ?? 0) - (x.revA ?? 0))).slice(0, 130);
+  const turningC = (mk: ChokeRegion) => sf.cands[mk].filter((c) => inBand(c, mk) && c.revQ != null && (c.revQ >= 25 || (c.revA != null && c.revQ >= c.revA + 10)) && (c.opm == null || c.opm > 0 || c.revQ >= 40))
+    .sort((x, y) => ((y.revQ ?? 0) - (y.revA ?? 0)) - ((x.revQ ?? 0) - (x.revA ?? 0))).slice(0, 160);
   // zzz1186 — and every in-band company in the bottleneck-prone industries, even before its figures turn (J1 watch names)
   const SEED_IND: Record<ChokeRegion, RegExp> = {
     US: /semiconductor|electronic comp|optical|fiber|communications equip|telecommunications equip|electrical|power|generat|turbine|engine|battery|industrial machin|aerospace|defen|ordnance|uranium|nuclear|metal|mining|rare|copper|chemical|computer (storage|peripheral|hardware|communication)|data storage|instrument|laser|refrigerat|hvac|heating|cooling|engineering|construction|shipbuild|space|robot|automation/i,
     IN: /electrical|electronic|cable|transformer|switchgear|meter|power|defen|explosive|aerospace|forg|casting|engineering|capital goods|compressor|pump|chemical|pharma|api|cdmo|ship|railway|wagon|metal|copper|aluminium|alumin|mining|semiconductor|component|industrial|gas|heavy|machinery|construction/i,
   };
   const seedC = (mk: ChokeRegion, skip: Set<string>) => sf.cands[mk].filter((c) => inBand(c, mk) && c.ind && SEED_IND[mk].test(c.ind) && !skip.has(c.t) && (c.revA != null || c.revQ != null))
-    .sort((x, y) => (y.revQ ?? -99) - (x.revQ ?? -99)).slice(0, 110);
+    .sort((x, y) => (y.revQ ?? -99) - (x.revQ ?? -99)).slice(0, 160);
   const prevFor = (mk: ChokeRegion) => (prev?.regions || []).filter((g) => g.region === mk).map((g) => g.themes.map((t) => `${t.name} [${[...(t.candidates || []), ...(t.leaders || []), ...(t.smallMid || [])].map((l: any) => l.ticker).join(', ')}]`).join('; ')).join('') || 'none';
   const newsFor = (mk: ChokeRegion) => news.lines.filter((l) => (mk === 'IN' ? !/\[(US|GLOBAL)\]/.test(l) || /india/i.test(l) : !/\[IN\]/.test(l)) ).slice(0, 90);
   const coverage: NonNullable<ChokeReport['coverage']> = {};
+  const researchUsed: Partial<Record<ChokeRegion, boolean>> = {};
   const userFor = (mk: ChokeRegion) => {
     const tc = turningC(mk), skip = new Set(tc.map((c) => c.t)), sc = seedC(mk, skip);
     coverage[mk] = { universe: sf.cands[mk].length, inBand: sf.cands[mk].filter((c) => inBand(c, mk)).length, turning: tc.length, industry: sc.length, news: newsFor(mk).length };
@@ -110,13 +111,39 @@ export async function runChoke(): Promise<{ ok: true; report: ChokeReport } | { 
   const prov = m.provider();
   const cheap = m.activeModel('claude-haiku-4-5-20251001');
   const strong = strongModel(prov, cheap);
+  const modelId = prov === 'anthropic' && strong ? strong : 'claude-haiku-4-5-20251001';
+  const aiOpts = (effort: string) => ({ signal: AbortSignal.timeout(300_000), ...(prov === 'openai' && strong ? { openaiModel: strong, reasoningEffort: effort } : {}) } as any);
+  // zzz1187 — STEP 1, think before filling the form: a free-text research pass with full reasoning (tool calls to GPT-6 run
+  // without reasoning) works through the checklist and both company lists, and names suppliers it knows beyond them.
+  const research = async (mk: ChokeRegion, base: string): Promise<string> => {
+    try {
+      const resp = await m.anthropicMessages('choke-themes', {
+        model: modelId, max_tokens: 12000, system: CHOKE_SYSTEM,
+        messages: [{ role: 'user', content: `${base}
+
+RESEARCH STEP (plain text, no form yet). Work like a sector analyst hunting the next Micron / SanDisk-type J-curve in ${mk === 'US' ? 'the US' : 'India'}:
+1. Go through EVERY checklist bottleneck and the cross-border shifts. For each: is supply tight NOW (lead times, allocation, price rises, sold-out capacity, qualification queues)? Say what the evidence is and how recent, or "no evidence".
+2. For each tight one, list the LISTED small / mid-cap suppliers in this country — from the company lists AND from your own knowledge (exact tickers) — with the product, exposure and the J-stage their own figures show (quarter vs year sales, margin swing).
+3. Say which popular "themes" are NOT J-curves now (already ran, ample supply, mature, one-off order on a low base) and why.
+4. Finish with the 5–7 strongest themes and their best 2–4 candidates each.
+Be concrete and brief: short lines, tickers, figures with their period. No filler.` }],
+      }, aiOpts('high'));
+      const j: any = await resp.json().catch(() => null);
+      if (!resp.ok) return '';
+      return String((j?.content || []).filter((c: any) => c?.type === 'text').map((c: any) => c.text).join('\n')).slice(0, 24_000);
+    } catch { return ''; }
+  };
   const callFor = async (mk: ChokeRegion) => {
     const tool = chokeToolFor(mk);
+    const base = userFor(mk);
+    const notes = await research(mk, base);
+    researchUsed[mk] = !!notes;
+    const content = notes ? `${base}\n\nYOUR RESEARCH NOTES (from the step before — verify each claim against the company data and keep only what holds; candidates not in the data are allowed with their exact ticker):\n${notes}` : base;
     const body: any = {
-      model: prov === 'anthropic' && strong ? strong : 'claude-haiku-4-5-20251001', max_tokens: 16000, system: CHOKE_SYSTEM,
-      tools: [tool], tool_choice: { type: 'tool', name: tool.name }, messages: [{ role: 'user', content: userFor(mk) }],
+      model: modelId, max_tokens: 16000, system: CHOKE_SYSTEM,
+      tools: [tool], tool_choice: { type: 'tool', name: tool.name }, messages: [{ role: 'user', content }],
     };
-    const resp = await m.anthropicMessages('choke-themes', body, { signal: AbortSignal.timeout(300_000), ...(prov === 'openai' && strong ? { openaiModel: strong, reasoningEffort: 'low' } : {}) } as any);
+    const resp = await m.anthropicMessages('choke-themes', body, aiOpts('low'));
     const j: any = await resp.json().catch(() => null);
     if (!resp.ok) {
       const raw = String(j?.error?.message || `HTTP ${resp.status}`);
@@ -144,7 +171,7 @@ export async function runChoke(): Promise<{ ok: true; report: ChokeReport } | { 
     const report: ChokeReport = {
       version: 2, ...clean, changes: prev?.version === 2 ? diffRuns(prev, clean) : [], generatedAt: new Date().toISOString(), model: ok[0].model ?? (strong || cheap),
       newsUsed: news.lines.length, asOfNews: news.asOf, marketDataAt: new Date().toISOString(), prevAt: prev?.generatedAt ?? null,
-      coverage, ...(failed.length ? { keptFromPrevious: failed } : {}),
+      coverage, researchUsed, ...(failed.length ? { keptFromPrevious: failed } : {}),
     } as any;
     if (prev) await kvSet(CHOKE_PREV_KEY, prev, TTL).catch(() => undefined);
     await kvSet(CHOKE_KEY, report, TTL);
