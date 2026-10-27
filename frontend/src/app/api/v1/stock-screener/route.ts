@@ -20,9 +20,10 @@ const bodies = new Map<string, { builtAt: string; body: string }>();
 /** zzz1045 — `?tickers=A,B` (≤ 400): only those companies' moving averages (a few KB, for the /watchlists "% from average" columns),
  *  never the whole 6 MB snapshot. */
 const SLIM_KEYS = ['t', 'sma50', 'sma200', 'scanPx', 'scanAt', 'de', 'deFY'] as const;   // zzz1068: + debt ÷ equity for the Conviction Beats cards
+const SLIM_EXTRA = ['ind', 'sec', 'n'] as const;   // zzz1192: industry / sector / name for Conviction Analytics
 function slim(rows: any[] | undefined, builtAt: string | null | undefined, market: string, tickers: string[]) {
   const want = new Set(tickers);
-  const out = (rows || []).filter((r) => r && want.has(String(r.t).toUpperCase())).map((r) => Object.fromEntries(SLIM_KEYS.filter((k) => r[k] != null).map((k) => [k, r[k]])));
+  const out = (rows || []).filter((r) => r && want.has(String(r.t).toUpperCase())).map((r) => Object.fromEntries([...SLIM_KEYS, ...SLIM_EXTRA].filter((k) => r[k] != null).map((k) => [k, r[k]])));
   return NextResponse.json({ ok: true, market, builtAt: builtAt ?? null, rows: out }, { headers: { 'Cache-Control': 'private, max-age=300' } });
 }
 export async function GET(req: Request) {

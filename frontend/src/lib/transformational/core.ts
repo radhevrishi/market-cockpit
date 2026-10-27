@@ -46,7 +46,14 @@ export interface TgItem {
   factsNote?: string | null;
   /** zzz1190 — what to establish before drawing a conclusion */
   research?: string[];
+  /** zzz1190 — the owner's evidence chain (industry → advantage → materiality → timing → per share → price), stage by stage */
+  chain?: EvidenceChain;
+  /** zzz1190 — valuation read from the stock screener (P/E, debt ÷ equity) */
+  pe?: number | null; de?: number | null;
 }
+export type ChainState = 'met' | 'unknown' | 'missing';
+export interface ChainStage { id: 'advantage' | 'material' | 'timing' | 'perShare' | 'price'; name: string; state: ChainState; why: string }
+export interface EvidenceChain { stages: ChainStage[]; met: number; missing: number }
 
 // ── the signals ────────────────────────────────────────────────────────────
 const STRONG: Record<string, TgKind> = {
@@ -310,6 +317,8 @@ export function orderValue(text: string, market: TgMarket): number | null {
     if (!m) return null;
     const v = Number(m[1]); const u = String(m[2] || 'cr').toLowerCase();
     if (!Number.isFinite(v) || v <= 0) return null;
+    // zzz1190 — no unit and a long figure is rupees written out ("Rs. 91,77,77,777" = ₹91.78 Cr), not crore
+    if (!m[2] && v >= 100_000) return v / 1e7;
     return /lakh|lac/.test(u) ? v / 100 : /million|mn/.test(u) ? v / 10 : /billion|bn/.test(u) ? v * 100 : v;
   }
   const m = /\$\s*([\d.]+)\s*(billion|bn|million|mn|m\b)/i.exec(t);
@@ -319,9 +328,12 @@ export function orderValue(text: string, market: TgMarket): number | null {
 }
 
 const TARGET_RE = /\b(?:voting and support agreement|to be acquired by|agreed to be acquired|will be acquired|acquired by an? (?:affiliate|entity|fund)|go(?:ing)?[- ]private|take[- ]private|takeover bid|definitive agreement to be acquired)\b/i;
-const NOT_ORDER_RE = /\b(?:refund|high court|supreme court|tribunal|nclt order|arbitration|tax (?:demand|relief)|court relief|penalty)\b/i;
+const NOT_ORDER_RE = /\b(?:refund|high court|supreme court|tribunal|nclt order|arbitration|tax (?:demand|relief)|court relief|penalty|summons|show[- ]cause|notice, direction or order|communication from the authority|violation|RERA registration)\b/i;
+// zzz1190 — a results release is not an order: its first ₹ / $ figure is revenue (Paramount "revenue ₹560 Cr" read as a 28% order)
+const RESULTS_TEXT_RE = /\b(?:results?|quarter(?:ly)?|Q[1-4]\s?FY|net (?:income|profit)|EBITDA|PBT|revenue (?:of|rose|grew|was|up)|news release|financial news)\b/i;
+const ORDER_WORD_RE = /\b(?:orders?|contracts?|LoA|LoI|letter of (?:award|acceptance|intent)|awarded|bagged|won|wins?|purchase orders?)\b/i;
 
-export interface SnapFacts { revQYoY?: number | null; epsQYoY?: number | null; q?: string | null; ind?: string | null; sec?: string | null; ps?: number | null }
+export interface SnapFacts { revQYoY?: number | null; epsQYoY?: number | null; q?: string | null; ind?: string | null; sec?: string | null; ps?: number | null; pe?: number | null; de?: number | null }
 
 // zzz1170 — EVIDENCE GATE (ChatGPT audit, owner 26 Oct): the shown text must support the event it is labelled as. A share
 // issue is not a licence, a valuation report is not commissioning, an existing JV in a monthly update is not a new deal.
@@ -339,7 +351,7 @@ const EXISTING_REL = /\b(?:is (?:a )?JV with|existing (?:JV|joint venture|partne
 const GENERIC_DOC = /\b(?:policy enforcement|risk management|overall management|responsibilities include|planning, |incorporation of (?:a )?(?:wholly[- ]owned )?subsidiary)\b/i;
 // zzz1190 — the lead line is a share issue (ONEGLOBAL "in-principle approval to issue shares … preferential allotment", QPOWER
 // "Proposed equity raise", TKNO "Proposed Public Offering"): a capital event, whatever label it got
-const LEAD_RAISE = /\b(?:proposed (?:equity raise|public offering|offering)|in-principle approval .{0,60}(?:shares|allotment)|(?:issue|allot\w*) .{0,40}equity shares|preferential (?:issue|allotment|basis)|private placement|QIP|qualified institutions placement|rights issue|public offering of common stock)\b/i;
+const LEAD_RAISE = /\b(?:listing approval|(?:conversion of|from) warrants?(?: conversion)?|warrant conversion|proposed (?:equity raise|public offering|offering)|in-principle approval .{0,60}(?:shares|allotment)|(?:issue|allot\w*) .{0,40}equity shares|preferential (?:issue|allotment|basis)|private placement|QIP|qualified institutions placement|rights issue|public offering of common stock)\b/i;
 // zzz1190 — the company is the BUYER (PVP "LOI signed for proposed procurement of … LINAC systems"), not receiving an order
 const BUYER_RE = /\b(?:for (?:the )?(?:proposed )?procurement of|to procure|procure(?:ment)? of|proposed purchase of|placed (?:an? )?(?:purchase )?order (?:with|on)|acquisition of (?:equipment|machinery|land))\b/i;
 
@@ -356,6 +368,7 @@ export function evidenceGap(x: Pick<TgItem, 'kind' | 'headline' | 'whatChanged' 
     if (loss && Number(loss[1]) * 1000 > x.marketCap * 1.5) return `figures conflict (a $${loss[1]}B loss against a $${(x.marketCap / 1000).toFixed(1)}B company) — likely an extraction or unit error, check the release`;
     if (/\brevenue(?:s)?\s*(?:of\s*)?\(\s*\$|\brevenue\s+of\s+-/i.test(text)) return 'figures conflict (negative revenue) — check the release';
   }
+  if (/^\s*(?:share buyback|buyback|debt financing|new credit facility|refinanc\w*)\b/i.test(String(x.headline || '')) || /^\s*(?:Share buyback|Debt financing \/ new credit facility):/i.test(String(x.headline || ''))) return 'a buyback or financing, not a business event — what it changes for earnings per share must be shown first';
   if (LEAD_RAISE.test(String(x.headline || '')) || (LEAD_RAISE.test(text) && !x.signals.some((g) => /^Earnings inflection/.test(g)) && x.kind === 'APPROVAL')) return 'a share issue (raising money / dilution), not a business event — establish the use of funds, the dilution and what it buys';
   if (x.kind === 'ORDERS' && BUYER_RE.test(text)) return 'the company is the buyer (a purchase / LOI to procure), not receiving an order — establish whether it is a commitment and which business earns from it';
   if (x.signals.some((g) => /^Earnings inflection/.test(g))) return null;
@@ -384,6 +397,37 @@ export function researchNeeded(x: Pick<TgItem, 'kind' | 'orderToRevenuePct' | 'f
   if (x.dilution) out.push('Dilution: new shares, use of funds and the per-share effect.');
   return out;
 }
+/** zzz1190 — the owner's research chain, read stage by stage from the filed facts. Each stage: met / unknown / missing. Milestones
+ *  and invalidation are the owner's to write, so they are never scored. Pure. */
+export function evidenceChain(x: Pick<TgItem, 'kind' | 'evidence' | 'orderToRevenuePct' | 'facts' | 'signals' | 'eventDate' | 'sessionDate' | 'dilution' | 'returns' | 'needsCheck' | 'durationYears'> & { pe?: number | null; de?: number | null }): EvidenceChain {
+  const f = x.facts; const inflect = x.signals.some((g) => /^Earnings inflection/.test(g));
+  const st: ChainStage[] = [];
+  // 1. advantage: a named product / customer / capacity event, filed by the company
+  const event = x.kind !== 'RESULTS';
+  st.push({ id: 'advantage', name: 'Advantage', state: x.needsCheck ? 'missing' : event && x.evidence === 'official' ? 'met' : event ? 'unknown' : inflect ? 'unknown' : 'missing',
+    why: x.needsCheck ? `held back: ${x.needsCheck}` : event ? (x.evidence === 'official' ? 'a specific business event in the company\'s own filing' : 'a business event, press only — confirm in a filing') : 'results only — no named product, customer or capacity behind them yet' });
+  // 2. material: big enough to move earnings
+  const big = (x.orderToRevenuePct != null && x.orderToRevenuePct >= 10) || (f.revenueYoY != null && f.revenueYoY >= 25) || (f.patYoY != null && f.patYoY >= 40) || inflect;
+  const small = x.orderToRevenuePct != null && x.orderToRevenuePct < 10 && !(f.revenueYoY != null && f.revenueYoY >= 25);
+  st.push({ id: 'material', name: 'Material', state: big ? 'met' : small ? 'missing' : 'unknown',
+    why: x.orderToRevenuePct != null ? `order ≈ ${Math.round(x.orderToRevenuePct)}% of a year's revenue${f.revenueYoY != null ? `, sales ${Math.round(f.revenueYoY)}%` : ''}` : f.revenueYoY != null || f.patYoY != null ? `sales ${f.revenueYoY != null ? `${Math.round(f.revenueYoY)}%` : '—'}, profit ${f.patYoY != null ? `${Math.round(f.patYoY)}%` : '—'} (≥ 25% / ≥ 40% counts)` : 'size against the business not known' });
+  // 3. timing: the change is executable now (order, commissioning, approval, raised guidance, filed inflection) and recent
+  const lag = x.eventDate ? (Date.parse(`${x.sessionDate}T00:00:00Z`) - Date.parse(`${x.eventDate}T00:00:00Z`)) / 86_400_000 : null;
+  const now = ['ORDERS', 'CAPACITY', 'APPROVAL', 'GUIDANCE', 'TURNAROUND'].includes(x.kind) || inflect;
+  st.push({ id: 'timing', name: 'Timing', state: now && (lag == null || lag <= 10) ? 'met' : now ? 'unknown' : x.kind === 'STRATEGIC' || x.kind === 'NEW_BUSINESS' ? 'unknown' : 'missing',
+    why: now ? `an executable change${lag != null ? ` filed ${Math.round(lag)}d before the move` : ''}` : x.kind === 'STRATEGIC' || x.kind === 'NEW_BUSINESS' ? 'first revenue date not yet shown' : 'no change that starts earning now' });
+  // 4. per share: no dilution, cash backs profit, debt not heavy
+  const cash = f.cfoToPat; const de = x.de;
+  st.push({ id: 'perShare', name: 'Per share', state: x.dilution || (cash != null && cash < 0.5) || (de != null && de > 1.5) ? 'missing' : (cash != null && cash >= 0.7) || (de != null && de <= 0.5) ? 'met' : 'unknown',
+    why: x.dilution ? 'new shares — the gain is shared with new holders' : cash != null && cash < 0.5 ? `profit not backed by cash (${cash.toFixed(2)})` : de != null && de > 1.5 ? `heavy debt (debt ÷ equity ${de.toFixed(1)})` : [cash != null ? `cash ÷ profit ${cash.toFixed(2)}` : null, de != null ? `debt ÷ equity ${de.toFixed(2)}` : null].filter(Boolean).join(', ') || 'cash conversion and debt not known' });
+  // 5. price: the share has not already priced it in
+  const pe = x.pe; const m3 = x.returns?.m3;
+  const rich = (pe != null && pe > 80) || (m3 != null && m3 > 80); const room = (pe != null && pe > 0 && pe <= 40) && (m3 == null || m3 < 60);
+  st.push({ id: 'price', name: 'Price room', state: rich ? 'missing' : room ? 'met' : 'unknown',
+    why: [pe != null ? (pe > 0 ? `P/E ${Math.round(pe)}` : 'loss-making (no P/E)') : 'P/E not known', m3 != null ? `3 months ${m3 >= 0 ? '+' : ''}${Math.round(m3)}%` : null].filter(Boolean).join(', ') + (rich ? ' — much already priced in' : room ? ' — room left' : '') });
+  return { stages: st, met: st.filter((s) => s.state === 'met').length, missing: st.filter((s) => s.state === 'missing').length };
+}
+
 export const ONE_PAGE_CASE = [
   'What changed?', 'Why should it increase earnings per share?', 'When should the improvement appear?',
   'What does the current price already require (earnings, growth, multiple)?', 'What evidence would make me change my mind?', 'How much portfolio loss could this position create (position size × downside)?',
@@ -406,10 +450,12 @@ export function reviewItem(x0: TgItem, snap?: SnapFacts | null): TgItem | null {
   const revenue = snap?.ps && snap.ps > 0 && x.marketCap ? x.marketCap / snap.ps : null;
   x.orderToRevenuePct = null;
   if (x.kind === 'ORDERS') {
-    if (!inflect && NOT_ORDER_RE.test(`${x.headline} ${x.quote || ''}`)) return null;   // a court relief or tax refund is not an order
-    let v = orderValue(`${x.quote || ''} ${x.headline} ${x.whatChanged || ''}`, x.market);
+    if (!inflect && NOT_ORDER_RE.test(`${x.headline} ${x.quote || ''} ${x.whatChanged || ''}`)) return null;   // a court relief or tax refund is not an order
+    const otext = `${x.quote || ''} ${x.headline} ${x.whatChanged || ''}`;
+    let v = ORDER_WORD_RE.test(otext) && !(RESULTS_TEXT_RE.test(`${x.headline} ${x.quote || ''}`) && !ORDER_WORD_RE.test(x.headline)) ? orderValue(otext, x.market) : null;
     if (v == null && x.market === 'IN') { const u = orderValue(`${x.quote || ''} ${x.headline}`.replace(/(?:US\$|USD)\s*/gi, '$'), 'US'); if (u != null) v = u * 8.5; }   // $M → ₹ Cr (~85/$ ÷ 10)
     if (v != null && revenue) x.orderToRevenuePct = Math.round((v / revenue) * 1000) / 10;
+    if (x.orderToRevenuePct != null && x.orderToRevenuePct > 500) { x.orderToRevenuePct = null; v = null; }   // units or denominator do not reconcile — not scored
     if (!inflect && v != null) {
       if (x.orderToRevenuePct != null ? x.orderToRevenuePct < 5 : (x.marketCap != null && x.marketCap > 0 && v / x.marketCap < 0.03)) return null;   // too small to change earnings
     }
@@ -420,6 +466,7 @@ export function reviewItem(x0: TgItem, snap?: SnapFacts | null): TgItem | null {
   // facts: filed figures first; else the stock screener's latest quarter (from the company's results)
   if (snap) {
     x.industry = x.industry || snap.ind || snap.sec || null;
+    x.pe = snap.pe ?? null; x.de = snap.de ?? null;
     if (x.facts.revenueYoY == null && x.facts.patYoY == null && (snap.revQYoY != null || snap.epsQYoY != null)) {
       x.facts.revenueYoY = snap.revQYoY ?? null; x.facts.patYoY = snap.epsQYoY ?? null;
       x.factsSource = 'screener'; x.factsPeriod = snap.q ?? null;
@@ -436,6 +483,7 @@ export function reviewItem(x0: TgItem, snap?: SnapFacts | null): TgItem | null {
   if (x.strength === 'NOTABLE' && x.mb.score < 55) return null;
   x.needsCheck = evidenceGap(x);
   x.research = researchNeeded(x);
+  x.chain = evidenceChain(x);
   return x;
 }
 

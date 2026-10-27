@@ -3711,3 +3711,16 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   `transformational-archive` (03:17 + 23:47 UTC — night in Europe and India; past sessions once: last 14 days' stored sessions, then AI auto read), the gainers page after an AI
   sweep, and the board's first visit of a day (backfill from stored sessions). Research states keep ~10 days, so history starts there.
 - ResearchView has NO `items` array — read `top3/queue/portfolio/watch/needsReading/context` (`viewItems`).
+
+## 31 · 27 Oct 2026 — Transformational Gainers evidence chain + Conviction Analytics (zzz1191 → zzz1192)
+
+- zzz1191 — TG: unit-less rupee figures ("Rs. 91,77,77,777") are rupees not crore (`orderValue`); order % > 500 is dropped as
+  unreconciled; order % only when order words are present and the text is not a results release; summons / show-cause / authority
+  notices / RERA registration are not orders; listing approval for warrant-conversion shares = share issue; buyback / debt financing
+  held back. `evidenceChain(x)` reads the owner's chain (advantage → material → timing → per share → price room; milestones are his
+  to write) as met / unknown / missing; page filter "Evidence chain: All 5 / 4+ / 3+" and per-row chips. MbChip says why rules and
+  AI differ when ≥ 30 points apart. Guidance prior-actuals screener fallback keys on the registered source (was skipped in production).
+- zzz1192 — Conviction Analytics tab: India on /watchlists (`?tab=cb-analytics`), USA as a tab on /us-conviction-beats. Pure logic
+  `lib/conviction-analytics.ts` (company score with named reasons, theme stance LEAD / EMERGING / CROWDED / SINGLE / WEAK, 2×2,
+  shortlist with theme caps, bench risks); component `components/conviction-analytics/ConvictionAnalytics.tsx`. Themes from
+  `classifyTheme` + Theme Rotation verdicts; industry from the stock-screener slim `?tickers=` call (SLIM_KEYS now include ind/sec/n).

@@ -33,6 +33,7 @@ export default function TransformationalGainersPage() {
   const [strength, setStrength] = useState<TgStrength | null>(null);
   const [smallMid, setSmallMid] = useState(true);
   const [onlyNew, setOnlyNew] = useState(false);
+  const [chainMin, setChainMin] = useState<number | null>(null);   // zzz1190 — evidence chain: stages met at least
   const [q, setQ] = useState('');
   const [sort, setSort] = useState<'newest' | 'chance'>('chance');
   const [aiBusy, setAiBusy] = useState<string | null>(null);
@@ -64,7 +65,8 @@ export default function TransformationalGainersPage() {
     (mkt === 'ALL' || x.market === mkt) && (!theme || x.theme === theme) && (!strength || x.strength === strength)
     && (!mbMin || rank[chanceOf(x).label] >= rank[mbMin])
     && (!smallMid || isSmallMid(x) || x.marketCap == null) && (!onlyNew || newSet.has(`${x.market}:${x.ticker}`))
-    && (!q || `${x.ticker} ${x.company} ${x.headline} ${x.theme}`.toLowerCase().includes(q.toLowerCase()))), [data, mkt, theme, strength, mbMin, smallMid, onlyNew, q, newSet]);
+    && (chainMin == null || ((x.chain?.met ?? 0) >= chainMin && (chainMin < 5 || (x.chain?.missing ?? 1) === 0) && (x.chain?.missing ?? 0) <= (chainMin >= 4 ? 0 : 1)))
+    && (!q || `${x.ticker} ${x.company} ${x.headline} ${x.theme}`.toLowerCase().includes(q.toLowerCase()))), [data, mkt, theme, strength, mbMin, smallMid, onlyNew, chainMin, q, newSet]);
 
   const groups = useMemo(() => {
     const m = new Map<string, Group>();
@@ -216,6 +218,9 @@ export default function TransformationalGainersPage() {
               <div><div style={sectionTitle}>{MB_NAME} at least</div><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 {(['HIGH', 'MEDIUM', 'LOW'] as MbLabel[]).map((x) => <button key={x} type="button" style={chip(mbMin === x, MB_COLOR[x])} onClick={() => setMbMin((v) => (v === x ? null : x))}>{MB_WORD[x]}</button>)}
               </div></div>
+              <div><div style={sectionTitle} title="Your research chain: advantage (a named, filed event) → material (big enough for earnings) → timing (the change starts now) → per share (no dilution, cash backs profit, debt) → price room (P/E, 3-month run). Milestones and invalidation are yours to write.">Evidence chain</div><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {[5, 4, 3].map((n) => <button key={n} type="button" style={chip(chainMin === n, n === 5 ? R.green : n === 4 ? R.cyan : R.amber)} onClick={() => setChainMin((v) => (v === n ? null : n))} title={n === 5 ? 'all 5 stages met' : n === 4 ? `at least ${n} met, none failing` : `at least ${n} met, at most one failing`}>{n === 5 ? 'All 5 ✓' : `${n}+ ✓`}</button>)}
+              </div><div style={{ fontSize: 11, color: R.faint, marginTop: 4 }}>{data?.items ? `${data.items.filter((x) => (x.chain?.met ?? 0) >= 4 && (x.chain?.missing ?? 1) === 0).length} events with 4+ met and none failing` : ''}</div></div>
               <div><div style={sectionTitle}>Sort</div><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 <button type="button" style={chip(sort === 'newest')} onClick={() => setSort('newest')}>Newest</button>
                 <button type="button" style={chip(sort === 'chance')} onClick={() => setSort('chance')}>{MB_NAME}</button>
@@ -278,6 +283,7 @@ export default function TransformationalGainersPage() {
                                 <div className="tg-clamp" style={{ fontWeight: 700, lineHeight: 1.4 }}>{x.headline}</div>
                                 <div className="tg-clamp" style={{ fontSize: 12, color: R.dim, marginTop: 2 }}>{x.signals.slice(0, 3).join(' · ')}</div>
                                 {x.orderToRevenuePct != null && <div style={{ fontSize: 12, fontWeight: 700, color: x.orderToRevenuePct >= 25 ? R.green : R.dim, marginTop: 2 }}>Order ≈ {x.orderToRevenuePct}% of a year’s revenue</div>}
+                                {x.chain && <ChainChips chain={x.chain} />}
                               </td>
                               <td className="tg-hide-sm" style={{ whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>
                                 <div>Sales <b style={{ color: (f.revenueYoY ?? 0) >= 25 ? R.green : R.text }}>{pct(f.revenueYoY)}</b></div>
@@ -362,6 +368,19 @@ export default function TransformationalGainersPage() {
           </section>
         </div>
       )}
+    </div>
+  );
+}
+
+// zzz1190 — the owner's evidence chain, one chip per stage (✓ met · ? not known · ✗ failing); hover for why
+function ChainChips({ chain }: { chain: NonNullable<TgItem['chain']> }) {
+  const col = { met: R.green, unknown: R.faint, missing: R.red } as const;
+  const sym = { met: '✓', unknown: '?', missing: '✗' } as const;
+  const lead = chain.met === 5 ? R.green : chain.met >= 4 && chain.missing === 0 ? R.cyan : chain.missing >= 2 ? R.red : R.amber;
+  return (
+    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center', marginTop: 5 }}>
+      <span style={{ fontSize: 11, fontWeight: 900, color: lead, border: `1px solid ${lead}`, borderRadius: 6, padding: '1px 6px' }} title="Your evidence chain: stages met of 5. Milestones and invalidation are yours to write.">Chain {chain.met}/5</span>
+      {chain.stages.map((s) => <span key={s.id} title={`${s.name}: ${s.why}`} style={{ fontSize: 10.5, fontWeight: 700, color: col[s.state], border: `1px solid ${tint(col[s.state], 40)}`, borderRadius: 999, padding: '0 6px', whiteSpace: 'nowrap' }}>{sym[s.state]} {s.name}</span>)}
     </div>
   );
 }

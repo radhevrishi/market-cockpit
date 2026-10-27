@@ -198,7 +198,7 @@ export async function loadPriorActuals(results: GuidanceExtractResult[], io?: Ex
     });
     // zzz1189 — a company without a results-cache entry: the stock screener's figures (yearly profit; sales = market cap ÷ P/S, the
     // trailing twelve months) stand in for the last completed year — labelled as such, used only for that one base year
-    if (!io) {
+    if (screenerRowsSource) {   // zzz1190 — the universe passes its own KV reader, so the fallback keys on the registered source, not on io
       const missing = tickers.filter((t) => Array.from(want.get(t) || []).some((pp) => !out.has(actualKey('IN', t, 'REVENUE', pp)) || !out.has(actualKey('IN', t, 'PAT', pp))));
       if (missing.length) {
         const snapRows: any[] = screenerRowsSource ? ((await Promise.race([screenerRowsSource().catch(() => []), new Promise((r) => setTimeout(() => r([]), 4000))])) as any[]) : [];

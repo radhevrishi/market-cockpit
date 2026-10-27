@@ -54,6 +54,7 @@ import { buildFunnel, BUCKET_META, bucketFor, type BucketId } from '@/lib/us-pro
 import { classifyTheme } from '@/lib/theme-classify';
 import { useThemeVerdicts, confluenceFor, type ConfluenceKind } from '@/lib/theme-confluence';
 import { DeskHeader, deskNumerals } from '@/components/desk-chrome';
+import { ConvictionAnalytics } from '@/components/conviction-analytics/ConvictionAnalytics';
 import { usEasternDate } from '@/lib/us-earnings-dates';
 import { decodeHTMLEntities } from '@/lib/html-decode';
 import { US_ENGINE_VERSION } from '@/lib/us-engine-version';
@@ -138,6 +139,7 @@ export default function UsConvictionBeatsPage() {
     try { return JSON.parse(localStorage.getItem(VIEW_KEY) || '{}').view || 'cards'; } catch { return 'cards'; }
   });
   const [showAdv, setShowAdv] = useState(false);
+  const [analyticsOn, setAnalyticsOn] = useState(false);   // zzz1192 — Conviction Analytics tab
   // Which cards have their detail panel open, keyed by BENCH KEY rather than by
   // ticker: an archived quarter lives under `TICKER@Q3-2026` and shares its
   // ticker with the live entry, so keying by ticker opened both at once.
@@ -1108,6 +1110,13 @@ export default function UsConvictionBeatsPage() {
           deleted — it is one click away, and it remembers whether you wanted
           it open. What takes its place is the state of the book, which is what
           a desk actually opens with. */}
+      <div role="tablist" style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+        {([[false, '🏅 Bench'], [true, '📊 Conviction Analytics']] as const).map(([v, l]) => (
+          <button key={l} type="button" role="tab" aria-selected={analyticsOn === v} onClick={() => setAnalyticsOn(v)}
+            style={{ cursor: 'pointer', fontSize: 13, fontWeight: 800, padding: '6px 14px', borderRadius: 8, border: `1px solid ${analyticsOn === v ? 'var(--mc-accent, #2453c4)' : 'var(--mc-border-1, #dde2e8)'}`, background: analyticsOn === v ? 'rgba(36,83,196,0.08)' : 'transparent', color: analyticsOn === v ? 'var(--mc-accent, #2453c4)' : 'var(--mc-text-2)' }}>{l}</button>
+        ))}
+      </div>
+      {analyticsOn ? <ConvictionAnalytics market="US" entries={entries} /> : (<>
       <DeskHeader
         icon="🏅" title="US Conviction Beats"
         tagline="NYSE · NASDAQ"
@@ -1821,6 +1830,7 @@ export default function UsConvictionBeatsPage() {
       ) : (
         <BenchTable rows={filtered} sort={sort} dir={sortDir} onSort={setSortKey} onRemove={(t) => { removeUsConviction(t); reload(); }} markOf={markReader} />
       )}
+      </>)}
 
       <style>{'@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}'}</style>
     </div>

@@ -12,6 +12,14 @@ export function MbChip({ mb, ai, compact = false }: { mb: MbView; ai?: AiMb | nu
   const ac = ai ? MB_COLOR[ai.label] : null;
   const all = chanceOf({ mb, ai });
   const oc = MB_COLOR[all.label];
+  // zzz1190 — rules and AI far apart: say why, before anyone reads the blended number
+  const AI_PTS: Record<MbLabel, number> = { HIGH: 78, MEDIUM: 55, LOW: 32, UNLIKELY: 12 };
+  const gap = ai ? mb.score - AI_PTS[ai.label] : 0;
+  const differ = ai && Math.abs(gap) >= 30
+    ? (gap > 0
+      ? `Rules rate it higher: they count ${mb.plus.slice(0, 2).join('; ') || 'the filed figures'} — the AI weighs ${ai.risks.slice(0, 2).join('; ') || 'risks the rules cannot see'}.`
+      : `AI rates it higher: it sees ${ai.why.slice(0, 2).join('; ') || 'more upside'} — the rules hold back for ${mb.minus.slice(0, 2).join('; ') || 'missing filed figures'}.`)
+    : null;
   return (
     <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 4, verticalAlign: 'top' }}>
       {ai && (
@@ -32,8 +40,10 @@ export function MbChip({ mb, ai, compact = false }: { mb: MbView; ai?: AiMb | nu
           </button>
         )}
       </span>
+      {differ && <span title={differ} style={{ fontSize: 10.5, fontWeight: 800, color: R.amber }}>⚖ rules and AI disagree — {open ? 'see why below' : 'click for why'}</span>}
       {open && (
         <span style={{ display: 'block', fontSize: 12, lineHeight: 1.45, color: R.text, background: R.bg2, border: `1px solid ${R.border}`, borderRadius: 8, padding: '8px 10px', maxWidth: 560 }}>
+          {differ && <span style={{ display: 'block', marginBottom: 6, padding: '5px 7px', borderRadius: 6, background: tint(R.amber, 10), color: R.text }}><b style={{ color: R.amber }}>Why they differ:</b> {differ} The blended score hides this — settle it before acting.</span>}
           <b style={{ color: c }}>Rules read ({mb.score}/100)</b>
           {mb.plus.length > 0 && <span style={{ display: 'block' }}>{mb.plus.map((p) => <span key={p} style={{ display: 'block', color: R.green }}>+ {p}</span>)}</span>}
           {mb.minus.length > 0 && <span style={{ display: 'block' }}>{mb.minus.map((p) => <span key={p} style={{ display: 'block', color: R.red }}>− {p}</span>)}</span>}

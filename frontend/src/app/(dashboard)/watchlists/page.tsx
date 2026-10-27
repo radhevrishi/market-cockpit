@@ -25,6 +25,7 @@ import DecayWatch from '@/components/DecayWatch'; // zzz525 — 🪪 passport fr
 // PATCH 0557 — BUG-AUDIT-2: backend-degraded banner.
 import DegradedBanner from '@/components/DegradedBanner';
 import { ConvictionBeatsPanel } from './ConvictionBeatsPanel';
+import { ConvictionAnalytics } from '@/components/conviction-analytics/ConvictionAnalytics';
 import { EIEliteTab } from './EIEliteTab';
 import { SummaryBar, WatchlistTable, EmptyState, WatchlistExportControl, SaveStatusStrip } from './components';
 import { buildWatchlistExport, type ExportScope } from '@/lib/watchlist-export';
@@ -97,9 +98,9 @@ export default function WatchlistsPage() {
   // selecting conviction betas short cut its going to watchlist only why".
   const searchParams = useSearchParams();
   const router = useRouter();
-  const initialTab: 'main' | 'conviction' =
-    searchParams?.get('tab') === 'conviction' ? 'conviction' : 'main';
-  const [activeTab, setActiveTab] = useState<'main' | 'conviction' | 'fundamentals' | 'ei-elite' | 'portfolio-earnings'>(initialTab);
+  const initialTab: 'main' | 'conviction' | 'cb-analytics' =
+    searchParams?.get('tab') === 'conviction' ? 'conviction' : searchParams?.get('tab') === 'cb-analytics' ? 'cb-analytics' : 'main';
+  const [activeTab, setActiveTab] = useState<'main' | 'conviction' | 'cb-analytics' | 'fundamentals' | 'ei-elite' | 'portfolio-earnings'>(initialTab);
   // Also react to URL changes mid-session (e.g. user clicks the chip again
   // from another page → SPA nav). Without this, the activeTab state from
   // the first render would stay on whatever tab was active.
@@ -709,6 +710,7 @@ export default function WatchlistsPage() {
     { id: 'main', label: 'My Watchlist', count: tickers.length },
     { id: 'fundamentals', label: 'Fundamentals' },
     { id: 'conviction', label: 'Conviction Beats', icon: <Award style={{ width: 13, height: 13 }} />, count: convictionCount, hot: convictionCount > 0 },
+    { id: 'cb-analytics', label: '📊 Conviction Analytics' },   // zzz1192
     { id: 'ei-elite', label: 'EI Elite' },
     { id: 'portfolio-earnings', label: 'Portfolio Earnings' },
   ];
@@ -722,7 +724,7 @@ export default function WatchlistsPage() {
       {/* ── Header ────────────────────────────────────────────────────────── */}
       <div className="wlp-head">
         <div>
-          {activeTab !== 'conviction' && (<>
+          {activeTab !== 'conviction' && activeTab !== 'cb-analytics' && (<>
             <h1 className="wlp-title">Watchlist</h1>
             <p className="wlp-lede">Tracking universe, observation only, no P&amp;L</p>
             {activeTab === 'main' && (
@@ -755,7 +757,7 @@ export default function WatchlistsPage() {
         ))}
       </div>
 
-      {activeTab === 'portfolio-earnings' ? <PortfolioEarningsTab /> : activeTab === 'ei-elite' ? <EIEliteTab /> : activeTab === 'fundamentals' ? <FundamentalsAnalyzerPage scope="watchlist" /> : activeTab === 'conviction' ? (
+      {activeTab === 'cb-analytics' ? <ConvictionAnalytics market="IN" entries={mergeCbEntries(convictionEntries, serverBench).filter(sinceOk)} /> : activeTab === 'portfolio-earnings' ? <PortfolioEarningsTab /> : activeTab === 'ei-elite' ? <EIEliteTab /> : activeTab === 'fundamentals' ? <FundamentalsAnalyzerPage scope="watchlist" /> : activeTab === 'conviction' ? (
         <>
         <ConvictionBeatsPanel
           entries={mergeCbEntries(convictionEntries, serverBench).filter(sinceOk) /* zzz426 merge server bench — zzz811: shared with Portfolio Catalysts */}

@@ -8,7 +8,7 @@ async function snapFacts(market: TgMarket): Promise<Map<string, SnapFacts>> {
   try {
     const { getSnapshot } = await import('../screener/snapshot-cache');
     const snap: any = await Promise.race([getSnapshot(market), new Promise((r) => setTimeout(() => r(null), 4_000))]);
-    for (const r of (snap?.rows || [])) if (r?.t) m.set(String(r.t).toUpperCase(), { revQYoY: r.revQYoY ?? null, epsQYoY: r.epsQYoY ?? null, q: r.q ?? null, ind: r.ind ?? null, sec: r.sec ?? null, ps: r.ps ?? null });
+    for (const r of (snap?.rows || [])) if (r?.t) m.set(String(r.t).toUpperCase(), { revQYoY: r.revQYoY ?? null, epsQYoY: r.epsQYoY ?? null, q: r.q ?? null, ind: r.ind ?? null, sec: r.sec ?? null, ps: r.ps ?? null, pe: r.pe ?? null, de: r.de ?? null });
   } catch { /* figures from the event only */ }
   return m;
 }
