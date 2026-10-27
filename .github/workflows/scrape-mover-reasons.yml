@@ -1,26 +1,14 @@
-name: Scrape Mover Reasons (hourly during market hours)
+name: Scrape Mover Reasons (10:00 Germany, weekdays)
 
-# ──────────────────────────────────────────────────────────────────────────────
-# PATCH 0801 — For each extreme NSE mover (≥10%), pull news from 4 free
-# public sources (Google News RSS, Moneycontrol, Trendlyne, Yahoo Finance)
-# to find the actual catalyst. Writes per-ticker KV keys that Vercel reads
-# to surface real headlines instead of generic "No confirmed trigger".
-#
-# Schedule: hourly during market hours (09:00-16:00 IST) + once post-close,
-# plus workflow_dispatch for manual triggers. GH Actions free tier is
-# unlimited for public repos.
-# ──────────────────────────────────────────────────────────────────────────────
+# For each NSE mover, collect catalyst headlines from free public sources.
+# Cost control: one scheduled run per weekday at 10:00 Europe/Berlin.
+# GitHub applies Germany's daylight-saving changes; manual runs remain available.
+# GitHub may delay scheduled runs, so 10:00 is the requested slot, not an SLA.
 
 on:
   schedule:
-    # PATCH 0975 — cut 8/day → 4/day. Was firing every hour during NSE
-    # market hours which was burning Vercel Hobby-tier function-execution
-    # quota (~30 GB-hr/week from this single workflow). Now: 2 mid-session
-    # snapshots, post-close sweep, evening update. Same operational value
-    # for users (they don't refresh /movers every hour), much less load.
-    - cron: '15 5 * * 1-5'   # 10:45 IST — mid-morning snapshot
-    - cron: '3 11 * * 1-5'   # 16:30 IST — post-close sweep
-    - cron: '3 14 * * 1-5'   # 19:30 IST — evening update (zzz933: weekdays only, mid-day run dropped, for GitHub minutes)
+    - cron: '0 10 * * 1-5'
+      timezone: 'Europe/Berlin'
   workflow_dispatch: {}
 
 concurrency:
