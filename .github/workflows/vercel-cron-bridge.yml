@@ -212,7 +212,7 @@ jobs:
           fi
           echo "- HTTP $STATUS"
           echo "status=$STATUS" >> "$GITHUB_OUTPUT" 
-          head -c 600 /tmp/response.json || true
+          echo "response $(wc -c < /tmp/response.json 2>/dev/null || echo 0) bytes (body not printed: may hold personal data)"
           echo
           if [ "$STATUS" != "200" ] && [ "$STATUS" != "201" ] && [ "$STATUS" != "202" ] && [ "$STATUS" != "204" ]; then
             echo "::warning title=$LABEL::Vercel returned HTTP $STATUS"

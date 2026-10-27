@@ -39,7 +39,7 @@ jobs:
           case "$CODE" in 000|429|5??) echo "::warning title=Deferred::digest got HTTP $CODE after 3 attempts (app not reachable)"; echo "deferred=1" >> "$GITHUB_OUTPUT"; exit 0 ;; esac
           if [ "$CODE" != "200" ]; then
             echo "::error::digest failed with HTTP $CODE after 3 attempts"
-            cat /tmp/digest.json || true
+            echo "digest $(wc -c < /tmp/digest.json 2>/dev/null || echo 0) bytes (body not printed: personal data)"
             exit 1
           fi
           cat /tmp/digest.json | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print('body length:', len(d.get('body',''))); print('dispatch:', d.get('dispatch'))" || true
