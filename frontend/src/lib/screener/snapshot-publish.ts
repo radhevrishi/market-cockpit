@@ -5,8 +5,8 @@
 // snapshot cache keeps its copy. Any change in a price, figure, profile or rule changes the rows and publishes as before.
 // Rollback: SCREENER_ALWAYS_PUBLISH=1.
 import { createHash } from 'crypto';
-import { dbQuery } from '@/lib/db';
-import { noteSnapshotWritten } from './snapshot-cache';
+import { publicationQuery as dbQuery } from './build-lease';
+import { noteSnapshotWritten, noteSnapshotMetadataWritten } from './snapshot-cache';
 import { rowsJson, type ScreenRow, type ScreenMarket } from './types';
 
 export const rowsHashOf = (json: string): string => createHash('sha1').update(json).digest('hex');
@@ -25,9 +25,10 @@ export async function publishSnapshot(m: ScreenMarket, rows: ScreenRow[], meta: 
     const r = await dbQuery<{ h: string | null }>(`SELECT meta->>'rowsHash' AS h FROM screener_snapshot WHERE market = $1`, [m]);
     stored = r[0]?.h ?? null;
   } catch { stored = null; }   // unknown → publish (never skip on a failed read)
-  const full = JSON.stringify({ ...meta, rowsHash: hash, checkedAt });
+  const full = JSON.stringify({ ...meta, rowsHash: hash, checkedAt, runner: process.env.SCREENER_BUILD_RUNNER === 'github' ? 'github' : 'railway' });
   if (!shouldPublish(stored, hash)) {
     await dbQuery(`UPDATE screener_snapshot SET meta = $2 WHERE market = $1`, [m, full]);
+    noteSnapshotMetadataWritten(m, JSON.parse(full));
     return { published: false };
   }
   await dbQuery(`INSERT INTO screener_snapshot (market, built_at, rows, meta) VALUES ($1, now(), $2, $3) ON CONFLICT (market) DO UPDATE SET built_at = now(), rows = EXCLUDED.rows, meta = EXCLUDED.meta`,

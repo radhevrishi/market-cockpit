@@ -421,6 +421,14 @@ async function portfolioJob(ctx: JobCtx, days = 7): Promise<JobOutcome> {
 
 const BRIDGE = 'vercel-cron-bridge.yml';
 const BOOK = 'book-watch.yml';
+function screenerBuildJob(market: 'IN' | 'US'): (ctx: JobCtx) => Promise<JobOutcome> {
+  return async (ctx) => {
+    if (await (await import('./screener/external-runner')).shouldDeferToExternal(market)) {
+      return { ok: true, status: 200, error: 'A recent completed GitHub build is available; Railway stays ready as fallback' };
+    }
+    return http('POST', `/api/v1/cron/build-screener?market=${market}`, 840_000)(ctx);
+  };
+}
 export const APP_JOBS: readonly AppJob[] = [
   // vercel-cron-bridge.yml — POST for /api/v1/* and /api/market/*, GET for /api/bot/* (their POST is the Telegram webhook)
   { name: 'refresh-earnings-calendar', crons: ['7 1 * * *'], timeoutMs: 6 * MIN, workflow: BRIDGE, does: 'POST /api/v1/cron/refresh-earnings-calendar', run: http('POST', '/api/v1/cron/refresh-earnings-calendar', 240_000) },
@@ -439,9 +447,9 @@ export const APP_JOBS: readonly AppJob[] = [
   { name: 'hub-ingest', crons: ['7 18 * * *'], timeoutMs: 10 * MIN, workflow: BRIDGE, does: 'POST /api/market/earnings?ingest=1&force=1&month=<slot month>', run: http('POST', (s) => `/api/market/earnings?ingest=1&force=1&month=${ym(s)}`, 240_000) },
   { name: 'hub-ingest-next', crons: ['15 18 * * *'], timeoutMs: 10 * MIN, workflow: BRIDGE, does: 'POST /api/market/earnings?ingest=1&force=1&month=<slot month + 1>', run: http('POST', (s) => `/api/market/earnings?ingest=1&force=1&month=${ym(s, 1)}`, 240_000) },
   // zzz938 — our own stock screener (USA): Nasdaq list + SEC figures + Yahoo prices, after the US close on weekdays
-  { name: 'build-screener-us', crons: ['45 14,18,22 * * 1-5', '45 2 * * 2-6'], timeoutMs: 15 * MIN, workflow: BRIDGE, does: 'POST /api/v1/cron/build-screener?market=US', run: http('POST', '/api/v1/cron/build-screener?market=US', 840_000) },
+  { name: 'build-screener-us', crons: ['45 14,18,22 * * 1-5', '45 2 * * 2-6'], timeoutMs: 15 * MIN, workflow: BRIDGE, does: 'POST /api/v1/cron/build-screener?market=US (Railway fallback when external runner is enabled)', run: screenerBuildJob('US') },
   // zzz939 — India screener: NSE price files + screener.in company pages (a slice each hour until every company is read, then ~weekly)
-  { name: 'build-screener-in', crons: ['5,25,45 * * * *'], timeoutMs: 15 * MIN, workflow: BRIDGE, does: 'POST /api/v1/cron/build-screener?market=IN', run: http('POST', '/api/v1/cron/build-screener?market=IN', 840_000) },
+  { name: 'build-screener-in', crons: ['5,25,45 * * * *'], timeoutMs: 15 * MIN, workflow: BRIDGE, does: 'POST /api/v1/cron/build-screener?market=IN (Railway fallback when external runner is enabled)', run: screenerBuildJob('IN') },
   // book-watch.yml — all GET
   { name: 'refresh-bench', crons: ['4 3 * * *'], timeoutMs: 4 * MIN, workflow: BOOK, does: 'GET /api/v1/cron/refresh-bench', run: http('GET', '/api/v1/cron/refresh-bench', 90_000) },
   { name: 'book-watch', crons: ['30 5 * * 1-5', '4 12 * * 1-5', '4 15 * * 1-6'], timeoutMs: 5 * MIN, workflow: BOOK, does: 'GET /api/v1/cron/refresh-bench, then GET /api/v1/cron/book-watch', run: bookWatchJob },

@@ -383,6 +383,11 @@ export function ensureSchema(): Promise<boolean> {
   _ready = (async () => {
     const pool = getPool();
     if (!pool) return false;
+    // External builders use a dedicated data-writer role. They verify the deployed schema, never create/migrate it.
+    if (process.env.SCREENER_SCHEMA_CHECK_ONLY === '1') {
+      const done = new Set((await pool.query('SELECT id FROM schema_migrations')).rows.map((r: any) => Number(r.id)));
+      return MIGRATIONS.every((m) => done.has(m.id));
+    }
     const c = await pool.connect();
     try {
       await c.query('SELECT pg_advisory_lock($1)', [LOCK_ID]);

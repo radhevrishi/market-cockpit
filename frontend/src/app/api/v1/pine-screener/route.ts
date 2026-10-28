@@ -18,9 +18,9 @@ export const dynamic = 'force-dynamic';
 // ETag; the snapshot itself comes from the ONE shared cache (lib/screener/snapshot-cache.ts) instead of a private copy per route.
 const bodies = new MemoLru<{ text: string; etag: string }>({ maxEntries: 24, maxBytes: 64 * 1024 * 1024, sizeOf: (b) => b.text.length });
 /** the parsed snapshot rows per market, from the shared cache (null = none built / no database) */
-async function snapOf(market: 'US' | 'IN'): Promise<{ builtAt: string; rows: ScreenRow[] } | null> {
+async function snapOf(market: 'US' | 'IN'): Promise<{ builtAt: string; checkedAt: string | null; rows: ScreenRow[] } | null> {
   const s = await getSnapshot(market);
-  return s ? { builtAt: s.builtAt, rows: s.rows } : null;
+  return s ? { builtAt: s.builtAt, checkedAt: s.meta?.checkedAt ?? null, rows: s.rows } : null;
 }
 export async function GET(req: Request) {
   const sp = new URL(req.url).searchParams;
@@ -66,7 +66,7 @@ export async function GET(req: Request) {
   }
   const all = found.rows;
   // the made body is reused while the snapshot and the build state are the same (a build start / finish makes a new one)
-  const bodyKey = `${key}|${found.builtAt}|${isBuilding(market) ? 'b' : ''}`;
+  const bodyKey = `${key}|${found.builtAt}|${found.checkedAt || ''}|${isBuilding(market) ? 'b' : ''}`;
   const made = bodies.get(bodyKey);
   // at most 5 minutes old, so a behind-snapshot check (kickBuild below, itself limited to once per 30 minutes) still runs
   if (made && Date.now() - made.at < 5 * 60_000) {
@@ -76,7 +76,7 @@ export async function GET(req: Request) {
   const lean = leanRows(all, bias, patternsOnly);
   // zzz989 — a snapshot from before the newest figures (patterns / TradingView-script fields) starts a build now, instead of
   // waiting for the next scheduled one; at most once every 30 minutes (kickBuild), and it joins a running build.
-  const builtMs = Date.parse(String(found.builtAt));
+  const builtMs = Date.parse(String(found.checkedAt || found.builtAt));
   // zzz993 (MC-02) — coverage counts genuine readings plus companies whose history is genuinely too short (a re-read cannot help them)
   const covered = lean.scanned + lean.insufficient;
   // zzz1003 — also while many weekly / monthly readings are from the older scan version (the v6 re-read is pending)
@@ -91,9 +91,9 @@ export async function GET(req: Request) {
   // market-wide note: the page states it for the SELECTED timeframes within the current list, in that timeframe's own units
   // (lean.coverage carries the counts per timeframe). Only market-wide facts stay here.
   if (lean.pxConflicts) notes.push(`Across the full ${market === 'IN' ? 'India' : 'USA'} universe (${lean.total} companies): ${lean.pxConflicts} companies show a latest quote more than 2% from the close the patterns were read from (different price sources) — pattern distances use the scan close; the quote distance is shown apart.`);
-  const body = JSON.stringify({ ok: true, market, builtAt: found.builtAt, ...lean, building, notes });
+  const body = JSON.stringify({ ok: true, market, builtAt: found.builtAt, checkedAt: found.checkedAt, ...lean, building, notes });
   // keyed by the build state AFTER this request's kickBuild, so the next request finds it
-  const finalKey = `${key}|${found.builtAt}|${building ? 'b' : ''}`;
+  const finalKey = `${key}|${found.builtAt}|${found.checkedAt || ''}|${building ? 'b' : ''}`;
   const etag = etagOfText(body);
   bodies.set(finalKey, { text: body, etag });
   return sendText(req, { text: body, contentType: 'application/json', cacheControl: 'private, max-age=300', etag, compressKey: `pine|${etag}`, timing: t });

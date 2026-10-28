@@ -50,6 +50,8 @@ import { withUntrustedRule } from './ai-fence';
 import { kvGet, kvSet, isRedisAvailable, kvIncrByFloat } from '@/lib/kv';
 import { toStrictSchema } from './ai-schemas';
 import type { AiRunOutcome } from './ai-runs';
+import { reserveBudget, settleBudget, type Reservation } from './ai-budget';
+export type { Reservation } from './ai-budget';
 
 // zzz978b — a key pasted with a space, a line break or quote marks around it is rejected by the provider as invalid.
 // Clean both keys once, before anything reads them. The value itself is never logged.
@@ -263,14 +265,17 @@ export async function readSpend(month = monthOf()): Promise<SpendLedger> {
   return mergeLedgers(month, parts);
 }
 
-async function record(feature: string, usd: number, u: Usage | null, blocked: boolean, failure?: { status: number; message: string }): Promise<void> {
+async function record(feature: string, usd: number, u: Usage | null, blocked: boolean, failure?: { status: number; message: string }, reservation?: Reservation): Promise<void> {
   if (!isRedisAvailable()) return;
-  const month = monthOf();
+  const month = reservation?.month || monthOf();
   const shard = Math.floor(Math.random() * SHARDS);
   const key = shardKey(month, shard);
   // zzz883: an ATOMIC monthly total next to the per-feature shards — the shards can lose an update when two calls land together,
   // the total cannot, and the spend cap reads the larger of the two
-  if (usd > 0) await kvIncrByFloat(totalKey(month), usd, SHARD_TTL_S).catch(() => null);
+  // Never create a gap between releasing reserved money and recording actual spend. A failed settlement keeps the
+  // reservation in place; it does not pretend that accounting succeeded. Unreserved/rollback callers keep legacy accounting.
+  if (reservation) await settleReservation(reservation, usd);
+  else if (usd > 0) await kvIncrByFloat(totalKey(month), usd, SHARD_TTL_S).catch(() => null);
   try {
     const cur = (await kvGet<SpendLedger>(key)) || emptyLedger(month);
     await kvSet(key, applyCall(cur, feature, usd, u, new Date().toISOString(), blocked, failure), SHARD_TTL_S);
@@ -336,14 +341,13 @@ export interface GateResult { allowed: boolean; spent: number; cap: number; mess
 
 const totalKey = (month: string) => `anthropic:spend-total:${METER_VERSION}:${month}`;
 // zzz1197 — cost audit item 5: the gate used to read what was spent and let the call go; ten calls arriving together all saw the
-// same remaining allowance. Now each metered call RESERVES its worst-case cost (prompt size + max output) in an atomic counter
-// before it is sent, and gives the reservation back when the answer (or a refusal) is in — the real cost is then recorded as
-// before. A call that never answered (timeout / network) keeps its reservation for the rest of the month (it may have been
-// billed). If the budget store cannot take the reservation, new paid work waits (existing results are untouched).
+// same remaining allowance. Each metered call now reserves an estimated input cost plus the full output allowance before
+// it is sent. Admission reads actual spend and outstanding reservations atomically; settlement exchanges a reservation
+// for reported usage atomically. Unknown usage (timeout / unreadable response) stays reserved against that month's budget.
+// This is an application estimate, not a provider-enforced dollar limit. If durable accounting fails, new paid work waits.
 // Rollback: AI_RESERVE_OFF=1.
 const reservedKey = (month: string) => `anthropic:spend-reserved:${METER_VERSION}:${month}`;
-export interface Reservation { usd: number; month: string; settled: boolean }
-/** Worst-case cost of a call: every character of the request at ~3 characters a token, plus the full output allowance. Pure. */
+/** Planning estimate, not an exact tokenizer or a provider-enforced spending limit (PDFs/search can add processed input). */
 export function estimateCallUsd(model: string, body: { max_tokens?: number; system?: any; messages?: any; tools?: any }): number {
   let chars = 0;
   try { chars = JSON.stringify([body.system ?? '', body.messages ?? [], body.tools ?? []]).length; } catch { chars = 0; }
@@ -351,11 +355,9 @@ export function estimateCallUsd(model: string, body: { max_tokens?: number; syst
 }
 /** Pure: may a reservation stand? `reservedAfter` = the counter after adding this call. */
 export function reservationFits(spent: number, reservedAfter: number, cap: number): boolean { return spent + Math.max(0, reservedAfter) <= cap; }
-/** Gives a reservation back (once). The actual cost is recorded separately by record(). */
-export async function settleReservation(r: Reservation | undefined): Promise<void> {
-  if (!r || r.settled || !(r.usd > 0)) return;
-  r.settled = true;
-  await kvIncrByFloat(reservedKey(r.month), -r.usd, SHARD_TTL_S).catch(() => null);
+/** Atomically exchanges the reservation for actual usage, once. No response/unknown usage must keep its reservation. */
+export async function settleReservation(r: Reservation | undefined, actualUsd = 0): Promise<void> {
+  await settleBudget(r, actualUsd, SHARD_TTL_S);
 }
 let lastSpent: { month: string; usd: number } | null = null;
 /** `estUsd` > 0 reserves that much before the call (zzz1197); callers then MUST settleReservation(gate.reservation). */
@@ -374,15 +376,13 @@ export async function spendGate(estUsd = 0): Promise<GateResult> {
   if (spent >= cap) {
     return { allowed: false, spent, cap, message: `Monthly AI cap reached ($${spent.toFixed(2)} of $${cap}) — raise AI_MONTHLY_CAP_USD in Railway to continue` };
   }
-  if (estUsd > 0 && isRedisAvailable() && process.env.AI_RESERVE_OFF !== '1') {
-    const after = await kvIncrByFloat(reservedKey(month), estUsd, SHARD_TTL_S).catch(() => null);
-    if (after == null) return { allowed: false, spent, cap, message: 'The AI budget store is not answering — new AI work waits until it is back (nothing already found is lost)' };
-    const reservation: Reservation = { usd: estUsd, month, settled: false };
-    if (!reservationFits(spent, after, cap)) {
-      await settleReservation(reservation);
-      return { allowed: false, spent, cap, message: `Monthly AI cap reached with calls in progress ($${spent.toFixed(2)} spent + $${Math.max(0, after - estUsd).toFixed(2)} in progress of $${cap})` };
-    }
-    return { allowed: true, spent, cap, reservation };
+  if (process.env.AI_RESERVE_OFF !== '1') {
+    if (!isRedisAvailable()) return { allowed: false, spent, cap, message: 'The AI budget store is not answering — new AI work waits until it is back (nothing already found is lost)' };
+    const budget = await reserveBudget({ spentKey: totalKey(month), reservedKey: reservedKey(month), month, spentFloor: spent, estimate: estUsd, cap, ttl: SHARD_TTL_S });
+    if (!budget.allowed) return { allowed: false, spent: budget.spent, cap, message: budget.reason === 'cap'
+      ? `Monthly AI cap reached with calls in progress ($${budget.spent.toFixed(2)} spent + $${budget.reserved.toFixed(2)} in progress of $${cap})`
+      : 'The AI budget store is not answering — new AI work waits until it is back (nothing already found is lost)' };
+    return { allowed: true, spent: budget.spent, cap, reservation: budget.reservation };
   }
   return { allowed: true, spent, cap };
 }
@@ -531,13 +531,12 @@ export async function anthropicMessages(feature: string, body: MessagesBody, opt
     track(feature, opts.run, body.model, startedAt, null, 0, 'failed', String(e?.message || e));
     throw e;
   }
-  await settleReservation(gate.reservation);   // zzz1197: an answer (or a refusal) is in — the real cost is recorded below
   if (resp.ok) {
     // The clone is read for accounting; the caller reads the original.
     let usage: Usage | null = null; let answer: any = null;
     try { answer = await resp.clone().json(); usage = answer?.usage || null; } catch { usage = null; }
     const usd = costOf(body.model, usage);
-    await record(feature, usd, usage, false);
+    await record(feature, usd, usage, false, undefined, usage ? gate.reservation : undefined);
     // zzz1050: a forced tool that did not come back is a schema failure (counted; the caller reports it as before)
     const tool = forcedToolName(body);
     const schemaFail = !!tool && !answeredWithTool(answer, tool);
@@ -546,7 +545,7 @@ export async function anthropicMessages(feature: string, body: MessagesBody, opt
   } else {
     let message = '';
     try { const t = await resp.clone().text(); const je = JSON.parse(t); message = String(je?.error?.message || je?.message || t); } catch { message = `HTTP ${resp.status}`; }
-    await record(feature, 0, null, false, { status: resp.status, message });
+    await record(feature, 0, null, false, { status: resp.status, message }, resp.status >= 400 && resp.status < 500 ? gate.reservation : undefined);
     track(feature, opts.run, body.model, startedAt, null, 0, 'failed', `HTTP ${resp.status}: ${message}`);
   }
   return resp;
@@ -586,13 +585,12 @@ async function openaiMessages(feature: string, body: MessagesBody, opts: MeterOp
     track(feature, opts.run, model, startedAt, null, 0, 'failed', String(e?.message || e));
     throw e;
   }
-  await settleReservation(gate.reservation);   // zzz1197: answered — give the reservation back; the real cost is recorded below
   if (!resp.ok) {
     // OpenAI's error body is `{ error: { message, type, code } }` — the same
     // shape callers already parse, so it is passed through untouched.
     let message = '';
     try { const t = await resp.clone().text(); const je = JSON.parse(t); message = String(je?.error?.message || je?.message || t); } catch { message = `HTTP ${resp.status}`; }
-    await record(feature, 0, null, false, { status: resp.status, message });
+    await record(feature, 0, null, false, { status: resp.status, message }, resp.status >= 400 && resp.status < 500 ? gate.reservation : undefined);
     track(feature, opts.run, model, startedAt, null, 0, 'failed', `HTTP ${resp.status}: ${message}`);
     // zzz1182 — a stronger model the account cannot use (wrong name, not yet enabled) falls back once to gpt-5, so a model
     // switch never breaks the guidance escalation or the research panels
@@ -607,14 +605,15 @@ async function openaiMessages(feature: string, body: MessagesBody, opts: MeterOp
     return resp;
   }
   let translated: Record<string, any>;
-  try { translated = fromOpenAIResponse(await resp.json()); }
+  let hasUsage = false;
+  try { const answer = await resp.json(); hasUsage = !!answer?.usage; translated = fromOpenAIResponse(answer); }
   catch (e: any) {
     await record(feature, 0, null, false, { status: 502, message: `unreadable OpenAI answer: ${String(e?.message || e)}` });
     track(feature, opts.run, model, startedAt, null, 0, 'failed', 'OpenAI answered with something that was not JSON');
     return new Response(JSON.stringify({ error: { type: 'bad_answer', message: 'OpenAI answered with something that was not JSON' } }), { status: 502, headers: { 'content-type': 'application/json' } });
   }
   const usd = costOf(model, translated.usage);
-  await record(feature, usd, translated.usage, false);
+  await record(feature, usd, translated.usage, false, undefined, hasUsage ? gate.reservation : undefined);
   const tool = forcedToolName(body);
   const schemaFail = !!tool && !answeredWithTool(translated, tool);
   if (schemaFail) await noteSchemaFailure(feature);
@@ -639,26 +638,27 @@ export interface WebResearchResult { ok: boolean; text: string; urls: string[]; 
  *  text as before (a forced tool would stop the search); the caller parses and validates either way. */
 export async function webResearch(feature: string, system: string, prompt: string, opts: { maxSearches?: number; signal?: AbortSignal; schema?: { name: string; schema: Record<string, any> } } = {}): Promise<WebResearchResult> {
   const startedAt = new Date();
-  const gate = await spendGate();
-  if (!gate.allowed) { await record(feature, 0, null, true); track(feature, undefined, null, startedAt, null, 0, 'cap_reached', gate.message); return { ok: false, text: '', urls: [], usd: 0, error: gate.message || 'spend cap' }; }
   const sys = withUntrustedRule(system) as string;
   const prov = provider();
+  const model = prov === 'openai' ? openaiModel() : 'claude-haiku-4-5-20251001';
+  const maxSearches = Math.max(1, Math.min(100, Math.trunc(Number(opts.maxSearches) || 3)));
+  const gate = await spendGate(estimateCallUsd(model, { system: sys, messages: [{ role: 'user', content: prompt }], max_tokens: prov === 'openai' ? 4000 : 2000 }) + maxSearches * WEB_SEARCH_USD);
+  if (!gate.allowed) { await record(feature, 0, null, true); track(feature, undefined, null, startedAt, null, 0, 'cap_reached', gate.message); return { ok: false, text: '', urls: [], usd: 0, error: gate.message || 'spend cap' }; }
   try {
     if (prov === 'openai') {
       const apiKey = process.env.OPENAI_API_KEY;
-      if (!apiKey) return { ok: false, text: '', urls: [], usd: 0, error: 'no OPENAI_API_KEY' };
-      const model = openaiModel();
+      if (!apiKey) { await settleReservation(gate.reservation); return { ok: false, text: '', urls: [], usd: 0, error: 'no OPENAI_API_KEY' }; }
       const strictFormat = opts.schema ? toStrictSchema(opts.schema.schema) : null;
       const resp = await fetch('https://api.openai.com/v1/responses', {
         method: 'POST',
         headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ model, instructions: sys, input: prompt, tools: [{ type: 'web_search' }], reasoning: { effort: 'low' }, max_output_tokens: 4000,
+        body: JSON.stringify({ model, instructions: sys, input: prompt, tools: [{ type: 'web_search' }], max_tool_calls: maxSearches, reasoning: { effort: 'low' }, max_output_tokens: 4000,
           ...(strictFormat ? { text: { format: { type: 'json_schema', name: opts.schema!.name, strict: true, schema: strictFormat } } } : {}) }),
         signal: opts.signal,
       });
       if (!resp.ok) {
         const t = await resp.text().catch(() => '');
-        await record(feature, 0, null, false, { status: resp.status, message: t.slice(0, 300) });
+        await record(feature, 0, null, false, { status: resp.status, message: t.slice(0, 300) }, resp.status >= 400 && resp.status < 500 ? gate.reservation : undefined);
         track(feature, undefined, model, startedAt, null, 0, 'failed', `HTTP ${resp.status}`);
         return { ok: false, text: '', urls: [], usd: 0, error: `HTTP ${resp.status}` };
       }
@@ -673,23 +673,22 @@ export async function webResearch(feature: string, system: string, prompt: strin
       const cached = Number(u?.input_tokens_details?.cached_tokens) || 0;
       const usage: Usage = { input_tokens: Math.max(0, (Number(u.input_tokens) || 0) - cached), output_tokens: Number(u.output_tokens) || 0, cache_read_input_tokens: cached };
       const usd = costOf(model, usage) + searches * WEB_SEARCH_USD;
-      await record(feature, usd, usage, false);
+      await record(feature, usd, usage, false, undefined, j?.usage ? gate.reservation : undefined);
       track(feature, undefined, model, startedAt, usage, usd, 'ok');
       return { ok: true, text, urls: Array.from(new Set(urls)), usd };
     }
     const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) return { ok: false, text: '', urls: [], usd: 0, error: 'no ANTHROPIC_API_KEY' };
-    const model = 'claude-haiku-4-5-20251001';
+    if (!apiKey) { await settleReservation(gate.reservation); return { ok: false, text: '', urls: [], usd: 0, error: 'no ANTHROPIC_API_KEY' }; }
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({ model, max_tokens: 2000, system: sys, messages: [{ role: 'user', content: prompt }],
-        tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: opts.maxSearches ?? 3 }] }),
+        tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: maxSearches }] }),
       signal: opts.signal,
     });
     if (!resp.ok) {
       const t = await resp.text().catch(() => '');
-      await record(feature, 0, null, false, { status: resp.status, message: t.slice(0, 300) });
+      await record(feature, 0, null, false, { status: resp.status, message: t.slice(0, 300) }, resp.status >= 400 && resp.status < 500 ? gate.reservation : undefined);
       track(feature, undefined, model, startedAt, null, 0, 'failed', `HTTP ${resp.status}`);
       return { ok: false, text: '', urls: [], usd: 0, error: `HTTP ${resp.status}` };
     }
@@ -700,7 +699,7 @@ export async function webResearch(feature: string, system: string, prompt: strin
     }
     const searches = Number(j?.usage?.server_tool_use?.web_search_requests) || 0;
     const usd = costOf(model, j?.usage) + searches * WEB_SEARCH_USD;
-    await record(feature, usd, j?.usage || null, false);
+    await record(feature, usd, j?.usage || null, false, undefined, j?.usage ? gate.reservation : undefined);
     track(feature, undefined, model, startedAt, j?.usage || null, usd, 'ok');
     return { ok: true, text, urls: Array.from(new Set(urls)), usd };
   } catch (e: any) {
@@ -720,9 +719,10 @@ export async function openaiEmbeddings(feature: string, inputs: string[], opts: 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return { ok: false, vectors: [], tokens: 0, usd: 0, status: 401, error: 'no OPENAI_API_KEY' };
   if (!inputs.length) return { ok: true, vectors: [], tokens: 0, usd: 0, status: 200 };
-  const gate = await spendGate();
-  if (!gate.allowed) { await record(feature, 0, null, true); return { ok: false, vectors: [], tokens: 0, usd: 0, status: 402, error: gate.message }; }
   const model = opts.model || 'text-embedding-3-small';
+  if (!pricingFor(model)) return { ok: false, vectors: [], tokens: 0, usd: 0, status: 400, error: 'Embedding model has no configured price' };
+  const gate = await spendGate(estimateCallUsd(model, { messages: inputs, max_tokens: 0 }));
+  if (!gate.allowed) { await record(feature, 0, null, true); return { ok: false, vectors: [], tokens: 0, usd: 0, status: 402, error: gate.message }; }
   let resp: Response;
   try {
     resp = await fetch('https://api.openai.com/v1/embeddings', {
@@ -738,7 +738,7 @@ export async function openaiEmbeddings(feature: string, inputs: string[], opts: 
   if (!resp.ok) {
     let message = '';
     try { const t = await resp.text(); const je = JSON.parse(t); message = String(je?.error?.message || t); } catch { message = `HTTP ${resp.status}`; }
-    await record(feature, 0, null, false, { status: resp.status, message });
+    await record(feature, 0, null, false, { status: resp.status, message }, resp.status >= 400 && resp.status < 500 ? gate.reservation : undefined);
     return { ok: false, vectors: [], tokens: 0, usd: 0, status: resp.status, error: message.slice(0, 200) };
   }
   const j: any = await resp.json().catch(() => null);
@@ -746,7 +746,7 @@ export async function openaiEmbeddings(feature: string, inputs: string[], opts: 
   const tokens = Number(j?.usage?.prompt_tokens ?? j?.usage?.total_tokens) || 0;
   const usage: Usage = { input_tokens: tokens, output_tokens: 0 };
   const usd = costOf(model, usage);
-  await record(feature, usd, usage, false);
+  await record(feature, usd, usage, false, undefined, j?.usage ? gate.reservation : undefined);
   const vectors = data.map((d) => (Array.isArray(d?.embedding) ? d.embedding.map(Number) : []));
   if (vectors.length !== inputs.length || vectors.some((v) => !v.length)) return { ok: false, vectors: [], tokens, usd, status: 502, error: 'embeddings answer did not match the inputs' };
   return { ok: true, vectors, tokens, usd, status: 200 };

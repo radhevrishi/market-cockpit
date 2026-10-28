@@ -1,0 +1,51 @@
+name: Build stock screeners (external, opt-in)
+
+on:
+  schedule:
+    - cron: '5,25,45 * * * *'
+    - cron: '45 14,18,22 * * 1-5'
+    - cron: '45 2 * * 2-6'
+  workflow_dispatch:
+    inputs:
+      market:
+        description: Market to build with the current application engine
+        required: true
+        default: US
+        type: choice
+        options: [US, IN]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # No scheduled runner minutes while the repository is private. Manual runs remain an explicit owner action.
+    if: github.event_name == 'workflow_dispatch' || (github.event.repository.private == false && vars.SCREENER_RUNNER_ENABLED == 'true')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    concurrency:
+      group: external-screener-${{ github.event.inputs.market || (github.event.schedule == '5,25,45 * * * *' && 'IN' || 'US') }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      DATABASE_URL: ${{ secrets.SCREENER_DATABASE_PUBLIC_URL }}
+      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Verify configuration
+        run: |
+          if [ -z "$DATABASE_URL" ]; then echo '::error::Configure a dedicated SCREENER_DATABASE_PUBLIC_URL secret before enabling this runner.'; exit 1; fi
+          if [ -z "$SEC_USER_AGENT" ]; then echo '::error::Configure SEC_USER_AGENT with a valid SEC fair-access contact.'; exit 1; fi
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund --legacy-peer-deps
+      - name: Build selected market
+        env:
+          MARKET: ${{ github.event.inputs.market || (github.event.schedule == '5,25,45 * * * *' && 'IN' || 'US') }}
+        run: node --import tsx scripts/build-screener-external.ts "$MARKET"

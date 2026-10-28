@@ -2,6 +2,7 @@
 import { buildUsSnapshot } from './us-build';
 import { buildInSnapshot } from './in-build';
 import type { ScreenMarket } from './types';
+import { withBuildLease } from './build-lease';
 
 const running = new Map<ScreenMarket, Promise<{ ok: boolean; rows: number; notes: string[]; ms: number }>>();
 const lastKick = new Map<ScreenMarket, number>();
@@ -12,7 +13,9 @@ export function isBuilding(m: ScreenMarket): boolean { return running.has(m); }
 export function runBuild(m: ScreenMarket) {
   const cur = running.get(m);
   if (cur) return cur;
-  const p = (m === 'IN' ? buildInSnapshot() : buildUsSnapshot()).finally(() => running.delete(m));
+  const p = withBuildLease(m, () => m === 'IN' ? buildInSnapshot() : buildUsSnapshot(),
+    () => ({ ok: true, rows: 0, notes: ['A build for this market is already running in another process; the existing snapshot was kept.'], ms: 0, skipped: true }))
+    .finally(() => running.delete(m));
   running.set(m, p);
   return p;
 }

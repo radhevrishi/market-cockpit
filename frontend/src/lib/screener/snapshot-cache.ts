@@ -22,10 +22,16 @@ G.__MC_SNAP_INFLIGHT__ = INFLIGHT;
 
 export interface SnapshotReader {
   builtAt(m: ScreenMarket): Promise<string | null>;
+  head?(m: ScreenMarket): Promise<{ builtAt: string; meta: any } | null>;
   full(m: ScreenMarket): Promise<SnapshotData | null>;
 }
 const isoOf = (b: unknown) => (b instanceof Date ? b.toISOString() : String(b));
 export const pgSnapshotReader: SnapshotReader = {
+  async head(m) {
+    if (!getPool() || !(await ensureSchema())) return null;
+    const r = await dbQuery<{ built_at: string | Date; meta: any }>(`SELECT built_at, meta FROM screener_snapshot WHERE market = $1`, [m]);
+    return r.length ? { builtAt: isoOf(r[0].built_at), meta: r[0].meta ?? null } : null;
+  },
   async builtAt(m) {
     if (!getPool() || !(await ensureSchema())) return null;
     const r = await dbQuery<{ built_at: string | Date }>(`SELECT built_at FROM screener_snapshot WHERE market = $1`, [m]);
@@ -51,6 +57,12 @@ export function noteSnapshotWritten(m: ScreenMarket): void {
   if (s) s.dirty = true;
 }
 
+/** An unchanged-row publication still updates source/check notes; retain the expensive shared rows. */
+export function noteSnapshotMetadataWritten(m: ScreenMarket, meta: any): void {
+  const s = SLOTS.get(m);
+  if (s?.snap && !s.dirty) s.snap = { ...s.snap, meta };
+}
+
 /**
  * The market's snapshot (null = none built / database unavailable). Never throws. A failed read keeps serving the copy in
  * memory (a database blip must not empty the screener).
@@ -64,8 +76,12 @@ export function getSnapshot(m: ScreenMarket): Promise<SnapshotData | null> {
     try {
       if (cur?.snap && !cur.dirty) {
         // cheap check first: only the timestamp
-        const b = await reader.builtAt(m);
-        if (b && b === cur.snap.builtAt) { SLOTS.set(m, { snap: cur.snap, checkedAt: clock(), dirty: false }); return cur.snap; }
+        const head = reader.head ? await reader.head(m) : null;
+        const b = reader.head ? head?.builtAt : await reader.builtAt(m);
+        if (b && b === cur.snap.builtAt) {
+          const snap = head ? { ...cur.snap, meta: head.meta } : cur.snap;
+          SLOTS.set(m, { snap, checkedAt: clock(), dirty: false }); return snap;
+        }
       }
       const full = await reader.full(m);
       SLOTS.set(m, { snap: full ?? (cur?.snap ?? null), checkedAt: clock(), dirty: false });

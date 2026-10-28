@@ -16,7 +16,7 @@ export const dynamic = 'force-dynamic';
 
 const CACHE_CONTROL = 'private, max-age=300';
 /** the serialized body per market, for the snapshot it was made from */
-const bodies = new Map<string, { builtAt: string; body: string }>();
+const bodies = new Map<string, { version: string; body: string }>();
 /** zzz1045 — `?tickers=A,B` (≤ 400): only those companies' moving averages (a few KB, for the /watchlists "% from average" columns),
  *  never the whole 6 MB snapshot. */
 const SLIM_KEYS = ['t', 'sma50', 'sma200', 'scanPx', 'scanAt', 'de', 'deFY'] as const;   // zzz1068: + debt ÷ equity for the Conviction Beats cards
@@ -42,14 +42,15 @@ export async function GET(req: Request) {
   // zzz991 — snapshots built before the Rule of 40 guard: blank the tiny-base artefacts here too
   const rows = r40GuardedRows(snap, ruleOf40Usable);
   if (slimTickers.length) return slim(rows as any[], snap.builtAt, market, slimTickers);
+  const version = etagFor('stock-screener', market, snap.builtAt, JSON.stringify(snap.meta ?? null));
   let b = bodies.get(market);
-  if (!b || b.builtAt !== snap.builtAt) {
-    const body = await t.time('serialize', () => JSON.stringify({ ok: true, market, builtAt: snap.builtAt, rows, notes: snap.meta?.notes || [], sources: snap.meta?.sources || [] }));
-    b = { builtAt: snap.builtAt, body };
+  if (!b || b.version !== version) {
+    const body = await t.time('serialize', () => JSON.stringify({ ok: true, market, builtAt: snap.builtAt, checkedAt: snap.meta?.checkedAt ?? null, rows, notes: snap.meta?.notes || [], sources: snap.meta?.sources || [] }));
+    b = { version, body };
     bodies.set(market, b);
   }
   return sendText(req, {
     text: b.body, contentType: 'application/json', cacheControl: CACHE_CONTROL,
-    etag: etagFor('stock-screener', market, snap.builtAt), compressKey: `stock-screener|${market}|${snap.builtAt}`, timing: t,
+    etag: version, compressKey: `stock-screener|${market}|${version}`, timing: t,
   });
 }

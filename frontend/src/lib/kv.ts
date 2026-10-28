@@ -439,6 +439,17 @@ export async function kvIncrByFloat(key: string, by: number, ttlSeconds?: number
     return Number(v);
   } catch (e) { console.error(`[KV] INCRBYFLOAT failed for ${key}:`, e); return null; }
 }
+
+/** Durable atomic accounting only: never substitute process memory or a cached value. */
+export async function kvEvalDurable(script: string, keys: string[], args: Array<string | number>): Promise<unknown | null> {
+  const r = getRedis();
+  if (!r) return null;
+  for (const key of keys) { READ_CACHE.markUncacheable(key); LAST_WRITE.delete(key); }
+  try {
+    KV_USAGE.record('eval(accounting)', keys[0] || 'accounting', 1);
+    return await r.eval(script, keys, args);
+  } catch { return null; }
+}
 /** zzz883 — atomic set add (job-name index etc.). */
 export async function kvSAdd(key: string, member: string, ttlSeconds?: number): Promise<boolean> {
   const r = getRedis();
