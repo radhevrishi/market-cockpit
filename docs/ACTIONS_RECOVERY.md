@@ -13,7 +13,8 @@ matches this setting. This is recovery from the observed limit, not evidence tha
 or that the memory bill will fall. Continue measuring RSS, heap and heavy-job samples.
 
 The guidance facts browser request now has a 45-second deadline including body parsing, cancels superseded requests and
-provides Retry figures per company. A failed source lookup says it could not be read, rather than asserting that the
+provides Retry figures per company. The server returns completed figures plus explicit pending company keys after its
+40-second deadline; slow company reads can finish into the cache, and overlapping India reads share one request. A failed source lookup says it could not be read, rather than asserting that the
 company has no figures. Negative India facts cache entries expire after five minutes; older un-stamped negative entries
 are re-read. Valid cached figures and all financial calculation rules are unchanged.
 

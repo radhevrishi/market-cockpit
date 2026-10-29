@@ -19,6 +19,7 @@ import { yahooEstimateTrend, pooled, type EstimateTrendRow } from '@/lib/us-pric
 import { proxiedFetch } from '@/lib/proxy-fetch';
 import { nasdaqMarketCapMusd, nasdaqQuoteFields, pickScreenerSlug, fillUsQuoteFromSnapshot } from '@/lib/gu-skygold-lookup';
 import { getSnapshot } from '@/lib/screener/snapshot-cache';
+import { waitForFacts } from '@/lib/gu-facts-deadline';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -32,6 +33,15 @@ const inKey = (t: string) => `gu-skygold:in:v4:${t}`;   // zzz925: v2 — a name
 const slugKey = (t: string) => `gu-skygold:slug:v1:${t}`;
 const usCapKey = (t: string) => `gu-skygold:uscap:v2:${t}`;   // zzz927: v2 — also the price, sector and industry (30 min cache, so the price stays current)
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36';
+const indiaInflight = new Map<string, Promise<{ facts: SkyFacts | null; error: string | null }>>();
+function sharedIndiaFacts(t: string, company: string | null) {
+  const key = `${t}:${company || ''}`;
+  const hit = indiaInflight.get(key);
+  if (hit) return hit;
+  const work = inFacts(t, company).finally(() => { if (indiaInflight.get(key) === work) indiaInflight.delete(key); });
+  indiaInflight.set(key, work);
+  return work;
+}
 
 /** zzz925: the screener.in page slug of a company whose symbol page does not exist, from the screener.in search (by company name). KV cached. */
 async function screenerSlug(t: string, company: string | null): Promise<string | null> {
@@ -142,7 +152,7 @@ export async function GET(req: NextRequest) {
       while (i < todo.length) {
         const t = todo[i++];
         if (Date.now() - t0 > DEADLINE_MS - 12_000) { pending.push(`IN:${t}`); continue; }
-        const got = await inFacts(t, names.get(t) ?? null).catch((e: any) => ({ facts: null, error: String(e?.message || e).slice(0, 120) }));
+        const got = await sharedIndiaFacts(t, names.get(t) ?? null).catch(() => ({ facts: null, error: 'Company source could not be read' }));
         facts[`IN:${t}`] = got.facts; if (got.error) errors[`IN:${t}`] = got.error;
         await kvSet(inKey(t), { ...got, checkedAt: Date.now() }, got.facts ? TTL_OK : TTL_FAIL).catch(() => null);
       }
@@ -202,7 +212,12 @@ export async function GET(req: NextRequest) {
     }
   })();
 
-  await Promise.all([india, usa]);
+  // DEADLINE_MS used to be checked only before STARTING another company. The final source/cache read could
+  // still hold the whole batch for minutes. Return the completed companies and explicit pending keys at the deadline.
+  const complete = await waitForFacts(Promise.all([india, usa]), DEADLINE_MS);
+  if (!complete) for (const key of [...IN.map((t) => `IN:${t}`), ...US.map((t) => `US:${t}`)]) {
+    if (!(key in facts) && !pending.includes(key)) pending.push(key);
+  }
   for (const [k, f] of Object.entries(facts)) if (k.startsWith('IN:') && f?.mcap != null && f.mcap > 0) caps.IN[k.slice(3)] = f.mcap;
   return NextResponse.json({ ok: true, facts, caps, errors, pending, ms: Date.now() - t0 }, { headers: { 'Cache-Control': 'private, max-age=600' } });
 }
