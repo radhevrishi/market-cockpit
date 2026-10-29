@@ -215,7 +215,7 @@ describe('zzz916 collector run (injected I/O)', () => {
     const fetchFake = async (url: string, init: any = {}) => {
       asked.push(url);
       if (url.includes('/api/v1/guidance-docs/ingest')) {
-        if ((init.method || 'GET') === 'POST') { posts.push(JSON.parse(init.body)); return resp({ ok: true, rejected: [] }); }
+        if ((init.method || 'GET') === 'POST') { posts.push(JSON.parse(init.body)); return resp({ ok: true, stored: JSON.parse(init.body).docs?.length || 0, rejected: [] }); }
         return resp({ ok: true, known: [], intimations: [], queueTickers: [] });
       }
       if (url.includes('/api/v1/guidance-pipeline')) return resp({ wanted: [] });
@@ -278,7 +278,7 @@ describe('zzz916 collector run (injected I/O)', () => {
     const intim = { docId: sha20('https://nsearchives.nseindia.com/corporate/v.pdf'), url: 'https://nsearchives.nseindia.com/corporate/v.pdf', ticker: 'VOEPL', bseCode: null, company: 'Virtuoso Optoelectronics Ltd', kind: 'TRANSCRIPT', filedAt: '2026-09-01T12:00:00.000Z' };
     const make = (max: string) => R.run({
       fetch: (async (url: string, init: any = {}) => {
-        if (url.includes('/api/v1/guidance-docs/ingest')) { if ((init.method || 'GET') === 'POST') { posts.push(JSON.parse(init.body)); return resp({ ok: true }); } return resp({ known: [], intimations: [intim] }); }
+        if (url.includes('/api/v1/guidance-docs/ingest')) { if ((init.method || 'GET') === 'POST') { posts.push(JSON.parse(init.body)); return resp({ ok: true, stored: JSON.parse(init.body).docs?.length || 0 }); } return resp({ known: [], intimations: [intim] }); }
         if (url.startsWith('https://www.screener.in/company/VOEPL/consolidated/')) { screener++; return resp(SCREENER_HTML('Virtuoso Optoelectronics Ltd', '543390', 'VOEPL', [['Aug 2026', 'https://www.bseindia.com/stockinfo/AnnPdfOpen.aspx?Pname=voepl-aug.pdf', null]])); }
         if (url.endsWith('/voepl-aug.pdf')) return resp(pdf('voepl'), 200);
         if (url.includes('corporate-announcements')) return resp([]);

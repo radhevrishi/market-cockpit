@@ -43,7 +43,7 @@ describe('zzz924 collector run: BSE code resolution in re-collect', () => {
     const asked: string[] = []; const posts: any[] = [];
     const fetchFake = async (url: string, init: any = {}) => {
       asked.push(url);
-      if (url.includes('/api/v1/guidance-docs/ingest')) { if ((init.method || 'GET') === 'POST') { posts.push(JSON.parse(init.body)); return resp({ ok: true, rejected: [] }); } return resp({ ok: true, known: [], intimations: [], queueTickers: [] }); }
+      if (url.includes('/api/v1/guidance-docs/ingest')) { if ((init.method || 'GET') === 'POST') { posts.push(JSON.parse(init.body)); return resp({ ok: true, stored: JSON.parse(init.body).docs?.length || 0, rejected: [] }); } return resp({ ok: true, known: [], intimations: [], queueTickers: [] }); }
       if (url.includes('/api/v1/guidance-pipeline')) return resp({ wanted: [] });
       if (url === 'https://www.nseindia.com/') return resp('<html/>');
       if (url.includes('nseindia.com/api/corporate-announcements')) return resp([]);

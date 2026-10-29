@@ -45,6 +45,11 @@ jobs:
       - name: Install locked restore tooling
         working-directory: frontend
         run: npm ci --no-audit --no-fund --legacy-peer-deps
+      - name: Verify dedicated backup passphrase
+        env:
+          PASS: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          if [ -z "$PASS" ]; then echo '::error::Set BACKUP_PASSPHRASE in repository Actions secrets before exporting personal data.'; exit 1; fi
       - name: Export including US book
         env:
           CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
@@ -61,7 +66,7 @@ jobs:
         run: node --import tsx ../.github/scripts/user-data-backup.mjs restore-check ../user-data.json
       - name: Encrypt and authenticate artifact round-trip
         env:
-          PASS: ${{ secrets.BACKUP_PASSPHRASE || secrets.CRON_SECRET }}
+          PASS: ${{ secrets.BACKUP_PASSPHRASE }}
         run: node .github/scripts/user-data-backup.mjs encrypt user-data.json user-data.json.enc
       - name: Remove plaintext even after failure
         if: always()

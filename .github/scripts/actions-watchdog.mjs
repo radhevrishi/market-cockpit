@@ -50,6 +50,10 @@ export function classifyRun(run, jobs = [], annotations = []) {
   const failedStep = failedJob?.steps?.find((s) => ['failure', 'timed_out', 'cancelled'].includes(s.conclusion))?.name;
   const firstReason = (meaningful[0] || (failedStep ? `step "${failedStep}" failed` : msgs[0]) || '').replace(/\s+/g, ' ').slice(0, 200);
 
+  // Billing/permission blocks also have no runner: do not misclassify an owner-actionable block as capacity.
+  if (/recent account payments have failed|spending limit needs to be increased|billing|payment method|Actions has been disabled|not allowed to run workflows/i.test(all)) {
+    return { kind: 'real', reason: 'GitHub account billing, spending limit or Actions permission blocked the job; inspect the account settings', step: failedStep };
+  }
   if (RX.capacity.test(all)) return { kind: 'capacity', reason: 'GitHub had no runner for the job' };
   if (concl === 'cancelled' && RX.superseded.test(all)) return { kind: 'superseded', reason: 'replaced by a newer run' };
   if (concl === 'cancelled' && RX.manual.test(all)) return { kind: 'manual', reason: 'cancelled by hand' };

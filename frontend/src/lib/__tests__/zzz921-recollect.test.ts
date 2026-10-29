@@ -227,7 +227,7 @@ describe('zzz921 collector run in re-collect mode', () => {
     const fetchFake = async (url: string, init: any = {}) => {
       asked.push(url);
       if (url.includes('/api/v1/guidance-docs/ingest')) {
-        if ((init.method || 'GET') === 'POST') { posts.push(JSON.parse(init.body)); return resp({ ok: true, rejected: [] }); }
+        if ((init.method || 'GET') === 'POST') { posts.push(JSON.parse(init.body)); return resp({ ok: true, stored: JSON.parse(init.body).docs?.length || 0, rejected: [] }); }
         gets++;
         return resp({ ok: true, known: opts.knownIds || [], intimations: [], queueTickers: [] });
       }

@@ -29,6 +29,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Sync screens
+        id: sync
         env:
           SESSION_RAW: ${{ secrets.SCREENER_SESSIONID }}
         run: |
@@ -43,9 +44,9 @@ jobs:
           echo "sessionid length: ${#SESSION}"
 
           DATA_DIR="frontend/public/data/screener"
-          DEBUG_DIR="$DATA_DIR/_debug"
-          mkdir -p "$DATA_DIR" "$DEBUG_DIR"
-          rm -f "$DEBUG_DIR"/*.html "$DEBUG_DIR"/*.txt 2>/dev/null || true
+          mkdir -p "$DATA_DIR"
+          # Never publish authenticated HTML/response headers in a public repository.
+          rm -rf "$DATA_DIR/_debug"
 
           UA="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
 
@@ -73,7 +74,6 @@ jobs:
 
           OK_COUNT=0
           FAIL_COUNT=0
-          DEBUG_SAVED=0
           REPORT=""
 
           # PATCH 1101rrr: collect file -> display name mapping for manifest.
@@ -172,14 +172,6 @@ jobs:
               echo "::warning::$slug failed (size=$SIZE, html=$IS_HTML)"
               FAIL_COUNT=$((FAIL_COUNT+1))
               REPORT="$REPORT"$'\n'"  fail $slug"
-              if [ "$DEBUG_SAVED" = "0" ]; then
-                cp "$PAGE" "$DEBUG_DIR/${slug}-page.html"
-                cp "$HDR" "$DEBUG_DIR/${slug}-response-headers.txt"
-                if [ -f "$out.tmp" ]; then
-                  cp "$out.tmp" "$DEBUG_DIR/${slug}-response-body.html"
-                fi
-                DEBUG_SAVED=1
-              fi
               rm -f "$out.tmp"
             fi
 
@@ -187,6 +179,7 @@ jobs:
             sleep 1.5
           done
 
+          echo "failed=$FAIL_COUNT" >> "$GITHUB_OUTPUT"
           NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           # PATCH 1101rrr: manifest now includes displayName per file.
           python3 - "$NAMES_FILE" "$DATA_DIR" "$NOW" "$OK_COUNT" "$FAIL_COUNT" <<'PYEOF'
@@ -226,7 +219,13 @@ jobs:
           printf '%s\n' "$REPORT"
           echo "============================="
 
-      - name: Commit data + debug
+      - name: Commit data and coverage manifest
         # zzz908: shared helper — a content conflict on the generated manifest (28 Sep 2026) used to leave the
         # rebase half-done and all 5 push retries failed. The helper re-applies this run's folder on top of main.
         run: bash .github/scripts/push-data.sh "[skip ci] Sync Screener.in CSVs $(date -u +%Y-%m-%d)" frontend/public/data/screener/
+
+      - name: Verify sync coverage
+        if: steps.sync.outputs.failed != '0'
+        run: |
+          echo '::error::One or more screen exports failed. Last-good files are retained; see the manifest for partial coverage. Check SCREENER_SESSIONID if the source returned a login page.'
+          exit 1

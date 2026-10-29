@@ -172,7 +172,7 @@ describe('collector run (injected I/O)', () => {
     const resp = (body: any, status = 200, headers: Record<string, string> = {}) => new Response((typeof body === "string" || Buffer.isBuffer(body) ? body : JSON.stringify(body)) as any, { status, headers });
     const fetchFake = async (url: string, init: any = {}) => {
       if (url.includes('/api/v1/guidance-docs/ingest')) {
-        if ((init.method || 'GET') === 'POST') { posts.push(JSON.parse(init.body)); return resp({ ok: true, rejected: [] }); }
+        if ((init.method || 'GET') === 'POST') { posts.push(JSON.parse(init.body)); return resp({ ok: true, stored: JSON.parse(init.body).docs?.length || 0, rejected: [] }); }
         return resp({ ok: true, known: [] });
       }
       if (url.includes('AnnSubCategoryGetData')) {
@@ -236,7 +236,7 @@ describe('collector run (injected I/O)', () => {
     const resp = (b: any, s = 200) => new Response(typeof b === 'string' ? b : JSON.stringify(b), { status: s });
     await R.run({
       fetch: (async (u: string, init: any = {}) => {
-        if (u.includes('guidance-docs/ingest')) return (init.method === 'POST') ? resp({ ok: true }) : resp({ known: [sha20(url)] });
+        if (u.includes('guidance-docs/ingest')) return (init.method === 'POST') ? resp({ ok: true, stored: JSON.parse(init.body).docs?.length || 0 }) : resp({ known: [sha20(url)] });
         if (u.includes('AnnSubCategoryGetData')) return resp({ Table: [{ SCRIP_CD: 513269, NEWSSUB: 'Earnings Call Transcript', NEWS_DT: '2026-10-02T17:00:00', ATTACHMENTNAME: 'man.pdf', PDFFLAG: 0 }], Table1: [{ ROWCNT: 1 }] });
         if (u.endsWith('.pdf')) { pdfFetches++; return resp('%PDF'); }
         return resp('x', 404);

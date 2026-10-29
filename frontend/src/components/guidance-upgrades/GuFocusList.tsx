@@ -143,7 +143,7 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
     for (const r of buildFocusList(data?.summary?.highGrowthGroups, events, new Date(), Infinity)) if (r.market === 'IN' && r.ticker) m[`IN:${r.ticker.toUpperCase()}`] = r.company;
     return m;
   }, [data, events]);
-  const { facts, caps: skyCaps, loading: skyLoading, failed: skyFailed } = useSkyGoldFacts(skyKeys, skyNames);
+  const { facts, caps: skyCaps, loading: skyLoading, failed: skyFailed, retryFigures } = useSkyGoldFacts(skyKeys, skyNames);
   // zzz925: the market caps read for the score fill sizes the graded results do not have — India from screener.in, USA from Nasdaq
   // (graded caps win). Before this, almost every US row said "size not known" and large caps stayed in "Small & mid only".
   const capsAll = useMemo(() => {
@@ -237,7 +237,8 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
     if (waiting || none) {
       return (
         <td colSpan={FV_COLS + OPP_COLS + 1 - (cols === 'compact' ? 2 : 0)} data-c="figures" data-figures={waiting ? 'reading' : 'none'} style={{ ...td, color: R.dim, fontSize: 12, fontStyle: 'italic' }}>
-          {waiting ? 'Reading company figures…' : r.market === 'IN' ? 'Company figures not on screener.in yet — the guidance above still counts' : 'Company figures not in the SEC filings yet — the guidance above still counts'}
+          {waiting ? 'Reading company figures…' : 'Company figures could not be read — the guidance above still counts'}
+          {!waiting && k && <button type="button" onClick={() => retryFigures(k)} style={{ marginLeft: 8, cursor: 'pointer', textDecoration: 'underline', color: R.cyan }} aria-label={`Retry figures for ${r.company}`}>Retry figures</button>}
         </td>
       );
     }

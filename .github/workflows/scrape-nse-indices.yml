@@ -1,4 +1,4 @@
-name: Scrape NSE Indices (4×/day)
+name: Scrape NSE Indices (3x weekdays, 2x weekends)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # PATCH 0782 — NSE broad-indices ingestion via GitHub Actions free CPU.

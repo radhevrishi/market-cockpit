@@ -27,6 +27,7 @@
 // Logs counts only — never document text, never secrets.
 
 import { createHash } from 'node:crypto';
+import { createGuidanceDelivery } from './lib/guidance-delivery.mjs';
 import { pathToFileURL } from 'node:url';
 import { exitForError } from './lib/resilient-fetch.mjs';   // zzz908: transient-vs-real exit
 
@@ -398,20 +399,6 @@ async function kvSetJson(key, value, ttl) {
   } catch { return false; }
 }
 
-async function postIngest(base, secret, payload) {
-  for (let a = 0; a < 3; a++) {
-    try {
-      const r = await fetch(`${base.replace(/\/+$/, '')}/api/v1/guidance-docs/ingest`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-cron-secret': secret }, body: JSON.stringify(payload), signal: AbortSignal.timeout(60_000),
-      });
-      if (r.ok) { const j = await r.json().catch(() => ({})); return { ok: true, status: r.status, stored: Number(j?.stored ?? j?.accepted ?? payload.docs.length) }; }
-      if (r.status === 401 || r.status === 403 || r.status === 404) return { ok: false, status: r.status };
-    } catch { /* retry */ }
-    await new Promise((r) => setTimeout(r, 2_000 * (a + 1)));
-  }
-  return { ok: false, status: 0 };
-}
-
 async function main() {
   const t0 = Date.now();
   const ua = secUserAgent();
@@ -420,6 +407,9 @@ async function main() {
   const secret = process.env.CRON_SECRET || '';
   if (!dry && !secret) { console.error('::error title=Missing CRON_SECRET::Set CRON_SECRET (or run with DRY_RUN=1).'); process.exit(1); }
   const base = (process.env.CRON_BASE_URL || '').trim() || PROD;
+  const delivery = createGuidanceDelivery({ fetch, env: { ...process.env, CRON_BASE_URL: base } });
+  const recovery = await delivery.replay('US');
+  if (recovery.pending) throw new Error(`Guidance delivery backlog: ${recovery.pending} batches pending; source collection paused`);
   const nDays = Math.max(1, Math.min(MAX_DAYS, parseInt(process.env.DAYS || '7', 10) || 7));
   const end = /^\d{4}-\d{2}-\d{2}$/.test(process.env.END_DATE || '') ? process.env.END_DATE : todayEt();
   const rps = Math.max(1, Math.min(9, Number(process.env.SEC_RPS) || 8));
@@ -464,17 +454,18 @@ async function main() {
       }
     }
     let postFail = 0; let posted = 0;
-    const batches = batchBySize(docs);
+    const batches = batchBySize(docs, 600_000);
     if (!dry) {
       for (let i = 0; i < batches.length; i++) {
-        const res = await postIngest(base, secret, { market: 'US', collector: COLLECTOR, docs: batches[i] });
+        const res = await delivery.post({ market: 'US', collector: COLLECTOR, docs: batches[i] });
+        if ([400, 401, 403, 404, 413].includes(res.status) || res.incomplete) throw new Error(`Guidance ingest refused: HTTP ${res.status}; batch retained for correction`);
         if (res.ok) posted += batches[i].length; else { postFail++; console.log(`  ${day}: ingest batch ${i + 1}/${batches.length} failed (HTTP ${res.status})`); }
       }
     }
     // the day's coverage row goes AFTER its documents, so a day is never 'ok' before its documents are stored
-    const st = dayStatus({ indexOk: listed.ok, exhibitFailures: exFail, postFailures: postFail });
+    let st = dayStatus({ indexOk: listed.ok, exhibitFailures: exFail, postFailures: postFail });
     const row = { [day]: { status: st, filings: matched.length, docs: docs.length, at: new Date().toISOString() } };
-    if (!dry) { const c = await postIngest(base, secret, { market: 'US', collector: COLLECTOR, docs: [], coverage: { market: 'US', days: row } }); if (!c.ok) console.log(`  ${day}: coverage row not accepted by ingest (HTTP ${c.status})`); }
+    if (!dry) { const c = await delivery.post({ market: 'US', collector: COLLECTOR, docs: [], coverage: { market: 'US', days: row } }); if (!c.ok) { postFail++; st = st === 'failed' ? st : 'partial'; row[day].status = st; console.log(`  ${day}: coverage row not accepted by ingest (HTTP ${c.status})`); } }
     Object.assign(coverageAll, row); pending++;
     if (pending >= 10) await flushCoverage();
     tot.exhibitFail += exFail; tot.noCue += noCue; tot.empty += empty; tot.kept += docs.length; tot.posted += posted; tot.postFail += postFail;
@@ -485,7 +476,7 @@ async function main() {
   await flushCoverage();
   const secs = Math.round((Date.now() - t0) / 1000);
   console.log(`done in ${secs}s: requests=${stats.requests} 8-K=${tot.filings} matched=${tot.matched} exhibits=${tot.exhibits} kept=${tot.kept} noCue=${tot.noCue} empty=${tot.empty} exhibitFail=${tot.exhibitFail} posted=${tot.posted} postFail=${tot.postFail} days ok=${tot.daysOk} partial=${tot.daysPartial} failed=${tot.daysFailed}`);
-  if (tot.daysFailed === days.length) process.exit(1);
+  if (!dry && (tot.postFail || tot.daysPartial || tot.daysFailed)) throw new Error(`EDGAR incomplete: ${tot.postFail} upload batches pending, ${tot.daysPartial} partial days, ${tot.daysFailed} failed days`);
 }
 
 const isMain = (() => { try { return !!process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href; } catch { return false; } })();

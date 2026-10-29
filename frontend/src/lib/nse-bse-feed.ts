@@ -32,17 +32,20 @@ const GH_BLOB_MAX_AGE_MS = 6 * 60 * 60 * 1000;   // 6h — half the 12h gap betw
 
 interface GhBlobShape {
   generatedAt?: string;
+  sources?: Partial<Record<'NSE' | 'BSE', { fetchedAt?: string; state?: string }>>;
   filings?: FilingRecord[];
 }
 
-async function readGhBlob(): Promise<GhBlobShape | null> {
+async function readGhBlob(exchange: 'NSE' | 'BSE'): Promise<GhBlobShape | null> {
   if (!isRedisAvailable()) return null;
   try {
     const blob = await kvGet<GhBlobShape>(GH_BLOB_KEY);
     if (!blob || !Array.isArray(blob.filings) || blob.filings.length === 0) return null;
-    if (blob.generatedAt) {
-      const ageMs = Date.now() - new Date(blob.generatedAt).getTime();
-      if (!Number.isFinite(ageMs) || ageMs > GH_BLOB_MAX_AGE_MS) return null;
+    const fetchedAt = blob.sources ? blob.sources[exchange]?.fetchedAt : blob.generatedAt;
+    if (blob.sources && !fetchedAt) return null;
+    if (fetchedAt) {
+      const ageMs = Date.now() - new Date(fetchedAt).getTime();
+      if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > GH_BLOB_MAX_AGE_MS) return null;
     }
     return blob;
   } catch {
@@ -349,11 +352,11 @@ export async function fetchNSEAnnouncements(opts: {
     try {
       const [cfFilings, ghBlob] = await Promise.all([
         readCFWorkerBlob(opts.signal).catch(() => null),
-        readGhBlob().catch(() => null),
+        readGhBlob('NSE').catch(() => null),
       ]);
       const merged = mergeByHash(cfFilings || [], (ghBlob && ghBlob.filings) || []);
       snapshot = filterBlobToWindow(merged, fromStr, toStr, 'NSE');
-      if (snapshot.length > 0 && snapshotCoversWindow(merged.filter((f) => f.exchange === 'NSE'), fromStr)) {
+      if (snapshot.length > 0 && (!ghBlob?.sources || ghBlob.sources.NSE?.state === 'fresh') && snapshotCoversWindow(merged.filter((f) => f.exchange === 'NSE'), fromStr)) {
         return { filings: snapshot, source: 'NSE_OK' as const, via: 'SNAPSHOT' as const };
       }
     } catch {
@@ -487,11 +490,11 @@ export async function fetchBSEAnnouncements(opts: {
         const toIso   = `${toStr.slice(0, 4)}-${toStr.slice(4, 6)}-${toStr.slice(6, 8)}`;
         const [cfFilings, blob] = await Promise.all([
           readCFWorkerBlob(opts.signal).catch(() => null),
-          readGhBlob().catch(() => null),
+          readGhBlob('BSE').catch(() => null),
         ]);
         const merged = mergeByHash(cfFilings || [], (blob && blob.filings) || []).filter((f) => f.exchange === 'BSE');
         snapshot = filterBlobToWindow(merged, fromIso, toIso, 'BSE');
-        if (snapshot.length > 0 && snapshotCoversWindow(merged, fromIso)) {
+        if (snapshot.length > 0 && (!blob?.sources || blob.sources.BSE?.state === 'fresh') && snapshotCoversWindow(merged, fromIso)) {
           return { filings: snapshot, source: 'BSE_OK' as const, via: 'SNAPSHOT' as const };
         }
       } catch {

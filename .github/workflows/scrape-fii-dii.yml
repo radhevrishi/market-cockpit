@@ -51,12 +51,8 @@ jobs:
         if: always()
         env:
           CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
-        run: |
-          BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
-          OK="true"
-          if [[ "${{ job.status }}" != "success" ]]; then OK="false"; fi
-          NOTE=''; if [[ "${{ steps.main.outputs.deferred }}" == "1" ]]; then NOTE=',"error":"deferred: upstream not available, data kept as it was"'; fi
-          curl -s --max-time 15 -X POST "$BASE/api/v1/cron/heartbeat" \
-            -H 'Content-Type: application/json' \
-            -d "{\"name\":\"scrape-fii-dii\",\"phase\":\"end\",\"ok\":$OK$NOTE,\"run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
-            -o /dev/null -w "heartbeat %{http_code}\n" || true
+          JOB_NAME: scrape-fii-dii
+          COLLECTION_OUTCOME: ${{ steps.main.outcome }}
+          COLLECTION_DEFERRED: ${{ steps.main.outputs.deferred }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node .github/scripts/send-heartbeat.mjs

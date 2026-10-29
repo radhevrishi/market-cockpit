@@ -87,6 +87,7 @@ async function getJson(f, url, cookie) {
 
 export async function run(d) {
   const env = d.env || process.env;
+  const pause = d.sleep || sleep;
   const f = d.fetch; const log = d.log || ((s) => console.log(s));
   const baseUrl = (env.CRON_BASE_URL || 'https://market-cockpit-production.up.railway.app').replace(/\/+$/, '');
   const days = Math.max(1, Math.min(60, Number(env.DAYS) || 7));
@@ -100,7 +101,7 @@ export async function run(d) {
     const r = await getJson(f, 'https://www.nseindia.com/api/corporates-financial-results?index=equities', cookie);
     if (r.ok) { const got = rowsOf(r.json); log(`latest list: ${got.length} rows, shape ${shapeOf(r.json)}`); const want = new Set(list); for (const x of got) if (want.has(rowDay(x))) rows.push(x); }
     else log(`latest list: FAILED (${r.error})`);
-    await sleep(400);
+    await pause(400);
   }
   for (const day of list) {
     // one day per call: the list is small per day and a failure stays local to that day. The website's own query first
@@ -116,7 +117,7 @@ export async function run(d) {
       if (!r.ok && r.blocked) { cookie = await nseCookie(f); r = await getJson(f, u, cookie); }
       last = r;
       if (r.ok) { const rows = rowsOf(r.json); if (shown++ < 3) log(`${day}: answer shape ${shapeOf(r.json)}${typeof r.json?.msg === 'string' ? ` msg="${r.json.msg.slice(0, 120)}"` : ''}`); if (rows.length) { got = rows; break; } got = got || []; }
-      await sleep(300);
+      await pause(300);
     }
     // direct read empty or refused: the same queries through the mc-proxy worker (Cloudflare egress)
     if (!got || !got.length) {
@@ -125,15 +126,15 @@ export async function run(d) {
         const r = await getJson(f, pu, '');
         last = last && last.ok ? last : r;
         if (r.ok) { const rows = rowsOf(r.json); if (shown++ < 6) log(`${day}: proxy answer shape ${shapeOf(r.json)}${typeof r.json?.msg === 'string' ? ` msg="${r.json.msg.slice(0, 120)}"` : ''}`); if (rows.length) { got = rows; break; } got = got || []; }
-        await sleep(300);
+        await pause(300);
       }
     }
-    if (got == null) { failed.push(day); log(`${day}: FAILED (${last?.error || 'no answer'})`); await sleep(400); continue; }
+    if (got == null) { failed.push(day); log(`${day}: FAILED (${last?.error || 'no answer'})`); await pause(400); continue; }
     // zero rows on a trading day cannot be told from a soft block ("no data found" is what a refused query says too): NOT a read day
     if (got.length || isWeekend(day)) readDays.push(day); else failed.push(day);
     rows.push(...got);
     log(`${day}: ${got.length} results rows${!got.length && !isWeekend(day) ? ' (weekday with zero rows: not counted as read)' : ''}`);
-    await sleep(400);
+    await pause(400);
   }
   let posted = false; let ingestStatus = null;   // zzz908: last ingest answer (HTTP code or 'network') for the exit classification
   if (env.DRY_RUN === '1') posted = true;
@@ -145,7 +146,7 @@ export async function run(d) {
         ingestStatus = res.status; log(`ingest HTTP ${res.status}`);
         if (res.status === 400 || res.status === 401 || res.status === 413) break;
       } catch { ingestStatus = 'network'; log('ingest network error'); }
-      await sleep(3000 * 2 ** i);
+      await pause(3000 * 2 ** i);
     }
   }
   log(`done: ${JSON.stringify({ days, daysRead: readDays.length, failedDays: failed.length, rows: rows.length, posted })}`);
@@ -164,6 +165,6 @@ if (isMain) {
       if (r.ingestStatus === 'network' || (typeof r.ingestStatus === 'number' && (r.ingestStatus === 429 || r.ingestStatus >= 500))) exitTransient(`app ingest unavailable (${r.ingestStatus}); rows were read but not stored`);
       console.error(`::error title=Ingest failed::rows were read but not stored (ingest answered ${r.ingestStatus ?? 'nothing'})`); process.exit(1);
     }
-    if (r.failed.length) console.log(`::warning title=Some days failed::${r.failed.length} day(s) not read`);
+    if (r.failed.length) exitTransient(`${r.failed.length} day(s) unread; available rows were stored, coverage remains incomplete`);
   }).catch((e) => exitForError(e, 'Collector crashed'));
 }

@@ -27,7 +27,7 @@ export const maxDuration = 60;
 const MAX_PER_MARKET = 80;
 const DEADLINE_MS = 40_000;
 const TTL_OK = 24 * 3600;
-const TTL_FAIL = 6 * 3600;
+const TTL_FAIL = 5 * 60; // A refused/slow read is not six hours of evidence that a company has no figures.
 const inKey = (t: string) => `gu-skygold:in:v4:${t}`;   // zzz925: v2 — a name the old symbol-only lookup missed (BMW) is read again; zzz927: v3 — price, sector and the fair-value figures are read too
 const slugKey = (t: string) => `gu-skygold:slug:v1:${t}`;
 const usCapKey = (t: string) => `gu-skygold:uscap:v2:${t}`;   // zzz927: v2 — also the price, sector and industry (30 min cache, so the price stays current)
@@ -135,8 +135,8 @@ export async function GET(req: NextRequest) {
 
   const india = (async () => {
     const todo: string[] = [];
-    const hits = await Promise.all(IN.map((t) => kvGet<{ facts: SkyFacts | null; error: string | null }>(inKey(t)).catch(() => null)));
-    IN.forEach((t, i) => { const h = hits[i]; if (h && (h.facts ? isCurrentPeriod(h.facts.period) : true)) { facts[`IN:${t}`] = h.facts; if (h.error) errors[`IN:${t}`] = h.error; } else todo.push(t); });
+    const hits = await Promise.all(IN.map((t) => kvGet<{ facts: SkyFacts | null; error: string | null; checkedAt?: number }>(inKey(t)).catch(() => null)));
+    IN.forEach((t, i) => { const h = hits[i]; if (h && (h.facts ? isCurrentPeriod(h.facts.period) : typeof h.checkedAt === 'number' && Date.now() - h.checkedAt < TTL_FAIL * 1000)) { facts[`IN:${t}`] = h.facts; if (h.error) errors[`IN:${t}`] = h.error; } else todo.push(t); });
     let i = 0;
     const worker = async () => {
       while (i < todo.length) {
@@ -144,7 +144,7 @@ export async function GET(req: NextRequest) {
         if (Date.now() - t0 > DEADLINE_MS - 12_000) { pending.push(`IN:${t}`); continue; }
         const got = await inFacts(t, names.get(t) ?? null).catch((e: any) => ({ facts: null, error: String(e?.message || e).slice(0, 120) }));
         facts[`IN:${t}`] = got.facts; if (got.error) errors[`IN:${t}`] = got.error;
-        await kvSet(inKey(t), got, got.facts ? TTL_OK : TTL_FAIL).catch(() => null);
+        await kvSet(inKey(t), { ...got, checkedAt: Date.now() }, got.facts ? TTL_OK : TTL_FAIL).catch(() => null);
       }
     };
     await Promise.all(Array.from({ length: Math.min(4, todo.length) }, worker));

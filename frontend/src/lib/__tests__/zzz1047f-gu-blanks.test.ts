@@ -10,7 +10,7 @@ test('figures missing or loading → one merged cell, never six dashes', () => {
   const s = read('components/guidance-upgrades/GuFocusList.tsx');
   assert.match(s, /colSpan=\{FV_COLS \+ OPP_COLS \+ 1 - \(cols === 'compact' \? 2 : 0\)\}/);   // zzz1142: fewer columns in Compact
   assert.match(s, /Reading company figures…/);
-  assert.match(s, /Company figures not on screener\.in yet/);
+  assert.match(s, /Company figures could not be read/);
   const fv = read('components/guidance-upgrades/GuFairValue.tsx');
   assert.match(fv, /colSpan=\{2\}[^>]*>No fair value: /);
 });

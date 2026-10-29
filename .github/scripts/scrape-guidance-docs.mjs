@@ -44,6 +44,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { execFile } from 'node:child_process';
+import { createGuidanceDelivery } from './lib/guidance-delivery.mjs';
 import { mkdtemp, writeFile, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -260,27 +261,12 @@ export async function pdftotextCli(buf) {
 // ── ingest client ───────────────────────────────────────────────────────────
 
 async function postIngest(deps, body) {
-  if (deps.env.DRY_RUN === '1') return true;
-  const url = `${deps.baseUrl}/api/v1/guidance-docs/ingest`;
-  for (let i = 0; i < 4; i++) {
-    try {
-      const res = await deps.fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-cron-secret': deps.env.CRON_SECRET || '' },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(90_000),
-      });
-      if (res.ok) {
-        const j = await res.json().catch(() => ({}));
-        deps.counts.ingestRejected += Array.isArray(j?.rejected) ? j.rejected.length : 0;
-        return true;
-      }
-      deps.log(`ingest HTTP ${res.status}`);
-      if (res.status === 400 || res.status === 401 || res.status === 413) return false;
-    } catch { deps.log('ingest network error'); }
-    await deps.sleep(3000 * 2 ** i);
+  const r = await deps.delivery.post(body);
+  deps.counts.ingestRejected += r.rejected || 0;
+  if ([400, 401, 403, 404, 413].includes(r.status) || r.incomplete) {
+    throw new Error(`Guidance ingest refused: HTTP ${r.status}${r.incomplete ? ' (incomplete acknowledgement)' : ''}. Check configuration; pending documents retained.`);
   }
-  return false;
+  return r.ok;
 }
 
 /** Known docIds plus (zzz916) the server's pending intimations and, when asked, the India tickers waiting in the events queue. */
@@ -290,6 +276,7 @@ async function knownIds(deps, o = {}) {
   try {
     const q = `market=IN&extras=1${o.queue ? '&queueTickers=1' : ''}`;
     const res = await deps.fetch(`${deps.baseUrl}/api/v1/guidance-docs/ingest?${q}`, { headers: { 'x-cron-secret': deps.env.CRON_SECRET }, signal: AbortSignal.timeout(45_000) });
+    if ([401, 403, 404].includes(res.status)) throw Object.assign(new Error(`Collector authentication/configuration failed: HTTP ${res.status}. Match GitHub CRON_SECRET to the deployed Railway value.`), { fatal: true });
     if (!res.ok) { deps.log(`known-ids HTTP ${res.status} (continuing without)`); return empty; }
     const j = await res.json();
     return {
@@ -299,7 +286,7 @@ async function knownIds(deps, o = {}) {
       // zzz1151: graded companies with no guidance document at all — read their last calls (screener.in concall list)
       needCall: Array.isArray(j?.needCall) ? parseTickerList(j.needCall.join(',')).slice(0, 12) : [],
     };
-  } catch { deps.log('known-ids unavailable (continuing without)'); return empty; }
+  } catch (e) { if (e.fatal) throw e; deps.log('known-ids unavailable (continuing without)'); return empty; }
 }
 
 // ── zzz916: Screener.in concall list ────────────────────────────────────────
@@ -389,6 +376,9 @@ export async function run(d) {
     counts: { listed: 0, matched: 0, known: 0, downloaded: 0, stored: 0, unreadable: 0, noCue: 0, tooBig: 0, errors: 0, linked: 0, posted: 0, postFailed: 0, ingestRejected: 0,
       smeListed: 0, intimations: 0, intimationsResolved: 0, intimationsPending: 0, screenerPages: 0, screenerDocs: 0, screenerOffHost: 0 },
   };
+  deps.delivery = createGuidanceDelivery({ fetch: deps.fetch, env, sleep: deps.sleep, log: deps.log });
+  const recovery = await deps.delivery.replay('IN');
+  if (recovery.pending) throw new Error(`Guidance delivery backlog: ${recovery.pending} batches still pending; collection paused to avoid repeated downloads`);
   const http = makeHttp(deps);
   const now = d.now || new Date();
   const days = Math.max(1, Math.min(210, Number(env.DAYS) || 7));
@@ -427,7 +417,7 @@ export async function run(d) {
   const pendingRe = [];      // zzz921: re-collected docs (posted with reextract = true)
   const flush = async (final) => {
     for (const [list, reextract] of [[pending, false], [pendingRe, true]]) {
-      const batches = chunkBatches(list.splice(0), { maxDocs: MAX_BATCH_DOCS, maxBytes: MAX_BATCH_BYTES });
+      const batches = chunkBatches(list.splice(0), { maxDocs: MAX_BATCH_DOCS, maxBytes: Math.min(MAX_BATCH_BYTES, 600_000) });
       for (const b of batches) {
         const ok = await postIngest(deps, { market: 'IN', collector: COLLECTOR, docs: b, ...(reextract ? { reextract: true } : {}), seen: seen.splice(0, 2000), intimations: intimations.splice(0, 500) });
         if (ok) c.posted += b.length; else c.postFailed += b.length;
@@ -756,11 +746,13 @@ export async function run(d) {
   const failedDays = statusDays.filter((s) => s.status === 'failed').length;
   // status last, so it reflects what was actually posted
   const atIso = new Date().toISOString();
-  if (!recollectRequested) await postIngest(deps, {
+  // Listing success alone is not delivery success. Keep every affected day partial until a later re-read succeeds.
+  if (c.postFailed) for (const day of statusDays) if (day.status !== 'failed') { day.partial = true; day.note += '; documents awaiting delivery'; }
+  if (!recollectRequested && !await postIngest(deps, {
     market: 'IN', collector: COLLECTOR, docs: [], seen: [],
     coverage: { market: 'IN', days: coverageRows(statusDays, atIso) },
     status: { days: statusDays, run: { at: new Date().toISOString(), days, stored: c.posted, skipped: c.unreadable + c.noCue + c.tooBig, failedDays } },
-  });
+  })) c.statusPostFailed = 1;
   deps.log(`done: ${JSON.stringify({ ...c, days, daysRead: statusDays.length, failedDays, stoppedBy })}`);
   return { counts: c, statusDays, stoppedBy };
 }
@@ -777,6 +769,7 @@ if (isMain) {
   run({ fetch: globalThis.fetch, pdftotext: pdftotextCli })
     .then((r) => {
       if (r.stoppedBy === 'bad_recollect_input') { console.error('::error title=Re-collect::recollect_tickers held no valid NSE symbol or BSE code'); process.exit(1); }
+      if (r.counts.statusPostFailed) { console.error("::error::Guidance coverage was not stored"); process.exit(1); }
       if (r.counts.postFailed > 0) { console.error(`::error title=Ingest failed::${r.counts.postFailed} docs not stored`); process.exit(1); }
       const failed = r.statusDays.filter((s) => s.status === 'failed').length;
       if (failed && failed === r.statusDays.length) exitTransient('no day could be read from BSE or NSE (exchange outage / refusal); days stay marked failed and are re-read next run');

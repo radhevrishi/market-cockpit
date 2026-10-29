@@ -1,4 +1,4 @@
-name: Scrape India News (4×/day)
+name: Scrape India News (2x/day)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # PATCH 0738 — Indian financial news ingestion via GitHub Actions free CPU.
