@@ -88,6 +88,8 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/ai-gainers',                label: 'AI Daily Gainers',          icon: <Zap className="w-4 h-4" /> },
       // zzz1166 — the 60-day board of transformational events from the gainers, with themes and a multibagger-chance read.
       { href: '/transformational-gainers',  label: 'Transformational Gainers',  icon: <Zap className="w-4 h-4" /> },
+      // zzz1208 — one or several companies: FCF checklist, growth vs price, Stage 2 + trend template, links to every other page
+      { href: '/company-lab',               label: 'Company Lab',               icon: <Microscope className="w-4 h-4" /> },
       // zzz843 — positive guidance raises in the last 7 days, verified and quantified.
       { href: '/guidance-upgrades',         label: 'Guidance Upgrades',         icon: <LineChart className="w-4 h-4" /> },
       // zzz846 — companies where management guides unusually high growth (30%+), verified.
