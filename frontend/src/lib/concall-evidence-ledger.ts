@@ -2,8 +2,8 @@
 // Never infer a speaker, claim period, or quantitative result from a filing date.
 import { assessRadarQuote, type QuoteQuality } from './concall-radar-decision';
 
-export type EvidenceAttribution = 'MANAGEMENT' | 'ANALYST' | 'UNKNOWN';
-export type EvidenceVerification = 'REJECTED' | 'NEEDS_ATTRIBUTION' | 'NEEDS_PERIOD_AND_ATTRIBUTION';
+export type EvidenceAttribution = 'MANAGEMENT' | 'ANALYST' | 'COMPANY_DOCUMENT' | 'UNKNOWN';
+export type EvidenceVerification = 'REJECTED' | 'NEEDS_ATTRIBUTION' | 'NEEDS_PERIOD_AND_ATTRIBUTION' | 'NEEDS_PERIOD' | 'ATTRIBUTED';
 export interface RadarEvidenceRecord {
   source_url: string;
   attachment_url: string | null;
@@ -12,6 +12,8 @@ export interface RadarEvidenceRecord {
   quote: string;
   quote_quality: QuoteQuality;
   attribution: EvidenceAttribution;
+  /** zzz1214 — the speaker's name when a speaker-aware transcript parse found it */
+  speaker?: string | null;
   fiscal_period: string | null;
   segment: string | null;
   verification: EvidenceVerification;
@@ -32,18 +34,21 @@ export function periodInQuote(quote: string): string | null {
   return `FY${m[2]}`;
 }
 
-/** Explicitly UNKNOWN unless a separate speaker-aware transcript parser supplies attribution. */
+/** Explicitly UNKNOWN unless a separate speaker-aware transcript parser supplies attribution (zzz1214: lib/radar-speakers). */
 export function buildRadarEvidenceRecord(input: {
   symbol: string; source_url: string; attachment_url: string | null;
   filing_datetime: string; evidence_quote: string; scored_from: 'PDF' | 'SUBJECT';
+  attribution?: EvidenceAttribution; speaker?: string | null;
 }): RadarEvidenceRecord {
   const quote = input.evidence_quote || '';
-  const quality = input.scored_from === 'PDF' ? assessRadarQuote(quote).quality : 'MISSING';
+  const attribution: EvidenceAttribution = input.attribution ?? 'UNKNOWN';
+  const raw = input.scored_from === 'PDF' ? assessRadarQuote(quote).quality : 'MISSING';
+  const quality = attribution === 'ANALYST' && raw === 'USABLE' ? 'QUESTION' : raw;   // an analyst's words are never proof
   const period = quality === 'USABLE' ? periodInQuote(quote) : null;
   const missing = [
     ...(input.scored_from !== 'PDF' ? ['Primary document not extracted'] : []),
     ...(quality !== 'USABLE' ? ['Coherent quote not established'] : []),
-    'Speaker not attributed',
+    ...(attribution === 'ANALYST' ? ['Quote is from an analyst, not management'] : attribution === 'UNKNOWN' ? ['Speaker not attributed'] : []),
     ...(period ? [] : ['Fiscal period not established in quoted evidence']),
     'Business segment not independently attributed',
     'Latest superseding guidance not reconciled',
@@ -55,10 +60,13 @@ export function buildRadarEvidenceRecord(input: {
     filing_datetime: input.filing_datetime,
     quote,
     quote_quality: quality,
-    attribution: 'UNKNOWN',
+    attribution,
+    ...(input.speaker ? { speaker: input.speaker } : {}),
     fiscal_period: period,
     segment: null,
-    verification: quality !== 'USABLE' ? 'REJECTED' : period ? 'NEEDS_ATTRIBUTION' : 'NEEDS_PERIOD_AND_ATTRIBUTION',
+    verification: quality !== 'USABLE' ? 'REJECTED'
+      : attribution === 'UNKNOWN' ? (period ? 'NEEDS_ATTRIBUTION' : 'NEEDS_PERIOD_AND_ATTRIBUTION')
+      : period ? 'ATTRIBUTED' : 'NEEDS_PERIOD',
     missing,
   };
 }

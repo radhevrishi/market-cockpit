@@ -3782,3 +3782,17 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   `funnel`, `coverage_note`, `excluded` (+ counts); the page shows a data-health row and a collapsed "Processing and excluded
   documents" panel. Decision queue defaults to Underwrite only when it has names, else All. Ledger: a period after "from / versus /
   compared with" is the comparison base, not the claim period.
+- zzz1213 (2 Nov): the site went down (even /api/healthz) after the radar began reading 5–25 MB decks in-process.
+  ALL PDF parsing now runs in a child process: `lib/pdf-parse-isolated.ts` (512 MB heap, killed after 25 s, 2 at a time,
+  pdf.js console silenced so warnings cannot corrupt the result). In-process only if the child cannot start, and < 3 MB.
+- zzz1214 (2 Nov): Transformation Radar v2. `lib/radar-speakers.ts`: transcript split into speaker turns (management list
+  in the header, moderator-introduced analysts, question-heavy speakers = analyst); ONLY management text is scored; the
+  quote carries its speaker (ledger attribution MANAGEMENT / ANALYST / COMPANY_DOCUMENT; analyst quote = REJECTED);
+  `documentTone` replaces the feed's "DATA PENDING" sentiment (tier_source 'document'). `lib/radar-insight.ts`: facts from
+  the India stock-screener snapshot (mc, P/E, revQYoY vs revTTMYoY, EPS growth, perf, twSt) + the guidance universe
+  revision → results ACCELERATING/GROWING/SLOWING/DECLINING, guidance RAISED/MAINTAINED/LOWERED, valuation gap,
+  lane INFLECTION / EARLY / NONE, "best" (strict, explained) + quality score 0–100; scan orders best first. Quote
+  quality: slide tables and mid-sentence fragments = BROKEN. UI: compact `concall-intel/radar-card.tsx`, "★ Best
+  transformations only" (default on when any pass) + lane chips + review queue; market cap from the scan (no slow enrich).
+  BSE announcements: direct, then the gated mc-proxy `/proxy` (PROXY_URL + PROXY_SECRET in the x-proxy-secret header).
+  Tests: zzz1214-radar-regression (25 scenarios), zzz1213-pdf-isolated.

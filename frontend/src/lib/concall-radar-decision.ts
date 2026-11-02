@@ -38,6 +38,13 @@ export function assessRadarQuote(raw: string | null | undefined): { quality: Quo
     return { quality: 'BOILERPLATE', reason: 'Legal, historical or biography text is not evidence of operating progress.' };
   if (/[a-z]{4,}[A-Z][a-z]{3,}|(?:Q[1-4]FY\d{2}){3,}/.test(q) || q.split(/\s+/).filter(x => /[A-Za-z]{3,}/.test(x)).length < 6)
     return { quality: 'BROKEN', reason: 'Fragmented or concatenated PDF text must be checked against the original.' };
+  // zzz1214 — a slide table pasted into one line ("QoQ 89.0% YoY Rs 2.5 Cr 100.8% QoQ …") or a sentence cut mid-way is not a statement
+  const toks = q.split(/\s+/);
+  const numeric = toks.filter((x) => /\d/.test(x)).length;
+  if (toks.length >= 8 && numeric / toks.length > 0.35)
+    return { quality: 'BROKEN', reason: 'Slide table text (mostly numbers), not a sentence; read the slide itself.' };
+  if (/^[a-z]/.test(q) && !/^(?:we|our|the|this|in|on|for|during|with|and|so|but)\b/.test(q))
+    return { quality: 'BROKEN', reason: 'The excerpt starts in the middle of a sentence; check the full sentence in the filing.' };
   return { quality: 'USABLE', reason: 'Coherent excerpt; attribution, period and accounting remain unverified.' };
 }
 

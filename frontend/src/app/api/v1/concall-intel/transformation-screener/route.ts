@@ -25,6 +25,9 @@ import { extractPdfText } from '@/lib/pdf-text-extractor';
 import { analyzeTransformation, TRANSFORM_PATTERNS, EVIDENCE_LADDER } from '@/lib/transformation-analyzer';
 import { kvMGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import { secretFromRequest } from '@/lib/request-secret';
+import { parseTranscript, speakerOf, documentTone, tierFromTone, type DocTone } from '@/lib/radar-speakers';
+import { radarInsight, type RadarFacts, type RadarInsight } from '@/lib/radar-insight';
+import { assessRadarQuote } from '@/lib/concall-radar-decision';
 import {
   preClassifyRadarFiling, shouldReadRadarDoc, classifyRadarContent, isRetryableFailure, emptyFunnel, coverageSentence,
   type RadarDocVerdict, type RadarFunnel, type RadarDocClass,
@@ -75,6 +78,14 @@ export interface TransformScreenEntry {
   doc_class?: RadarDocClass;
   doc_label?: string;
   doc_confidence?: 'HIGH' | 'MEDIUM' | 'LOW';
+  /** zzz1214 — management tone of the document (pos / neg phrase counts) and where the sentiment tier came from */
+  tone?: DocTone; tone_pos?: number; tone_neg?: number; tier_source?: 'feed' | 'document';
+  /** zzz1214 — who said the evidence quote; COMPANY = the company's own presentation / results document */
+  quote_role?: 'MANAGEMENT' | 'ANALYST' | 'COMPANY' | 'UNKNOWN'; quote_speaker?: string | null;
+  /** zzz1214 — transcript split into speakers (only management text was scored) */
+  speakers_parsed?: boolean; analyst_share?: number | null;
+  /** zzz1214 — market data and the cross-period / valuation verdicts (filled at scan time, not stored per document) */
+  market_cap_cr?: number | null; facts?: RadarFacts; insight?: RadarInsight;
 }
 
 // zzz434 — lightweight record of a filing we scanned that produced no
@@ -165,6 +176,7 @@ const emptyPayload = (days: number, error?: string): ScreenPayload => ({
 // of the analyzer + classifier code, so a rule change re-scores everything (PDF text itself stays cached 30 days).
 const ANALYZER_FP = createHash('sha256').update([
   analyzeTransformation.toString(), classifyRadarContent.toString(), buildRadarEvidenceRecord.toString(),
+  parseTranscript.toString(), documentTone.toString(), assessRadarQuote.toString(),
   JSON.stringify(TRANSFORM_PATTERNS.map((p) => [p.key, p.re.source])), JSON.stringify(EVIDENCE_LADDER.map((r) => [r.score, r.re.source])),
 ].join('|')).digest('hex').slice(0, 10);
 const DOC_KEY = (url: string) => `radar-doc:v1:${ANALYZER_FP}:${createHash('sha256').update(url).digest('hex').slice(0, 24)}`;
@@ -251,8 +263,26 @@ async function readDocResults(urls: string[]): Promise<Map<string, DocResult>> {
   return out;
 }
 
+const PENDING_TIERS = new Set(['', 'DATA_PENDING', 'PENDING', 'UNKNOWN']);
+/** The feed's sentiment tier when it really graded the filing, else null. */
+const feedTier = (f: any): string | null => { const t = String(f?.bullish?.tier || '').toUpperCase(); return PENDING_TIERS.has(t) ? null : t; };
+
 function scoreEntry(f: any, text: string, v: RadarDocVerdict): TransformScreenEntry {
-  const t = analyzeTransformation(text);
+  // zzz1214 — in a transcript only MANAGEMENT turns are scored; analyst questions never become proof
+  const isTranscript = v.cls === 'TRANSCRIPT';
+  const parse = isTranscript ? parseTranscript(text) : null;
+  const scoring = parse?.ok ? parse.managementText : text;
+  const t = analyzeTransformation(scoring);
+  const tone = documentTone(scoring);
+  let role: TransformScreenEntry['quote_role'] = isTranscript ? 'UNKNOWN' : 'COMPANY';
+  let speaker: string | null = null;
+  if (isTranscript && parse?.ok && t.evidence_quote) {
+    const who = speakerOf(t.evidence_quote, text, parse);
+    role = who.role === 'MANAGEMENT' ? 'MANAGEMENT' : who.role === 'ANALYST' ? 'ANALYST' : 'UNKNOWN';
+    speaker = who.speaker;
+    if (role === 'UNKNOWN') role = 'MANAGEMENT';   // the quote was taken from management-only text
+  } else if (isTranscript && assessRadarQuote(t.evidence_quote).quality === 'QUESTION') role = 'ANALYST';
+  const tier = feedTier(f);
   return {
     symbol: f.symbol,
     company_name: f.company_name,
@@ -261,7 +291,12 @@ function scoreEntry(f: any, text: string, v: RadarDocVerdict): TransformScreenEn
     filing_datetime: f.filing_datetime,
     source_url: f.source_url,
     attachment_url: f.attachment_urls?.[0] || null,
-    bullish_tier: f.bullish?.tier || 'NEUTRAL',
+    bullish_tier: tier ?? tierFromTone(tone.tone),
+    tier_source: tier ? 'feed' : 'document',
+    tone: tone.tone, tone_pos: tone.pos, tone_neg: tone.neg,
+    quote_role: role, quote_speaker: speaker,
+    speakers_parsed: parse ? parse.ok : undefined,
+    analyst_share: parse?.ok ? Math.round((100 * parse.analystChars) / Math.max(1, text.length)) : null,
     transformation_score: transformScore(t),
     pattern_count: t.pattern_count,
     patterns: t.patterns,
@@ -282,11 +317,46 @@ function scoreEntry(f: any, text: string, v: RadarDocVerdict): TransformScreenEn
       attachment_url: f.attachment_urls?.[0] || null,
       filing_datetime: f.filing_datetime, evidence_quote: t.evidence_quote,
       scored_from: 'PDF',
+      attribution: role === 'COMPANY' ? 'COMPANY_DOCUMENT' : role === 'MANAGEMENT' ? 'MANAGEMENT' : role === 'ANALYST' ? 'ANALYST' : 'UNKNOWN',
+      speaker,
     }),
     doc_class: v.cls,
     doc_label: v.label,
     doc_confidence: v.confidence,
   };
+}
+
+// ── zzz1214 — market data for the cross-period / valuation checks (one in-memory snapshot + the guidance universe) ──
+const crOf = (mc: unknown): number | null => {
+  const v = typeof mc === 'number' && Number.isFinite(mc) ? mc : null;
+  if (v == null || v <= 0) return null;
+  return v > 1e7 ? v / 1e7 : v;   // the India snapshot stores ₹ crore; a raw-rupee figure is converted
+};
+async function loadFacts(symbols: string[]): Promise<Map<string, RadarFacts>> {
+  const out = new Map<string, RadarFacts>();
+  const want = new Set(symbols.map((s) => String(s || '').toUpperCase()));
+  const timed = <T,>(p: Promise<T>, ms: number): Promise<T | null> => Promise.race([p.catch(() => null), new Promise<null>((r) => setTimeout(() => r(null), ms))]);
+  const [snap, uni] = await Promise.all([
+    timed((async () => (await import('@/lib/screener/snapshot-cache')).getSnapshot('IN'))(), 8_000),
+    timed((async () => { const s = await import('@/lib/guidance-universe-service'); const b = await s.getUniverseBundle(Date.now()); return [...(b.build.defaultRecords ?? [])] as any[]; })(), 8_000),
+  ]);
+  for (const r of (snap as any)?.rows || []) {
+    const t = String(r?.t || '').toUpperCase();
+    if (!want.has(t)) continue;
+    out.set(t, {
+      mcCr: crOf(r.mc), pe: r.pe ?? null, revQ: r.revQYoY ?? null, revTTM: r.revTTMYoY ?? null, epsQ: r.epsQYoY ?? null, epsTTM: r.epsTTMYoY ?? null,
+      ebitdaQ: r.ebitdaQYoY ?? null, perf6M: r.perf6M ?? null, perf1Y: r.perf1Y ?? null, stage: r.twSt ?? null, stageHealth: r.twH ?? null, resultsDate: r.earnD ?? null,
+      guidance: null,
+    });
+  }
+  for (const g of (uni as any[]) || []) {
+    const t = String(g?.record?.ticker || '').toUpperCase();
+    if (!want.has(t) || String(g?.record?.market || 'IN') !== 'IN') continue;
+    const cur = out.get(t) || {};
+    if (cur.guidance) continue;   // the first (headline) record
+    out.set(t, { ...cur, guidance: { revision: String(g.revision || 'NONE'), display: String(g.display || ''), period: g.record?.primary?.period ?? null, atRisk: !!g.atRisk } });
+  }
+  return out;
 }
 
 async function buildScreen(req: NextRequest, days: number, minPatterns: number, mode: ScanMode): Promise<Built> {
@@ -396,12 +466,23 @@ async function buildScreen(req: NextRequest, days: number, minPatterns: number, 
     if (v.analyzable && res.entry) {
       funnel.read_full++;
       // the stored entry carries the filing details as of its first read; sentiment can be re-graded by the feed
-      entries.push({ ...res.entry, bullish_tier: f.bullish?.tier || res.entry.bullish_tier });
+      // the feed's sentiment wins when it really graded the filing; otherwise the document's own tone (zzz1214)
+      const ft = feedTier(f);
+      entries.push({ ...res.entry, ...(ft ? { bullish_tier: ft, tier_source: 'feed' as const } : {}) });
     } else if (v.cls === 'UNREADABLE') { funnel.unreadable++; exclude(f, v); }
     else { funnel.cover_only++; exclude(f, v); }
   }
 
   const ranked = entries.filter((e) => e.pattern_count >= minPatterns).sort((a, b) => b.transformation_score - a.transformation_score);
+  // zzz1214 — results / guidance / valuation from market data, then the lane and the "best" verdict
+  const facts = await loadFacts(ranked.map((e) => e.symbol)).catch(() => new Map<string, RadarFacts>());
+  for (const e of ranked) {
+    const fx = facts.get(String(e.symbol || '').toUpperCase());
+    e.facts = fx;
+    e.market_cap_cr = fx?.mcCr ?? null;
+    e.insight = radarInsight({ ...e, quote_quality: e.evidence_record?.quote_quality ?? null }, fx);
+  }
+  ranked.sort((a, b) => Number(!!b.insight?.best) - Number(!!a.insight?.best) || (b.insight?.bestScore ?? 0) - (a.insight?.bestScore ?? 0) || b.transformation_score - a.transformation_score);
   funnel.with_signal = ranked.length;
   // read in full, no transformation pattern: only substantive documents now (never a notice or covering letter)
   const scannedNoSignal: ScannedNoSignal[] = entries

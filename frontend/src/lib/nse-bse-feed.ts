@@ -510,11 +510,26 @@ export async function fetchBSEAnnouncements(opts: {
     try {
       for (let pageno = 1; pageno <= pages; pageno++) {
         const url = `https://api.bseindia.com/BseIndiaAPI/api/AnnGetData/w?pageno=${pageno}&strCat=${cat ? encodeURIComponent(cat) : '-1'}&strPrevDate=${fromStr}&strScrip=&strSearch=P&strToDate=${toStr}&strType=C${sub ? `&subcategory=${encodeURIComponent(sub)}` : ''}`;
-        const res = await fetch(url, {
+        let res = await fetch(url, {
           signal: withDefaultTimeout(opts.signal, ANNOUNCEMENT_DEFAULT_TIMEOUT_MS),
           headers: BSE_HEADERS,
           cache: 'no-store',
         });
+        // zzz1214 — BSE's API refuses datacenter IPs (Akamai "Access Denied" 403, or an empty table). Ask once more through
+        // the mc-proxy relay (the same one used for BSE PDFs, SCREENER_PROXY_URL) before calling BSE unreachable.
+        let viaProxy = false;
+        const canProxy = !!bseProxyUrl(url);
+        if (canProxy && (res.status === 401 || res.status === 403 || res.status === 429)) {
+          const r2 = await bseProxyFetch(url, opts.signal);
+          if (r2 && r2.ok) { res = r2; viaProxy = true; }
+        }
+        if (res.ok && pageno === 1 && !viaProxy && canProxy) {
+          const peek = await res.clone().json().catch(() => null);
+          if (!Array.isArray((peek as any)?.Table) || (peek as any).Table.length === 0) {
+            const r2 = await bseProxyFetch(url, opts.signal);
+            if (r2 && r2.ok) { res = r2; viaProxy = true; }
+          }
+        }
         if (!res.ok) {
           if (res.status === 401 || res.status === 403 || res.status === 429) {
             const reason = `BSE HTTP ${res.status}`;
@@ -548,6 +563,19 @@ export async function fetchBSEAnnouncements(opts: {
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
+
+/** zzz1214 — the mc-proxy relay route for a BSE API call (PROXY_URL + PROXY_SECRET; api.bseindia.com is a gated host,
+ *  so it goes through /proxy with the secret in a header, never in the URL), or null when the relay is not configured. */
+export function bseProxyUrl(url: string): string | null {
+  const base = (process.env.PROXY_URL || '').replace(/\/$/, '');
+  if (!base || !process.env.PROXY_SECRET) return null;
+  return `${base}/proxy?url=${encodeURIComponent(url)}`;
+}
+async function bseProxyFetch(url: string, signal?: AbortSignal): Promise<Response | null> {
+  const p = bseProxyUrl(url);
+  if (!p) return null;
+  return fetch(p, { signal: withDefaultTimeout(signal, 25_000), cache: 'no-store', headers: { 'x-proxy-secret': process.env.PROXY_SECRET || '', Accept: 'application/json' } }).catch(() => null);
+}
 
 function isoDaysAgo(n: number): string {
   const d = new Date();

@@ -10,7 +10,8 @@ import type { TransformationRadarData, TransformScreenPayload } from './types';
 import { TF, TFM, TIER_COLOR, CONV_TIER_COLOR } from './constants';
 import { velocityColor } from './helpers';
 import { FeedStatusNote } from './FeedStatusNote';
-import { radarDecision, rankForDecision, assessRadarQuote, type RadarQueue } from '@/lib/concall-radar-decision';
+import { RadarCard } from './radar-card';   // zzz1214
+import { radarDecision, type RadarQueue } from '@/lib/concall-radar-decision';
 
 export function TfSection({ n, title, lede, children }: { n: string; title: string; lede?: ReactNode; children: ReactNode }) {
   return (
@@ -295,6 +296,8 @@ export function TransformationScreenerTab() {
   const [days, setDays] = useState<number>(60);
   // zzz1212 — null = automatic: Underwrite when it holds names, otherwise All (an empty default queue read as "radar broken")
   const [decisionPick, setDecisionFilter] = useState<RadarQueue | 'ALL' | null>(null);
+  const [laneFilter, setLaneFilter] = useState<'ALL' | 'INFLECTION' | 'EARLY' | 'NONE'>('ALL');   // zzz1214
+  const [bestPick, setBestPick] = useState<boolean | null>(null);   // zzz1214 — null = on when any company passes
   const [showFullSignals, setShowFullSignals] = useState(false);
   const [data, setData] = useState<TransformScreenPayload | null>(null);
   const [loading, setLoading] = useState(false);
@@ -438,7 +441,7 @@ export function TransformationScreenerTab() {
   const allEntries = data?.entries ?? [];
   // zzz898 — look up the size of every ranked name (chunks of 40, best-effort; failures leave the size unknown)
   useEffect(() => {
-    const syms = Array.from(new Set((data?.entries ?? []).map((e) => String(e.symbol || '').toUpperCase()).filter(Boolean)));
+    const syms = Array.from(new Set((data?.entries ?? []).filter((e) => typeof e.market_cap_cr !== 'number').map((e) => String(e.symbol || '').toUpperCase()).filter(Boolean)));
     if (syms.length === 0 || !smallMidOnly) { setCapLoading(false); return; }
     let alive = true;
     setCapLoading(true);
@@ -458,7 +461,9 @@ export function TransformationScreenerTab() {
     })();
     return () => { alive = false; };
   }, [data, smallMidOnly]);
-  const capOf = (sym: unknown): number | null => capMap.get(String(sym || '').toUpperCase()) ?? null;
+  // zzz1214 — the scan carries each company's market cap from the stock-screener snapshot; the slow enrich lookup is only a fallback
+  const serverCap = useMemo(() => { const m = new Map<string, number>(); for (const e of data?.entries ?? []) if (typeof e.market_cap_cr === 'number') m.set(String(e.symbol).toUpperCase(), e.market_cap_cr); return m; }, [data]);
+  const capOf = (sym: unknown): number | null => serverCap.get(String(sym || '').toUpperCase()) ?? capMap.get(String(sym || '').toUpperCase()) ?? null;
   const sizeCounts = smallMidCounts(allEntries, (e) => capOf(e.symbol));
   const sourceOf = useCallback(
     (sym: unknown): SymbolSource => classifySource(sym, owned, benchKeys),
@@ -476,14 +481,23 @@ export function TransformationScreenerTab() {
     RISK: scopedEntries.filter((e) => radarDecision(e).queue === 'RISK').length,
     UNVERIFIED: scopedEntries.filter((e) => radarDecision(e).queue === 'UNVERIFIED').length,
   };
-  const decisionFilter: RadarQueue | 'ALL' = decisionPick ?? (decisionCounts.RESEARCH > 0 ? 'RESEARCH' : 'ALL');
-  const entries = rankForDecision(scopedEntries).filter((e) => decisionFilter === 'ALL' || radarDecision(e).queue === decisionFilter);
+  // zzz1214 — lanes + "best transformations only". The scan already orders best first; the queue filter stays available.
+  const laneCounts = {
+    ALL: scopedEntries.length,
+    INFLECTION: scopedEntries.filter((e) => e.insight?.lane === 'INFLECTION').length,
+    EARLY: scopedEntries.filter((e) => e.insight?.lane === 'EARLY').length,
+    NONE: scopedEntries.filter((e) => (e.insight?.lane ?? 'NONE') === 'NONE').length,
+  };
+  const bestCount = scopedEntries.filter((e) => e.insight?.best).length;
+  const bestOnly = bestPick ?? bestCount > 0;
+  const decisionFilter: RadarQueue | 'ALL' = decisionPick ?? 'ALL';
+  const entries = scopedEntries
+    .filter((e) => !bestOnly || e.insight?.best)
+    .filter((e) => laneFilter === 'ALL' || (e.insight?.lane ?? 'NONE') === laneFilter)
+    .filter((e) => decisionFilter === 'ALL' || radarDecision(e).queue === decisionFilter);
   const fn = data?.funnel;
   const routineTotal = fn ? fn.routine.meeting_schedule + fn.routine.call_invite + fn.routine.recording_link + fn.routine.admin_notice + fn.routine.no_attachment : 0;
   const hiddenByFilters = allEntries.length - scopedEntries.length;
-  const sweetSpotCount = entries.filter((e) => e.stage_sweet_spot).length;
-  const tripleCount = entries.filter((e) => e.triple.count === 3).length;
-  const onBenchCount = entries.filter((e) => bench[e.symbol?.toUpperCase()]).length;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -491,7 +505,7 @@ export function TransformationScreenerTab() {
       <div style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '16px 18px' }}>
         <div style={{ fontSize: 15, fontWeight: 900, color: TF.cyan, letterSpacing: '0.3px' }}>🔭 Transformation Radar — actionable filing shortlist</div>
         <div style={{ fontSize: 12.5, color: TF.muted, lineHeight: 1.6, marginTop: 6 }}>
-          Scans a bounded, newest-first sample, not the complete universe. Missing companies are UNCHECKED, not negative. <b style={{ color: TF.text2 }}>Proof-quality first:</b> analyst questions and broken PDF extracts cannot establish commercial orders; contradictory periods are isolated for reconciliation. T-Score is not a buy rating.
+          Reads concall transcripts, investor presentations and results documents. Only management's own words count as proof; each company is checked against its latest results, guidance and valuation. Unread companies are unchecked, not negative.
         </div>
         {/* controls */}
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 }}>
@@ -603,60 +617,54 @@ export function TransformationScreenerTab() {
         </div>
       )}
 
-      {/* A decision queue answers what to do next, not merely how many buzzwords appeared. */}
+      {/* zzz1214 — what to look at: best only, by lane, then the review queue */}
       {data && (
         <div style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '12px 14px' }}>
-          <div style={{ fontSize: 13, fontWeight: 900, color: TF.text, marginBottom: 4 }}>Decision queue · evidence before narratives</div>
-          <div style={{ fontSize: 11, lineHeight: 1.6, color: TF.muted, marginBottom: 10 }}>
-            Underwrite is research only, <strong>never a buy signal</strong>. Positive tone, three distinct evidence milestones and two structural change drivers are required; routine quarterly margin improvements and neutral tone stay in Wait. Cross-quarter results, guidance and valuation remain unverified.
-            {sizeCounts.unknown > 0 && ` ${sizeCounts.unknown} companies have unknown market cap; their small/mid status is unverified.`}
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, alignItems: 'center' }}>
+            <button type="button" onClick={() => setBestPick(!bestOnly)} aria-pressed={bestOnly}
+              title="Best = a real transformation lane, positive management tone, proof quoted from management, results not slowing, guidance not cut, and (for an inflection) not already priced in."
+              style={{ background: bestOnly ? '#FDE68A' : TF.card2, color: bestOnly ? '#7C2D12' : TF.text2, border: `1px solid ${bestOnly ? '#F59E0B' : TF.border}`,
+                borderRadius: 999, fontSize: 11.5, fontWeight: 900, cursor: 'pointer', padding: '7px 12px' }}>
+              {bestOnly ? '★ Best transformations only · ' : '☆ Show best only · '}{bestCount}
+            </button>
+            <span style={{ width: 1, height: 18, background: TF.border }} />
             {([
-              ['ALL', 'All signals', TF.cyan],
-              ['RESEARCH', 'Underwrite thesis', TF.green],
-              ['RECONCILE', 'Conflicting evidence', TF.amber],
-              ['WAIT', 'Wait for proof', TF.amber],
-              ['RISK', 'Guidance / risk', TF.red],
-              ['UNVERIFIED', 'No full document', TF.dim],
-            ] as const).map(([key, label, color]) => (
-              <button key={key} type="button" onClick={() => setDecisionFilter(key)}
-                aria-pressed={decisionFilter === key}
-                style={{ background: decisionFilter === key ? `color-mix(in srgb, ${color} 20%, transparent)` : TF.card2,
-                  color, border: `1px solid ${decisionFilter === key ? color : TF.border}`,
-                  borderRadius: 7, fontSize: 11, fontWeight: 800, cursor: 'pointer', padding: '7px 10px' }}>
-                {label} · {decisionCounts[key]}
+              ['ALL', 'All lanes', TF.cyan, 'Every company with a signal'],
+              ['INFLECTION', 'Earnings inflection', '#10B981', 'The change is already in the reported numbers'],
+              ['EARLY', 'Early transformation', '#0EA5E9', 'Capacity, customers, orders or approvals moving; not yet in the numbers'],
+              ['NONE', 'No clear transformation', TF.dim, 'Keywords only, no milestones, or cautious'],
+            ] as const).map(([key, label, color, tip]) => (
+              <button key={key} type="button" title={tip} onClick={() => setLaneFilter(key)} aria-pressed={laneFilter === key}
+                style={{ background: laneFilter === key ? `color-mix(in srgb, ${color} 18%, transparent)` : TF.card2, color,
+                  border: `1px solid ${laneFilter === key ? color : TF.border}`, borderRadius: 7, fontSize: 11, fontWeight: 800, cursor: 'pointer', padding: '6px 10px' }}>
+                {label} · {laneCounts[key]}
               </button>
             ))}
           </div>
-          {hiddenByFilters > 0 && (
-            <div style={{ fontSize: 10.5, color: TF.dim, marginTop: 7 }}>
-              Queue counts use the filters above: {allEntries.length} companies with a signal, {hiddenByFilters} hidden by the SHOW / size filter, {scopedEntries.length} counted here.
-            </div>
-          )}
-          <button type="button" onClick={() => setShowFullSignals(v => !v)}
-            aria-pressed={showFullSignals} style={{ background: TF.card2, border: `1px solid ${TF.border}`, borderRadius: 6, padding: '6px 10px', cursor: 'pointer', marginTop: 9, color: TF.text2, fontSize: 11 }}>
-            {showFullSignals ? 'Hide keyword details' : 'Show all keyword details'}
-          </button>
-        </div>
-      )}
-
-      {/* summary tiles */}
-      {data && entries.length > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 10 }}>
-          {[
-            { label: 'Ranked names', v: entries.length, c: TF.cyan },
-            { label: 'Evidence rung 3–7', v: sweetSpotCount, c: TF.green },
-            { label: 'Keyword triple (unverified)', v: tripleCount, c: TF.amber },
-            { label: '🏆 Also on Conviction Bench', v: onBenchCount, c: TF.green },
-            { label: '📗 In my book', v: entries.filter(e => sourceOf(e.symbol) === 'portfolio').length, c: '#34D399' },
-            { label: 'Top score', v: entries[0]?.transformation_score ?? 0, c: TF.purple },
-          ].map((t) => (
-            <div key={t.label} style={{ background: TF.card2, border: `1px solid ${TF.border}`, borderRadius: 8, padding: '10px 12px' }}>
-              <div style={{ fontSize: 22, fontWeight: 900, color: t.c, ...TFM }}>{t.v}</div>
-              <div style={{ fontSize: 10, color: TF.dim, marginTop: 2 }}>{t.label}</div>
-            </div>
-          ))}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', marginTop: 9 }}>
+            <span style={{ fontSize: 10, color: TF.dim, fontWeight: 800, letterSpacing: '0.4px' }}>REVIEW QUEUE</span>
+            {([
+              ['ALL', 'All', TF.cyan],
+              ['RESEARCH', 'Underwrite', TF.green],
+              ['RECONCILE', 'Conflicting', TF.amber],
+              ['WAIT', 'Wait for proof', TF.amber],
+              ['RISK', 'Guidance / risk', TF.red],
+            ] as const).map(([key, label, color]) => (
+              <button key={key} type="button" onClick={() => setDecisionFilter(key)} aria-pressed={decisionFilter === key}
+                style={{ background: decisionFilter === key ? `color-mix(in srgb, ${color} 18%, transparent)` : 'transparent',
+                  color, border: `1px solid ${decisionFilter === key ? color : TF.border}`, borderRadius: 6, fontSize: 10.5, fontWeight: 700, cursor: 'pointer', padding: '4px 8px' }}>
+                {label} · {decisionCounts[key]}
+              </button>
+            ))}
+            <button type="button" onClick={() => setShowFullSignals(v => !v)} aria-pressed={showFullSignals}
+              style={{ background: 'transparent', border: `1px solid ${TF.border}`, borderRadius: 6, padding: '4px 8px', cursor: 'pointer', color: TF.text2, fontSize: 10.5, marginLeft: 'auto' }}>
+              {showFullSignals ? 'Fold all details' : 'Open all details'}
+            </button>
+          </div>
+          <div style={{ fontSize: 10.5, color: TF.dim, marginTop: 7, lineHeight: 1.5 }}>
+            Showing {entries.length} of {scopedEntries.length}{hiddenByFilters > 0 ? ` (${hiddenByFilters} more hidden by the SHOW / size filter)` : ''}. Research priority, never a buy signal.
+            {bestOnly && bestCount === 0 && ' No company passes every "best" rule yet — switch it off to see all.'}
+          </div>
         </div>
       )}
 
@@ -746,133 +754,10 @@ export function TransformationScreenerTab() {
         </details>
       )}
 
-      {/* leaderboard */}
+      {/* leaderboard — zzz1214 compact cards (radar-card.tsx) */}
       {entries.map((e, i) => (
-        <div key={`${e.symbol}-${e.filing_datetime}-${i}`} style={{
-          background: TF.card, border: `1px solid ${TF.border}`,
-          borderLeft: `4px solid ${radarDecision(e).queue === 'RESEARCH' ? TF.green : radarDecision(e).queue === 'RISK' ? TF.red : TF.amber}`, borderRadius: 10, padding: '14px 16px',
-        }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 13, fontWeight: 900, color: TF.dim, ...TFM }}>#{i + 1}</span>
-              <span style={{ fontSize: 16, fontWeight: 900, color: TF.text }}>{e.symbol}</span>
-              <span style={{ fontSize: 11.5, color: TF.muted, maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.company_name}</span>
-              <span style={{ fontSize: 9.5, fontWeight: 800, padding: '2px 7px', borderRadius: 4, background: `${TIER_COLOR[e.bullish_tier] || TF.dim}22`, color: TIER_COLOR[e.bullish_tier] || TF.dim, letterSpacing: '0.4px' }}>{e.bullish_tier.replace('_', ' ')}</span>
-              {(() => {
-                const b = bench[e.symbol?.toUpperCase()];
-                if (!b) return null;
-                const c = CONV_TIER_COLOR[b.tier] || TF.green;
-                return (
-                  <a href="/conviction-beats" title={`On Conviction Bench · ${b.tier}${b.composite_score != null ? ` · score ${b.composite_score}` : ''}`} style={{ fontSize: 9.5, fontWeight: 800, padding: '2px 7px', borderRadius: 4, background: `${c}22`, color: c, letterSpacing: '0.3px', textDecoration: 'none', border: `1px solid ${c}44` }}>
-                    🏆 On Bench · {b.tier}
-                  </a>
-                );
-              })()}
-              {e.scored_from === 'SUBJECT' && <span style={{ fontSize: 9, color: TF.dim, fontStyle: 'italic' }}>subject-only</span>}
-              {e.doc_label && <span title={`What the attached document is, judged from its text${e.doc_confidence ? ` (confidence ${e.doc_confidence.toLowerCase()})` : ''}`} style={{ fontSize: 9, fontWeight: 800, padding: '1px 6px', borderRadius: 4, border: `1px solid ${TF.border}`, color: e.doc_confidence === 'LOW' ? TF.amber : TF.dim }}>📄 {e.doc_label}</span>}
-              {(() => {   // zzz898 — size, or an honest "size n/a"
-                const c = capOf(e.symbol);
-                return c != null
-                  ? <span title="Market cap (₹ Cr, Screener)" style={{ fontSize: 9.5, fontWeight: 700, color: TF.muted, ...TFM }}>₹{Math.round(c).toLocaleString('en-IN')} Cr</span>
-                  : <span title="Market cap not available — kept on the Small & mid view because its size is unknown" style={{ fontSize: 9, color: TF.dim, border: `1px dashed ${TF.border}`, borderRadius: 3, padding: '0 5px' }}>{capLoading ? 'size …' : 'size n/a'}</span>;
-              })()}
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: 22, fontWeight: 900, color: velocityColor(e.velocity), ...TFM, lineHeight: 1 }}>{e.transformation_score}</div>
-                <div style={{ fontSize: 8.5, color: TF.dim, letterSpacing: '0.5px' }}>T-SCORE</div>
-              </div>
-            </div>
-          </div>
-
-          {/* Fundamental triage: a high T-score never overrides caution or missing proof. */}
-          {(() => {
-            const d = radarDecision(e);
-            const color = d.queue === 'RESEARCH' ? TF.green : d.queue === 'RISK' ? TF.red : d.queue === 'RECONCILE' ? TF.amber : d.queue === 'WAIT' ? TF.amber : TF.dim;
-            return (
-              <div style={{ borderLeft: `3px solid ${color}`, background: TF.card2, borderRadius: 6, padding: '9px 11px', marginTop: 10 }}>
-                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 9 }}>
-                  <strong style={{ fontSize: 11.5, color }}>{d.label}</strong>
-                  <span style={{ fontSize: 11, color: TF.text2 }}>{d.reason}</span>
-                </div>
-                <div style={{ fontSize: 10, color: assessRadarQuote(e.evidence_quote).quality === 'USABLE' ? TF.green : TF.amber, marginTop: 5 }}>
-                  Excerpt quality: {assessRadarQuote(e.evidence_quote).quality.toLowerCase()} · text screen only, not financial confirmation
-                </div>
-                {e.evidence_record && (
-                  <div style={{ fontSize: 10, color: TF.amber, marginTop: 5, lineHeight: 1.5 }}>
-                    Evidence ledger · speaker: {e.evidence_record.attribution.toLowerCase()} · period: {e.evidence_record.fiscal_period || 'not established'} · segment: not established · {e.evidence_record.verification.replace(/_/g, ' ').toLowerCase()}
-                    <div style={{ color: TF.dim }}>Still missing: {e.evidence_record.missing.slice(0, 4).join(' · ')}</div>
-                  </div>
-                )}
-                <div style={{ fontSize: 11, marginTop: 5, lineHeight: 1.5, color: TF.muted }}>
-                  <strong style={{ color: TF.text2 }}>Next check:</strong> {d.nextCheck}
-                </div>
-                {d.blockers.length > 0 && (
-                  <div style={{ fontSize: 10, color: TF.dim, marginTop: 5 }}>
-                    NOT VERIFIED: {d.blockers.slice(0, 4).join(' · ')}
-                  </div>
-                )}
-                <a href={`/company-lab?add=IN:${encodeURIComponent(e.symbol)}`}
-                   style={{ display: 'inline-block', marginTop: 7, fontSize: 11, color: TF.cyan, fontWeight: 800 }}>
-                  Examine financials, valuation and trend in Company Lab →
-                </a>
-              </div>
-            );
-          })()}
-
-          {/* pattern chips */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 10 }}>
-            {e.patterns.slice(0, showFullSignals ? 10 : 3).map((p) => (
-              <span key={p.key} title={`${p.hits} mention${p.hits === 1 ? '' : 's'}`} style={{
-                fontSize: 10.5, fontWeight: 700, padding: '3px 8px', borderRadius: 5,
-                background: TF.card2, border: `1px solid ${TF.border}`, color: TF.text2,
-              }}>{p.emoji} {p.label}{p.hits > 1 ? ` ·${p.hits}` : ''}</span>
-            ))}
-                {sourceOf(e.symbol) === 'portfolio' && (
-                  <span title="This name is in your portfolio — a radar hit here is a reason to re-read the thesis you already hold."
-                    style={{ fontSize: 9.5, fontWeight: 900, letterSpacing: '0.3px', padding: '1px 6px',
-                      borderRadius: 3, border: '1px solid #34D399', background: '#064E3B', color: '#6EE7B7' }}>
-                    📗 IN MY BOOK
-                  </span>
-                )}
-            {e.patterns.length === 0 && <span style={{ fontSize: 10.5, color: TF.dim }}>no patterns</span>}
-          </div>
-
-          {/* meta row */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, marginTop: 10, fontSize: 11, color: TF.muted, alignItems: 'center' }}>
-            <span title="Pattern breadth is a count of keyword families, not a measured rate of business change">🧩 Pattern breadth: <b style={{ color: TF.text2 }}>{e.pattern_count} vectors</b> (not growth speed)</span>
-            <span title="Evidence-rung proxy, not business-cycle maturity">🪜 Evidence rung <b style={{ color: e.stage_sweet_spot ? TF.green : TF.text2 }}>{e.stage}/10</b>{e.stage_sweet_spot ? ' · sweet spot' : ''}</span>
-            <span>🎯 Evidence <b style={{ color: TF.text2 }}>{e.evidence_score}/11</b> — {e.evidence_label}</span>
-            <span title="Industry tailwind / company transformation / financial inflection">
-              {['industry', 'company', 'financial'].map((k) => (
-                <span key={k} style={{ color: (e.triple as any)[k] ? TF.green : TF.dim, fontWeight: 800, marginLeft: 4 }}>
-                  {(e.triple as any)[k] ? '●' : '○'}{k[0].toUpperCase()}
-                </span>
-              ))}
-            </span>
-          </div>
-
-          {e.evidence_quote && (
-            <div style={{ background: TF.card2, borderLeft: `2px solid ${TF.cyan}`, padding: '8px 10px', borderRadius: 5,
-              fontSize: 11, lineHeight: 1.6, marginTop: 9, color: TF.text2 }}>
-              <strong style={{ color: TF.cyan }}>PDF-extracted excerpt (verify attribution):</strong> “{e.evidence_quote}”
-              <span style={{ color: TF.dim }}> · confirm surrounding context in the filing</span>
-            </div>
-          )}
-
-          {/* events + link */}
-          {showFullSignals && e.top_events.length > 0 && (
-            <div style={{ marginTop: 8, fontSize: 10, color: TF.dim, ...TFM }}>
-              EVENTS: {e.top_events.join(' · ')}
-            </div>
-          )}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, gap: 8, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 10, color: TF.dim }}>{new Date(e.filing_datetime).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} · {e.exchange}</span>
-            {e.attachment_url && (
-              <a href={e.attachment_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10.5, color: TF.cyan, fontWeight: 700 }}>📄 Open transcript →</a>
-            )}
-          </div>
-        </div>
+        <RadarCard key={`${e.symbol}-${e.filing_datetime}-${i}`} e={e} rank={i + 1} bench={bench[e.symbol?.toUpperCase()]}
+          inBook={sourceOf(e.symbol) === 'portfolio'} capCr={capOf(e.symbol)} showFullSignals={showFullSignals} />
       ))}
 
       {data && entries.length > 0 && (

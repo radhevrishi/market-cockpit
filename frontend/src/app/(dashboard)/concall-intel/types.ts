@@ -290,6 +290,13 @@ export interface TransformScreenEntry {
   top_events: string[]; scored_from: 'PDF' | 'SUBJECT';
   evidence_record?: RadarEvidenceRecord; // optional for older cached scans
   doc_class?: string; doc_label?: string; doc_confidence?: 'HIGH' | 'MEDIUM' | 'LOW';   // zzz1212 — what the document really is
+  // zzz1214 — who said it, document tone, market data checks
+  tone?: string; tone_pos?: number; tone_neg?: number; tier_source?: 'feed' | 'document';
+  quote_role?: 'MANAGEMENT' | 'ANALYST' | 'COMPANY' | 'UNKNOWN'; quote_speaker?: string | null;
+  speakers_parsed?: boolean; analyst_share?: number | null;
+  market_cap_cr?: number | null;
+  facts?: import('@/lib/radar-insight').RadarFacts;
+  insight?: import('@/lib/radar-insight').RadarInsight;
 }
 
 export interface ScannedNoSignal {
