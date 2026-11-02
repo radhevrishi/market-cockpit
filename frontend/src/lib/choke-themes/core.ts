@@ -8,7 +8,7 @@
 //     milestone, the invalidation condition and the funding / valuation concern;
 //   · price history is CONTEXT only (a past rally does not finish a J-curve; a fall does not make one early);
 //   · scenarios are calculated HERE from the AI's stated assumptions and the stock screener's current P/E:
-//       multiple = (1 + EPS growth)^years × (1 − dilution) × exit P/E ÷ current P/E   (no dividends; diluted)
+//       multiple = (1 + diluted EPS growth)^years × exit P/E ÷ current P/E (no dividends; no second dilution penalty)
 //     and "not estimated" when the current P/E is missing, negative or not representative;
 //   · "What changed" is computed from the stored runs (theme / candidate / J-stage differences), not written by the model.
 // Written by the AI ONLY on the owner's click; otherwise the last successful run is shown. Pure (no imports).
@@ -99,7 +99,7 @@ const CAND_SCHEMA = {
         years: { type: 'integer', minimum: 2, maximum: 7 },
         eps_cagr: { type: 'object', additionalProperties: false, required: ['bear', 'base', 'bull'], properties: { bear: { type: 'number' }, base: { type: 'number' }, bull: { type: 'number' } }, description: 'Diluted EPS growth a year, %, per case.' },
         exit_pe: { type: 'object', additionalProperties: false, required: ['bear', 'base', 'bull'], properties: { bear: { type: 'number' }, base: { type: 'number' }, bull: { type: 'number' } } },
-        dilution_pct: { type: 'number', description: 'Total share-count increase over the period, % (0 if none expected).' },
+        dilution_pct: { type: 'number', description: 'Total expected share-count increase over the period, %. Account for this INSIDE diluted EPS growth; the calculator does not subtract dilution again.' },
         basis: { type: 'string', maxLength: 200, description: 'What the growth rests on: revenue, margin and capacity assumptions.' },
       },
     },
@@ -170,7 +170,7 @@ CROSS-BORDER DEMAND SHIFTS are a major source of real J-curves — look for them
 CANDIDATES: prefer DIRECT and ENABLER exposure, J2 / J3 first; J1 only as an early watch; never promote J0 because the market is large. Judge the J-stage on OPERATING evidence only — orders, qualification, commissioning, utilisation, revenue, margins, cash. A fall does not make a company early.
 FIRST STAGE ONLY — the owner wants companies EARLY in the curve, before the market has paid for the turn. A company whose share price is already up 10x or more in 5 years, 3x or more in one year or 2x or more in six months, or whose weekly chart is topping (stage 3), has already been re-rated: it is LATE (the transformer makers after their 20x runs, Vicor or TTM after their runs). Put such a company in "reference" with the reason, never in "candidates" — unless its figures show a NEW business line still at J1 / J2 that the price has not reflected, and you say exactly which line and why. Prefer names whose figures are turning while the share price has moved little (1-year move modest, P/E not stretched). The system checks the share moves and moves late names out of the discovery list itself. Use the company data given (stock-screener figures) and the recent news; never invent customers, contracts, capacity, market share or dates. An MoU, a tender, a qualification, an order, a shipment and recognised revenue are different events — say which one. Planned capacity is not usable capacity. A big order still needs margin, funding and execution. If something is not disclosed, write "Not disclosed".
 Governance: exclude companies with known auditor resignations or qualifications, regulator enforcement, pledge problems, promoter or board disputes or chronic dilution; separate allegations from findings; never call governance clean — write what you checked against.
-SCENARIOS: only for a profitable company whose current earnings are representative; give EPS growth a year and exit P/E for bear / base / bull and the expected dilution — the system calculates the return; never assume 5–20x because a company is small. Otherwise scenario = null.
+SCENARIOS: only for a profitable company whose current earnings are representative; give DILUTED PER-SHARE EPS growth a year and exit P/E for bear / base / bull, with expected share issuance already reflected in that per-share growth; give dilution separately as a risk disclosure, never subtract it twice — the system calculates the return; never assume 5–20x because a company is small. Otherwise scenario = null.
 PLAYBOOK per country: strongest evidence-backed ideas, what needs confirmation, upcoming milestones, disconfirming evidence, valuation conditions. Never recommend buying because a price fell.
 WHAT A J-CURVE IS (the pattern before Micron and SanDisk ran 10–50x): a hard-to-add supply meets a demand step-up; prices or utilisation turn first; then quarterly revenue jumps above the yearly trend; then margins swing up faster than revenue; the share price lags the figures. Look for that sequence in the company figures given. A company already up 10x+ with peak margins is J4 / J5 — a reference, not a discovery. NOT choke points: products with ample suppliers (generic hoses, fittings, standard PCBs, commodity APIs, plain EPC contracting), one big order on a low base, a government scheme with many bidders.
 COMPANIES BEYOND THE LISTS: you may name a company LISTED in this country that is not in the lists when you know it is a direct supplier of the bottleneck — give its exact exchange ticker; the system checks it against the full stock screener and marks it if not found. Never invent customers, contracts or figures.
@@ -213,7 +213,7 @@ export function cleanChoke(d: any): Pick<ChokeReport, 'regions' | 'changes'> | n
       why: str(t?.why, 320), necessity: str(t?.necessity, 300), constraint: str(t?.constraint, 300), valueCapture: str(t?.value_capture, 300),
       breakers: str(t?.breakers, 300), unknowns: str(t?.unknowns, 340), evidence: t?.evidence ? str(t.evidence, 280) : null,
       tightness: t?.tightness ? str(t.tightness, 300) : null,
-      supply: (['TIGHT', 'EASING', 'AMPLE', 'UNKNOWN'] as const).includes(t?.supply) ? t.supply : (t?.tightness ? 'TIGHT' : 'UNKNOWN'),
+      supply: (['TIGHT', 'EASING', 'AMPLE', 'UNKNOWN'] as const).includes(t?.supply) ? t.supply : 'UNKNOWN',
       driver: typeof t?.driver === 'string' ? str(t.driver, 40) : null,
       candidates: (Array.isArray(t?.candidates) ? t.candidates : []).map(cleanCand).filter(Boolean).slice(0, 6) as ChokeCandidate[],
       reference: (Array.isArray(t?.reference) ? t.reference : []).map(cleanCand).filter(Boolean).slice(0, 3) as ChokeCandidate[],
@@ -233,7 +233,7 @@ export const SMALL_MID_MAX: Record<ChokeRegion, number> = { US: DISCOVERY_CAP.US
 export const homeTicker = (t: string, region: ChokeRegion) => { const m = /^([A-Z0-9&.-]+)(?:\s*[,(]\s*([A-Za-z]+))?/.exec(t.trim().toUpperCase()); if (!m) return null; if (m[2] && !(region === 'US' ? /^(NYSE|NASDAQ|US)$/ : /^(NSE|BSE|IN)$/).test(m[2])) return null; return m[1].replace(/\.NS$|\.BO$/, ''); };
 export const fmtChokeCap = (v: number | null | undefined, region: ChokeRegion): string | null => (v == null ? null : region === 'IN' ? `₹${Math.round(v).toLocaleString('en-IN')} Cr` : v >= 1_000_000 ? `$${(v / 1_000_000).toFixed(1)}T` : v >= 1000 ? `$${(v / 1000).toFixed(v >= 100_000 ? 0 : 1)}B` : `$${Math.round(v)}M`);
 
-/** multiple = (1 + g)^years × (1 − dilution) × exit P/E ÷ current P/E. Null (with the reason) when the current P/E is missing,
+/** multiple = (1 + diluted EPS growth)^years × exit P/E ÷ current P/E. EPS growth is ALREADY per-share after any dilution: do not deduct it again. Null when current P/E is missing,
  *  negative or extreme (earnings not representative) or an assumption is out of range. Pure. */
 export function scenarioMultiples(s: ScenarioIn | null, currentPe: number | null): { out: ScenarioOut | null; note: string | null } {
   if (!s) return { out: null, note: 'Scenario not estimated — insufficient evidence' };
@@ -241,7 +241,7 @@ export function scenarioMultiples(s: ScenarioIn | null, currentPe: number | null
   if (currentPe > 150) return { out: null, note: `Scenario not estimated — current P/E ${Math.round(currentPe)} means today's earnings are not representative` };
   const m = (g: number, pe: number) => {
     if (!(pe > 0) || g < -60 || g > 150) return NaN;
-    return Math.round(((1 + g / 100) ** s.years) * (1 - s.dilutionPct / 100) * (pe / currentPe) * 100) / 100;
+    return Math.round(((1 + g / 100) ** s.years) * (pe / currentPe) * 100) / 100;
   };
   const out = { bear: m(s.epsCagr.bear, s.exitPe.bear), base: m(s.epsCagr.base, s.exitPe.base), bull: m(s.epsCagr.bull, s.exitPe.bull), currentPe: Math.round(currentPe * 10) / 10 };
   if (![out.bear, out.base, out.bull].every(Number.isFinite)) return { out: null, note: 'Scenario not estimated — assumptions out of range' };
@@ -279,7 +279,7 @@ export function lateCurve(f: CandFacts | null | undefined): string[] {
 
 const STAGE_W: Record<JStage, number> = { J0: 0.2, J1: 0.8, J2: 2.5, J3: 3, J4: 1.4, J5: 0 };
 const EXPO_W: Record<Exposure, number> = { DIRECT: 1, ENABLER: 0.9, PROXY: 0.35, SPECULATIVE: 0.2 };
-const CHECK_W = { CONFIRMS: 1, MIXED: 0.75, NO_DATA: 0.6, CONTRADICTS: 0.25 } as const;
+const CHECK_W = { CONFIRMS: 1, MIXED: 0.75, NO_DATA: 0.2, CONTRADICTS: 0 } as const;
 
 /** The server's pass over a fresh (or stored) run: stock-screener facts and identity on every candidate, the discovery size
  *  band (a large company moves to the reference leaders), one primary theme per company (others become tags), calculated
@@ -325,7 +325,7 @@ export function enrich(r: Pick<ChokeReport, 'regions'>, facts: Record<ChokeRegio
       t.rankScore = Math.round(score * 10) / 10;
       // zzz1187 — a choke point needs evidence that supply is tight now (runs before the field existed are judged as before)
       // zzz1188 — the hard gate is only AMPLE supply (a known non-bottleneck); UNKNOWN is shown as such, not thrown out
-      t.qualifies = t.supply !== 'AMPLE' && t.candidates.some((c) => (c.jstage === 'J2' || c.jstage === 'J3') && (c.exposure === 'DIRECT' || c.exposure === 'ENABLER') && c.dataCheck !== 'CONTRADICTS' && c.found !== false);
+      t.qualifies = (t.supply === 'TIGHT' || t.supply === 'EASING') && !!t.tightness && t.candidates.some((c) => (c.jstage === 'J2' || c.jstage === 'J3') && (c.exposure === 'DIRECT' || c.exposure === 'ENABLER') && c.dataCheck !== 'CONTRADICTS' && c.dataCheck !== 'NO_DATA' && c.found === true);
       t.candidates.sort((a, b) => STAGE_W[b.jstage] * EXPO_W[b.exposure] - STAGE_W[a.jstage] * EXPO_W[a.exposure]);
     }
     g.themes.sort((a, b) => Number(!!b.qualifies) - Number(!!a.qualifies) || (b.rankScore ?? 0) - (a.rankScore ?? 0));
