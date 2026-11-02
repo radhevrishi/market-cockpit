@@ -14,12 +14,12 @@ const LANE_META: Record<string, { label: string; color: string; tip: string }> =
 };
 const TONE_COLOR: Record<string, string> = { POSITIVE: '#10B981', MIXED: '#F59E0B', NEGATIVE: '#EF4444', NEUTRAL: '#94A3B8' };
 const VERDICT_COLOR: Record<string, string> = {
-  ACCELERATING: '#10B981', GROWING: '#10B981', SLOWING: '#F59E0B', DECLINING: '#EF4444', UNKNOWN: '#94A3B8',
+  STRONGER_LATEST: '#10B981', NOT_UNDERWRITTEN: '#64748B', STRETCHED: '#EF4444', ACCELERATING: '#10B981', GROWING: '#10B981', SLOWING: '#F59E0B', DECLINING: '#EF4444', UNKNOWN: '#94A3B8',
   RAISED: '#10B981', MAINTAINED: '#64748B', NEW: '#0EA5E9', LOWERED: '#EF4444', NONE: '#94A3B8',
   NOT_PRICED_IN: '#10B981', PARTLY: '#F59E0B', PRICED_IN: '#EF4444',
 };
 const WORD: Record<string, string> = {
-  ACCELERATING: 'speeding up', GROWING: 'growing', SLOWING: 'slowing', DECLINING: 'falling', UNKNOWN: 'not checked',
+  STRONGER_LATEST: 'latest quarter stronger', NOT_UNDERWRITTEN: 'not underwritten', STRETCHED: 'expensive (trailing)', ACCELERATING: 'speeding up', GROWING: 'growing', SLOWING: 'slowing', DECLINING: 'falling', UNKNOWN: 'not checked',
   RAISED: 'raised', MAINTAINED: 'kept', NEW: 'given', LOWERED: 'lowered', NONE: 'none on file',
   NOT_PRICED_IN: 'not priced in', PARTLY: 'partly priced in', PRICED_IN: 'priced in',
 };
@@ -57,6 +57,7 @@ export function RadarCard({ e, rank, bench, inBook, capCr, showFullSignals }: {
           <span style={{ fontSize: 11.5, color: TF.muted, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.company_name}</span>
           <span title={lane.tip} style={{ fontSize: 10, fontWeight: 900, padding: '2px 8px', borderRadius: 999, color: '#fff', background: lane.color }}>{lane.label}</span>
           {ins?.best && <span title={`Passes every "best" rule: ${ins.bestWhy.join(', ')}`} style={{ fontSize: 10, fontWeight: 900, padding: '2px 8px', borderRadius: 999, color: '#7C2D12', background: '#FDE68A' }}>★ Best</span>}
+          {ins?.promising && <span title="Passes every best rule except one: the document has a contradiction (a positive and a negative statement) that must be read and reconciled first" style={{ fontSize: 10, fontWeight: 900, padding: '2px 8px', borderRadius: 999, color: '#92400E', border: '1px solid #F59E0B' }}>◐ Promising — reconcile first</span>}
           {e.tone && <span title={`Management tone read from the document: ${e.tone_pos ?? 0} positive and ${e.tone_neg ?? 0} negative phrases`} style={{ fontSize: 10, fontWeight: 800, color: TONE_COLOR[e.tone] || TF.dim }}>● {e.tone.toLowerCase()} tone</span>}
           {inBook && <span style={{ fontSize: 9.5, fontWeight: 900, padding: '1px 6px', borderRadius: 3, border: '1px solid #34D399', color: '#047857' }}>📗 in my book</span>}
           {bench && <a href="/conviction-beats" style={{ fontSize: 9.5, fontWeight: 800, padding: '1px 6px', borderRadius: 3, border: `1px solid ${CONV_TIER_COLOR[bench.tier] || TF.green}`, color: CONV_TIER_COLOR[bench.tier] || TF.green, textDecoration: 'none' }}>🏆 {bench.tier}</a>}
@@ -77,7 +78,16 @@ export function RadarCard({ e, rank, bench, inBook, capCr, showFullSignals }: {
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
           <Fact title="RESULTS" verdict={ins.results.verdict} text={ins.results.text} />
           <Fact title="GUIDANCE" verdict={ins.guidance.verdict} text={ins.guidance.text} />
-          <Fact title="VALUATION" verdict={ins.valuation.gap} text={ins.valuation.text} />
+          <Fact title="VALUATION (context)" verdict={ins.valuation.gap} text={ins.valuation.text} />
+        </div>
+      )}
+      {/* zzz1216 — three separate facts, never inferred from each other, plus how big the order is */}
+      {ins?.checks && (
+        <div style={{ fontSize: 10.5, color: TF.muted, marginTop: 6, lineHeight: 1.5 }}>
+          <span style={{ color: ins.checks.transformation ? TF.green : TF.dim }}>{ins.checks.transformation ? '✓' : '✗'} business change seen</span>
+          {' · '}<span style={{ color: ins.checks.growth ? TF.green : TF.dim }}>{ins.checks.growth ? '✓' : '✗'} growth in reported results</span>
+          {' · '}<span style={{ color: TF.dim }}>✗ link between the two not proven</span>
+          {ins.materiality && <div title="Order value against annual sales (market cap ÷ P/S). Orders are not revenue until delivered.">{ins.materiality.text}</div>}
         </div>
       )}
 
@@ -95,7 +105,10 @@ export function RadarCard({ e, rank, bench, inBook, capCr, showFullSignals }: {
 
       {/* line 5 — blockers, links */}
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginTop: 8, fontSize: 10.5 }}>
-        <span title={d.reason} style={{ fontWeight: 800, color: dColor }}>{d.label}</span>
+        {/* zzz1215 — a "best" card never carries a contradicting headline label; its open questions read as checks */}
+        {ins?.best
+          ? (d.queue === 'RECONCILE' || d.queue === 'RISK' ? <span title={d.reason} style={{ fontWeight: 800, color: TF.amber }}>Check: {(e.caution_flags || []).slice(0, 2).join(', ') || d.reason}</span> : null)
+          : <span title={d.reason} style={{ fontWeight: 800, color: dColor }}>{d.label}</span>}
         {ins && ins.blockers.length > 0 && <span style={{ color: TF.dim }}>Holding back: {ins.blockers.slice(0, 3).join(' · ')}</span>}
         <span style={{ color: TF.dim }}>{e.doc_label ? `📄 ${e.doc_label}` : ''}{date ? ` · ${date}` : ''}</span>
         {e.attachment_url && <a href={e.attachment_url} target="_blank" rel="noopener noreferrer" style={{ color: TF.cyan, fontWeight: 800 }}>Open filing →</a>}

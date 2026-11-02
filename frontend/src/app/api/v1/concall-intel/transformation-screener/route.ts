@@ -26,7 +26,8 @@ import { analyzeTransformation, TRANSFORM_PATTERNS, EVIDENCE_LADDER } from '@/li
 import { kvMGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import { secretFromRequest } from '@/lib/request-secret';
 import { parseTranscript, speakerOf, documentTone, tierFromTone, type DocTone } from '@/lib/radar-speakers';
-import { radarInsight, type RadarFacts, type RadarInsight } from '@/lib/radar-insight';
+import { radarInsight, orderValueCr, type RadarFacts, type RadarInsight } from '@/lib/radar-insight';
+import { radarDecision } from '@/lib/concall-radar-decision';
 import { assessRadarQuote } from '@/lib/concall-radar-decision';
 import {
   preClassifyRadarFiling, shouldReadRadarDoc, classifyRadarContent, isRetryableFailure, emptyFunnel, coverageSentence,
@@ -86,6 +87,8 @@ export interface TransformScreenEntry {
   speakers_parsed?: boolean; analyst_share?: number | null;
   /** zzz1214 — market data and the cross-period / valuation verdicts (filled at scan time, not stored per document) */
   market_cap_cr?: number | null; facts?: RadarFacts; insight?: RadarInsight;
+  /** zzz1216 — largest order / order-book value management states (₹ crore), for materiality */
+  order_value_cr?: number | null;
 }
 
 // zzz434 — lightweight record of a filing we scanned that produced no
@@ -176,7 +179,7 @@ const emptyPayload = (days: number, error?: string): ScreenPayload => ({
 // of the analyzer + classifier code, so a rule change re-scores everything (PDF text itself stays cached 30 days).
 const ANALYZER_FP = createHash('sha256').update([
   analyzeTransformation.toString(), classifyRadarContent.toString(), buildRadarEvidenceRecord.toString(),
-  parseTranscript.toString(), documentTone.toString(), assessRadarQuote.toString(),
+  parseTranscript.toString(), documentTone.toString(), assessRadarQuote.toString(), orderValueCr.toString(),
   JSON.stringify(TRANSFORM_PATTERNS.map((p) => [p.key, p.re.source])), JSON.stringify(EVIDENCE_LADDER.map((r) => [r.score, r.re.source])),
 ].join('|')).digest('hex').slice(0, 10);
 const DOC_KEY = (url: string) => `radar-doc:v1:${ANALYZER_FP}:${createHash('sha256').update(url).digest('hex').slice(0, 24)}`;
@@ -296,6 +299,7 @@ function scoreEntry(f: any, text: string, v: RadarDocVerdict): TransformScreenEn
     tone: tone.tone, tone_pos: tone.pos, tone_neg: tone.neg,
     quote_role: role, quote_speaker: speaker,
     speakers_parsed: parse ? parse.ok : undefined,
+    order_value_cr: orderValueCr(scoring),
     analyst_share: parse?.ok ? Math.round((100 * parse.analystChars) / Math.max(1, text.length)) : null,
     transformation_score: transformScore(t),
     pattern_count: t.pattern_count,
@@ -338,20 +342,24 @@ async function loadFacts(symbols: string[]): Promise<Map<string, RadarFacts>> {
   const timed = <T,>(p: Promise<T>, ms: number): Promise<T | null> => Promise.race([p.catch(() => null), new Promise<null>((r) => setTimeout(() => r(null), ms))]);
   const [snap, uni] = await Promise.all([
     timed((async () => (await import('@/lib/screener/snapshot-cache')).getSnapshot('IN'))(), 8_000),
-    timed((async () => { const s = await import('@/lib/guidance-universe-service'); const b = await s.getUniverseBundle(Date.now()); return [...(b.build.defaultRecords ?? [])] as any[]; })(), 8_000),
+    // the universe is built once and kept in memory; a cold build takes 5–20 s, so it gets more time than the snapshot (zzz1215)
+    timed((async () => { const s = await import('@/lib/guidance-universe-service'); const b = await s.getUniverseBundle(Date.now()); return [...(b.build.defaultRecords ?? [])] as any[]; })(), 25_000),
   ]);
   for (const r of (snap as any)?.rows || []) {
     const t = String(r?.t || '').toUpperCase();
     if (!want.has(t)) continue;
     out.set(t, {
-      mcCr: crOf(r.mc), pe: r.pe ?? null, revQ: r.revQYoY ?? null, revTTM: r.revTTMYoY ?? null, epsQ: r.epsQYoY ?? null, epsTTM: r.epsTTMYoY ?? null,
+      mcCr: crOf(r.mc), salesCr: crOf(r.mc) != null && typeof r.ps === 'number' && r.ps > 0 ? crOf(r.mc)! / r.ps : null,
+      asOf: (snap as any)?.builtAt ?? null, pe: r.pe ?? null, revQ: r.revQYoY ?? null, revTTM: r.revTTMYoY ?? null, epsQ: r.epsQYoY ?? null, epsTTM: r.epsTTMYoY ?? null,
       ebitdaQ: r.ebitdaQYoY ?? null, perf6M: r.perf6M ?? null, perf1Y: r.perf1Y ?? null, stage: r.twSt ?? null, stageHealth: r.twH ?? null, resultsDate: r.earnD ?? null,
       guidance: null,
     });
   }
   for (const g of (uni as any[]) || []) {
-    const t = String(g?.record?.ticker || '').toUpperCase();
-    if (!want.has(t) || String(g?.record?.market || 'IN') !== 'IN') continue;
+    if (String(g?.record?.market || 'IN') !== 'IN') continue;
+    const t = [g?.record?.ticker, ...(Array.isArray(g?.tickers) ? g.tickers : [])]
+      .map((x: unknown) => String(x || '').toUpperCase().replace(/^(NSE|BSE):/, '').replace(/\.(NS|BO)$/, '')).find((x: string) => want.has(x));
+    if (!t) continue;
     const cur = out.get(t) || {};
     if (cur.guidance) continue;   // the first (headline) record
     out.set(t, { ...cur, guidance: { revision: String(g.revision || 'NONE'), display: String(g.display || ''), period: g.record?.primary?.period ?? null, atRisk: !!g.atRisk } });
@@ -480,9 +488,9 @@ async function buildScreen(req: NextRequest, days: number, minPatterns: number, 
     const fx = facts.get(String(e.symbol || '').toUpperCase());
     e.facts = fx;
     e.market_cap_cr = fx?.mcCr ?? null;
-    e.insight = radarInsight({ ...e, quote_quality: e.evidence_record?.quote_quality ?? null }, fx);
+    e.insight = radarInsight({ ...e, quote_quality: e.evidence_record?.quote_quality ?? null, review_queue: radarDecision(e).queue }, fx);
   }
-  ranked.sort((a, b) => Number(!!b.insight?.best) - Number(!!a.insight?.best) || (b.insight?.bestScore ?? 0) - (a.insight?.bestScore ?? 0) || b.transformation_score - a.transformation_score);
+  ranked.sort((a, b) => Number(!!b.insight?.best) - Number(!!a.insight?.best) || Number(!!b.insight?.promising) - Number(!!a.insight?.promising) || (b.insight?.bestScore ?? 0) - (a.insight?.bestScore ?? 0) || b.transformation_score - a.transformation_score);
   funnel.with_signal = ranked.length;
   // read in full, no transformation pattern: only substantive documents now (never a notice or covering letter)
   const scannedNoSignal: ScannedNoSignal[] = entries

@@ -3796,3 +3796,10 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   transformations only" (default on when any pass) + lane chips + review queue; market cap from the scan (no slow enrich).
   BSE announcements: direct, then the gated mc-proxy `/proxy` (PROXY_URL + PROXY_SECRET in the x-proxy-secret header).
   Tests: zzz1214-radar-regression (25 scenarios), zzz1213-pdf-isolated.
+- zzz1215/1216 (2 Nov): radar financial-integrity pass (owner + outside review). `radar-insight.ts`: results "STRONGER_LATEST"
+  = latest quarter vs TTM is a snapshot, never "speeding up"; low-base flag (sales > 150% or profit > 200%); valuation is context
+  only — NOT_UNDERWRITTEN (no forward estimate, no PEG, never "not priced in") or STRETCHED (trailing P/E > 80 or 1y > 150%), no
+  score points for valuation; `orderValueCr` + `materialityOf` (order value ÷ sales, "orders, not yet revenue" / "materiality
+  unverified"); `checks {transformation, growth, causalLink:false}` kept separate; INFLECTION needs a clean management quote;
+  an open RECONCILE/RISK review queue blocks ★ Best → "◐ Promising — reconcile first". Universe read 25 s, ticker match via
+  record.ticker + tickers. radar-coverage now runs 7,27,47 every hour (was 01–18 UTC).

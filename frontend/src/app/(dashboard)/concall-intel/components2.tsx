@@ -489,10 +489,11 @@ export function TransformationScreenerTab() {
     NONE: scopedEntries.filter((e) => (e.insight?.lane ?? 'NONE') === 'NONE').length,
   };
   const bestCount = scopedEntries.filter((e) => e.insight?.best).length;
-  const bestOnly = bestPick ?? bestCount > 0;
+  const promisingCount = scopedEntries.filter((e) => e.insight?.promising).length;   // zzz1216
+  const bestOnly = bestPick ?? bestCount + promisingCount > 0;
   const decisionFilter: RadarQueue | 'ALL' = decisionPick ?? 'ALL';
   const entries = scopedEntries
-    .filter((e) => !bestOnly || e.insight?.best)
+    .filter((e) => !bestOnly || e.insight?.best || e.insight?.promising)
     .filter((e) => laneFilter === 'ALL' || (e.insight?.lane ?? 'NONE') === laneFilter)
     .filter((e) => decisionFilter === 'ALL' || radarDecision(e).queue === decisionFilter);
   const fn = data?.funnel;
@@ -625,7 +626,7 @@ export function TransformationScreenerTab() {
               title="Best = a real transformation lane, positive management tone, proof quoted from management, results not slowing, guidance not cut, and (for an inflection) not already priced in."
               style={{ background: bestOnly ? '#FDE68A' : TF.card2, color: bestOnly ? '#7C2D12' : TF.text2, border: `1px solid ${bestOnly ? '#F59E0B' : TF.border}`,
                 borderRadius: 999, fontSize: 11.5, fontWeight: 900, cursor: 'pointer', padding: '7px 12px' }}>
-              {bestOnly ? '★ Best transformations only · ' : '☆ Show best only · '}{bestCount}
+              {bestOnly ? '★ Best only · ' : '☆ Show best only · '}{bestCount}{promisingCount ? ` + ◐ ${promisingCount} to reconcile` : ''}
             </button>
             <span style={{ width: 1, height: 18, background: TF.border }} />
             {([
@@ -663,7 +664,7 @@ export function TransformationScreenerTab() {
           </div>
           <div style={{ fontSize: 10.5, color: TF.dim, marginTop: 7, lineHeight: 1.5 }}>
             Showing {entries.length} of {scopedEntries.length}{hiddenByFilters > 0 ? ` (${hiddenByFilters} more hidden by the SHOW / size filter)` : ''}. Research priority, never a buy signal.
-            {bestOnly && bestCount === 0 && ' No company passes every "best" rule yet — switch it off to see all.'}
+            {bestOnly && bestCount + promisingCount === 0 && ' No company passes every "best" rule yet — switch it off to see all.'}
           </div>
         </div>
       )}
@@ -762,7 +763,7 @@ export function TransformationScreenerTab() {
 
       {data && entries.length > 0 && (
         <div style={{ ...TFM, fontSize: 9.5, color: TF.dim, lineHeight: 1.6 }}>
-          T-Score measures narrative and evidence-rung signals, NOT a buy opportunity or the age of the investment cycle. Positive and adverse passages must be reconciled for the same reporting period; OCR fragments, analyst questions and boilerplate do not prove operating results. Guidance, valuation and price setup still require independent checks. Chain: TAILWIND → TRANSFORMATION → VALIDATION → EARNINGS INFLECTION → FCF → RE-RATING. Open any name in the 🚀 Transformation tab framework, or paste its transcript in 🔥 Live Feeds for the full analysis. Educational, not investment advice.
+          Quality 0–100 ranks research priority from the lane, management tone, a management-quoted proof, results, guidance and valuation. It is not a buy rating: read the filing, check the latest results and price before acting. Educational, not investment advice.
         </div>
       )}
     </div>

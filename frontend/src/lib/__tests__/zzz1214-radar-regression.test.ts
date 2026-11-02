@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseTranscript, speakerOf, documentTone, tierFromTone } from '../radar-speakers';
-import { radarInsight, resultsVerdict, guidanceVerdict, valuationGap, type RadarFacts } from '../radar-insight';
+import { radarInsight, resultsVerdict, guidanceVerdict, valuationGap, orderValueCr, materialityOf, type RadarFacts } from '../radar-insight';
 import { preClassifyRadarFiling, classifyRadarContent } from '../radar-doc-class';
 import { assessRadarQuote, radarDecision } from '../concall-radar-decision';
 import { buildRadarEvidenceRecord } from '../concall-evidence-ledger';
@@ -91,8 +91,11 @@ test('11 a document-derived positive tone lets a well-evidenced name reach Under
 });
 
 // ── cross-period checks ────────────────────────────────────────────────────
-test('12 results: latest quarter faster than the year = accelerating', () => {
-  assert.equal(resultsVerdict({ revQ: 32, revTTM: 18, epsQ: 55 }).verdict, 'ACCELERATING');
+test('12 results: latest quarter faster than the year is a snapshot, not "speeding up"', () => {
+  const r = resultsVerdict({ revQ: 32, revTTM: 18, epsQ: 55 });
+  assert.equal(r.verdict, 'STRONGER_LATEST');
+  assert.match(r.text, /snapshot, not yet a sustained trend/);
+  assert.doesNotMatch(r.text, /speeding up/i);
 });
 test('13 results: fall in sales and profit = declining; fading quarter = slowing', () => {
   assert.equal(resultsVerdict({ revQ: -8, epsQ: -20 }).verdict, 'DECLINING');
@@ -106,12 +109,15 @@ test('14 guidance across filings: raised / lowered / none', () => {
 });
 
 // ── valuation / expectations gap ───────────────────────────────────────────
-test('15 valuation: low P/E for the growth and a quiet price = not priced in', () => {
-  assert.equal(valuationGap({ pe: 20, epsTTM: 30, perf6M: 5 }).gap, 'NOT_PRICED_IN');
+test('15 valuation: a low P/E and a falling price are context, never "not priced in" (REFEX)', () => {
+  const v = valuationGap({ pe: 11, epsTTM: 26, perf6M: -16, perf1Y: -40 });
+  assert.equal(v.gap, 'NOT_UNDERWRITTEN');
+  assert.match(v.text, /Valuation not underwritten/);
+  assert.doesNotMatch(v.text, /not priced in|not caught up/i);
 });
-test('16 valuation: P/E 120 or a 3x run = priced in; loss-making = unknown', () => {
-  assert.equal(valuationGap({ pe: 120, epsTTM: 30 }).gap, 'PRICED_IN');
-  assert.equal(valuationGap({ pe: 25, epsTTM: 30, perf1Y: 210 }).gap, 'PRICED_IN');
+test('16 valuation: trailing P/E 120 or a 3x run = expensive; loss-making = unknown', () => {
+  assert.equal(valuationGap({ pe: 120, epsTTM: 30 }).gap, 'STRETCHED');
+  assert.equal(valuationGap({ pe: 25, epsTTM: 30, perf1Y: 210 }).gap, 'STRETCHED');
   assert.equal(valuationGap({ pe: -5 }).gap, 'UNKNOWN');
 });
 
@@ -139,7 +145,7 @@ test('21 an analyst-question proof can never be "best"', () => {
   assert.equal(i.best, false);
   assert.ok(i.blockers.includes('proof is an analyst question'));
 });
-test('22 an inflection that is already priced in is not "best"', () => {
+test('22 an inflection that is expensive on trailing figures is not "best"', () => {
   assert.equal(radarInsight(goodEntry, { ...goodFacts, pe: 150 }).best, false);
 });
 
@@ -166,4 +172,48 @@ test('25 BSE API goes through the gated relay with the secret in a header, never
   } finally { env.PROXY_URL = before.u; env.PROXY_SECRET = before.s; }
   const src = readFileSync(new URL('../nse-bse-feed.ts', import.meta.url), 'utf8');
   assert.match(src, /'x-proxy-secret': process\.env\.PROXY_SECRET/);
+});
+
+// zzz1215/1216 — owner + outside review of the live radar
+test('26 PANACHE: a +423% EPS quarter is flagged as a possible low base, not a trend', () => {
+  const r = resultsVerdict({ revQ: 232, revTTM: 137, epsQ: 423 });
+  assert.equal(r.lowBase, true);
+  assert.match(r.text, /low-base effect/);
+  assert.ok(radarInsight(goodEntry, { ...goodFacts, revQ: 232, revTTM: 137, epsQ: 423 }).blockers.includes('possible low-base effect'));
+});
+test('27 an unresolved contradiction blocks "best" and gives "promising — reconcile first" instead', () => {
+  const i = radarInsight({ ...goodEntry, review_queue: 'RECONCILE' }, goodFacts);
+  assert.equal(i.best, false);
+  assert.equal(i.promising, true);
+  assert.ok(i.blockers.includes('contradiction in the document not reconciled'));
+  assert.equal(radarInsight({ ...goodEntry, review_queue: 'WAIT' }, goodFacts).best, true);
+});
+test('28 earnings inflection needs a clean management quote; transformation, growth and the causal link are separate facts', () => {
+  const i = radarInsight({ ...goodEntry, quote_role: 'UNKNOWN' }, goodFacts);
+  assert.notEqual(i.lane, 'INFLECTION');
+  const ok = radarInsight(goodEntry, goodFacts);
+  assert.equal(ok.lane, 'INFLECTION');
+  assert.deepEqual(ok.checks, { transformation: true, growth: true, causalLink: false });
+  assert.match(ok.headline, /not proven/);
+});
+test('29 PARACABLES: an order book is sized against sales and called orders, not revenue', () => {
+  const o = orderValueCr('We have already secured an HTLS order book of INR 200 crores plus as on date and the capacity augmentation is planned.');
+  assert.equal(o, 200);
+  const m = materialityOf({ order_value_cr: o }, { salesCr: 1600 });
+  assert.equal(m.pctOfSales, 13);
+  assert.match(m.text, /Orders, not yet revenue/);
+  assert.match(materialityOf({}, {}).text, /Materiality unverified/);
+  assert.equal(orderValueCr('a healthy enquiry pipeline of ₹19,464 crore'), null);
+});
+test('30 PRUDENT: routine operating leverage with modest growth is not "latest quarter stronger"', () => {
+  const r = resultsVerdict({ revQ: 22, revTTM: 22, epsQ: 34 });
+  assert.equal(r.verdict, 'GROWING');
+});
+test('31 a best card shows open questions as checks; the universe read gets time to build', () => {
+  const src = readFileSync(new URL('../../app/(dashboard)/concall-intel/radar-card.tsx', import.meta.url), 'utf8');
+  assert.match(src, /Promising — reconcile first/);
+  assert.match(src, /link between the two not proven/);
+  const route = readFileSync(new URL('../../app/api/v1/concall-intel/transformation-screener/route.ts', import.meta.url), 'utf8');
+  assert.match(route, /25_000\),/);
+  assert.match(route, /review_queue: radarDecision\(e\)\.queue/);
 });
