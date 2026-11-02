@@ -1,13 +1,14 @@
 // Decision triage for the Concall Transformation Radar.
 // This is a REVIEW PRIORITY, never a buy recommendation or price target.
 // A single transcript cannot certify the latest guidance, valuation or trend.
-export type RadarQueue = 'RESEARCH' | 'WAIT' | 'RISK' | 'UNVERIFIED';
+export type RadarQueue = 'RESEARCH' | 'RECONCILE' | 'WAIT' | 'RISK' | 'UNVERIFIED';
 export interface RadarTriageInput {
   bullish_tier?: string;
   scored_from?: 'PDF' | 'SUBJECT';
   caution_level?: number;
   caution_flags?: string[];
   evidence_score?: number;
+  evidence_quote?: string;
   stage?: number;
   stage_sweet_spot?: boolean;
   transformation_score?: number;
@@ -21,6 +22,21 @@ export interface RadarDecision {
   reason: string;
   nextCheck: string;
   blockers: string[];
+}
+
+
+// USABLE is only a text-quality test, NOT independent confirmation of a fact.
+export type QuoteQuality = 'USABLE' | 'QUESTION' | 'BOILERPLATE' | 'BROKEN' | 'MISSING';
+export function assessRadarQuote(raw: string | null | undefined): { quality: QuoteQuality; reason: string } {
+  const q = String(raw || '').replace(/\s+/g, ' ').trim();
+  if (q.length < 35) return { quality: 'MISSING', reason: 'Missing or incomplete extracted quote.' };
+  if (/\?$|\bmy (?:first|second|third|last) question\b|\bcan you (?:share|comment|explain|tell)\b|\bcould you (?:share|comment|explain|tell)\b|\bhow do we look\b/i.test(q))
+    return { quality: 'QUESTION', reason: 'An analyst question is not management-confirmed financial evidence.' };
+  if (/\b(?:qualified institutional buyers|rule 144a|forward-looking statements|not guarantees of future|safe harbor|our philosophy mission vision|key milestones|as defined in|primarily responsible for overseeing|risk factors)\b/i.test(q))
+    return { quality: 'BOILERPLATE', reason: 'Legal, historical or biography text is not evidence of operating progress.' };
+  if (/[a-z]{4,}[A-Z][a-z]{3,}|(?:Q[1-4]FY\d{2}){3,}/.test(q) || q.split(/\s+/).filter(x => /[A-Za-z]{3,}/.test(x)).length < 6)
+    return { quality: 'BROKEN', reason: 'Fragmented or concatenated PDF text must be checked against the original.' };
+  return { quality: 'USABLE', reason: 'Coherent excerpt; attribution, period and accounting remain unverified.' };
 }
 
 const HARD_NEGATIVES = new Set([
@@ -38,6 +54,7 @@ export function radarDecision(item: RadarTriageInput): RadarDecision {
   const evidence = item.evidence_score ?? 0;
   const stage = item.stage ?? 0;
   const financial = item.triple?.financial === true;
+  const quote = assessRadarQuote(item.evidence_quote);
 
   const alwaysCheck = ['Current guidance not reconciled across filings', 'Current valuation and price setup not checked'];
   if (item.scored_from !== 'PDF') return {
@@ -47,21 +64,32 @@ export function radarDecision(item: RadarTriageInput): RadarDecision {
     blockers: [...alwaysCheck, 'Full transcript unavailable'],
   };
   if (cut || bearish || level >= 2 || negative.length >= 1) {
-    const why = cut ? 'Guidance reduction detected' : negative.length ? 'Adverse operating signals: ' + negative.slice(0, 3).join(', ') : bearish ? 'Bearish filing sentiment' : 'Multiple caution signals';
+    // Both "margin improved" and "margin down" can appear across different
+    // subsidiaries/periods. Do not treat a document-wide negative keyword as
+    // a verified current-period deterioration.
+    const conflict = !cut && !bearish && quote.quality === 'USABLE' && evidence >= 6 && negative.length > 0;
+    const why = cut ? 'Guidance reduction detected; verify the fiscal period and superseding guidance' :
+      conflict ? 'Positive results conflict with negative phrases: ' + negative.slice(0, 3).join(', ') :
+      negative.length ? 'Negative transcript phrases requiring period validation: ' + negative.slice(0, 3).join(', ') :
+      bearish ? 'Bearish filing sentiment' : 'Multiple caution signals';
     return {
-      queue: 'RISK', label: 'PAUSE / VERIFY',
+      queue: conflict ? 'RECONCILE' : 'RISK',
+      label: conflict ? 'RECONCILE RESULTS' : 'PAUSE / VERIFY',
       reason: why,
-      nextCheck: 'Compare the latest two guidance statements, actual sales/margin/PAT and management explanations before considering a new position.',
+      nextCheck: conflict ? 'Compare the actual positive and negative passages for the SAME quarter and segment before acting.' :
+        'Compare the latest two guidance statements and corresponding actual results before considering a new position.',
       blockers: [...alwaysCheck, ...flags.slice(0, 6)],
     };
   }
-  if (stage >= 8) return {
-    queue: 'WAIT', label: 'LATE / REVIEW',
-    reason: 'The disclosed transformation appears relatively mature (stage 8–10); early-J-curve advantage is unproven.',
-    nextCheck: 'Quantify incremental ROIC and residual earnings runway; test valuation against normalized forward EPS.',
-    blockers: alwaysCheck,
+  // Evidence stage 8/9/10 is NOT proof of a late business cycle. Realised
+  // margin/FCF improvements may be the first earnings inflection.
+  if (evidence >= 5 && quote.quality !== 'USABLE') return {
+    queue: 'WAIT', label: 'SOURCE PROOF UNRELIABLE',
+    reason: quote.reason,
+    nextCheck: 'Open the primary PDF and verify an actual management statement, current customer order or reported number.',
+    blockers: [...alwaysCheck, 'Primary excerpt failed text-quality gate'],
   };
-  if (evidence < 6 || stage < 3 || !financial) return {
+  if (evidence < 6 || !financial) return {
     queue: 'WAIT', label: 'WAIT FOR PROOF',
     reason: evidence < 6 ? 'No confirmed commercial order or higher-level proof.' : !financial ? 'Operating or financial inflection not established.' : 'Very early-stage transformation claim.',
     nextCheck: 'Look for order execution, booked revenue, EBITDA/PAT growth and operating cash-flow confirmation in the next result.',
@@ -69,13 +97,13 @@ export function radarDecision(item: RadarTriageInput): RadarDecision {
   };
   return {
     queue: 'RESEARCH', label: 'RESEARCH FIRST',
-    reason: 'Commercial evidence and a reported financial signal warrant a deeper review; this is not a buy trigger.',
+    reason: 'A credible-looking commercial or financial excerpt warrants underwriting, not buying. The evidence rung does not establish cycle age.',
     nextCheck: 'Verify latest management guidance, actual diluted EPS growth, CFO/PAT, capital needs, valuation and technical entry.',
     blockers: alwaysCheck,
   };
 }
 
-const ORDER: Record<RadarQueue, number> = { RESEARCH: 0, WAIT: 1, RISK: 2, UNVERIFIED: 3 };
+const ORDER: Record<RadarQueue, number> = { RESEARCH: 0, RECONCILE: 1, RISK: 2, WAIT: 3, UNVERIFIED: 4 };
 export function rankForDecision<T extends RadarTriageInput>(entries: readonly T[]): T[] {
   return [...entries].sort((a, b) => {
     const qa = ORDER[radarDecision(a).queue], qb = ORDER[radarDecision(b).queue];
