@@ -24,7 +24,7 @@ test('scanned count is actual completed analysis, not the selection before the t
 
 test('radar never claims zero signals when an async scan is still being built', () => {
   const s = view();
-  assert.match(s, /if\s*\(j\.building\)/);
+  assert.match(s, /if\s*\(j\.building\s*\|\|\s*oldSnapshot\)/);
   assert.match(s, /!building\s*&&\s*!loading\s*&&\s*entries\.length\s*===\s*0/);
   assert.match(s, /Radar scanning in the background/);
   assert.match(s, /setTimeout\(\(\) => \{ void load\(days\); \}, 8_000\)/);
