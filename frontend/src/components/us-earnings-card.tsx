@@ -882,6 +882,17 @@ function TileRow({ r, gaapEpsY, opmD, adjEpsCur, adjEpsPrev, epsEst, surp, hasAd
     ) });
   }
 
+  // zzz1210 — gross margin as its own tile (it was only a chip under Methodology & Caveats, hidden on the summary view):
+  // NVT Q3 FY26 37.4% → 35.8% while OPM rose. Same-quarter-a-year-earlier, from the filing's own quarterly series.
+  const gmv = (r as any).gross_margin as { now: number; prev: number; delta: number; end: string; prevEnd: string } | undefined;
+  if (gmv && Number.isFinite(gmv.now) && Number.isFinite(gmv.delta)) {
+    parts.push({ w: Math.min(70, Math.abs(gmv.delta) * 7 + (gmv.delta <= -1.5 ? 20 : 0)), node: (size) => (
+      <Tile key="gm" label={gmv.delta <= -1.5 ? 'GROSS MARGIN ⚠' : 'GROSS MARGIN'} size={size} value={`${gmv.now.toFixed(1)}%`}
+        color={gmv.delta >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)'}
+        sub={`${gmv.delta >= 0 ? '+' : ''}${gmv.delta.toFixed(1)}pp YoY · was ${gmv.prev.toFixed(1)}%`} />
+    ) });
+  }
+
   // zzz1160 — a margin is a critical field: with no operating line (GM, banks), the NET margin from the same figures, labelled as such
   if (r.opm_pct == null && r.opm_prev_pct == null) {
     const ni = num((r as any).net_income_curr_musd), niP = num((r as any).net_income_prev_musd);

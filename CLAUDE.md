@@ -3750,3 +3750,15 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
 - Conviction Beats India + USA: Stage 2 yes / no in the preset (`lib/cb-stage2.ts`, weekly `twSt` from the slim screener answer,
   laid on cards by use-debt-equity; no stage passes neither).
 - Company Lab `/company-lab` (nav + home favourite): `lib/company-lab/{core,annual,server}.ts`, `/api/v1/company-lab`.
+- zzz1210 (2 Nov): Company Lab charts redone per script — `LabChart` (one chart per script, own colours, yearly dots at fiscal
+  year ends, 10-year prices): price vs revenue growth / revenue + EPS growth / revenue growth + FCF margin / FCF per share; the
+  checklist's four plots (FCF vs revenue growth, FCF margin + yield at each year-end price, capex÷FCF + debt÷FCF, SBC %);
+  capex rule = CapEx < 50% of FCF; 5-year averages; Stage2.py RS = stock ÷ index cumulative return (`rsCumulative`, S&P 500 /
+  Nifty), 50/150/200 chart, "meets all criteria" (`stage2Verdict`); Multiple_FCF panel with log toggle; a ticker not found
+  under one market is read from the other (`movedFrom`). US card: GROSS MARGIN tile (`r.gross_margin`).
+- zzz1210 — GitHub e-mail storm since 29 Oct: GitHub's CRON_SECRET no longer matches a key Railway accepts (every upload →
+  401 "service key required": FII/DII, NSE results, guidance docs → "delivery backlog paused", EDGAR, backup). OWNER: copy
+  Railway CRON_SECRET into the GitHub secret. Collectors now run `.github/scripts/check-service-key.mjs` first
+  (`/api/v1/service-key-check`): first refusal of the UTC day fails with the fix, later runs skip quietly. Also open:
+  Screener.in CSV sync 0/19 = SCREENER_SESSIONID expired (owner refreshes); mc-pulse-bots "Keep Render Alive" pings the
+  retired Render service — disable that workflow.

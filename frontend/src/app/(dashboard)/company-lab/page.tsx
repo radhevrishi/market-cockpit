@@ -37,48 +37,67 @@ const chip = (text: string, c: string, title?: string) => (
 );
 const label = (t: string) => <div style={{ fontSize: 11.5, fontWeight: 900, letterSpacing: '0.5px', color: R.faint, margin: '2px 0 6px' }}>{t}</div>;
 
-// ── a small two-axis chart: weekly price (left) and yearly figures held from each year end (right) ──────────────────────────
-function DualChart({ prices, series, unitRight }: { prices: Array<{ t: string; c: number }>; series: Array<{ name: string; color: string; points: Array<{ t: string; v: number | null }> }>; unitRight: string }) {
-  const W = 640, H = 220, P = { l: 48, r: 48, t: 10, b: 24 };
-  if (prices.length < 2) return <div style={{ fontSize: 13, color: R.faint }}>No price history.</div>;
-  const t0 = Date.parse(prices[0].t), t1 = Date.parse(prices[prices.length - 1].t);
+// ── zzz1210: one chart per script, each with its own colours (the old single chart made every view look the same) ──────
+// x axis = time (shared by price and yearly figures); left axis = price (or the first group), right axis = the yearly figures.
+// Yearly figures are drawn as dots at each fiscal year end joined by a line — the way the scripts plotted them — and every
+// fiscal year with figures is inside the window (prices are read 10 years back).
+type Pt = { t: string; v: number | null };
+type Ser = { name: string; color: string; pts: Pt[]; axis: 'L' | 'R'; dots?: boolean; dash?: string; width?: number };
+const PRICE_C = '#475569';
+function LabChart({ title, note, series, unitL = '', unitR = '', logL = false, h = 230, zeroR = true }: { title: string; note?: string; series: Ser[]; unitL?: string; unitR?: string; logL?: boolean; h?: number; zeroR?: boolean }) {
+  const W = 680, H = h, P = { l: 54, r: 54, t: 12, b: 26 };
+  const all = series.flatMap((s) => s.pts.filter((p) => p.v != null && Number.isFinite(p.v)));
+  if (all.length < 2) return <div style={{ fontSize: 13, color: R.faint, padding: '6px 0' }}><b style={{ color: R.dim }}>{title}</b> — not enough figures to draw.</div>;
+  const ts = all.map((p) => Date.parse(p.t));
+  const t0 = Math.min(...ts) - 30 * 86_400_000, t1 = Math.max(...ts) + 30 * 86_400_000;
   const x = (d: string) => P.l + ((Date.parse(d) - t0) / Math.max(1, t1 - t0)) * (W - P.l - P.r);
-  const pMin = Math.min(...prices.map((p) => p.c)), pMax = Math.max(...prices.map((p) => p.c));
-  const yP = (v: number) => P.t + (1 - (v - pMin) / Math.max(1e-9, pMax - pMin)) * (H - P.t - P.b);
-  const vals = series.flatMap((s) => s.points.map((p) => p.v)).filter((v): v is number => v != null && Number.isFinite(v));
-  const vMin = vals.length ? Math.min(0, ...vals) : 0, vMax = vals.length ? Math.max(...vals) : 1;
-  const yV = (v: number) => P.t + (1 - (v - vMin) / Math.max(1e-9, vMax - vMin)) * (H - P.t - P.b);
-  const path = prices.map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${yP(p.c).toFixed(1)}`).join(' ');
-  const steps = (pts: Array<{ t: string; v: number | null }>) => {
-    const inWin = pts.filter((p) => p.v != null && Date.parse(p.t) <= t1);
-    let d = '';
-    inWin.forEach((p, i) => {
-      const xs = Math.max(P.l, x(p.t)), xe = i + 1 < inWin.length ? Math.max(P.l, x(inWin[i + 1].t)) : W - P.r;
-      if (xe <= P.l) return;
-      d += `M${xs.toFixed(1)},${yV(p.v!).toFixed(1)} L${xe.toFixed(1)},${yV(p.v!).toFixed(1)} `;
-    });
+  const range = (axis: 'L' | 'R', log: boolean) => {
+    const vs = series.filter((s) => s.axis === axis).flatMap((s) => s.pts.map((p) => p.v)).filter((v): v is number => v != null && Number.isFinite(v) && (!log || v > 0));
+    if (!vs.length) return null;
+    let lo = Math.min(...vs), hi = Math.max(...vs);
+    if (!log && axis === 'R' && zeroR) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
+    if (lo === hi) { lo -= 1; hi += 1; }
+    const pad = log ? 1.05 : (hi - lo) * 0.06;
+    return log ? { lo: lo / pad, hi: hi * pad } : { lo: lo - pad, hi: hi + pad };
+  };
+  const rL = range('L', logL), rR = range('R', false);
+  const yOf = (axis: 'L' | 'R') => (v: number) => {
+    const r = axis === 'L' ? rL : rR; if (!r) return 0;
+    const f = axis === 'L' && logL ? (Math.log(v) - Math.log(r.lo)) / (Math.log(r.hi) - Math.log(r.lo)) : (v - r.lo) / (r.hi - r.lo);
+    return P.t + (1 - f) * (H - P.t - P.b);
+  };
+  const line = (s: Ser) => {
+    const y = yOf(s.axis); let d = '', pen = false;
+    for (const p of s.pts) { if (p.v == null || !Number.isFinite(p.v) || (s.axis === 'L' && logL && p.v <= 0)) { pen = false; continue; } d += `${pen ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)} `; pen = true; }
     return d;
   };
-  const years = Array.from(new Set(prices.map((p) => p.t.slice(0, 4))));
+  const years: number[] = [];
+  for (let yr = new Date(t0).getUTCFullYear() + 1; yr <= new Date(t1).getUTCFullYear(); yr++) years.push(yr);
+  const fmt = (v: number) => (Math.abs(v) >= 1000 ? v.toLocaleString('en-US', { maximumFractionDigits: 0 }) : Math.abs(v) >= 10 ? v.toFixed(0) : v.toFixed(1));
+  const ticks = (r: { lo: number; hi: number } | null, log: boolean) => (!r ? [] : [0, 0.5, 1].map((f) => (log ? Math.exp(Math.log(r.lo) + f * (Math.log(r.hi) - Math.log(r.lo))) : r.lo + f * (r.hi - r.lo))));
+  const cL = series.find((s) => s.axis === 'L')?.color || PRICE_C, cR = series.find((s) => s.axis === 'R')?.color || R.dim;
   return (
-    <div>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', background: R.bg, border: `1px solid ${R.border}`, borderRadius: 8 }} role="img" aria-label="Price and yearly figures">
-        {vMin < 0 && vMax > 0 && <line x1={P.l} x2={W - P.r} y1={yV(0)} y2={yV(0)} stroke="var(--mc-bg-4)" strokeDasharray="3 3" />}
-        {years.map((y) => { const xx = x(`${y}-01-01`); return xx > P.l && xx < W - P.r ? <g key={y}><line x1={xx} x2={xx} y1={P.t} y2={H - P.b} stroke="var(--mc-bg-4)" strokeWidth={0.5} /><text x={xx + 2} y={H - 8} fontSize={10} fill="var(--mc-text-3)">{y}</text></g> : null; })}
-        <path d={path} fill="none" stroke="#D97706" strokeWidth={1.8} />
-        {series.map((s) => <path key={s.name} d={steps(s.points)} fill="none" stroke={s.color} strokeWidth={2.4} strokeDasharray={s.name.includes('EPS') ? '5 3' : undefined} />)}
-        <text x={4} y={P.t + 10} fontSize={10} fill="#D97706">{num(pMax, 0)}</text>
-        <text x={4} y={H - P.b} fontSize={10} fill="#D97706">{num(pMin, 0)}</text>
-        <text x={W - P.r + 4} y={P.t + 10} fontSize={10} fill="var(--mc-text-3)">{num(vMax, 0)}{unitRight}</text>
-        <text x={W - P.r + 4} y={H - P.b} fontSize={10} fill="var(--mc-text-3)">{num(vMin, 0)}{unitRight}</text>
+    <div data-lab-chart={title}>
+      <div style={{ fontSize: 13.5, fontWeight: 900, margin: '4px 0 2px' }}>{title}</div>
+      {note && <div style={{ fontSize: 12, color: R.faint, marginBottom: 4 }}>{note}</div>}
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', background: R.bg, border: `1px solid ${R.border}`, borderRadius: 8 }} role="img" aria-label={title}>
+        {years.map((yr) => { const xx = x(`${yr}-01-01`); return <g key={yr}><line x1={xx} x2={xx} y1={P.t} y2={H - P.b} stroke="var(--mc-bg-4)" strokeWidth={0.6} /><text x={xx + 2} y={H - 9} fontSize={10} fill="var(--mc-text-3)">{yr}</text></g>; })}
+        {rR && rR.lo < 0 && rR.hi > 0 && <line x1={P.l} x2={W - P.r} y1={yOf('R')(0)} y2={yOf('R')(0)} stroke={cR} strokeOpacity={0.45} strokeDasharray="4 3" />}
+        {series.map((s) => <path key={s.name} d={line(s)} fill="none" stroke={s.color} strokeWidth={s.width ?? (s.dots ? 2.2 : 1.6)} strokeDasharray={s.dash} />)}
+        {series.filter((s) => s.dots).map((s) => s.pts.filter((p) => p.v != null && Number.isFinite(p.v)).map((p) => (
+          <circle key={`${s.name}-${p.t}`} cx={x(p.t)} cy={yOf(s.axis)(p.v!)} r={3.6} fill={s.color} stroke="#fff" strokeWidth={1}><title>{`${s.name} ${p.t.slice(0, 7)}: ${fmt(p.v!)}${s.axis === 'R' ? unitR : unitL}`}</title></circle>
+        )))}
+        {ticks(rL, logL).map((v, i) => <text key={`l${i}`} x={4} y={yOf('L')(v) + 3} fontSize={10} fill={cL}>{fmt(v)}{unitL}</text>)}
+        {ticks(rR, false).map((v, i) => <text key={`r${i}`} x={W - P.r + 4} y={yOf('R')(v) + 3} fontSize={10} fill={cR}>{fmt(v)}{unitR}</text>)}
       </svg>
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 12, color: R.dim, marginTop: 4 }}>
-        <span><b style={{ color: '#D97706' }}>━</b> Share price (left)</span>
-        {series.map((s) => <span key={s.name}><b style={{ color: s.color }}>━</b> {s.name} (right)</span>)}
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 12, color: R.dim, marginTop: 3 }}>
+        {series.map((s) => <span key={s.name}><b style={{ color: s.color }}>{s.dots ? '●' : '━'}</b> {s.name} ({s.axis === 'L' ? 'left' : 'right'})</span>)}
       </div>
     </div>
   );
 }
+const pricePts = (c: LabCard): Pt[] => c.prices.map((p) => ({ t: p.t, v: p.c }));
+const yearPts = (c: LabCard, f: (y: LabCard['years'][number]) => number | null): Pt[] => c.years.map((y) => ({ t: y.end, v: f(y) }));
 
 function Card({ c, onRemove }: { c: LabCard; onRemove: () => void }) {
   const [open, setOpen] = useState<'fcf' | 'growth' | 'stage' | 'years'>('fcf');
@@ -102,7 +121,6 @@ function Card({ c, onRemove }: { c: LabCard; onRemove: () => void }) {
     ['🏆 Conviction', c.market === 'US' ? `/us-conviction-beats?q=${encodeURIComponent(sym)}` : `/watchlists?tab=conviction&q=${encodeURIComponent(sym)}`],
     ['📒 Decisions', '/decisions'],
   ];
-  const yearsPts = (f: (y: LabCard['years'][number]) => number | null) => c.years.map((y) => ({ t: y.end, v: f(y) }));
   return (
     <div data-lab-card style={{ border: `1px solid ${R.border}`, borderRadius: 12, padding: 14, background: R.bg, display: 'grid', gap: 10 }}>
       <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
@@ -120,6 +138,8 @@ function Card({ c, onRemove }: { c: LabCard; onRemove: () => void }) {
         {ttKnown > 0 && chip(`Trend template ${tt}/6`, tt === 6 ? R.green : tt >= 4 ? R.amber : R.red, "Minervini's six rules on the daily chart")}
         {c.stage.rsR != null && chip(`RS ${c.stage.rsR}`, c.stage.rsR >= 80 ? R.green : c.stage.rsR >= 50 ? R.amber : R.red, 'RS Rating 1–99 against every company in the same market')}
         {c.breakout.ok && chip('Breakout on volume today', R.green, c.breakout.value)}
+        {c.rs?.ratio != null && chip(`vs ${c.rs.index} ${c.rs.ratio.toFixed(2)}×`, c.rs.ratio > 1 ? R.green : R.red, `Stage2.py relative strength: stock return ÷ index return over the last year (${c.rs.stockRet}% vs ${c.rs.idxRet}%). Above 1 = beating the index.`)}
+        {c.verdict?.all === true && chip('Meets all Stage 2 criteria', R.green, c.verdict.text)}
         {c.record?.tier && chip(`Last result ${c.record.tier}${c.record.resultDate ? ` · ${c.record.resultDate}` : ''}`, /BLOCKBUSTER|STRONG/.test(c.record.tier) ? R.green : /AVOID/.test(c.record.tier) ? R.red : R.amber, 'Latest graded result on the bench')}
         {c.record && c.record.guidance > 0 && chip(`Guidance on file ${c.record.guidance}`, R.cyan, 'Active company guidance in the guidance universe')}
       </div>
@@ -128,7 +148,7 @@ function Card({ c, onRemove }: { c: LabCard; onRemove: () => void }) {
         {links.map(([t, h]) => <NavLink key={t} href={h} style={{ color: R.cyan, fontWeight: 700 }}>{t}</NavLink>)}
       </div>
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-        {([['fcf', '💵 FCF checklist'], ['growth', '📊 Growth vs price'], ['stage', '🧭 Stage 2 & trend'], ['years', '🗂 Yearly figures']] as const).map(([k, l]) => (
+        {([['fcf', '💵 FCF checklist'], ['growth', '📊 Price charts'], ['stage', '🧭 Stage 2 & trend'], ['years', '🗂 Yearly figures']] as const).map(([k, l]) => (
           <button key={k} type="button" onClick={() => setOpen(k)} style={{ fontSize: 13, fontWeight: 800, padding: '4px 10px', borderRadius: 8, cursor: 'pointer', border: `1px solid ${open === k ? R.cyan : R.border}`, background: open === k ? tint(R.cyan, 12) : 'transparent', color: open === k ? R.cyan : R.dim }}>{l}</button>
         ))}
       </div>
@@ -150,18 +170,45 @@ function Card({ c, onRemove }: { c: LabCard; onRemove: () => void }) {
             {c.fcf.metrics.map((m) => <span key={m.label}>{m.label}: <b style={{ color: R.text }}>{m.value}</b></span>)}
           </div>
           <div style={{ fontSize: 12, color: R.faint, marginTop: 4 }}>✓ passed · ✗ failed · ? could not be worked out (never counted as a fail). Hover a line for what it means.</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12, marginTop: 10 }}>
+            <LabChart title="FCF growth vs revenue growth" note="Year on year, %" unitR="%" h={200} series={[
+              { name: 'FCF growth', color: '#16A34A', axis: 'R', dots: true, pts: yearPts(c, (y) => y.fcfG) },
+              { name: 'Revenue growth', color: '#2563EB', axis: 'R', dots: true, dash: '5 3', pts: yearPts(c, (y) => y.revG) },
+            ]} />
+            <LabChart title="FCF margin and FCF yield" note="Yield at each year-end price" unitR="%" h={200} series={[
+              { name: 'FCF margin', color: '#EA580C', axis: 'R', dots: true, pts: yearPts(c, (y) => y.fcfM) },
+              { name: 'FCF yield', color: '#7C3AED', axis: 'R', dots: true, dash: '5 3', pts: yearPts(c, (y) => y.fcfYield) },
+            ]} />
+            <LabChart title="Capex ÷ FCF and debt ÷ FCF" note={c.market === 'IN' ? 'screener.in prints no capex line, so capex ÷ FCF is not shown for India' : 'Capex as % of FCF (left), years of FCF to repay debt (right)'} unitL="%" unitR="×" h={200} series={[
+              { name: 'Capex ÷ FCF', color: '#DC2626', axis: 'L', dots: true, pts: yearPts(c, (y) => y.capexToFcf) },
+              { name: 'Debt ÷ FCF', color: '#0891B2', axis: 'R', dots: true, dash: '5 3', pts: yearPts(c, (y) => y.debtToFcf) },
+            ]} />
+            <LabChart title="Share-based pay % of revenue" note={c.market === 'IN' ? 'not reported on screener.in' : 'Stock-based compensation ÷ revenue'} unitR="%" h={200} series={[
+              { name: 'SBC % of revenue', color: '#DB2777', axis: 'R', dots: true, pts: yearPts(c, (y) => y.sbcPct) },
+            ]} />
+          </div>
         </div>
       )}
       {open === 'growth' && (
-        <div style={{ display: 'grid', gap: 12 }}>
-          {label('REVENUE GROWTH, EPS GROWTH AND FCF MARGIN AGAINST THE SHARE PRICE (each year\'s figure held from its year end)')}
-          <DualChart prices={c.prices} unitRight="%" series={[
-            { name: 'Revenue growth', color: '#2563EB', points: yearsPts((y) => y.revG) },
-            { name: 'EPS growth', color: '#059669', points: yearsPts((y) => y.epsG) },
-            { name: 'FCF margin', color: '#7C3AED', points: yearsPts((y) => y.fcfM) },
+        <div style={{ display: 'grid', gap: 14 }}>
+          <LabChart title="Share price vs revenue growth" note="FCF_and_Revenue_growth — revenue growth each fiscal year (dots at the year end)" unitR="%" series={[
+            { name: `Price (${c.currency})`, color: PRICE_C, axis: 'L', pts: pricePts(c) },
+            { name: 'Revenue growth', color: '#2563EB', axis: 'R', dots: true, pts: yearPts(c, (y) => y.revG) },
           ]} />
-          {label(`FREE CASH FLOW PER SHARE AGAINST THE SHARE PRICE (${c.currency})`)}
-          <DualChart prices={c.prices} unitRight="" series={[{ name: 'FCF per share', color: '#2563EB', points: yearsPts((y) => y.fcfPs) }]} />
+          <LabChart title="Share price vs revenue and EPS growth" note="EPS_and_Revenue_growth — year-on-year change of revenue and of EPS" unitR="%" series={[
+            { name: `Price (${c.currency})`, color: PRICE_C, axis: 'L', pts: pricePts(c) },
+            { name: 'Revenue growth', color: '#059669', axis: 'R', dots: true, pts: yearPts(c, (y) => y.revG) },
+            { name: 'EPS growth', color: '#9333EA', axis: 'R', dots: true, dash: '5 3', pts: yearPts(c, (y) => y.epsG) },
+          ]} />
+          <LabChart title="Share price vs revenue growth and FCF margin" note="FCF_Margins_and_Revenue_growth" unitR="%" series={[
+            { name: `Price (${c.currency})`, color: PRICE_C, axis: 'L', pts: pricePts(c) },
+            { name: 'Revenue growth', color: '#0D9488', axis: 'R', dots: true, pts: yearPts(c, (y) => y.revG) },
+            { name: 'FCF margin', color: '#EA580C', axis: 'R', dots: true, dash: '5 3', pts: yearPts(c, (y) => y.fcfM) },
+          ]} />
+          <LabChart title={`Share price vs free cash flow per share (${c.currency})`} note={`FCF.py — FCF ÷ shares each fiscal year; FCF = ${c.fcf.fcfBasis}`} unitR="" series={[
+            { name: `Price (${c.currency})`, color: PRICE_C, axis: 'L', pts: pricePts(c) },
+            { name: 'FCF per share', color: '#16A34A', axis: 'R', dots: true, width: 2.6, pts: yearPts(c, (y) => y.fcfPs) },
+          ]} />
         </div>
       )}
       {open === 'stage' && (
@@ -171,6 +218,20 @@ function Card({ c, onRemove }: { c: LabCard; onRemove: () => void }) {
             {st == null ? 'No weekly stage on file yet.' : <>Weekly stage: <b style={{ color: STAGE_C[st] }}>{STAGE_WORD[st]}</b>{c.stage.weeks != null ? ` for ${c.stage.weeks} weeks` : ''}{st === 2 && c.stage.health != null ? ` — ${HEALTH[c.stage.health]}` : ''}.</>}
             {c.stage.mrs != null && <> Mansfield RS vs {c.market === 'US' ? 'S&P 500' : 'Nifty 50'}: <b>{num(c.stage.mrs, 1)}</b> ({c.stage.mrs > 0 ? 'beating' : 'lagging'} the index).</>}
           </div>
+          {c.verdict?.text && <div style={{ fontSize: 14, fontWeight: 800, color: c.verdict.all ? R.green : c.verdict.trendAndRs ? R.amber : R.dim }}>{c.verdict.all ? '✓ ' : ''}{c.verdict.text}</div>}
+          <div style={{ fontSize: 13.5 }}>
+            Relative strength vs {c.rs?.index}: {c.rs?.ratio == null ? 'index history not available' : <><b style={{ color: c.rs.ratio > 1 ? R.green : R.red }}>{c.rs.ratio.toFixed(2)}×</b> (stock {pct(c.rs.stockRet)} vs index {pct(c.rs.idxRet)} since {c.rs.from}) — {c.rs.ratio > 1 ? 'beating' : 'trailing'} the index.</>}
+          </div>
+          <LabChart title="Price with 50 / 150 / 200-day averages (2 years)" unitL="" series={[
+            { name: `Price (${c.currency})`, color: '#0F172A', axis: 'L', pts: (c.ma || []).map((p) => ({ t: p.t, v: p.c })), width: 1.8 },
+            { name: '50-day', color: '#2563EB', axis: 'L', pts: (c.ma || []).map((p) => ({ t: p.t, v: p.m50 })) },
+            { name: '150-day', color: '#F59E0B', axis: 'L', pts: (c.ma || []).map((p) => ({ t: p.t, v: p.m150 })) },
+            { name: '200-day', color: '#DC2626', axis: 'L', pts: (c.ma || []).map((p) => ({ t: p.t, v: p.m200 })) },
+          ]} />
+          <LabChart title={`Relative strength vs ${c.rs?.index || 'the index'} (last year)`} note="Stock's cumulative return ÷ the index's. Above 1 (dashed line) = beating the index." unitR="×" h={180} zeroR={false} series={[
+            { name: 'RS ratio', color: '#16A34A', axis: 'R', pts: (c.rs?.line || []).map((p) => ({ t: p.t, v: p.v })), width: 2 },
+            { name: 'Index = 1', color: R.faint, axis: 'R', dash: '4 3', pts: (c.rs?.line || []).length ? [{ t: c.rs.line[0].t, v: 1 }, { t: c.rs.line[c.rs.line.length - 1].t, v: 1 }] : [] },
+          ]} />
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5 }}>
             <tbody>
               {c.trend.map((r) => (
@@ -193,7 +254,7 @@ function Card({ c, onRemove }: { c: LabCard; onRemove: () => void }) {
         <div style={{ overflowX: 'auto' }}>
           {label(`YEARLY FIGURES (${c.unit}; EPS in ${c.currency})`)}
           <table style={{ borderCollapse: 'collapse', fontSize: 13, minWidth: 560 }}>
-            <thead><tr>{['Year', 'Revenue', 'Growth', 'Net income', 'EPS', 'EPS growth', 'Op. cash', 'FCF', 'FCF margin', 'Debt'].map((h) => <th key={h} style={{ textAlign: 'right', padding: '4px 8px', color: R.faint, fontSize: 12 }}>{h}</th>)}</tr></thead>
+            <thead><tr>{['Year', 'Revenue', 'Growth', 'Net income', 'EPS', 'EPS growth', 'Op. cash', 'FCF', 'FCF margin', 'FCF / share', 'FCF yield', 'Debt'].map((h) => <th key={h} style={{ textAlign: 'right', padding: '4px 8px', color: R.faint, fontSize: 12 }}>{h}</th>)}</tr></thead>
             <tbody>
               {c.years.map((y, i) => (
                 <tr key={y.end} style={{ borderTop: `1px solid ${R.border}` }}>
@@ -206,6 +267,8 @@ function Card({ c, onRemove }: { c: LabCard; onRemove: () => void }) {
                   <td style={{ padding: '4px 8px', textAlign: 'right' }}>{num(c.rows[i]?.cfo, 0)}</td>
                   <td style={{ padding: '4px 8px', textAlign: 'right' }}>{num(y.fcf, 0)}</td>
                   <td style={{ padding: '4px 8px', textAlign: 'right' }}>{pct(y.fcfM)}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{num(y.fcfPs, 2)}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{pct(y.fcfYield)}</td>
                   <td style={{ padding: '4px 8px', textAlign: 'right' }}>{num(c.rows[i]?.debt, 0)}</td>
                 </tr>
               ))}
@@ -214,6 +277,31 @@ function Card({ c, onRemove }: { c: LabCard; onRemove: () => void }) {
         </div>
       )}
       <div style={{ fontSize: 11.5, color: R.faint }}>Sources: {c.sources.join(' · ')}. Built {new Date(c.builtAt).toLocaleString()}. Research, not advice.</div>
+    </div>
+  );
+}
+
+// Multiple_FCF: each company's price and FCF per share, one panel each, on one screen; log scale optional.
+function MultiFcf({ cards }: { cards: LabCard[] }) {
+  const [log, setLog] = useState(false);
+  const ok = cards.filter((c) => c.ok && c.prices.length > 1);
+  if (ok.length < 2) return null;
+  return (
+    <div style={{ border: `1px solid ${R.border}`, borderRadius: 10, padding: 10, background: R.bg }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        {label('PRICE AND FREE CASH FLOW PER SHARE — EVERY COMPANY')}
+        <label style={{ fontSize: 13, color: R.dim, display: 'inline-flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+          <input type="checkbox" checked={log} onChange={(e) => setLog(e.target.checked)} /> Log scale for price
+        </label>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(330px, 1fr))', gap: 12 }}>
+        {ok.map((c) => (
+          <LabChart key={`${c.market}:${c.ticker}`} title={`${c.ticker}${c.name ? ` · ${c.name}` : ''}`} h={190} logL={log} series={[
+            { name: `Price (${c.currency})`, color: PRICE_C, axis: 'L', pts: pricePts(c) },
+            { name: 'FCF per share', color: '#16A34A', axis: 'R', dots: true, width: 2.4, pts: yearPts(c, (y) => y.fcfPs) },
+          ]} />
+        ))}
+      </div>
     </div>
   );
 }
@@ -231,7 +319,8 @@ function Compare({ cards }: { cards: LabCard[] }) {
     ['Revenue growth (last yr)', (c) => pct(last(c)?.revG ?? null), (c) => last(c)?.revG ?? -999],
     ['EPS growth (last yr)', (c) => pct(last(c)?.epsG ?? null), (c) => last(c)?.epsG ?? -999],
     ['Stage', (c) => (c.stage.st != null ? `Stage ${c.stage.st}` : '—'), (c) => (c.stage.st === 2 ? 2 : c.stage.st === 1 ? 1 : 0)],
-    ['Trend template', (c) => `${c.trend.filter((r) => r.ok).length}/6`, (c) => c.trend.filter((r) => r.ok).length],
+    ['Trend template', (c) => `${c.stage.tt ?? c.trend.filter((r) => r.ok).length}/6`, (c) => c.stage.tt ?? c.trend.filter((r) => r.ok).length],
+    ['RS vs index', (c) => (c.rs?.ratio == null ? '—' : `${c.rs.ratio.toFixed(2)}×`), (c) => c.rs?.ratio ?? -1],
     ['RS', (c) => num(c.stage.rsR, 0), (c) => c.stage.rsR ?? -1],
   ];
   const rows = ok.slice().sort((a, b) => cols[sortI][2](b) - cols[sortI][2](a));
@@ -287,7 +376,11 @@ export default function CompanyLabPage() {
           const r = await fetch(`/api/v1/company-lab?market=${m}&tickers=${encodeURIComponent(ts.slice(i, i + 8).join(','))}`).catch(() => null);
           const j: any = r ? await r.json().catch(() => null) : null;
           if (!j?.ok) { setErr(j?.error || `Could not load (HTTP ${r?.status ?? '—'})`); continue; }
-          setCards((prev) => { const n = { ...prev }; for (const c of j.cards as LabCard[]) n[`${m}:${c.ticker}`] = c; return n; });
+          const got = j.cards as LabCard[];
+          setCards((prev) => { const n = { ...prev }; for (const c of got) { n[`${m}:${c.ticker}`] = c; n[`${c.market}:${c.ticker}`] = c; } return n; });
+          // typed under the wrong market (SPOT with India selected): keep it under the market it was found in
+          const moved = got.filter((c) => c.ok && c.market !== m);
+          if (moved.length) setList((l) => { const out: Array<{ m: Mkt; t: string }> = []; for (const e of l) { const mv = moved.find((c) => c.ticker === e.t && e.m === m); const ne = mv ? { m: mv.market as Mkt, t: e.t } : e; if (!out.some((x) => key(x) === key(ne))) out.push(ne); } return out; });
         }
       }
     } finally { setBusy(false); }
@@ -307,7 +400,7 @@ export default function CompanyLabPage() {
     <div style={{ padding: '16px 18px', display: 'grid', gap: 12, maxWidth: 1200 }}>
       <div>
         <h1 style={{ fontSize: 24, fontWeight: 900, margin: 0 }}>🧪 Company Lab</h1>
-        <div style={{ fontSize: 14, color: R.dim, marginTop: 4 }}>Add one company or several — India or USA. Each gets its free-cash-flow checklist, growth against the share price, Stage 2 and the trend template, and links to everything else the portal knows about it.</div>
+        <div style={{ fontSize: 14, color: R.dim, marginTop: 4 }}>Add one company or several — India or USA. Each gets the FCF checklist with its four plots, price charts against revenue / EPS growth, FCF margin and FCF per share, Stage 2 (trend template, relative strength vs the index, breakout), and links to everything else the portal knows about it. A ticker typed under the wrong market is found in the other one.</div>
       </div>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', border: `1px solid ${R.border}`, borderRadius: 10, padding: 10, background: R.bg }}>
         {(['IN', 'US'] as Mkt[]).map((m) => (
@@ -327,7 +420,7 @@ export default function CompanyLabPage() {
         </div>
       )}
       {!list.length && <div style={{ fontSize: 14, color: R.faint, padding: 20, border: `1px dashed ${R.border}`, borderRadius: 10 }}>No companies yet. Type one or several tickers above and press Add. Your list is kept on this browser.</div>}
-      {shown.length >= 2 && <Fragment>{label('SIDE BY SIDE')}<Compare cards={shown} /></Fragment>}
+      {shown.length >= 2 && <Fragment>{label('SIDE BY SIDE')}<Compare cards={shown} /><MultiFcf cards={shown} /></Fragment>}
       <div style={{ display: 'grid', gap: 12 }}>
         {shown.map((c) => <Card key={`${c.market}:${c.ticker}`} c={c} onRemove={() => remove({ m: c.market, t: c.ticker })} />)}
       </div>

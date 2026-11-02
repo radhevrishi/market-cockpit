@@ -29,8 +29,17 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Service key check (one failure a day, not one per run)
+        id: key
+        env:
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          JOB_NAME: scrape-fii-dii
+        run: node .github/scripts/check-service-key.mjs
+
       - name: Collect FII / DII
         id: main
+        if: steps.key.outputs.key_ok != '0'
         env:
           CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
           CRON_SECRET:   ${{ secrets.CRON_SECRET }}

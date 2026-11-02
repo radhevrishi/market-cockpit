@@ -103,8 +103,17 @@ jobs:
       - name: Install pdftotext
         run: sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils > /dev/null && pdftotext -v 2>&1 | head -1
 
+      - name: Service key check (one failure a day, not one per run)
+        id: key
+        env:
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          JOB_NAME: scrape-guidance-docs
+        run: node .github/scripts/check-service-key.mjs
+
       - name: Collect documents
         id: main
+        if: steps.key.outputs.key_ok != '0'
         env:
           UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
           UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}

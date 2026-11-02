@@ -33,18 +33,40 @@ function stdev(xs: number[]): number | null {
 const pct = (v: number | null, d = 1) => (v == null ? 'not known' : `${v >= 0 ? '' : '−'}${Math.abs(v).toFixed(d)}%`);
 const times = (v: number | null) => (v == null ? 'not known' : `${v.toFixed(1)}×`);
 
-/** Per year: revenue growth, EPS growth, FCF margin, FCF per share (for the charts and tables). */
-export interface YearPoint { label: string; end: string; revG: number | null; epsG: number | null; fcfM: number | null; fcfPs: number | null; fcf: number | null; revenue: number | null; eps: number | null; netIncome: number | null }
-export function yearPoints(rows: AnnualRow[], sharesNow: number | null): YearPoint[] {
+/** Per year, one value per fiscal year end (zzz1210: every series the owner's scripts plot). */
+export interface YearPoint {
+  label: string; end: string;
+  revG: number | null; epsG: number | null; fcfG: number | null;          // growth vs the year before, %
+  fcfM: number | null; fcfPs: number | null; fcf: number | null; revenue: number | null; eps: number | null; netIncome: number | null;
+  fcfYield: number | null;      // FCF ÷ market value at that year end (price at the year end × shares), %
+  capexToFcf: number | null;    // capex ÷ FCF, % (FCF positive only)
+  debtToFcf: number | null;     // debt ÷ FCF, years (FCF positive only)
+  sbcPct: number | null;        // share-based pay ÷ revenue, %
+  priceAtEnd: number | null;
+}
+/**
+ * `sharesNow` (millions US / crore India) stands in for a year with no share count; `priceAt(end)` gives the close on or
+ * before a year end (for the yield then — the script's FCF yield, but at each year's own price, not today's).
+ */
+export function yearPoints(rows: AnnualRow[], sharesNow: number | null, priceAt?: (end: string) => number | null): YearPoint[] {
   return rows.map((r, i) => {
     const p = i > 0 ? rows[i - 1] : null;
     const sh = fin(r.shares) && r.shares > 0 ? r.shares : fin(sharesNow) && sharesNow > 0 ? sharesNow : null;
+    const px = priceAt ? priceAt(r.end) : null;
+    const mv = fin(px) && px > 0 && sh ? px * sh : null;
+    const posF = fin(r.fcf) && r.fcf > 0;
     return {
       label: r.label, end: r.end, revenue: r.revenue, eps: r.eps, netIncome: r.netIncome, fcf: r.fcf,
       revG: p ? growthPct(r.revenue, p.revenue) : null,
       epsG: p ? growthPct(r.eps, p.eps) : null,
+      fcfG: p ? growthPct(r.fcf, p.fcf) : null,
       fcfM: fin(r.fcf) && fin(r.revenue) && r.revenue > 0 ? r1((r.fcf / r.revenue) * 100) : null,
       fcfPs: fin(r.fcf) && sh ? Math.round((r.fcf / sh) * 100) / 100 : null,
+      fcfYield: fin(r.fcf) && mv ? r1((r.fcf / mv) * 100) : null,
+      capexToFcf: posF && fin(r.capex) ? r1((Math.abs(r.capex) / r.fcf!) * 100) : null,
+      debtToFcf: posF && fin(r.debt) ? Math.round((r.debt / r.fcf!) * 10) / 10 : null,
+      sbcPct: fin(r.sbc) && fin(r.revenue) && r.revenue > 0 ? r1((r.sbc / r.revenue) * 100) : null,
+      priceAtEnd: fin(px) ? px : null,
     };
   });
 }
@@ -54,7 +76,7 @@ export function yearPoints(rows: AnnualRow[], sharesNow: number | null): YearPoi
  * five before it. `mcap` is today's market cap in the SAME unit as the figures ($ M / ₹ Cr). `fcfBasis` says how FCF was
  * worked out (US: operating cash − capex; India: operating + investing cash, an approximation — screener.in prints no capex).
  */
-export function fcfReport(rowsIn: AnnualRow[], mcap: number | null, fcfBasis: string): FcfReport {
+export function fcfReport(rowsIn: AnnualRow[], mcap: number | null, fcfBasis: string, pts: YearPoint[] = []): FcfReport {
   const rows = rowsIn.filter((r) => fin(r.revenue) || fin(r.fcf));
   const L = rows[rows.length - 1];
   const last6 = rows.slice(-6);
@@ -74,13 +96,15 @@ export function fcfReport(rowsIn: AnnualRow[], mcap: number | null, fcfBasis: st
   add('margin', 'FCF margin above 10%', mg == null ? null : mg > 10, `${pct(mg)} (${L?.label || '—'})`, 'Free cash flow ÷ revenue in the latest full year.');
   // 3 FCF yield > 5%
   const yld = L && fin(L.fcf) && fin(mcap) && mcap > 0 ? r1((L.fcf / mcap) * 100) : null;
-  add('yield', 'FCF yield above 5%', yld == null ? null : yld > 5, `${pct(yld)} at today's market cap`, 'Latest full-year free cash flow ÷ today\'s market value. Above 5% = the price is not stretched against the cash.');
+  add('yield', 'FCF yield above 5% (buybacks would be at a fair price)', yld == null ? null : yld > 5, `${pct(yld)} at today's market cap`, 'Latest full-year free cash flow ÷ today\'s market value. Above 5% = buying back shares is not overpaying.');
   // 4 FCF > net income
   add('conv', 'Free cash flow above net income', L && fin(L.fcf) && fin(L.netIncome) ? L.fcf > L.netIncome : null,
     L && fin(L.fcf) && fin(L.netIncome) ? `FCF ${fmtShort(L.fcf)} vs profit ${fmtShort(L.netIncome)}` : 'not known', 'Profit backed by cash after investment.');
-  // 5 capex share of operating cash
-  const cx = L && fin(L.capex) && fin(L.cfo) && L.cfo > 0 ? r1((Math.abs(L.capex) / L.cfo) * 100) : null;
-  add('capex', 'Capex at most half of operating cash', cx == null ? null : cx <= 50, cx == null ? (L && fin(L.cfo) && L.cfo <= 0 ? 'operating cash negative' : 'capex not stated') : `${cx}% of operating cash`, 'A business that needs most of its cash to stand still is capital-hungry.');
+  // 5 capex vs FCF (the script's rule: CapEx-to-FCF below 50%)
+  const cx = L && fin(L.capex) && fin(L.fcf) && L.fcf > 0 ? r1((Math.abs(L.capex) / L.fcf) * 100) : null;
+  add('capex', 'Capex below half of free cash flow', cx == null ? (L && fin(L.capex) && fin(L.fcf) ? false : null) : cx < 50,
+    cx == null ? (L && fin(L.fcf) && L.fcf <= 0 && fin(L.capex) ? 'FCF not positive' : 'capex not reported') : `capex = ${cx}% of FCF`,
+    'Capital spending ÷ free cash flow. Below 50% = most of the cash is left over after investment.');
   // 6 debt vs FCF
   const dF = L && fin(L.debt) && fin(L.fcf) ? (L.fcf > 0 ? Math.round((L.debt / L.fcf) * 10) / 10 : null) : null;
   add('debt', 'Debt at most 3 years of FCF', L && fin(L.debt) && fin(L.fcf) ? (L.fcf > 0 ? dF! <= 3 : L.debt <= 0) : null,
@@ -98,12 +122,18 @@ export function fcfReport(rowsIn: AnnualRow[], mcap: number | null, fcfBasis: st
   const sbcP = L && fin(L.sbc) && fin(L.revenue) && L.revenue > 0 ? r1((L.sbc / L.revenue) * 100) : null;
   if (sbcP != null) add('sbc', 'Share pay below 10% of revenue', sbcP < 10, pct(sbcP), 'Stock-based pay is a real cost the cash-flow statement adds back.');
   const known = C.filter((c) => c.state !== 'unknown').length, passed = C.filter((c) => c.state === 'pass').length;
-  const avgM = mean(margins), ff = mean(last6.map((r) => (fin(r.fcf) && fin(mcap) && mcap > 0 ? (r.fcf / mcap) * 100 : null)).filter(fin));
+  const avgM = mean(margins);
+  // 5-year analysis (the script's block): averages over the last five years with a figure; yields at each year's own price
+  const p5 = pts.slice(-5);
+  const avg = (f: (y: YearPoint) => number | null) => { const xs = p5.map(f).filter(fin); return xs.length ? r1(mean(xs)!) : null; };
+  const yAvg = avg((y) => y.fcfYield), cxAvg = avg((y) => y.capexToFcf), dAvg = avg((y) => y.debtToFcf);
   const metrics = [
     { label: `FCF growth a year (${n >= 1 ? n : '—'} yrs)`, value: pct(fcfC) },
-    { label: 'FCF margin, average', value: pct(avgM == null ? null : r1(avgM)) },
-    { label: 'FCF yield, average (today\'s cap)', value: pct(ff == null ? null : r1(ff)) },
     { label: 'Revenue growth a year', value: pct(revC) },
+    { label: 'FCF margin, average', value: pct(avgM == null ? null : r1(avgM)) },
+    { label: 'FCF yield, average (each year\'s price)', value: pct(yAvg) },
+    { label: 'Capex ÷ FCF, average', value: pct(cxAvg) },
+    { label: 'Debt ÷ FCF, average', value: times(dAvg) },
   ];
   return { checks: C, passed, known, metrics, fcfBasis };
 }
@@ -145,6 +175,59 @@ export function breakout(b: DayBars): { ok: boolean | null; value: string } {
   const av = vs / 20, vr = av > 0 ? b.v[L] / av : null;
   const ok = b.c[L] > hi && vr != null && vr >= 1.5;
   return { ok, value: `close ${b.c[L] > hi ? 'above' : 'below'} the 20-session high; volume ${vr == null ? '—' : `${vr.toFixed(1)}×`} average` };
+}
+
+/**
+ * Stage2.py's relative strength: the stock's cumulative return ÷ the index's over the same sessions (last `sessions`
+ * trading days, matched by date; an index day missing takes the close before it). Above 1 = beating the index.
+ * `line` = that ratio through the window, one point a week, for the chart.
+ */
+export interface RsCum { ratio: number | null; stockRet: number | null; idxRet: number | null; ok: boolean | null; from: string | null; line: Array<{ t: string; v: number }> }
+export function rsCumulative(st: { t: string[]; c: number[] }, ix: { t: string[]; c: number[] }, sessions = 252): RsCum {
+  const none: RsCum = { ratio: null, stockRet: null, idxRet: null, ok: null, from: null, line: [] };
+  const n = st.t.length;
+  if (n < 30 || ix.t.length < 30) return none;
+  const start = Math.max(0, n - 1 - sessions);
+  let j = 0;
+  const idxAt = (d: string): number | null => {   // ix dates ascending; walk forward
+    while (j + 1 < ix.t.length && ix.t[j + 1] <= d) j++;
+    return ix.t[j] <= d && fin(ix.c[j]) && ix.c[j] > 0 ? ix.c[j] : null;
+  };
+  const i0 = idxAt(st.t[start]), s0 = st.c[start];
+  if (i0 == null || !(s0 > 0)) return none;
+  const line: Array<{ t: string; v: number }> = [];
+  let last: number | null = null, lastI: number | null = null;
+  for (let k = start; k < n; k++) {
+    const iv = idxAt(st.t[k]);
+    if (iv == null || !(st.c[k] > 0)) continue;
+    last = st.c[k]; lastI = iv;
+    const v = (st.c[k] / s0) / (iv / i0);
+    if ((k - start) % 5 === 0 || k === n - 1) line.push({ t: st.t[k], v: Math.round(v * 1000) / 1000 });
+  }
+  if (last == null || lastI == null) return none;
+  const ratio = Math.round(((last / s0) / (lastI / i0)) * 1000) / 1000;
+  return { ratio, stockRet: r1((last / s0 - 1) * 100), idxRet: r1((lastI / i0 - 1) * 100), ok: ratio > 1, from: st.t[start], line };
+}
+
+/** The price with its 50 / 150 / 200-day averages, one point a week over the last `weeks` weeks (the Stage 2 chart). */
+export function maSeries(t: string[], c: number[], weeks = 104): Array<{ t: string; c: number; m50: number | null; m150: number | null; m200: number | null }> {
+  const out: Array<{ t: string; c: number; m50: number | null; m150: number | null; m200: number | null }> = [];
+  const L = c.length - 1, from = Math.max(0, L - weeks * 5);
+  const rd = (v: number | null) => (v == null ? null : Math.round(v * 100) / 100);
+  for (let i = from; i <= L; i++) if ((L - i) % 5 === 0) out.push({ t: t[i], c: c[i], m50: rd(sma(c, 50, i)), m150: rd(sma(c, 150, i)), m200: rd(sma(c, 200, i)) });
+  return out;
+}
+
+/** Stage2.py's last line: trend template (all six) AND RS above 1 AND a volume breakout today. */
+export function stage2Verdict(rules: TrendRule[], rs: RsCum, bo: { ok: boolean | null }): { all: boolean | null; trendAndRs: boolean | null; text: string } {
+  const tt = rules.length === 6 && rules.every((r) => r.ok != null) ? rules.every((r) => r.ok) : null;
+  const trendAndRs = tt == null || rs.ok == null ? null : tt && rs.ok;
+  const all = trendAndRs == null || bo.ok == null ? null : trendAndRs && bo.ok;
+  const text = all == null ? 'Not enough price history to judge every criterion.'
+    : all ? 'Meets all criteria: trend template, beating the index and a volume breakout today.'
+    : trendAndRs ? 'Trend template and relative strength pass; no volume breakout today (watch for one).'
+    : `Does not meet the criteria: ${[tt ? null : 'trend template', rs.ok ? null : 'relative strength vs the index'].filter(Boolean).join(' and ')} not passing.`;
+  return { all, trendAndRs, text };
 }
 
 /** One company's lab verdict in plain words (no buy / sell): what the cash says and what the chart says. */
