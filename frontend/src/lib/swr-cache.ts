@@ -292,6 +292,7 @@ export function __resetSwrForTests(): void {
   MEM.clear();
   INFLIGHT.clear();
   REFRESHING.clear();
+  FAILED_RETRY_AFTER.clear();
 }
 
 /** Test hook: resolve once no build or background refresh is running. */
