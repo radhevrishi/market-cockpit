@@ -256,7 +256,11 @@ export function dataCheck(c: ChokeCandidate): ChokeCandidate['dataCheck'] {
   const q = f.revQ ?? f.revA!, a = f.revA ?? f.revQ!;
   const growing = q >= 10 || (q >= 5 && q >= a + 5);
   const shrinking = q < 0 && a < 5;
-  if (c.jstage === 'J2' || c.jstage === 'J3') return growing ? 'CONFIRMS' : shrinking ? 'CONTRADICTS' : 'MIXED';
+  // Revenue strength alone cannot verify an earnings J-curve when profit is
+  // contracting sharply or the operating margin is negative. Keep the stock
+  // visible as MIXED instead of falsely treating revenue as earnings proof.
+  const earningsConflict = (f.epsQ != null && f.epsQ < -20) || (f.opm != null && f.opm < 0);
+  if (c.jstage === 'J2' || c.jstage === 'J3') return shrinking ? 'CONTRADICTS' : growing ? (earningsConflict ? 'MIXED' : 'CONFIRMS') : 'MIXED';
   if (c.jstage === 'J5') return shrinking ? 'CONFIRMS' : 'MIXED';
   return growing ? 'MIXED' : 'NO_DATA';
 }
