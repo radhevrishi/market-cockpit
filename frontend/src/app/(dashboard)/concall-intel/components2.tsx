@@ -319,6 +319,9 @@ export function TransformationScreenerTab() {
   const setSmallMidOnly = (on: boolean) => { setSmallMidOnlyState(on); writeSmallMidPref('mc:radar:small-mid-only:v1', on); };
   const [capMap, setCapMap] = useState<Map<string, number | null>>(new Map());
   const [capLoading, setCapLoading] = useState(false);
+  const [extraOffset, setExtraOffset] = useState(80);
+  const [moreLoading, setMoreLoading] = useState(false);
+  const [moreNote, setMoreNote] = useState<string | null>(null);
 
   const load = useCallback(async (d: number, force = false) => {
     const requestId = ++requestSeq.current;
@@ -378,7 +381,7 @@ export function TransformationScreenerTab() {
     }
   }, []);
 
-  useEffect(() => { refreshStartedAt.current = null; pendingSince.current = null; setData(null); setBuilding(false); void load(days); }, [days, load]);
+  useEffect(() => { refreshStartedAt.current = null; pendingSince.current = null; setExtraOffset(80); setMoreNote(null); setData(null); setBuilding(false); void load(days); }, [days, load]);
   // A pending scan is not an empty feed: poll the shared cached result
   // without another forced extraction. Avoid overlap while fetching.
   useEffect(() => {
@@ -398,6 +401,39 @@ export function TransformationScreenerTab() {
     const t = setTimeout(() => { retries.current++; void load(days); }, 90_000);
     return () => clearTimeout(t);
   }, [feedState, building, loading, days, load]);
+
+  // Voluntary incremental coverage. One small, cached batch per click: NO
+  // automatic 1,171-PDF backlog, preserving the app's real-time responsiveness.
+  const loadMore = async () => {
+    if (moreLoading || !data) return;
+    setMoreLoading(true); setMoreNote(null);
+    try {
+      const r = await fetch(`/api/v1/concall-intel/transformation-screener?days=${days}&limit=40&offset=${extraOffset}`, {
+        cache: 'no-store', signal: AbortSignal.timeout(16_000),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const page: TransformScreenPayload = await r.json();
+      if (page.building) {
+        setMoreNote('This older batch is being built in the background; click Scan next batch again to retrieve it.');
+        return;
+      }
+      if (page.error) throw new Error(page.error);
+      if (!page.analyzed) { setMoreNote('No more matching filings in this window.'); return; }
+      setData((current) => {
+        if (!current || current.window_days !== page.window_days) return current;
+        const seen = new Set(current.entries.map(e => `${e.symbol}|${e.filing_datetime}|${e.attachment_url}`));
+        const added = page.entries.filter(e => !seen.has(`${e.symbol}|${e.filing_datetime}|${e.attachment_url}`));
+        return { ...current, entries: [...current.entries, ...added],
+          analyzed: current.analyzed + page.analyzed,
+          pdf_cache_hits: current.pdf_cache_hits + page.pdf_cache_hits,
+          scanned_no_signal: [...(current.scanned_no_signal || []), ...(page.scanned_no_signal || [])] };
+      });
+      setExtraOffset(o => o + 40);
+      setMoreNote(`Examined another ${page.analyzed} filings; newly qualifying signals have been added. Not a complete-universe scan.`);
+    } catch (e) {
+      setMoreNote(e instanceof Error && e.name === 'TimeoutError' ? 'Older batch still loading; saved shortlist is unchanged.' : e instanceof Error ? e.message : 'Additional scan unavailable.');
+    } finally { setMoreLoading(false); }
+  };
 
   const allEntries = data?.entries ?? [];
   // zzz898 — look up the size of every ranked name (chunks of 40, best-effort; failures leave the size unknown)
@@ -479,6 +515,21 @@ export function TransformationScreenerTab() {
         {data && (data.concalls_in_feed ?? 0) > 0 && (
           <div style={{ fontSize: 11, color: TF.amber, marginTop: 8 }}>
             Coverage: {data.analyzed} of {data.concalls_in_feed} identified concall filings sampled ({(100 * data.analyzed / Math.max(1, data.concalls_in_feed!)).toFixed(1)}%). This is not a complete market scan; missed companies are not negative calls.
+          </div>
+        )}
+        {data && !building && (
+          <div style={{ marginTop: 8, display: 'flex', gap: 9, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button type="button" disabled={loading || moreLoading} onClick={() => { void loadMore(); }}
+              title="Manually scan the next 40 older filings; no automatic expensive full-market extraction"
+              style={{ border: `1px solid ${TF.border}`, borderRadius: 6, background: TF.card2, color: TF.cyan,
+                padding: '7px 11px', cursor: moreLoading ? 'wait' : 'pointer', fontSize: 11, fontWeight: 800 }}>
+              {moreLoading ? 'Scanning older batch…' : 'Scan next 40 unreviewed filings'}
+            </button>
+            <span style={{ fontSize: 11, color: TF.muted }}>
+              Up to {Math.max(0, (data.concalls_in_feed ?? 0) - data.analyzed)} relevant concalls may remain unchecked.
+              Older batches are manual to protect page speed.
+            </span>
+            {moreNote && <span role="status" style={{ fontSize: 11, color: TF.amber }}>{moreNote}</span>}
           </div>
         )}
         {building && (
