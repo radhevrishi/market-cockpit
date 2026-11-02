@@ -230,13 +230,12 @@ export function detectCaution(text: string): { level: number; flags: string[] } 
   const flags: string[] = [];
   // explicit guidance CUT (strong) — but not "maintained / reaffirmed / raised / no reduction"
   const guidanceCut = /\b(reduc\w*|lower\w*|cut|trimm\w*|slash\w*|downgrad\w*|revis\w*\s+(?:down\w*|lower))\b[^.]{0,30}?\b(guidance|outlook|forecast|estimate\w*|target\w*)\b|\b(guidance|outlook|forecast)\b[^.]{0,30}?\b(reduc\w*|lower\w*|cut|trimm\w*|downward|revis\w*\s+down\w*)\b/i;
-  const guidanceHeld = /\b(maintain\w*|reaffirm\w*|reiterat\w*|retain\w*|raised|rais\w*|increas\w*|upgrad\w*|no reduction|no change|unchanged|intact)\b[^.]{0,25}?\b(guidance|outlook|forecast)\b|\b(guidance|outlook|forecast)\b[^.]{0,25}?\b(maintain\w*|reaffirm\w*|reiterat\w*|unchanged|intact|raised)\b/i;
   let strong = 0;
   // Never let a "maintained guidance" sentence elsewhere in a 100-page PDF
   // suppress a real reduction in a different sentence. Treat historical or
   // contradictory comments as review-required, not as current verified cuts.
-  const clauses = text.split(/(?<=[.!?])\\s+|\\n+/).slice(0, 12000);
-  const contradictedInClause = /\\b(?:no|not|never|without|hasn't|haven't|did\\s+not)\\b[^.!?]{0,32}?\\b(?:reduc\\w*|lower\\w*|cut|trim\\w*|downgrad\\w*)\\b/i;
+  const clauses = text.split(/(?<=[.!?])\s+|\n+/).slice(0, 12000);
+  const contradictedInClause = /\b(?:no|not|never|without|hasn't|haven't|did\s+not)\b[^.!?]{0,32}?\b(?:reduc\w*|lower\w*|cut|trim\w*|downgrad\w*)\b/i;
   const cutInContext = clauses.some((clause) =>
     guidanceCut.test(clause) && !contradictedInClause.test(clause));
   if (cutInContext) { strong++; flags.push('guidance reduced'); }
