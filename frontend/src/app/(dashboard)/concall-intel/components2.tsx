@@ -287,7 +287,8 @@ export function TransformationFrameworkTab({ lastRadar, lastTicker }: { lastRada
 
 export function TransformationScreenerTab() {
   const [days, setDays] = useState<number>(60);
-  const [decisionFilter, setDecisionFilter] = useState<RadarQueue | 'ALL'>('ALL');
+  const [decisionFilter, setDecisionFilter] = useState<RadarQueue | 'ALL'>('RESEARCH');
+  const [showFullSignals, setShowFullSignals] = useState(false);
   const [data, setData] = useState<TransformScreenPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [building, setBuilding] = useState(false);
@@ -431,7 +432,7 @@ export function TransformationScreenerTab() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       {/* header */}
       <div style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '16px 18px' }}>
-        <div style={{ fontSize: 15, fontWeight: 900, color: TF.cyan, letterSpacing: '0.3px' }}>🔭 Transformation Radar — the whole feed, auto-scanned</div>
+        <div style={{ fontSize: 15, fontWeight: 900, color: TF.cyan, letterSpacing: '0.3px' }}>🔭 Transformation Radar — actionable filing shortlist</div>
         <div style={{ fontSize: 12.5, color: TF.muted, lineHeight: 1.6, marginTop: 6 }}>
           Scans a bounded, newest-first sample, not the complete universe. <b style={{ color: TF.text2 }}>Proof-quality first:</b> analyst questions and broken PDF extracts cannot establish commercial orders; contradictory periods are isolated for reconciliation. T-Score is not a buy rating.
         </div>
@@ -452,11 +453,16 @@ export function TransformationScreenerTab() {
           }}>{building ? '⏳ Rebuilding…' : loading ? '⏳ Loading…' : '↻ Rescan (fresh)'}</button>
           {data && (
             <span style={{ fontSize: 10.5, color: TF.dim, ...TFM }}>
-              {data.analyzed} filings sampled · {data.pdf_cache_hits} cached · {data.candidates_total} announcements in feed · last scan {new Date(data.generated_at).toLocaleString('en-IN')}
+              {data.analyzed} filings analyzed · {data.pdf_cache_hits} cached · {data.candidates_total} announcements in feed · last scan {new Date(data.generated_at).toLocaleString('en-IN')}
               {data.concalls_in_feed != null && <> · {data.concalls_in_feed} concall filings ({data.transcripts_in_feed ?? 0} transcripts)</>}
             </span>
           )}
         </div>
+        {data && (data.concalls_in_feed ?? 0) > 0 && (
+          <div style={{ fontSize: 11, color: TF.amber, marginTop: 8 }}>
+            Coverage: {data.analyzed} of {data.concalls_in_feed} identified concall filings sampled ({(100 * data.analyzed / Math.max(1, data.concalls_in_feed!)).toFixed(1)}%). This is not a complete market scan; missed companies are not negative calls.
+          </div>
+        )}
         {building && (
           <p role="status" aria-live="polite" style={{ color: TF.amber, fontSize: 12, margin: '10px 0 0' }}>
             ⏳ Radar scanning in the background. Rechecking every 8 seconds; existing results are retained.
@@ -522,7 +528,7 @@ export function TransformationScreenerTab() {
               ['RECONCILE', 'Conflicting evidence', TF.amber],
               ['WAIT', 'Wait for proof', TF.amber],
               ['RISK', 'Guidance / risk', TF.red],
-              ['UNVERIFIED', 'Unverified PDFs', TF.dim],
+              ['UNVERIFIED', 'No full document', TF.dim],
             ] as const).map(([key, label, color]) => (
               <button key={key} type="button" onClick={() => setDecisionFilter(key)}
                 aria-pressed={decisionFilter === key}
@@ -533,6 +539,10 @@ export function TransformationScreenerTab() {
               </button>
             ))}
           </div>
+          <button type="button" onClick={() => setShowFullSignals(v => !v)}
+            aria-pressed={showFullSignals} style={{ background: TF.card2, border: `1px solid ${TF.border}`, borderRadius: 6, padding: '6px 10px', cursor: 'pointer', marginTop: 9, color: TF.text2, fontSize: 11 }}>
+            {showFullSignals ? 'Hide keyword details' : 'Show all keyword details'}
+          </button>
         </div>
       )}
 
@@ -542,9 +552,9 @@ export function TransformationScreenerTab() {
           {[
             { label: 'Ranked names', v: entries.length, c: TF.cyan },
             { label: 'Evidence rung 3–7', v: sweetSpotCount, c: TF.green },
-            { label: 'Full triple (ind+co+fin)', v: tripleCount, c: TF.amber },
+            { label: 'Keyword triple (unverified)', v: tripleCount, c: TF.amber },
             { label: '🏆 Also on Conviction Bench', v: onBenchCount, c: TF.green },
-            { label: '📗 In my book', v: ownedCount, c: '#34D399' },
+            { label: '📗 In my book', v: entries.filter(e => sourceOf(e.symbol) === 'portfolio').length, c: '#34D399' },
             { label: 'Top score', v: entries[0]?.transformation_score ?? 0, c: TF.purple },
           ].map((t) => (
             <div key={t.label} style={{ background: TF.card2, border: `1px solid ${TF.border}`, borderRadius: 8, padding: '10px 12px' }}>
@@ -608,8 +618,8 @@ export function TransformationScreenerTab() {
       {/* leaderboard */}
       {entries.map((e, i) => (
         <div key={`${e.symbol}-${e.filing_datetime}-${i}`} style={{
-          background: TF.card, border: `1px solid ${e.stage_sweet_spot ? 'color-mix(in srgb, var(--mc-bullish) 40%, transparent)' : TF.border}`,
-          borderLeft: `4px solid ${velocityColor(e.velocity)}`, borderRadius: 10, padding: '14px 16px',
+          background: TF.card, border: `1px solid ${TF.border}`,
+          borderLeft: `4px solid ${radarDecision(e).queue === 'RESEARCH' ? TF.green : radarDecision(e).queue === 'RISK' ? TF.red : TF.amber}`, borderRadius: 10, padding: '14px 16px',
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
@@ -674,7 +684,7 @@ export function TransformationScreenerTab() {
 
           {/* pattern chips */}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 10 }}>
-            {e.patterns.slice(0, 10).map((p) => (
+            {e.patterns.slice(0, showFullSignals ? 10 : 3).map((p) => (
               <span key={p.key} title={`${p.hits} mention${p.hits === 1 ? '' : 's'}`} style={{
                 fontSize: 10.5, fontWeight: 700, padding: '3px 8px', borderRadius: 5,
                 background: TF.card2, border: `1px solid ${TF.border}`, color: TF.text2,
@@ -713,7 +723,7 @@ export function TransformationScreenerTab() {
           )}
 
           {/* events + link */}
-          {e.top_events.length > 0 && (
+          {showFullSignals && e.top_events.length > 0 && (
             <div style={{ marginTop: 8, fontSize: 10, color: TF.dim, ...TFM }}>
               EVENTS: {e.top_events.join(' · ')}
             </div>
