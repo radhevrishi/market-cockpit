@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { assessRadarQuote, radarDecision, rankForDecision } from '../concall-radar-decision';
 
-const good = { evidence_quote: 'The company reported EBITDA margin expanded 300 basis points to 17% and commercial revenue grew 42% in Q2 FY27.', scored_from: 'PDF' as const, bullish_tier: 'BULLISH', caution_flags: [], caution_level: 0, evidence_score: 8, stage: 5, stage_sweet_spot: true, triple: { industry: true, company: true, financial: true, count: 3 }, transformation_score: 36 };
+const good = { evidence_quote: 'The company reported EBITDA margin expanded 300 basis points to 17% and commercial revenue grew 42% in Q2 FY27.', scored_from: 'PDF' as const, bullish_tier: 'BULLISH', caution_flags: [], caution_level: 0, evidence_score: 8, stage: 5, stage_sweet_spot: true, evidence_breadth: 4, patterns: [{ key: 'capacity' }, { key: 'export' }, { key: 'margin' }], triple: { industry: true, company: true, financial: true, count: 3 }, transformation_score: 36 };
 
 test('guidance cuts block research priority even with a very high transformation score', () => {
   const result = radarDecision({ ...good, transformation_score: 90, caution_flags: ['guidance reduced'] });
@@ -61,11 +61,11 @@ test('legal definition and company biographies cannot be evidence', () => {
     'He is primarily responsible for overseeing overall strategy and business development functions of the group.',
   ]) assert.notEqual(assessRadarQuote(q).quality, 'USABLE');
 });
-test('real secured order can advance to RESEARCH but still has valuation and guidance blockers', () => {
+test('an order mention by itself is insufficient to underwrite before materiality is established', () => {
  const q = 'We have already secured an HTLS order book of INR 200 crores plus as on date and the capacity augmentation is planned at our new plant.';
  assert.equal(assessRadarQuote(q).quality, 'USABLE');
  const d = radarDecision({ ...good, evidence_quote: q, evidence_score: 6 });
- assert.equal(d.queue, 'RESEARCH');
+ assert.equal(d.queue, 'WAIT');
  assert.ok(d.blockers.some(x => x.includes('guidance')));
 });
 test('positive and negative signals for different periods must be reconciled', () => {
@@ -80,4 +80,21 @@ test('unreliable proof sorts below credible reported earnings even with huge T-s
   { ...good, symbol:'CONFLICT', transformation_score:40, caution_flags:['margin down'] },
  ];
  assert.deepEqual(rankForDecision(data).map(x => x.symbol), ['PROOF','CONFLICT','QUESTION']);
+});
+
+test('neutral restaurants with one margin excerpt do not enter Underwrite thesis', () => {
+  const d = radarDecision({ ...good, bullish_tier: 'NEUTRAL', transformation_score: 100 });
+  assert.equal(d.queue, 'WAIT');
+  assert.match(d.reason, /Neutral or unconfirmed/);
+});
+test('mixed-positive high T-Score without forward outlook remains WAIT', () => {
+  assert.equal(radarDecision({ ...good, bullish_tier: 'MIXED_POSITIVE', transformation_score: 100 }).queue, 'WAIT');
+});
+test('one margin excerpt cannot establish an earnings J-curve', () => {
+  const d = radarDecision({ ...good, evidence_breadth: 1, patterns: [{ key: 'margin' }] });
+  assert.equal(d.queue, 'WAIT');
+});
+test('no independent structural milestone remains WAIT even with several financial keywords', () => {
+  const d = radarDecision({ ...good, patterns: [{ key: 'tech' }, { key: 'margin' }, { key: 'utilisation' }] });
+  assert.equal(d.queue, 'WAIT');
 });

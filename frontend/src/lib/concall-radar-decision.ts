@@ -9,6 +9,8 @@ export interface RadarTriageInput {
   caution_flags?: string[];
   evidence_score?: number;
   evidence_quote?: string;
+  evidence_breadth?: number;
+  patterns?: Array<{ key: string; hits?: number }>; 
   stage?: number;
   stage_sweet_spot?: boolean;
   transformation_score?: number;
@@ -52,6 +54,10 @@ export function radarDecision(item: RadarTriageInput): RadarDecision {
   const bearish = ['BEARISH', 'MIXED_NEGATIVE'].includes((item.bullish_tier || '').toUpperCase());
   const level = item.caution_level ?? 0;
   const evidence = item.evidence_score ?? 0;
+  const proofBreadth = item.evidence_breadth ?? 0; // distinct matched rungs, NOT independent filings
+  const structuralKeys = new Set(['customer', 'capacity', 'cdmo', 'export', 'recurring', 'acqui', 'mix', 'debt', 'parent']);
+  const structuralCount = (item.patterns ?? []).filter(p => structuralKeys.has(p.key)).length;
+  const sentiment = (item.bullish_tier || '').toUpperCase();
   const stage = item.stage ?? 0;
   const financial = item.triple?.financial === true;
   const quote = assessRadarQuote(item.evidence_quote);
@@ -89,17 +95,30 @@ export function radarDecision(item: RadarTriageInput): RadarDecision {
     nextCheck: 'Open the primary PDF and verify an actual management statement, current customer order or reported number.',
     blockers: [...alwaysCheck, 'Primary excerpt failed text-quality gate'],
   };
-  if (evidence < 6 || !financial) return {
-    queue: 'WAIT', label: 'WAIT FOR PROOF',
-    reason: evidence < 6 ? 'No confirmed commercial order or higher-level proof.' : !financial ? 'Operating or financial inflection not established.' : 'Very early-stage transformation claim.',
-    nextCheck: 'Look for order execution, booked revenue, EBITDA/PAT growth and operating cash-flow confirmation in the next result.',
-    blockers: [...alwaysCheck, 'Earnings conversion not yet established'],
-  };
+  // A strong margin line is not itself a transformation. Financial keyword
+  // matching in the analyzer is permissive: do not label an unchanged/neutral
+  // operating business "Underwrite" on one good sentence.
+  const positiveOutlook = sentiment === 'BULLISH' || sentiment === 'ULTRA_BULLISH';
+  const layeredEvidence = evidence >= 8 && proofBreadth >= 3 && structuralCount >= 2;
+  if (!positiveOutlook || !financial || !layeredEvidence) {
+    const why = !positiveOutlook
+      ? (sentiment === 'MIXED_POSITIVE' ? 'Mixed-positive tone: materiality and forward outlook not established.' : 'Neutral or unconfirmed outlook; a positive margin quarter alone is insufficient.')
+      : !financial ? 'Financial improvement has not been verified from the extracted filing.'
+      : evidence < 8 ? 'Orders or plans alone have not been shown to contribute reported revenue or earnings.'
+      : proofBreadth < 3 ? 'One or two isolated proof signals cannot establish an earnings J-curve.'
+      : 'Too few distinct structural business-change drivers; this may be ordinary quarterly margin variation.';
+    return {
+      queue: 'WAIT', label: 'VALIDATE EARNINGS INFLECTION',
+      reason: why,
+      nextCheck: 'Compare the latest two quarters of sales, EBIT/PAT, margins and cash flow; quantify order-to-revenue conversion, forward guidance and the stock valuation.',
+      blockers: [...alwaysCheck, 'At least three distinct proof rungs and two structural drivers required', 'Cross-quarter acceleration unverified'],
+    };
+  }
   return {
     queue: 'RESEARCH', label: 'RESEARCH FIRST',
-    reason: 'A credible-looking commercial or financial excerpt warrants underwriting, not buying. The evidence rung does not establish cycle age.',
-    nextCheck: 'Verify latest management guidance, actual diluted EPS growth, CFO/PAT, capital needs, valuation and technical entry.',
-    blockers: alwaysCheck,
+    reason: 'Multiple different operating milestones, a positive filing tone and a realised earnings excerpt justify underwriting, not buying.',
+    nextCheck: 'Independently verify latest guidance, diluted EPS growth for two quarters, CFO/PAT, incremental ROIC, current valuation and technical entry.',
+    blockers: [...alwaysCheck, 'Separate filings and subsequent earnings still require confirmation'],
   };
 }
 

@@ -5,6 +5,7 @@ import { type ReactNode, useState, useEffect, useMemo, useCallback, useRef } fro
 import { readPortfolioSymbols, normSymbol, type SymbolSource, classifySource, SOURCE_META } from '@/lib/portfolio-symbols';
 import { type ConvictionEntry, readConvictionBeats } from '@/lib/conviction-beats';
 import { readSmallMidPref, writeSmallMidPref, knownCapCr, smallMidCounts, passesSmallMid, SMALL_MID_MAX_CR } from '@/lib/small-mid-filter';
+const RADAR_MIN_CAP_CR = 500; // Microcaps remain available when Small & mid toggle is off.
 import type { TransformationRadarData, TransformScreenPayload } from './types';
 import { TF, TFM, TIER_COLOR, CONV_TIER_COLOR } from './constants';
 import { velocityColor } from './helpers';
@@ -430,7 +431,8 @@ export function TransformationScreenerTab() {
   const ownedCount = allEntries.filter((e) => sourceOf(e.symbol) === 'portfolio').length;
   const scopedEntries = (sourceFilter
     ? allEntries.filter((e) => sourceOf(e.symbol) === sourceFilter)
-    : allEntries).filter((e) => passesSmallMid(capOf(e.symbol), smallMidOnly));
+    : allEntries).filter((e) => passesSmallMid(capOf(e.symbol), smallMidOnly) && (!smallMidOnly || capOf(e.symbol) == null || capOf(e.symbol)! >= RADAR_MIN_CAP_CR));
+  const radarTriage = (e: TransformScreenPayload['entries'][number]) => radarDecision(e);
   const decisionCounts = {
     ALL: scopedEntries.length,
     RESEARCH: scopedEntries.filter((e) => radarDecision(e).queue === 'RESEARCH').length,
@@ -450,7 +452,7 @@ export function TransformationScreenerTab() {
       <div style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '16px 18px' }}>
         <div style={{ fontSize: 15, fontWeight: 900, color: TF.cyan, letterSpacing: '0.3px' }}>🔭 Transformation Radar — actionable filing shortlist</div>
         <div style={{ fontSize: 12.5, color: TF.muted, lineHeight: 1.6, marginTop: 6 }}>
-          Scans a bounded, newest-first sample, not the complete universe. <b style={{ color: TF.text2 }}>Proof-quality first:</b> analyst questions and broken PDF extracts cannot establish commercial orders; contradictory periods are isolated for reconciliation. T-Score is not a buy rating.
+          Scans a bounded, newest-first sample, not the complete universe. Missing companies are UNCHECKED, not negative. <b style={{ color: TF.text2 }}>Proof-quality first:</b> analyst questions and broken PDF extracts cannot establish commercial orders; contradictory periods are isolated for reconciliation. T-Score is not a buy rating.
         </div>
         {/* controls */}
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 }}>
@@ -515,15 +517,15 @@ export function TransformationScreenerTab() {
           {/* zzz898 — Small & mid only (default on) */}
           <span style={{ width: 1, height: 14, background: TF.border, margin: '0 4px' }} />
           <button onClick={() => setSmallMidOnly(!smallMidOnly)}
-            title={`Hide names with a market cap of ₹${SMALL_MID_MAX_CR.toLocaleString('en-IN')} Cr or more. Names whose size is not available stay visible, marked "size n/a".`}
+            title={`Show ₹${RADAR_MIN_CAP_CR.toLocaleString('en-IN')}–₹${SMALL_MID_MAX_CR.toLocaleString('en-IN')} Cr. Unknown sizes remain visible but are not certified small/mid.`}
             style={{
               fontSize: 11, fontWeight: 800, padding: '3px 10px', borderRadius: 20, cursor: 'pointer',
               border: `1px solid #38BDF8${smallMidOnly ? '' : '55'}`,
               background: smallMidOnly ? '#38BDF8' : '#38BDF818',
               color: smallMidOnly ? '#0B1220' : '#38BDF8',
             }}>
-            {smallMidOnly ? '✓ ' : ''}◧ Small &amp; mid only
-            {smallMidOnly && sizeCounts.hiddenLarge > 0 ? ` · ${sizeCounts.hiddenLarge} large hidden` : ''}
+            {smallMidOnly ? '✓ ' : ''}◧ ₹500–30,000 Cr only
+            {smallMidOnly && sizeCounts.hiddenLarge > 0 ? ` · ${sizeCounts.hiddenLarge} large hidden` : ''}{smallMidOnly ? ` · ${allEntries.filter((e) => { const c = capOf(e.symbol); return c != null && c < RADAR_MIN_CAP_CR; }).length} microcaps hidden` : ''}
             {capLoading ? ' · sizes loading…' : sizeCounts.unknown > 0 ? ` · ${sizeCounts.unknown} size n/a` : ''}
           </button>
         </div>
@@ -534,7 +536,7 @@ export function TransformationScreenerTab() {
         <div style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '12px 14px' }}>
           <div style={{ fontSize: 13, fontWeight: 900, color: TF.text, marginBottom: 4 }}>Decision queue · evidence before narratives</div>
           <div style={{ fontSize: 11, lineHeight: 1.6, color: TF.muted, marginBottom: 10 }}>
-            Underwrite means research, <strong>not buy</strong>. An evidence rung of 8–10 does not imply the stock is late-cycle. Conflicting excerpts require matching the actual quarter and segment. Valuation, cash conversion and current guidance remain unverified.
+            Underwrite is research only, <strong>never a buy signal</strong>. Positive tone, three distinct evidence milestones and two structural change drivers are required; routine quarterly margin improvements and neutral tone stay in Wait. Cross-quarter results, guidance and valuation remain unverified.
             {sizeCounts.unknown > 0 && ` ${sizeCounts.unknown} companies have unknown market cap; their small/mid status is unverified.`}
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
