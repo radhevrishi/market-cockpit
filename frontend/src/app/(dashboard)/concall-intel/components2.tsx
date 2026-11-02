@@ -360,17 +360,17 @@ export function TransformationScreenerTab() {
   const retries = useRef(0);
   useEffect(() => { retries.current = 0; }, [days]);
   useEffect(() => {
-    if (loading || (feedState !== 'FAILED' && feedState !== 'PARTIAL')) return;
+    if (building || loading || (feedState !== 'FAILED' && feedState !== 'PARTIAL')) return;
     if (retries.current >= 5) return;
     const t = setTimeout(() => { retries.current++; load(days, true); }, 90_000);
     return () => clearTimeout(t);
-  }, [feedState, loading, days, load]);
+  }, [feedState, building, loading, days, load]);
 
   const allEntries = data?.entries ?? [];
   // zzz898 — look up the size of every ranked name (chunks of 40, best-effort; failures leave the size unknown)
   useEffect(() => {
     const syms = Array.from(new Set((data?.entries ?? []).map((e) => String(e.symbol || '').toUpperCase()).filter(Boolean)));
-    if (syms.length === 0) return;
+    if (syms.length === 0 || !smallMidOnly) { setCapLoading(false); return; }
     let alive = true;
     setCapLoading(true);
     (async () => {
@@ -379,7 +379,7 @@ export function TransformationScreenerTab() {
       for (let i = 0; i < syms.length; i += 40) chunks.push(syms.slice(i, i + 40));
       await Promise.all(chunks.map(async (c) => {
         try {
-          const r = await fetch(`/api/v1/earnings/enrich?symbols=${encodeURIComponent(c.join(','))}`, { signal: AbortSignal.timeout(60_000) });
+          const r = await fetch(`/api/v1/earnings/enrich?symbols=${encodeURIComponent(c.join(','))}`, { signal: AbortSignal.timeout(12_000) });
           if (!r.ok) return;
           const j = await r.json();
           for (const s of c) m.set(s, knownCapCr(j?.data?.[s]?.market_cap_cr));
@@ -388,7 +388,7 @@ export function TransformationScreenerTab() {
       if (alive) { setCapMap(m); setCapLoading(false); }
     })();
     return () => { alive = false; };
-  }, [data]);
+  }, [data, smallMidOnly]);
   const capOf = (sym: unknown): number | null => capMap.get(String(sym || '').toUpperCase()) ?? null;
   const sizeCounts = smallMidCounts(allEntries, (e) => capOf(e.symbol));
   const sourceOf = useCallback(
