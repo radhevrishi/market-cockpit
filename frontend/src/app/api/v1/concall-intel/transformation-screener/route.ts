@@ -127,8 +127,11 @@ export async function GET(req: NextRequest) {
   const days = Math.min(180, Math.max(1, Number(req.nextUrl.searchParams.get('days')) || 60));
   const limit = Math.min(150, Math.max(1, Number(req.nextUrl.searchParams.get('limit')) || 80));
   const minPatterns = Math.max(0, Number(req.nextUrl.searchParams.get('minPatterns')) || 1);
+  // Explicitly paged scan for previously skipped filings; never launch the
+  // full 1,000+ filing backlog automatically on a dashboard visit.
+  const offset = Math.min(10_000, Math.max(0, Math.floor(Number(req.nextUrl.searchParams.get('offset')) || 0)));
   try {
-    return await handle(req, days, limit, minPatterns);
+    return await handle(req, days, limit, minPatterns, offset);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[transform-screener] uncaught', msg);
@@ -149,13 +152,13 @@ const SCREEN_FRESH_MS = CACHE_TTL * 1000;
 const SCREEN_MAX_STALE_MS = 7 * 24 * 3_600_000;
 const SCREEN_WAIT_MS = 9_000;
 type Built = { payload: ScreenPayload; cacheable: boolean };
-async function handle(req: NextRequest, days: number, limit: number, minPatterns: number) {
+async function handle(req: NextRequest, days: number, limit: number, minPatterns: number, offset = 0) {
   const sp = req.nextUrl.searchParams;
   const forceFresh = sp.get('refresh') === '1' || sp.get('nocache') === '1';
   try {
     const r = await swrGet<Built>({
-      key: `transform-screener:swr:v5:${days}:${limit}:${minPatterns}`, freshMs: SCREEN_FRESH_MS, maxStaleMs: SCREEN_MAX_STALE_MS, force: forceFresh,
-      build: () => buildScreen(req, days, limit, minPatterns, forceFresh),
+      key: offset === 0 ? `transform-screener:swr:v5:${days}:${limit}:${minPatterns}` : `transform-screener:swr:v6:${days}:${limit}:${minPatterns}:${offset}`, freshMs: SCREEN_FRESH_MS, maxStaleMs: SCREEN_MAX_STALE_MS, force: forceFresh,
+      build: () => buildScreen(req, days, limit, minPatterns, forceFresh, offset),
       isUsable: (b) => !!b && b.cacheable,
       waitMs: SCREEN_WAIT_MS,
       readWaitMs: 2_000, // 18s browser budget also includes Redis; avoid unbounded cold lookup
@@ -170,7 +173,7 @@ async function handle(req: NextRequest, days: number, limit: number, minPatterns
   }
 }
 
-async function buildScreen(req: NextRequest, days: number, limit: number, minPatterns: number, forceFresh: boolean): Promise<Built> {
+async function buildScreen(req: NextRequest, days: number, limit: number, minPatterns: number, forceFresh: boolean, offset = 0): Promise<Built> {
   const origin = new URL(req.url).origin;
   // zzz810 — a forced Rescan also forces the feed, so an empty/failed feed
   // is re-fetched from NSE/BSE instead of re-read from cache.
@@ -225,7 +228,7 @@ async function buildScreen(req: NextRequest, days: number, limit: number, minPat
       if (t !== 0) return t;                                // then high-bullish
       return new Date(b.filing_datetime).getTime() - new Date(a.filing_datetime).getTime();
     })
-    .slice(0, limit);
+    .slice(offset, offset + limit);
 
   let cacheHits = 0;
   const entries: TransformScreenEntry[] = [];

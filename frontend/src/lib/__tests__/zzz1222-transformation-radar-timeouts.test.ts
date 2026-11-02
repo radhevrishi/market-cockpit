@@ -62,3 +62,14 @@ test('radar throttles PDF parsing to keep the rest of the application responsive
  assert.match(src, /TIME_BUDGET_MS = 32_000/);
  assert.match(src, /setImmediate\(resolve\)/);
 });
+
+test('radar can scan additional bounded older batches without automatic full-feed work', () => {
+  const code = route(), ui = view();
+  assert.match(code, /get\('offset'\)/);
+  assert.match(code, /slice\(offset, offset \+ limit\)/);
+  assert.match(code, /transform-screener:swr:v6:/);
+  assert.match(code, /offset === 0 \? `transform-screener:swr:v5:/);
+  assert.match(ui, /Scan next 40 unreviewed filings/);
+  assert.match(ui, /\&offset=\$\{extraOffset\}/);
+  assert.match(ui, /setExtraOffset\(o => o \+ page\.analyzed\)/);
+});

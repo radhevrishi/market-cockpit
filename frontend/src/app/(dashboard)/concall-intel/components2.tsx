@@ -5,6 +5,7 @@ import { type ReactNode, useState, useEffect, useMemo, useCallback, useRef } fro
 import { readPortfolioSymbols, normSymbol, type SymbolSource, classifySource, SOURCE_META } from '@/lib/portfolio-symbols';
 import { type ConvictionEntry, readConvictionBeats } from '@/lib/conviction-beats';
 import { readSmallMidPref, writeSmallMidPref, knownCapCr, smallMidCounts, passesSmallMid, SMALL_MID_MAX_CR } from '@/lib/small-mid-filter';
+const RADAR_MIN_CAP_CR = 500; // Microcaps remain available when Small & mid toggle is off.
 import type { TransformationRadarData, TransformScreenPayload } from './types';
 import { TF, TFM, TIER_COLOR, CONV_TIER_COLOR } from './constants';
 import { velocityColor } from './helpers';
@@ -318,10 +319,13 @@ export function TransformationScreenerTab() {
   const setSmallMidOnly = (on: boolean) => { setSmallMidOnlyState(on); writeSmallMidPref('mc:radar:small-mid-only:v1', on); };
   const [capMap, setCapMap] = useState<Map<string, number | null>>(new Map());
   const [capLoading, setCapLoading] = useState(false);
+  const [extraOffset, setExtraOffset] = useState(80);
+  const [moreLoading, setMoreLoading] = useState(false);
+  const [moreNote, setMoreNote] = useState<string | null>(null);
 
   const load = useCallback(async (d: number, force = false) => {
     const requestId = ++requestSeq.current;
-    if (force) refreshStartedAt.current = Date.now();
+    if (force) { refreshStartedAt.current = Date.now(); setExtraOffset(80); setMoreNote(null); }
     setLoading(true); setErr(null);
     try {
       // An uncached force refresh is a bounded request; the backend completes
@@ -377,7 +381,7 @@ export function TransformationScreenerTab() {
     }
   }, []);
 
-  useEffect(() => { refreshStartedAt.current = null; pendingSince.current = null; setData(null); setBuilding(false); void load(days); }, [days, load]);
+  useEffect(() => { refreshStartedAt.current = null; pendingSince.current = null; setExtraOffset(80); setMoreNote(null); setData(null); setBuilding(false); void load(days); }, [days, load]);
   // A pending scan is not an empty feed: poll the shared cached result
   // without another forced extraction. Avoid overlap while fetching.
   useEffect(() => {
@@ -397,6 +401,39 @@ export function TransformationScreenerTab() {
     const t = setTimeout(() => { retries.current++; void load(days); }, 90_000);
     return () => clearTimeout(t);
   }, [feedState, building, loading, days, load]);
+
+  // Voluntary incremental coverage. One small, cached batch per click: NO
+  // automatic 1,171-PDF backlog, preserving the app's real-time responsiveness.
+  const loadMore = async () => {
+    if (moreLoading || !data) return;
+    setMoreLoading(true); setMoreNote(null);
+    try {
+      const r = await fetch(`/api/v1/concall-intel/transformation-screener?days=${days}&limit=40&offset=${extraOffset}`, {
+        cache: 'no-store', signal: AbortSignal.timeout(16_000),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const page: TransformScreenPayload = await r.json();
+      if (page.building) {
+        setMoreNote('This older batch is being built in the background; click Scan next batch again to retrieve it.');
+        return;
+      }
+      if (page.error) throw new Error(page.error);
+      if (!page.analyzed) { setMoreNote('No more matching filings in this window.'); return; }
+      setData((current) => {
+        if (!current || current.window_days !== page.window_days) return current;
+        const seen = new Set(current.entries.map(e => `${e.symbol}|${e.filing_datetime}|${e.attachment_url}`));
+        const added = page.entries.filter(e => !seen.has(`${e.symbol}|${e.filing_datetime}|${e.attachment_url}`));
+        return { ...current, entries: [...current.entries, ...added],
+          analyzed: current.analyzed + page.analyzed,
+          pdf_cache_hits: current.pdf_cache_hits + page.pdf_cache_hits,
+          scanned_no_signal: [...(current.scanned_no_signal || []), ...(page.scanned_no_signal || [])] };
+      });
+      setExtraOffset(o => o + page.analyzed); // do not skip PDFs when the server time budget stops a partial batch
+      setMoreNote(`Examined another ${page.analyzed} filings; newly qualifying signals have been added. Not a complete-universe scan.`);
+    } catch (e) {
+      setMoreNote(e instanceof Error && e.name === 'TimeoutError' ? 'Older batch still loading; saved shortlist is unchanged.' : e instanceof Error ? e.message : 'Additional scan unavailable.');
+    } finally { setMoreLoading(false); }
+  };
 
   const allEntries = data?.entries ?? [];
   // zzz898 — look up the size of every ranked name (chunks of 40, best-effort; failures leave the size unknown)
@@ -430,7 +467,7 @@ export function TransformationScreenerTab() {
   const ownedCount = allEntries.filter((e) => sourceOf(e.symbol) === 'portfolio').length;
   const scopedEntries = (sourceFilter
     ? allEntries.filter((e) => sourceOf(e.symbol) === sourceFilter)
-    : allEntries).filter((e) => passesSmallMid(capOf(e.symbol), smallMidOnly));
+    : allEntries).filter((e) => passesSmallMid(capOf(e.symbol), smallMidOnly) && (!smallMidOnly || capOf(e.symbol) == null || capOf(e.symbol)! >= RADAR_MIN_CAP_CR));
   const decisionCounts = {
     ALL: scopedEntries.length,
     RESEARCH: scopedEntries.filter((e) => radarDecision(e).queue === 'RESEARCH').length,
@@ -450,7 +487,7 @@ export function TransformationScreenerTab() {
       <div style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '16px 18px' }}>
         <div style={{ fontSize: 15, fontWeight: 900, color: TF.cyan, letterSpacing: '0.3px' }}>🔭 Transformation Radar — actionable filing shortlist</div>
         <div style={{ fontSize: 12.5, color: TF.muted, lineHeight: 1.6, marginTop: 6 }}>
-          Scans a bounded, newest-first sample, not the complete universe. <b style={{ color: TF.text2 }}>Proof-quality first:</b> analyst questions and broken PDF extracts cannot establish commercial orders; contradictory periods are isolated for reconciliation. T-Score is not a buy rating.
+          Scans a bounded, newest-first sample, not the complete universe. Missing companies are UNCHECKED, not negative. <b style={{ color: TF.text2 }}>Proof-quality first:</b> analyst questions and broken PDF extracts cannot establish commercial orders; contradictory periods are isolated for reconciliation. T-Score is not a buy rating.
         </div>
         {/* controls */}
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 }}>
@@ -477,6 +514,21 @@ export function TransformationScreenerTab() {
         {data && (data.concalls_in_feed ?? 0) > 0 && (
           <div style={{ fontSize: 11, color: TF.amber, marginTop: 8 }}>
             Coverage: {data.analyzed} of {data.concalls_in_feed} identified concall filings sampled ({(100 * data.analyzed / Math.max(1, data.concalls_in_feed!)).toFixed(1)}%). This is not a complete market scan; missed companies are not negative calls.
+          </div>
+        )}
+        {data && !building && (
+          <div style={{ marginTop: 8, display: 'flex', gap: 9, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button type="button" disabled={loading || moreLoading} onClick={() => { void loadMore(); }}
+              title="Manually scan the next 40 older filings; no automatic expensive full-market extraction"
+              style={{ border: `1px solid ${TF.border}`, borderRadius: 6, background: TF.card2, color: TF.cyan,
+                padding: '7px 11px', cursor: moreLoading ? 'wait' : 'pointer', fontSize: 11, fontWeight: 800 }}>
+              {moreLoading ? 'Scanning older batch…' : 'Scan next 40 unreviewed filings'}
+            </button>
+            <span style={{ fontSize: 11, color: TF.muted }}>
+              Up to {Math.max(0, (data.concalls_in_feed ?? 0) - data.analyzed)} relevant concalls may remain unchecked.
+              Older batches are manual to protect page speed.
+            </span>
+            {moreNote && <span role="status" style={{ fontSize: 11, color: TF.amber }}>{moreNote}</span>}
           </div>
         )}
         {building && (
@@ -515,15 +567,15 @@ export function TransformationScreenerTab() {
           {/* zzz898 — Small & mid only (default on) */}
           <span style={{ width: 1, height: 14, background: TF.border, margin: '0 4px' }} />
           <button onClick={() => setSmallMidOnly(!smallMidOnly)}
-            title={`Hide names with a market cap of ₹${SMALL_MID_MAX_CR.toLocaleString('en-IN')} Cr or more. Names whose size is not available stay visible, marked "size n/a".`}
+            title={`Show ₹${RADAR_MIN_CAP_CR.toLocaleString('en-IN')}–₹${SMALL_MID_MAX_CR.toLocaleString('en-IN')} Cr. Unknown sizes remain visible but are not certified small/mid.`}
             style={{
               fontSize: 11, fontWeight: 800, padding: '3px 10px', borderRadius: 20, cursor: 'pointer',
               border: `1px solid #38BDF8${smallMidOnly ? '' : '55'}`,
               background: smallMidOnly ? '#38BDF8' : '#38BDF818',
               color: smallMidOnly ? '#0B1220' : '#38BDF8',
             }}>
-            {smallMidOnly ? '✓ ' : ''}◧ Small &amp; mid only
-            {smallMidOnly && sizeCounts.hiddenLarge > 0 ? ` · ${sizeCounts.hiddenLarge} large hidden` : ''}
+            {smallMidOnly ? '✓ ' : ''}◧ ₹500–30,000 Cr only
+            {smallMidOnly && sizeCounts.hiddenLarge > 0 ? ` · ${sizeCounts.hiddenLarge} large hidden` : ''}{smallMidOnly ? ` · ${allEntries.filter((e) => { const c = capOf(e.symbol); return c != null && c < RADAR_MIN_CAP_CR; }).length} microcaps hidden` : ''}
             {capLoading ? ' · sizes loading…' : sizeCounts.unknown > 0 ? ` · ${sizeCounts.unknown} size n/a` : ''}
           </button>
         </div>
@@ -534,7 +586,7 @@ export function TransformationScreenerTab() {
         <div style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '12px 14px' }}>
           <div style={{ fontSize: 13, fontWeight: 900, color: TF.text, marginBottom: 4 }}>Decision queue · evidence before narratives</div>
           <div style={{ fontSize: 11, lineHeight: 1.6, color: TF.muted, marginBottom: 10 }}>
-            Underwrite means research, <strong>not buy</strong>. An evidence rung of 8–10 does not imply the stock is late-cycle. Conflicting excerpts require matching the actual quarter and segment. Valuation, cash conversion and current guidance remain unverified.
+            Underwrite is research only, <strong>never a buy signal</strong>. Positive tone, three distinct evidence milestones and two structural change drivers are required; routine quarterly margin improvements and neutral tone stay in Wait. Cross-quarter results, guidance and valuation remain unverified.
             {sizeCounts.unknown > 0 && ` ${sizeCounts.unknown} companies have unknown market cap; their small/mid status is unverified.`}
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
