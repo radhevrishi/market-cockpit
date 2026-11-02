@@ -3807,3 +3807,6 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   the transformation-screener route; SWR key `transform-screener:swr:v8:<scanDays>:<minPatterns>`), so 7d/30d/60d are
   instant and never a cold exchange-feed fetch (the 7d click had timed out on NSE and shown nothing). Funnel counts stay
   those of the 90-day scan; coverage_note says so. "Best" now excludes STRETCHED valuation in every lane (was inflection only).
+- zzz1217b (2 Nov): radar stored reads were thrown away on EVERY deploy — the per-document key hashed the analyzer
+  functions' compiled text, which the bundle renames each build (coverage 457 → 63 after a one-line deploy). Key now uses
+  `RADAR_RULES_VERSION` (hand-bumped, 'r1217') + pattern data. Bump it when a document's scoring rules change.

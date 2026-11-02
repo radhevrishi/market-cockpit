@@ -177,9 +177,14 @@ const emptyPayload = (days: number, error?: string): ScreenPayload => ({
 // coverage GROWS across scans instead of re-reading the same newest 80: a scan reuses all stored results (cheap
 // MGETs) and spends its download budget only on documents not read yet, newest first. The key carries a fingerprint
 // of the analyzer + classifier code, so a rule change re-scores everything (PDF text itself stays cached 30 days).
+// zzz1217 — the fingerprint used to hash the analyzer functions' compiled text (fn.toString()). The production bundle
+// renames module references on every deploy, so EVERY deploy changed the key and threw away all stored reads (coverage
+// fell from 457 to 63 documents after a one-line deploy). Now: a hand-bumped rules version + the pattern data only.
+// BUMP RADAR_RULES_VERSION whenever analyzeTransformation, classifyRadarContent, parseTranscript, documentTone,
+// assessRadarQuote, buildRadarEvidenceRecord or orderValueCr change what a document scores.
+const RADAR_RULES_VERSION = 'r1217';
 const ANALYZER_FP = createHash('sha256').update([
-  analyzeTransformation.toString(), classifyRadarContent.toString(), buildRadarEvidenceRecord.toString(),
-  parseTranscript.toString(), documentTone.toString(), assessRadarQuote.toString(), orderValueCr.toString(),
+  RADAR_RULES_VERSION,
   JSON.stringify(TRANSFORM_PATTERNS.map((p) => [p.key, p.re.source])), JSON.stringify(EVIDENCE_LADDER.map((r) => [r.score, r.re.source])),
 ].join('|')).digest('hex').slice(0, 10);
 const DOC_KEY = (url: string) => `radar-doc:v1:${ANALYZER_FP}:${createHash('sha256').update(url).digest('hex').slice(0, 24)}`;

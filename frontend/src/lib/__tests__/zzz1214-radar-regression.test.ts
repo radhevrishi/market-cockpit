@@ -228,3 +228,9 @@ test('33 NEOGEN: an early-stage name that is expensive on trailing figures is no
   const src = readFileSync(new URL('../radar-insight.ts', import.meta.url), 'utf8');
   assert.match(src, /valuation\.gap !== 'STRETCHED'/);
 });
+test('34 stored document reads survive a deploy: the key uses a hand-bumped version, never compiled function text', () => {
+  const route = readFileSync(new URL('../../app/api/v1/concall-intel/transformation-screener/route.ts', import.meta.url), 'utf8');
+  const fp = route.slice(route.indexOf('const ANALYZER_FP'), route.indexOf('const DOC_KEY'));
+  assert.match(fp, /RADAR_RULES_VERSION/);
+  assert.doesNotMatch(fp, /\.toString\(\)/);
+});
