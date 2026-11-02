@@ -290,6 +290,7 @@ export function TransformationScreenerTab() {
   const [loading, setLoading] = useState(false);
   const [building, setBuilding] = useState(false);
   const requestSeq = useRef(0);
+  const refreshStartedAt = useRef<number | null>(null);
   const [err, setErr] = useState<string | null>(null);
   // zzz433 — Conviction × Transformation: which radar names are ALSO on the bench
   const [bench, setBench] = useState<Record<string, ConvictionEntry>>({});
@@ -316,6 +317,7 @@ export function TransformationScreenerTab() {
 
   const load = useCallback(async (d: number, force = false) => {
     const requestId = ++requestSeq.current;
+    if (force) refreshStartedAt.current = Date.now();
     setLoading(true); setErr(null);
     try {
       // An uncached force refresh is a bounded request; the backend completes
@@ -326,16 +328,27 @@ export function TransformationScreenerTab() {
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const j: TransformScreenPayload = await r.json();
       if (requestId !== requestSeq.current) return;
-      if (j.building) {
+      const refreshAt = refreshStartedAt.current;
+      // A normal poll can return the previous *fresh* cache entry while a
+      // forced rebuild is still running. Do not falsely mark that as done.
+      const oldSnapshot = refreshAt != null && (!Date.parse(j.generated_at) ||
+        Date.parse(j.generated_at) < refreshAt - 1_000);
+      if (refreshAt != null && Date.now() - refreshAt > 120_000) {
+        refreshStartedAt.current = null;
+        setBuilding(false);
+        setErr('The refreshed scan exceeded two minutes. Previous research is retained; retry later.');
+      } else if (j.building || oldSnapshot) {
         setBuilding(true);
         setData((prev) => prev && prev.entries.length > 0 ? prev : j);
       } else {
+        refreshStartedAt.current = null;
         setBuilding(false);
         setData(j);
         if (j.error) setErr(j.error);
       }
     } catch (e) {
       if (requestId !== requestSeq.current) return;
+      refreshStartedAt.current = null;
       setBuilding(false);
       setErr(e instanceof Error && e.name === 'TimeoutError'
         ? 'Radar request timed out. Existing results are retained; retry the scan.'
@@ -345,7 +358,7 @@ export function TransformationScreenerTab() {
     }
   }, []);
 
-  useEffect(() => { setData(null); setBuilding(false); void load(days); }, [days, load]);
+  useEffect(() => { refreshStartedAt.current = null; setData(null); setBuilding(false); void load(days); }, [days, load]);
   // A pending scan is not an empty feed: poll the shared cached result
   // without another forced extraction. Avoid overlap while fetching.
   useEffect(() => {
