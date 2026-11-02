@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import {
   parseCron, prevCronSlot, nextCronSlot, prevSlot, nextSlot, dueSlot, slotWindowMs, lockTtlSec, lockKeyFor, shouldRetry,
   lockSettlesSlot, maxGapHours, staleAfterHoursFor, aiVerifyNext, guidanceExtractNext, ledgerPassComplete, aiEvalPasses,
-  APP_JOBS, MAX_WINDOW_MIN, type AppJob, type JobCtx, type CallResult,
+  APP_JOBS, MAX_WINDOW_MIN, MAX_CONCURRENT, type AppJob, type JobCtx, type CallResult,
 } from '../app-scheduler';
 
 const at = (iso: string) => new Date(iso);
