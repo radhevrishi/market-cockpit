@@ -207,3 +207,9 @@ test('moved workflows have no schedule left (no double runs) but keep the manual
     if (/^\s+schedule:/m.test(readFileSync(join(WF, f), 'utf8'))) assert.ok(!moved.has(f) || f === 'daily-research.yml', f);
   }
 });
+
+// Production incident 2026-11-02: expensive scheduled work must not saturate
+// the web server with multiple concurrent research tasks.
+test('web scheduler allows one heavy job at a time', () => {
+  assert.equal(MAX_CONCURRENT, 1);
+});

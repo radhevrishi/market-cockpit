@@ -54,3 +54,11 @@ test('KV lookup is bounded BEFORE the nine-second scan deadline, including fallb
   assert.match(swr, /readWaitMs\?: number/);
   assert.match(swr, /boundedRead\(store\.get<Envelope<T>>\(kvKeyOf\(o\.key\)\), o\.readWaitMs\)/);
 });
+
+
+test('radar throttles PDF parsing to keep the rest of the application responsive', () => {
+ const src = route();
+ assert.match(src, /const CONC = 3/);
+ assert.match(src, /TIME_BUDGET_MS = 32_000/);
+ assert.match(src, /setImmediate\(resolve\)/);
+});

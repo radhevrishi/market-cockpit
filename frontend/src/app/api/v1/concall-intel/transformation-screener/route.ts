@@ -232,8 +232,11 @@ async function buildScreen(req: NextRequest, days: number, limit: number, minPat
   // fetches before maxDuration so a big cold scan degrades gracefully (cached
   // + already-scanned rows still return) instead of timing out.
   const START = Date.now();
-  const TIME_BUDGET_MS = 48_000;
-  const CONC = 8;
+  // Concall PDFs are CPU-heavy to parse in this SAME Node process that serves
+  // the trading terminal. Eight simultaneous parses caused broad request stalls.
+  // Bound parallel extraction and yield between batches to keep UI responsive.
+  const TIME_BUDGET_MS = 32_000;
+  const CONC = 3;
   for (let i = 0; i < withPdf.length; i += CONC) {
     if (Date.now() - START > TIME_BUDGET_MS) break;   // out of time — return what we have
     const batch = withPdf.slice(i, i + CONC);
@@ -278,6 +281,7 @@ async function buildScreen(req: NextRequest, days: number, limit: number, minPat
       return entry;
     }));
     entries.push(...results);
+    await new Promise<void>((resolve) => setImmediate(resolve)); // yield to interactive requests
   }
 
   // Keep the ones with real transformation signal, best first. Obvious
