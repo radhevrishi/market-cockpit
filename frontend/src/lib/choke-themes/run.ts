@@ -12,10 +12,32 @@ export const CHOKE_DAILY_MAX = 6;
 const TTL = 400 * 86_400;
 
 const toFacts = (c: Cand): CandFacts => ({ cap: c.mc, revQ: c.revQ, revA: c.revA, epsQ: c.epsQ, opm: c.opm, opmFY: c.opmFY ?? null, pe: c.pe, fcfm: c.fcfm, de: c.de, p1y: c.p1y, p5y: c.p5y, p6m: c.p6m ?? null, st: c.st ?? null, stWk: c.stWk ?? null });
-async function screenerFacts(): Promise<{ facts: Record<ChokeRegion, Map<string, CandFacts>>; cands: Record<ChokeRegion, Cand[]> }> {
-  const { loadCands } = await import('../screener/ai-candidates-load');
-  const [us, ind] = await Promise.all([loadCands('US'), loadCands('IN')]);
-  return { cands: { US: us, IN: ind }, facts: { US: new Map(us.map((c) => [c.t, toFacts(c)])), IN: new Map(ind.map((c) => [c.t, toFacts(c)])) } };
+type ChokeScreenerSnapshot = { facts: Record<ChokeRegion, Map<string, CandFacts>>; cands: Record<ChokeRegion, Cand[]> };
+const SCREENER_SNAPSHOT_MS = 60_000;
+// Choke report polling previously reloaded both entire exchanges on every GET.
+// Coalesce concurrent reads and reuse fresh snapshots for one minute. Failed loads
+// are never cached. This does not persist market data or change the AI run.
+let screenerSnapshot: { at: number; promise: Promise<ChokeScreenerSnapshot>; pending: boolean } | null = null;
+async function screenerFacts(): Promise<ChokeScreenerSnapshot> {
+  const now = Date.now();
+  // An upstream fetch taking more than a minute must not create duplicate
+  // full-universe reloads every time the UI polls.
+  if (screenerSnapshot && (screenerSnapshot.pending || now - screenerSnapshot.at < SCREENER_SNAPSHOT_MS)) return screenerSnapshot.promise;
+  const promise: Promise<ChokeScreenerSnapshot> = (async () => {
+    const { loadCands } = await import('../screener/ai-candidates-load');
+    const [us, ind] = await Promise.all([loadCands('US'), loadCands('IN')]);
+    return { cands: { US: us, IN: ind }, facts: { US: new Map(us.map((c) => [c.t, toFacts(c)])), IN: new Map(ind.map((c) => [c.t, toFacts(c)])) } };
+  })();
+  const entry = { at: now, promise, pending: true };
+  screenerSnapshot = entry;
+  try {
+    const result = await promise;
+    entry.at = Date.now(); entry.pending = false;
+    return result;
+  } catch (error) {
+    if (screenerSnapshot === entry) screenerSnapshot = null;
+    throw error;
+  }
 }
 
 /** The last successful run with today's stock-screener facts laid over it (no AI). An older v1 run is returned as it is. */
@@ -24,7 +46,17 @@ export async function loadChoke(): Promise<ChokeReport | null> {
   const r = (await kvGet<ChokeReport>(CHOKE_KEY).catch(() => null)) || null;
   if (!r) return null;
   if (r.version === 2) {
-    enrich(r, (await screenerFacts()).facts);
+    // UI loads the LAST GOOD report even if an entire market's screener data
+    // is cold or rate-limited. Explicitly show that the live overlay timed out.
+    const live = await Promise.race([
+      screenerFacts().then((v) => v.facts).catch(() => null),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 3500)),
+    ]);
+    r.marketDataTimedOut = !live;
+    if (live) {
+      enrich(r, live);
+      r.marketDataAt = new Date().toISOString();
+    }
     // zzz1185 — a "what changed" computed against an old-method run is not a comparison: shown only when the previous run is v2
     if (r.changes?.length) { const prev = await kvGet<ChokeReport>(CHOKE_PREV_KEY).catch(() => null); if (prev?.version !== 2) r.changes = []; }
   }

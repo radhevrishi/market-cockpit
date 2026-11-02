@@ -246,6 +246,19 @@ export async function kvMGet<T = any>(keys: string[]): Promise<Array<T | null>> 
 }
 
 async function kvMGetFromStore<T = any>(keys: string[]): Promise<{ values: Array<T | null>; batched: boolean }> {
+  // Upstash rejects batches whose aggregate payload exceeds its 10 MiB
+  // ceiling. Split ONLY on this specific error: normal days remain one MGET,
+  // while oversized days recover without treating missing data as a real zero.
+  const tooLarge = (s: string) => /max request size exceeded|request (?:body |payload )?too large|response too large|10485760/i.test(s);
+  const splitLarge = async (): Promise<{ values: Array<T | null>; batched: boolean }> => {
+    if (keys.length < 2) return { values: await Promise.all(keys.map((k) => kvGet<T>(k))), batched: false };
+    const pivot = Math.ceil(keys.length / 2);
+    const [left, right] = await Promise.all([
+      kvMGetFromStore<T>(keys.slice(0, pivot)),
+      kvMGetFromStore<T>(keys.slice(pivot)),
+    ]);
+    return { values: [...left.values, ...right.values], batched: left.batched && right.batched };
+  };
   const parse = (raw: any): any => {
     if (raw === null || raw === undefined) return null;
     if (typeof raw === 'string') {
@@ -265,14 +278,15 @@ async function kvMGetFromStore<T = any>(keys: string[]): Promise<{ values: Array
         cache: 'no-store',
         signal: AbortSignal.timeout(15000),
       });
+      const text = await resp.text();
       if (resp.ok) {
-        const text = await resp.text();
         KV_USAGE.record('mget', keys[0], 0, text.length);
         let j: any = null; try { j = JSON.parse(text); } catch { j = null; }
         if (Array.isArray(j?.result) && j.result.length === keys.length) {
           return { values: j.result.map((v: any) => parse(v) as T | null), batched: true };
         }
       }
+      if (tooLarge(text)) return splitLarge();
     } catch { /* fall through */ }
   }
   const r = getRedis();
@@ -282,6 +296,7 @@ async function kvMGetFromStore<T = any>(keys: string[]): Promise<{ values: Array
       const vals = await r.mget<any[]>(...keys);
       if (Array.isArray(vals) && vals.length === keys.length) return { values: vals.map((v) => parse(v) as T | null), batched: true };
     } catch (e) {
+      if (tooLarge(String(e))) return splitLarge();
       console.error('[KV] Redis MGET failed:', e);
     }
   }

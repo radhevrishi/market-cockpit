@@ -48,8 +48,8 @@ test('size band from market data (large → reference leaders); one primary them
 test('scenarios reconcile to their assumptions; no estimate without representative earnings', () => {
   const s = { years: 5, epsCagr: { bear: 0, base: 20, bull: 30 }, exitPe: { bear: 15, base: 30, bull: 40 }, dilutionPct: 10, basis: 'x' };
   const { out } = scenarioMultiples(s, 30);
-  assert.equal(out!.bear, 0.45);                                        // 1 × 0.9 × 15/30
-  assert.equal(out!.base, Math.round(1.2 ** 5 * 0.9 * 100) / 100);       // 2.24
+  assert.equal(out!.bear, 0.5);                                         // diluted EPS already includes issuance: 1 × 15/30
+  assert.equal(out!.base, Math.round(1.2 ** 5 * 100) / 100);             // no second dilution haircut
   assert.equal(scenarioMultiples(s, -12).out, null); assert.match(scenarioMultiples(s, -12).note!, /no positive current earnings/);
   assert.equal(scenarioMultiples(s, 400).out, null); assert.equal(scenarioMultiples(null, 20).out, null);
 });
@@ -69,4 +69,27 @@ test('GPT-6 tool calls go without reasoning effort (the live 400 on 26 Oct)', ()
   assert.equal(r.reasoning_effort, 'none');
   const r5 = toOpenAIRequest({ model: 'x', max_tokens: 100, tools: [{ name: 't', input_schema: { type: 'object', properties: {}, additionalProperties: false, required: [] } }], messages: [{ role: 'user', content: 'hi' }] } as any, 'gpt-5', 'low');
   assert.equal(r5.reasoning_effort, 'low');
+});
+
+test('unknown supply and absent revenue evidence never qualify as a proven choke point', () => {
+  const unknown = build([theme('Speculative scarcity', [cand('Q')])]);
+  unknown.regions[0].themes[0].supply = 'UNKNOWN';
+  enrich(unknown, { US: new Map([['Q', F({})]]), IN: new Map() });
+  assert.equal(unknown.regions[0].themes[0].qualifies, false);
+
+  const noFinancials = build([theme('Unknown numbers', [cand('Q')])]);
+  noFinancials.regions[0].themes[0].supply = 'TIGHT';
+  enrich(noFinancials, { US: new Map([['Q', F({ revQ: null, revA: null })]]), IN: new Map() });
+  assert.equal(noFinancials.regions[0].themes[0].qualifies, false);
+
+  const noTicker = build([theme('No listed candidate match', [cand('Q')])]);
+  noTicker.regions[0].themes[0].supply = 'TIGHT';
+  enrich(noTicker, { US: new Map([['OTHER', F({})]]), IN: new Map() });
+  assert.equal(noTicker.regions[0].themes[0].qualifies, false);
+});
+
+test('high sales growth with deteriorating profit is mixed, not a confirmed earnings inflection', () => {
+  assert.equal(dataCheck({ ...cand('LOSS', { jstage: 'J3' }), facts: F({ revQ: 110, revA: 55, epsQ: -70 }) } as any), 'MIXED');
+  assert.equal(dataCheck({ ...cand('NEGOPM', { jstage: 'J2' }), facts: F({ revQ: 80, opm: -4 }) } as any), 'MIXED');
+  assert.equal(dataCheck({ ...cand('PROFITABLE', { jstage: 'J2' }), facts: F({ revQ: 45, revA: 20, epsQ: 70, opm: 15 }) } as any), 'CONFIRMS');
 });

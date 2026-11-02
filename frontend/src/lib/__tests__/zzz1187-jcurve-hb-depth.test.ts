@@ -57,7 +57,8 @@ test('zzz1188 — supply UNKNOWN is shown, not thrown out; cross-border driver k
   const r = cleanChoke({ regions: [{ region: 'IN', themes: [th], playbook: {} }] })!;
   en(r, { IN: new Map([['F', { cap: 3000, revQ: 40, revA: 20, epsQ: 50, opm: 15, pe: 30, fcfm: 5, de: 0.2, p1y: 10, p5y: 100 }]]), US: new Map() });
   const t = r.regions.find((g) => g.region === 'IN')!.themes[0];
-  assert.equal(t.qualifies, true);
+  assert.equal(t.qualifies, false, 'unknown supply remains visible but is not certified a bottleneck');
+  assert.equal(t.supply, 'UNKNOWN');
   assert.equal(t.driver, 'EUROPE_PLUS_1');
   assert.match(CROSS_BORDER_CHECKLIST.IN, /ammunition/); assert.match(CROSS_BORDER_CHECKLIST.IN, /forgings/);
   assert.ok((CHOKE_TOOL.input_schema as any).properties.regions.items.properties.themes.items.properties.driver.enum.includes('EUROPE_PLUS_1'));

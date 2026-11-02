@@ -98,9 +98,12 @@ describe('the page is wired to server lists', () => {
   test('server sources per country', () => {
     for (const u of ['/api/portfolio?chatId=', '/api/v1/bench?view=tickers', '/api/v1/us-book?view=universe', '/api/v1/bench-us?view=tickers']) assert.ok(loader.includes(u), u);
   });
-  test('the India bench route answers a compact tickers view and is unchanged otherwise', () => {
+  test('the India bench route answers a compact ticker view with safe stale fallback', () => {
     assert.match(bench, /view === 'tickers'/);
-    assert.match(bench, /return NextResponse\.json\(payload\);/);
+    assert.match(bench, /return NextResponse\.json\(\{ \.\.\.payload, stale \}, \{ headers \}\);/);
+    assert.match(bench, /READ_BUDGET_MS = 4_000/);
+    assert.match(bench, /storage temporarily unavailable|Bench storage temporarily unavailable/);
+    assert.match(bench, /lastGood/);
   });
   test('chips with counts; portfolio scope only; the old file view kept', () => {
     assert.match(page, /📗 My book/); assert.match(page, /🏆 Conviction Beats/); assert.match(page, /📄 Synced file only/);

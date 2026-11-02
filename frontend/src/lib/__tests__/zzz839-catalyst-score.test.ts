@@ -28,6 +28,13 @@ describe('zzz839 score engine', () => {
     assert.ok(s.total! >= 9 && s.total! <= 12);
     assert.equal(s.band, 'RESEARCH NOW');
   });
+  test('verified event with UNKNOWN business impact stays WATCH even when its type is measurable', () => {
+    const item = { ...base, stage: 'EXECUTED', materiality: { label: 'UNKNOWN', ratios: [], explanation: 'Size not disclosed' } };
+    const s = catalystScoreOf(item);
+    assert.ok((s.total ?? 0) >= 9, 'the pre-cap numeric score would otherwise reach the top band');
+    assert.equal(s.band, 'WATCH / CONFIRM');
+    assert.match(s.bandNote, /impact or route to revenue has not been measured/);
+  });
   test('Evidence below 2 can never be RESEARCH NOW (document not read)', () => {
     const s = catalystScoreOf({ ...base, stage: 'EXECUTED', evidenceVerification: 'document_not_read' });
     assert.equal(s.factors[0].points, 1);

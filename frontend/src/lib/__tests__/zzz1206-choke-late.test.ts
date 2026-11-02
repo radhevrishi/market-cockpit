@@ -16,7 +16,7 @@ test('late reasons', () => {
 
 test('enrich moves late names out of discovery; a theme with only late names does not qualify; re-enrich keeps them', () => {
   const cand = (t: string) => ({ name: t, ticker: t, exposure: 'DIRECT', jstage: 'J2', product: 'x', inflection: 'x', milestone: 'x', invalidation: 'x', concern: 'x', scenario: null });
-  const r: any = { regions: [{ region: 'IN', playbook: {}, themes: [{ name: 'Power transformers', why: 'w', supply: 'TIGHT', candidates: [cand('TARIL'), cand('EARLYCO')], reference: [] }] }] };
+  const r: any = { regions: [{ region: 'IN', playbook: {}, themes: [{ name: 'Power transformers', why: 'w', supply: 'TIGHT', tightness: 'Qualified transformer supply constrained by multi-year lead times', candidates: [cand('TARIL'), cand('EARLYCO')], reference: [] }] }] };
   const facts: any = { US: new Map(), IN: new Map([['TARIL', f({ p5y: 2100 })], ['EARLYCO', f({})]]) };
   enrich(r, facts);
   const t = r.regions[0].themes[0];
