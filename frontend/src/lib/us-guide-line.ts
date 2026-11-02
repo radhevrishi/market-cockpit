@@ -104,6 +104,8 @@ function moves(figs: Fig[], changes: GuideChangeLike[]): { up: string[]; down: s
 }
 
 /** The one-line guidance verdict for a graded US row. */
+const AI_CUT_WORDS = /\b(lower(?:ed|s|ing)?|reduc(?:e|ed|es|ing)|cut(?:s|ting)?|trim(?:med|s)?|below|declin(?:e|ed|es|ing)|weaker|soft(?:er|ness)?|withdr[ae]w|narrow(?:ed)? (?:to|down)|downward|decrease[ds]?)\b/i;
+const AI_HEARSAY = /\breportedly\b|\breports? (?:say|suggest|indicate)|\brumou?r|\bunconfirmed\b|follow-up reporting|\bmay have\b|\bcould have\b/i;
 export function guideLine(r: any): GuideLine {
   const figs: Fig[] = Array.isArray(r?.guidance_figures) ? r.guidance_figures.filter(Boolean) : [];
   const changes: GuideChangeLike[] = Array.isArray(r?.guide_change) ? r.guide_change.filter(Boolean) : [];
@@ -112,6 +114,12 @@ export function guideLine(r: any): GuideLine {
   let gcDir = gc ? String(gc.direction || (gc.lowered ? 'lowered' : '')) : '';
   // a stored free-source "raised" is re-read with today's rules (records made before a detector fix stay honest)
   if (gc && gcDir === 'raised' && gc.source !== 'ai-web' && !guideRaisedInText(String(gc.quote || gc.what || ''))) gcDir = '';
+  // zzz1211 — an AI web check that says "lowered / mixed / cautious" must SHOW it: its verbatim quote has to contain a lowering
+  // word (or its summary states the cut plainly, not as hearsay). nVent Q3 FY26 was moved STRONG → MIXED on "EBITDA guidance was reportedly trimmed in follow-up reporting" while the
+  // quote it gave was the release raising sales growth and adjusted EPS. Hearsay without a quote is not a cut.
+  if (gc && gc.source === 'ai-web' && (gcDir === 'lowered' || gcDir === 'mixed' || gcDir === 'cautious' || gc.lowered)
+    && !AI_CUT_WORDS.test(String(gc.quote || ''))
+    && !(AI_CUT_WORDS.test(String(gc.what || '')) && !AI_HEARSAY.test(String(gc.what || '')))) gcDir = 'not-lowered';
   const gcSrc = gc?.source ? (SOURCE_WORD[String(gc.source)] || String(gc.source)) : '';
   const gcUrl = gc?.url || null;
   const releaseUrl = r?.guidance_url || r?.release_url || null;
@@ -121,7 +129,7 @@ export function guideLine(r: any): GuideLine {
   const firstSnippet = snippetFor(snips, 'any');
 
   // 1. a cut found outside the release (or inside its other exhibits) — always wins
-  if (gc && (gcDir === 'lowered' || gcDir === 'withdrawn' || gc.lowered)) {
+  if (gc && (gcDir === 'lowered' || gcDir === 'withdrawn' || (gc.lowered && gcDir !== 'not-lowered'))) {
     const what = clip(gc.what || gc.quote || 'management lowered its outlook', 140).replace(/^call coverage:\s*/i, '');
     const alsoUp = gv?.verdict === 'RAISED' && mv.up.length ? ` · release raised ${clip(mv.up[0], 60)}` : '';
     return {

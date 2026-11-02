@@ -998,9 +998,9 @@ export function marginQualityCap(i: MarginQualityIn): MarginQualityCap | null {
   const n = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
   const f1 = (v: number) => `${v > 0 ? '+' : ''}${v.toFixed(1)}`;
   const gm = n(i.gmDelta) ? i.gmDelta : null, op = n(i.opmExp) ? i.opmExp : null;
-  if (gm != null && gm <= -3) return { max: 'MIXED', why: `gross margin fell ${f1(gm)} pts year on year` };
+  if (gm != null && gm <= -3) return { max: 'MIXED', why: `gross margin fell ${Math.abs(gm).toFixed(1)} pts year on year` };
   if (gm != null && gm <= -1.5 && !(op != null && op >= 1)) {
-    return { max: 'MIXED', why: `gross margin fell ${f1(gm)} pts and the operating margin did not make up for it${op != null ? ` (${f1(op)} pts)` : ''}` };
+    return { max: 'MIXED', why: `gross margin fell ${Math.abs(gm).toFixed(1)} pts and the operating margin did not make up for it${op != null ? ` (${f1(op)} pts)` : ''}` };
   }
   if (op != null && op <= -1) {
     const s = n(i.salesY) ? i.salesY : null, p = n(i.patY) ? i.patY : null, o = n(i.opProfitYoy) ? i.opProfitYoy : null;
@@ -1008,7 +1008,7 @@ export function marginQualityCap(i: MarginQualityIn): MarginQualityCap | null {
     if (o != null && s != null && o >= s - 2) return null;
     const carried = p != null && p >= 50 && s != null && s >= 25;
     const tail = o != null && s != null ? ` — operating profit ${f1(o)}% vs sales ${f1(s)}%, so profit growth came from below the operating line` : '';
-    return { max: carried ? 'STRONG' : 'MIXED', why: `operating margin fell ${f1(op)} pts${tail}` };
+    return { max: carried ? 'STRONG' : 'MIXED', why: `operating margin fell ${Math.abs(op).toFixed(1)} pts${tail}` };
   }
   return null;
 }

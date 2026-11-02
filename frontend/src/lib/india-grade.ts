@@ -529,7 +529,14 @@ function _gradeIndiaRow(rowIn: any, drop: (reason: string) => null): IndiaGraded
       growth_basis_note = `graded on the lower of PAT (+${Math.round(patYRaw)}%) and EPS (+${Math.round(epsYRaw)}%) growth — the two disagree`;
     }
   }
-  const opmExp = row?.opm_pct != null && row?.opm_prev_pct != null ? row.opm_pct - row.opm_prev_pct : null;
+  // zzz1211 — Screener prints OPM in WHOLE percent, so 19% → 18% can be a fall of 0.1 pt or 1.9 pts. When operating-profit
+  // growth and sales growth are both known, the true change is prev × ((1 + op) ÷ (1 + sales) − 1): Mold-Tek Q2 FY27 showed
+  // 19% → 18% (−1 pt, "segment mix shift") while operating profit grew 30.8% on sales +30.5% — the margin did not fall.
+  const _opmRound = row?.opm_pct != null && row?.opm_prev_pct != null ? row.opm_pct - row.opm_prev_pct : null;
+  const _opPYx = typeof row?.op_profit_yoy_pct === 'number' && Number.isFinite(row.op_profit_yoy_pct) ? row.op_profit_yoy_pct : null;
+  const _opmExact = _opmRound != null && _opPYx != null && salesY != null && salesY > -90 && typeof row?.opm_prev_pct === 'number' && row.opm_prev_pct > 0
+    ? Math.round(row.opm_prev_pct * ((1 + _opPYx / 100) / (1 + salesY / 100) - 1) * 100) / 100 : null;
+  const opmExp = _opmExact != null && Math.abs(_opmExact - _opmRound!) <= 2 ? _opmExact : _opmRound;
   // Financials are PRESENT even when the percentage was refused — a turnaround
   // with a negative base must not fall into the no-financials preview path.
   const hasFin = salesY != null || patY != null || epsY != null
@@ -1841,6 +1848,7 @@ function _gradeIndiaRow(rowIn: any, drop: (reason: string) => null): IndiaGraded
     // this final return shape never included the field. Fix: include them.
     opm_pct: row.opm_pct ?? null,
     opm_prev_pct: row.opm_prev_pct ?? null,
+    opm_exp_pp: opmExp != null ? Math.round(opmExp * 10) / 10 : null,   // zzz1211 — the margin change the grade used (exact when operating profit is known)
     // zzz314 — SAME class of bug as PATCH 1015: enrichment provides
     // ocf_to_pat_ratio (used above for the 'ocf divergence' caveat), but
     // gradeRow was dropping it from the response so downstream CB cards

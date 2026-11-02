@@ -187,8 +187,14 @@ export function marginView(r: any, opts: { newlyListed?: boolean } = {}): Margin
   const zeroNow = value === 0, zeroPrev = prev === 0;
   if (zeroNow) value = null;
   if (zeroPrev) prev = null;
+  // zzz1211 — the source rounds OPM to whole percent; the grade's exact change (from operating-profit growth) wins when it differs
+  let exactNote = '';
+  if (value != null && prev != null && fin(r?.opm_exp_pp) && Math.abs((value - prev) - r.opm_exp_pp) >= 0.3) {
+    value = Math.round((prev + r.opm_exp_pp) * 10) / 10;
+    exactNote = ' · exact from operating profit (source rounds to whole %)';
+  }
   const note = value != null
-    ? (prev != null ? `vs ${prev.toFixed(1)}%` : 'prior n/a')
+    ? (prev != null ? `vs ${prev.toFixed(1)}%${exactNote}` : 'prior n/a')
     : (zeroNow ? 'not in source' : (opts.newlyListed ? 'newly listed' : 'not in source'));
   return {
     mode: 'opm',

@@ -87,3 +87,33 @@ test('Upstash: batched queue scan, "who has a PDF record" list, enrich + extract
   assert.match(read('lib/kv.ts'), /forgetExtractCopy\(key\)/);
   void gets;
 });
+
+test('India: whole-percent OPM rounding is not a margin fall (Mold-Tek: 19% → 18% shown, operating profit +30.8% on sales +30.5%)', async () => {
+  const { gradeIndiaRow } = await import('../india-grade');
+  const { marginView } = await import('../india-eo-card-data');
+  const base = { ticker: 'MOLDTKPAC', company: 'Mold-Tek Packaging Limited', filing_date: '2026-11-02', quarter: 'Q2 FY27', sales_curr_cr: 274, sales_prev_cr: 210, sales_yoy_pct: 30.5,
+    pat_curr_cr: 21, pat_prev_cr: 15, eps_curr: 3.17, eps_prev: 2.33, eps_yoy_pct: 36.1, opm_pct: 18, opm_prev_pct: 19, op_profit_yoy_pct: 30.8, ocf_to_pat_ratio: 1.71, market_cap_cr: 1941 };
+  const g: any = gradeIndiaRow(base);
+  assert.ok(g);
+  assert.ok(!g.caveat_tags.includes('segment mix shift'), 'no mix-shift caveat from a rounding dip');
+  assert.ok(!g.caveat_tags.some((t: string) => /operating margin fell/.test(t)));
+  assert.equal(g.opm_exp_pp, 0);
+  assert.match(marginView(g).note, /exact from operating profit/);
+  const weak: any = gradeIndiaRow({ ...base, op_profit_yoy_pct: 22 });
+  assert.equal(weak.tier, 'MIXED');
+  assert.ok(weak.caveat_tags.some((t: string) => /operating margin fell 1\.2 pts — operating profit \+22\.0% vs sales \+30\.5%/.test(t)));
+});
+
+test('nVent: an AI web check without a quoted cut does not move the grade', async () => {
+  const { guideLine } = await import('../us-guide-line');
+  const { applyGuideCheck } = await import('../us-guide-check');
+  const gc = { source: 'ai-web', direction: 'mixed', lowered: true, what: 'Raised full-year reported sales to 48–49% and adjusted EPS to $5.36–$5.39; EBITDA guidance was reportedly trimmed in follow-up reporting.',
+    quote: 'The company now estimates reported sales growth for full-year 2026 of 48 to 49 percent…expects full-year 2026 EPS of $4.54 to $4.57 and adjusted EPS of $5.36 to $5.39.' };
+  assert.equal(guideLine({ guide_check: gc }).lowered, false);
+  const row: any = { tier: 'STRONG', caveat_tags: [], methodology_tags: [] };
+  assert.equal(applyGuideCheck(row, gc as any), false);
+  assert.equal(row.tier, 'STRONG');
+  // with the cut in its own quote it still counts
+  const cut = { ...gc, quote: 'We now expect full-year adjusted EBITDA below our prior range, lowered to $1.1 billion.' };
+  assert.equal(guideLine({ guide_check: cut }).lowered, true);
+});
