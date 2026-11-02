@@ -296,5 +296,6 @@ export interface ScannedNoSignal {
 export interface TransformScreenPayload {
   generated_at: string; window_days: number; analyzed: number; pdf_cache_hits: number;
   candidates_total: number; entries: TransformScreenEntry[]; scanned_no_signal?: ScannedNoSignal[]; error?: string;
+  building?: boolean; message?: string; // async radar refresh: not an empty research result
   feed_status?: FeedStatusLite | null; concalls_in_feed?: number; transcripts_in_feed?: number;   // zzz810
 }
