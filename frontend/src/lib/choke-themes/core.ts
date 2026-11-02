@@ -70,7 +70,7 @@ export interface ChokeReport {
   version?: 2;
   regions: ChokeRegionView[]; changes: Array<ChokeChange | string>;
   generatedAt: string; model: string | null; newsUsed: number; asOfNews: string | null;
-  marketDataAt?: string | null; prevAt?: string | null;
+  marketDataAt?: string | null; marketDataTimedOut?: boolean; prevAt?: string | null;
   /** zzz1186 — the discovery funnel per country: universe → size band → sent to the AI */
   coverage?: Partial<Record<ChokeRegion, { universe: number; inBand: number; turning: number; industry: number; news: number }>>;
   /** zzz1187 — whether the reasoning research pass ran before the structured answer, per country */
