@@ -162,6 +162,7 @@ async function handle(req: NextRequest, days: number, limit: number, minPatterns
       isUsable: (b) => !!b && b.cacheable,
       waitMs: SCREEN_WAIT_MS,
       readWaitMs: 2_000, // 18s browser budget also includes Redis; avoid unbounded cold lookup
+      failureRetryMs: 5 * 60_000, // feed failures retry at most once per 5 min per instance; never discard last-good
     });
     return NextResponse.json(r.value.payload, { headers: swrHeaders(r, privateCache(120, 1800)) });
   } catch (e) {

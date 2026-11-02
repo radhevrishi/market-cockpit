@@ -63,6 +63,8 @@ export interface SwrOptions<T> {
   waitMs?: number;
   /** Maximum Redis lookup delay; on timeout, retain memory fallback and start an ordinary build. Unset preserves default semantics. */
   readWaitMs?: number;
+  /** Minimum time between failed stale-background rebuild attempts. Opt-in for expensive feeds. */
+  failureRetryMs?: number;
   store?: SwrStore;
   now?: () => number;
 }
@@ -92,6 +94,9 @@ const INFLIGHT: Map<string, Promise<Envelope<unknown>>> = G.__MC_SWR_INFLIGHT__ 
 G.__MC_SWR_INFLIGHT__ = INFLIGHT;
 const REFRESHING: Set<string> = G.__MC_SWR_REFRESHING__ || new Set();
 G.__MC_SWR_REFRESHING__ = REFRESHING;
+// Persist across Next.js module reloads. Only used when failureRetryMs is opted into.
+const FAILED_RETRY_AFTER: Map<string, number> = G.__MC_SWR_FAILED_RETRY_AFTER__ || new Map();
+G.__MC_SWR_FAILED_RETRY_AFTER__ = FAILED_RETRY_AFTER;
 
 const kvKeyOf = (k: string) => `swr:${k}`;
 const lockKeyOf = (k: string) => `swr:lock:${k}`;
@@ -146,8 +151,11 @@ export class SwrPendingError extends Error {
   constructor(key: string) { super(`swr: ${key} is still being built`); this.name = 'SwrPendingError'; }
 }
 
-function refreshInBackground<T>(o: SwrOptions<T>, store: SwrStore, now: () => number, useMem: boolean, useKv: boolean): void {
-  if (INFLIGHT.has(o.key) || REFRESHING.has(o.key)) return;
+function refreshInBackground<T>(o: SwrOptions<T>, store: SwrStore, now: () => number, useMem: boolean, useKv: boolean): boolean {
+  if (INFLIGHT.has(o.key) || REFRESHING.has(o.key)) return true;
+  // An upstream outage must not re-run costly PDF/feed analysis for every reader.
+  // Forced refreshes intentionally bypass this guard via the synchronous path.
+  if ((o.failureRetryMs ?? 0) > 0 && (FAILED_RETRY_AFTER.get(o.key) ?? 0) > now()) return false;
   REFRESHING.add(o.key);   // marked synchronously so concurrent stale requests in this instance start one refresh
   const lockTtl = o.lockTtlS ?? 120;
   void (async () => {
@@ -156,13 +164,23 @@ function refreshInBackground<T>(o: SwrOptions<T>, store: SwrStore, now: () => nu
       try { locked = await store.setNX(lockKeyOf(o.key), now(), lockTtl); } catch { locked = true; }
     }
     if (!locked) { REFRESHING.delete(o.key); return; }   // another instance is refreshing; it will write KV
-    try { await runBuild(o, store, now, useMem, useKv); }
-    catch (e: any) { console.warn(`[swr] background refresh failed for ${o.key}: ${e?.message || e}`); }
+    try {
+      await runBuild(o, store, now, useMem, useKv);
+      FAILED_RETRY_AFTER.delete(o.key);
+    } catch (e: any) {
+      if ((o.failureRetryMs ?? 0) > 0) {
+        // Bound growth if many one-off query keys fail at once.
+        if (FAILED_RETRY_AFTER.size >= 200) FAILED_RETRY_AFTER.delete(FAILED_RETRY_AFTER.keys().next().value as string);
+        FAILED_RETRY_AFTER.set(o.key, now() + (o.failureRetryMs ?? 0));
+      }
+      console.warn(`[swr] background refresh failed for ${o.key}: ${e?.message || e}`);
+    }
     finally {
       if (useKv && locked) { try { await store.del(lockKeyOf(o.key)); } catch { /* lock TTL expires */ } }
       REFRESHING.delete(o.key);
     }
   })();
+  return true;
 }
 
 // Bound a slow KV read independently of the rebuild deadline. Late rejection is
@@ -209,8 +227,8 @@ export async function swrGet<T>(o: SwrOptions<T>): Promise<SwrResult<T>> {
     const age = Math.max(0, now() - env.ts);
     if (age < o.freshMs) return { value: env.value, state: 'hit', ageMs: age, builtAt: env.ts, refreshing: false, source };
     if (age < o.maxStaleMs) {
-      refreshInBackground(o, store, now, useMem, useKv);
-      return { value: env.value, state: 'stale', ageMs: age, builtAt: env.ts, refreshing: true, source };
+      const refreshing = refreshInBackground(o, store, now, useMem, useKv);
+      return { value: env.value, state: 'stale', ageMs: age, builtAt: env.ts, refreshing, source };
     }
   }
 
@@ -274,6 +292,7 @@ export function __resetSwrForTests(): void {
   MEM.clear();
   INFLIGHT.clear();
   REFRESHING.clear();
+  FAILED_RETRY_AFTER.clear();
 }
 
 /** Test hook: resolve once no build or background refresh is running. */
