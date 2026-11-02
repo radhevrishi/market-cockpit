@@ -37,5 +37,7 @@ test('radar fetches time out, stale results survive, and market-cap enrichment i
   assert.match(s, /AbortSignal\.timeout\(12_000\)/);
   assert.match(s, /setData\(\(prev\) => prev && prev\.entries\.length > 0 \? prev : j\)/);
   assert.match(s, /requestId !== requestSeq\.current/);
+  assert.match(s, /refreshStartedAt/);
+  assert.match(s, /Date\.parse\(j\.generated_at\) < refreshAt - 1_000/);
   assert.match(s, /building \|\| loading/);
 });
