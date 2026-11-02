@@ -25,6 +25,14 @@ export async function readLedgers(tickers: string[], market: LedgerMarket = 'IN'
   return out;
 }
 
+/** Like readLedgers but throws when the store cannot be read (so a failed read is never mistaken for "no history"). */
+async function readLedgersStrict(list: string[], market: LedgerMarket): Promise<Map<string, TickerLedger>> {
+  const out = new Map<string, TickerLedger>();
+  const vals = await kvMGet<TickerLedger>(list.map((t) => ledgerKey(t, market)));
+  list.forEach((t, i) => { const v = vals[i]; if (v && Array.isArray(v.rows)) out.set(t, { rows: v.rows, points: Array.isArray(v.points) ? v.points : [], ids: Array.isArray(v.ids) ? v.ids : [] }); });
+  return out;
+}
+
 export function ledgerRowsOf(e: GuidanceEvent): GuLedgerRow[] {
   // zzz854: only a verified FORMAL upgrade writes RAISED. A midpoint-only / widened / mixed move is never stored as a raise (it would feed REPEATED UPGRADER).
   const formal = !e.pipeline || e.pipeline.status === 'CARD';
@@ -44,8 +52,21 @@ export async function writeEvents(events: GuidanceEvent[], existing: Map<string,
   let n = 0;
   const byTicker = new Map<string, GuidanceEvent[]>();
   for (const e of events) if (isLedgerWorthy(e)) byTicker.set(e.ticker.toUpperCase(), [...(byTicker.get(e.ticker.toUpperCase()) || []), e]);
+  // zzz1203: tickers the caller did not read (beyond its 200-ticker read, or a read that timed out) are read here first. Before,
+  // they counted as empty, so every run rewrote them (≈700 writes an hour) AND replaced their stored history with this run's rows.
+  const missing = Array.from(byTicker.keys()).filter((t) => !existing.has(t));
+  const known = new Map(existing);
+  const unreadable = new Set<string>();
+  for (let i = 0; i < missing.length; i += 200) {
+    const part = missing.slice(i, i + 200);
+    try {
+      const got = await readLedgersStrict(part, market);
+      for (const t of part) if (got.has(t)) known.set(t, got.get(t)!);
+    } catch { part.forEach((t) => unreadable.add(t)); }
+  }
   for (const [t, evs] of Array.from(byTicker.entries())) {
-    const cur = existing.get(t) || { rows: [], points: [], ids: [] };
+    if (unreadable.has(t)) continue;   // history could not be read: never overwrite it blind
+    const cur = known.get(t) || { rows: [], points: [], ids: [] };
     const fresh = evs.filter((e) => !cur.ids.includes(e.guidance_event_id));
     if (!fresh.length) continue;
     const next: TickerLedger = {

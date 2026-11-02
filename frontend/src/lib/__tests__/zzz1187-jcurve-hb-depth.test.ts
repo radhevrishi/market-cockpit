@@ -26,11 +26,11 @@ test('a theme whose supply is ample is not a choke point; a 10x past run is flag
   ] }, { region: 'US', playbook: pb, themes: [] }] } as unknown as ChokeReport;
   const f = (p5y: number): CandFacts => ({ cap: 9000, revQ: 60, revA: 24, epsQ: 100, opm: 15, pe: 28, fcfm: 5, de: 0.1, p1y: 20, p5y });
   enrich(r, { IN: new Map([['AEROFLEX', f(100)], ['TARIL', f(2029)]]), US: new Map() });
-  const [first, second] = r.regions[0].themes;
-  assert.equal(first.name, 'Transformers');
-  assert.equal(first.qualifies, true);
-  assert.equal(second.qualifies, false);
-  assert.match(first.candidates[0].sizeNote || '', /up 21x in 5 years/);
+  // zzz1206 — the 21x transformer name is late in the curve: out of discovery, so neither theme qualifies
+  const tr = r.regions[0].themes.find((t) => t.name === 'Transformers')!;
+  assert.equal(tr.qualifies, false);
+  assert.match((tr.late || [])[0].lateWhy!.join(), /up 21x in 5 years/);
+  assert.equal(r.regions[0].themes.find((t) => t.name === 'Hoses')!.qualifies, false);
 });
 
 test('100-bagger gates: lenders / insurers out, an accelerating grower in, heavy burn out', () => {

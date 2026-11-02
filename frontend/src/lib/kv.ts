@@ -21,7 +21,7 @@ import { gzipSync, gunzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
 import { MemoryKvStore } from './kv-memory';
 import { VERSIONED_SET_LUA, parseVersionedResult, type VersionedValue } from './kv-versioned';
-import { KvReadCache, KvUsage, readThrough, isCacheableKey } from './kv-read-cache';
+import { KvReadCache, KvUsage, readThrough, isCacheableKey, RestFallbackLearner } from './kv-read-cache';
 
 let redis: Redis | null = null;
 let redisAvailable: boolean | null = null;
@@ -79,6 +79,8 @@ const READ_CACHE: KvReadCache = (globalThis as any).__MC_KV_READ_CACHE__ || new 
 (globalThis as any).__MC_KV_READ_CACHE__ = READ_CACHE;
 const READ_INFLIGHT = new Map<string, Promise<string | null>>();
 export const KV_USAGE: KvUsage = (globalThis as any).__MC_KV_USAGE__ || new KvUsage();
+const REST_LEARN: RestFallbackLearner = (globalThis as any).__MC_KV_REST_LEARN__ || new RestFallbackLearner();   // zzz1203
+(globalThis as any).__MC_KV_REST_LEARN__ = REST_LEARN;
 (globalThis as any).__MC_KV_USAGE__ = KV_USAGE;
 
 /** For callers that talk to the Upstash REST API directly, so the per-hour counter stays complete. */
@@ -89,6 +91,7 @@ export function kvUsageSnapshot() {
   const s = READ_CACHE.size();
   return {
     ...KV_USAGE.snapshot(),
+    restRetry: { skippedMisses: REST_LEARN.skipped, families: REST_LEARN.snapshot().sort((a, b) => b.tried - a.tried).slice(0, 15) },
     readCache: { on: readCacheOn(), entries: s.entries, mb: Math.round(s.bytes / 1e4) / 100, hits: READ_CACHE.hits, knownMissingHits: READ_CACHE.missHits, storeReads: READ_CACHE.loads, evictions: READ_CACHE.evictions, ttlS: READ_CACHE.opts.hitTtlMs / 1000 },
   };
 }
@@ -152,17 +155,21 @@ async function kvGetFromStore<T = any>(key: string): Promise<{ value: T | null; 
   // large blobs the @upstash client returns empty for (universe/mover-reasons).
   // zzz1049: note a MISS therefore costs two commands — the memory cache keeps "missing" for 30 s.
   let failed = false;
+  let clientMissed = false;
   const r = getRedis();
   if (r) {
     try {
       KV_USAGE.record('get', key);
       const val = await r.get<T>(key);
       if (val !== null && val !== undefined) return { value: unpackLarge<T>(val), failed: false };
+      clientMissed = true;
     } catch (e) {
       failed = true;
       console.error(`[KV] Redis GET failed for ${key}:`, e);
     }
   }
+  // zzz1203: a clean client miss in a family whose REST retries never find anything is trusted (saves one command per miss)
+  if (clientMissed && process.env.KV_REST_RETRY_ALWAYS !== '1' && !REST_LEARN.shouldRetry(key)) { REST_LEARN.skipped++; return { value: null, failed: false }; }
   const creds = restCreds();
   if (creds) {
     failed = true;
@@ -177,6 +184,7 @@ async function kvGetFromStore<T = any>(key: string): Promise<{ value: T | null; 
         const j: any = await resp.json().catch(() => null);
         if (j && typeof j === 'object' && 'result' in j) failed = false;
         const raw: any = j?.result;
+        if (clientMissed && j && typeof j === 'object' && 'result' in j) REST_LEARN.note(key, raw !== null && raw !== undefined);
         if (raw !== null && raw !== undefined) {
           if (typeof raw === 'string') {
             KV_USAGE.record('get(rest)', key, 0, raw.length);

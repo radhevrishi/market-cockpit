@@ -191,7 +191,7 @@ function readCache(key: string, isToday: boolean): UsPayload | null {
     if (!raw) return null;
     const o = JSON.parse(raw);
     const age = Date.now() - Date.parse(o?._cachedAt || '');
-    const maxAge = isToday ? 10 * 60_000 : 30 * 24 * 3600_000;
+    const maxAge = isToday ? 5 * 60_000 : 30 * 24 * 3600_000;   // zzz1205: today 10 → 5 min
     if (!Number.isFinite(age) || age > maxAge) return null;
     if (!o?.by_tier) return null;
     // A scan that found filers but graded NONE of them is a failed scan, not a

@@ -570,7 +570,7 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
       <SignalRow signals={(r as any).signals} />
 
       <AiSummary docs={(r as any).filing_docs} ticker={r.ticker} releaseUrl={(r as any).release_url ?? null} filingDate={r.filing_date}
-        company={(r as any).company ?? null} quarter={(r as any).quarter ?? null} tier={(r as any).tier ?? null} />
+        company={(r as any).company ?? null} quarter={(r as any).quarter ?? null} tier={(r as any).tier ?? null} eps={epsFactsOf(r)} />
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', margin: '9px 0 0', fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)' }}>
         <span>Reaction <b style={{ color: r.d1_pct == null ? 'var(--mc-text-3)' : r.d1_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(r.d1_pct, 1)}</b></span>
@@ -1291,9 +1291,9 @@ export function setAllAiSummaries(open: boolean) {
   window.dispatchEvent(new CustomEvent(AI_ALL_EVENT, { detail: { open } }));
 }
 
-function AiSummary({ docs, ticker, releaseUrl, filingDate, company, quarter, tier }: {
+function AiSummary({ docs, ticker, releaseUrl, filingDate, company, quarter, tier, eps }: {
   docs: FilingDocs | null | undefined; ticker: string; releaseUrl: string | null; filingDate?: string | null;
-  company?: string | null; quarter?: string | null; tier?: string | null;
+  company?: string | null; quarter?: string | null; tier?: string | null; eps?: EpsFacts | null;
 }) {
   const [open, setOpen] = useState(false);
   const [state, setState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
@@ -1464,7 +1464,7 @@ function AiSummary({ docs, ticker, releaseUrl, filingDate, company, quarter, tie
           {state === 'done' && commentary && (
             <CommentaryScoreBlock c={commentary} hasTranscript={!!transcript} />
           )}
-          {state === 'done' && (struct ? <SummaryView d={struct} /> : <SummaryText text={text} />)}
+          {state === 'done' && (struct ? <SummaryView d={struct} eps={eps} /> : <SummaryText text={text} />)}
           {state === 'done' && files.length > 0 && (
             <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--mc-bg-4)' }}>
               <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.3, color: 'var(--mc-text-3)', marginBottom: 5 }}>
@@ -1906,7 +1906,36 @@ export function CommentaryScoreBlock({ c, hasTranscript }: { c: CommentaryScore;
 /** zzz700 — exported so the India card renders the IDENTICAL blocks. The
  *  reading is market-agnostic: it is the shared tool schema's output, and a
  *  second renderer would drift from this one exactly as a second prompt would. */
-export function SummaryView({ d }: { d: any }) {
+// zzz1205 — THE EPS PART OF THE SUMMARY. The model is told not to repeat the headline numbers, so the summary said nothing about
+// EPS (NVT: GAAP $1.23 vs $0.74, adjusted $1.52 above the street, full-year EPS outlook raised). These lines come from the
+// graded row — figures already checked against the filing — never from the model.
+export interface EpsFacts { gaap: number | null; gaapPrev: number | null; gaapYoy: number | null; adj: number | null; adjLabel: string | null; est: number | null; surprisePct: number | null; basis: string | null; guide: Array<{ label: string; low: number | null; high: number | null; prevLow: number | null; prevHigh: number | null; dir: string }> }
+export function epsFactsOf(r: any): EpsFacts | null {
+  const n = (v: any): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  const guide = (Array.isArray(r?.guide_change) ? r.guide_change : []).filter((g: any) => g?.metric === 'eps' && g?.unit === 'usd_share')
+    .map((g: any) => ({ label: `${g.basis === 'adjusted' ? 'adj. ' : ''}EPS ${g.period_label || ''}`.trim(), low: n(g.new_low), high: n(g.new_high), prevLow: n(g.prev_low), prevHigh: n(g.prev_high), dir: String(g.direction || '') }));
+  const f: EpsFacts = { gaap: n(r?.eps_curr), gaapPrev: n(r?.eps_prev), gaapYoy: n(r?.eps_gaap_yoy_pct ?? r?.eps_yoy_pct), adj: n(r?.eps_adj), adjLabel: r?.eps_adj_label || null,
+    est: n(r?.eps_estimate), surprisePct: n(r?.eps_surprise_pct), basis: r?.eps_basis ? String(r.eps_basis) : null, guide };
+  return f.gaap == null && f.adj == null ? null : f;
+}
+function EpsBlock({ e }: { e: EpsFacts }) {
+  const m = (v: number | null) => (v == null ? '—' : `${v < 0 ? '-' : ''}$${Math.abs(v).toFixed(2)}`);
+  const rng = (a: number | null, b: number | null) => (a == null && b == null ? '—' : a != null && b != null && Math.abs(a - b) > 0.004 ? `${m(a)}–${m(b)}` : m(a ?? b));
+  const lines: React.ReactNode[] = [];
+  if (e.gaap != null) lines.push(<>Reported (GAAP) EPS <b>{m(e.gaap)}</b>{e.gaapPrev != null ? <> vs {m(e.gaapPrev)} a year ago</> : null}{e.gaapYoy != null ? <> ({e.gaapYoy >= 0 ? '+' : ''}{Math.round(e.gaapYoy)}%)</> : null}.</>);
+  if (e.adj != null) lines.push(<>{e.adjLabel || 'Adjusted EPS'} <b>{m(e.adj)}</b>{e.est != null && e.surprisePct != null ? <> — {Math.abs(e.surprisePct) < 0.5 ? 'in line with' : e.surprisePct > 0 ? `${e.surprisePct.toFixed(1)}% above` : `${Math.abs(e.surprisePct).toFixed(1)}% below`} the street&apos;s {m(e.est)}{e.basis ? ` (${e.basis})` : ''}</> : null}. Adjusted figures leave out one-off items, so they differ from GAAP.</>);
+  for (const g of e.guide) lines.push(<>{g.label} outlook {g.dir === 'raised' ? 'raised' : g.dir === 'lowered' || g.dir === 'cut' ? 'lowered' : g.dir || 'updated'} to <b>{rng(g.low, g.high)}</b>{g.prevLow != null || g.prevHigh != null ? <> (was {rng(g.prevLow, g.prevHigh)})</> : null}.</>);
+  if (!lines.length) return null;
+  return (
+    <div data-summary-eps style={{ marginBottom: 11, paddingLeft: 9, borderLeft: '2px solid var(--mc-cyan)' }}>
+      <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: '0.4px', color: 'var(--mc-cyan)', marginBottom: 3 }}>EPS</div>
+      {lines.map((l, i) => <div key={i} style={{ fontSize: 11.5, lineHeight: 1.5, color: 'var(--mc-text-2)' }}>{l}</div>)}
+      <div style={{ fontSize: 10.5, color: 'var(--mc-text-4)' }}>From the graded figures (checked against the filing), not from the AI.</div>
+    </div>
+  );
+}
+
+export function SummaryView({ d, eps }: { d: any; eps?: EpsFacts | null }) {
   const pos: any[] = Array.isArray(d?.positives) ? d.positives : [];
   const neg: any[] = Array.isArray(d?.negatives) ? d.negatives : [];
   const segs: any[] = Array.isArray(d?.segments) ? d.segments : [];
@@ -1939,6 +1968,7 @@ export function SummaryView({ d }: { d: any }) {
         }}>{d.verdict_line}</div>
       )}
 
+      {eps && <EpsBlock e={eps} />}
       {/* 2 — guidance, the loudest thing on the card when it exists */}
       {gs && (
         <div style={{
@@ -4233,7 +4263,12 @@ export function DetailPanel({ r }: { r: UsRowX }) {
           {(r.methodology_tags.length > 0 || r.caveat_tags.length > 0) && (
             <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: r.prelim ? 6 : 0 }}>
               {r.methodology_tags.map((t) => <Chip key={`m-${t}`} text={t} color="#10B981" />)}
-              {r.caveat_tags.map((t) => <Chip key={`c-${t}`} text={t} color="#EF4444" />)}
+              {r.caveat_tags.map((t) => {
+                // zzz1205 — the gross-margin note carries its own figures
+                const gm = t === 'gross margin fell 1.5+ pts year on year' ? (r as any).gross_margin : null;
+                return <Chip key={`c-${t}`} text={gm ? `gross margin ${gm.prev}% → ${gm.now}% (${gm.delta} pts)` : t} color="#EF4444"
+                  title={gm ? `Gross profit as a share of revenue, quarter to ${gm.end} vs the same quarter a year earlier (${gm.prevEnd}). Shown for information — it does not change the grade.` : undefined} />;
+              })}
             </div>
           )}
           {/* zzz804 — price context, never part of the grade. */}

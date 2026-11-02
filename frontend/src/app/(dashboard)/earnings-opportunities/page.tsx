@@ -45,7 +45,7 @@ import { IN_OVERLAY_VERSION, applyInGuideLine } from '@/lib/in-guide-line';
 // zzz814 — multi-day window (1d … 60d), as on the US page.
 import {
   IN_WINDOWS, parseWindowParam, parseWindowViewParam, withWindowParams, rowsByTier,
-  sortByDate, sortByTier, windowCsv, tradingViewList, fmtShortDate, freshestFirst,
+  sortByDate, sortByTier, windowCsv, tradingViewList, fmtShortDate, freshestFirst, bestFirst,
   type WindowView, type WindowRow,
 } from '@/lib/india-earnings-window';
 // zzz817 — tier chips as filters, per-day MIXED/AVOID expanders, filter-aware
@@ -132,6 +132,10 @@ export default function EarningsOpportunitiesPage() {
   const [smallMidOnly, setSmallMidOnlyState] = useState<boolean>(false);
   useEffect(() => { setSmallMidOnlyState(readSmallMidPref(EO_SMALL_MID_KEY, false)); }, []);
   const setSmallMidOnly = (on: boolean) => { setSmallMidOnlyState(on); writeSmallMidPref(EO_SMALL_MID_KEY, on); };
+  // zzz1204 — order inside a tier: BEST first (default; the owner: "at top all good") or newest filing first. Remembered.
+  const [orderBest, setOrderBestState] = useState<boolean>(true);
+  useEffect(() => { try { setOrderBestState(localStorage.getItem('mc:eo-order:v1') !== 'newest'); } catch { /* default */ } }, []);
+  const setOrderBest = (on: boolean) => { setOrderBestState(on); try { localStorage.setItem('mc:eo-order:v1', on ? 'best' : 'newest'); } catch { /* not kept */ } };
   // PATCH zzz75 — Always default to ONE day before today (previous weekday,
   // skipping Sat/Sun backward to Fri). User explicitly wants the page to
   // start on yesterday, NOT auto-jump to a dense-earnings calendar date.
@@ -1848,6 +1852,7 @@ export default function EarningsOpportunitiesPage() {
   const withinTierOrder = (a: any, b: any): number =>
     turnaroundOnly ? (b.inflection_score ?? 0) - (a.inflection_score ?? 0)
       : beatCheapOnly ? (a.pe ?? 0) - (b.pe ?? 0)
+      : orderBest ? bestFirst(a, b)   // zzz1204
       : freshestFirst(a, b);
   // zzz817 — the window: the filters run on EVERY result in the window, then
   // one row per company among what passed. (Before, the latest result was
@@ -2750,6 +2755,8 @@ Source label: ${coverageStats.source}`}
                     allC.length - sm.hiddenLarge,
                     () => setSmallMidOnly(!smallMidOnly));
                 })()}
+                {/* zzz1204 — order inside each tier */}
+                {chip(orderBest, '#10B981', orderBest ? '⇅ Best first' : '⇅ Newest first', allC.length, () => setOrderBest(!orderBest))}
               </>
             );
           })()}
@@ -3089,7 +3096,7 @@ Source label: ${coverageStats.source}`}
             const names = otherCards0.map((c) => `${c.ticker} (graded on ${fmtDate(String(c._first_shown))})`).join(', ');
             return (
               <div data-other-day-note style={{ color: 'var(--mc-text-2)', fontSize: 13, padding: '14px 18px', backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 'var(--mc-radius)', lineHeight: 1.5 }}>
-                <b style={{ color: 'var(--mc-text-1)' }}>{filingDateLabel}: {otherCards0.length} {otherCards0.length === 1 ? 'company' : 'companies'} on the calendar, already graded on an earlier day</b> — {names}. The same results are shown below; they count on the day they were first graded.
+                <b style={{ color: 'var(--mc-text-1)' }}>{filingDateLabel}: {otherCards0.length} {otherCards0.length === 1 ? 'company' : 'companies'} on the calendar, already graded on an earlier day</b> — {names}. They count on the day they were first graded — the list is at the end of the page; click a name to open that day.
               </div>
             );
           }
@@ -3543,29 +3550,21 @@ Source label: ${coverageStats.source}`}
           const pending = scheduled.filter((it) => !gradedTickers.has((it.symbol || '').toUpperCase()) && !shownElsewhere.has((it.symbol || '').toUpperCase()));
           // zzz1157 — names graded on another day for the same results: said, with a jump to that day (never silently missing)
           // zzz1158 — the card itself is shown here too (from the day's payload), not only a link
-          const otherCards: any[] = Array.isArray((view as any)?._other_day_cards) ? (view as any)._other_day_cards : [];
+          // zzz1204 — the owner: keep this AT THE END and as a short list (no company cards). Collapsed, after the pending names.
           const elsewhereBlock = otherDay.size > 0 ? (
-            <div data-other-day-wrap style={{ display: 'grid', gap: 8 }}>
-            <div data-other-day style={{ fontSize: 12.5, color: 'var(--mc-text-2)', margin: '6px 0', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'baseline' }}>
-              <b style={{ color: 'var(--mc-text-1)' }}>Graded on another day (same results):</b>
-              {Array.from(otherDay.entries()).map(([t, d]) => (
-                <button key={t} type="button" onClick={() => setFilterDate(d)} title={`${t}'s results were filed and graded on ${d}; the calendar also lists it on ${filterDate}. Click to open ${d}.`}
-                  style={{ fontSize: 12, padding: '2px 8px', borderRadius: 6, border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', background: 'transparent', color: 'var(--mc-cyan)', cursor: 'pointer', fontWeight: 700 }}>
-                  {t} → {new Date(`${d}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })}
-                </button>
-              ))}
-            </div>
-            {otherCards.length > 0 && (
-              <div data-other-day-cards style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 12 }}>
-                {otherCards.map((c) => (
-                  <div key={`od-${c.ticker}`} style={{ display: 'grid', gap: 4 }}>
-                    <span style={{ fontSize: 11.5, color: 'var(--mc-text-3)' }}>First graded on {String(c._first_shown)} — the same {String(c.quarter || '')} results, shown here too; not counted in this day&apos;s tiers</span>
-                    <EarningsCard stock={c} />
-                  </div>
+            <details data-other-day-wrap style={{ marginTop: 10 }}>
+              <summary style={{ fontSize: 12.5, color: 'var(--mc-text-2)', cursor: 'pointer' }}>
+                <b style={{ color: 'var(--mc-text-1)' }}>Graded on another day (same results): {otherDay.size}</b> — click a name to open the day it was graded
+              </summary>
+              <div data-other-day style={{ fontSize: 12.5, color: 'var(--mc-text-2)', margin: '6px 0', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'baseline' }}>
+                {Array.from(otherDay.entries()).map(([t, d]) => (
+                  <button key={t} type="button" onClick={() => setFilterDate(d)} title={`${t}'s results were filed and graded on ${d}; the calendar also lists it on ${filterDate}. Click to open ${d}.`}
+                    style={{ fontSize: 12, padding: '2px 8px', borderRadius: 6, border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', background: 'transparent', color: 'var(--mc-cyan)', cursor: 'pointer', fontWeight: 700 }}>
+                    {t} → {new Date(`${d}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })}
+                  </button>
                 ))}
               </div>
-            )}
-            </div>
+            </details>
           ) : null;
           if (pending.length === 0) return elsewhereBlock;
           // zzz1152 — until this day's graded answer has arrived, nothing is known about a name: say "checking", never "not out yet"
@@ -3594,7 +3593,6 @@ Source label: ${coverageStats.source}`}
                   return `📊 ${total} ${total === 1 ? 'company' : 'companies'} on the calendar for ${filterDate} — ${filed} filed & graded below · ${pending.length} results still pending (shown here).`;
                 })()}
               </div>
-              {elsewhereBlock}
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
                 <span style={{ fontSize: 16, fontWeight: 800, color: 'var(--mc-warn)' }}>📅 SCHEDULED TODAY · RESULTS PENDING</span>
                 <span style={{ fontSize: 12, color: 'var(--mc-warn)', fontWeight: 800 }}>{pending.length} {pending.length === 1 ? 'company' : 'companies'}</span>
@@ -3639,6 +3637,7 @@ Source label: ${coverageStats.source}`}
                   </span>
                 )}
               </div>
+              {elsewhereBlock}
             </div>
           );
         })()}

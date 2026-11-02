@@ -20,6 +20,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { useDebtEquityEntries, DebtEquityContext, type DeIndex } from '@/lib/use-debt-equity';   // zzz1068 · zzz1077
+import { STAGE2_PICKS, writeStage2, stageOf } from '@/lib/cb-stage2';   // zzz1207
 import { deCell, TONE_COLOR, DE_MAX_OPTIONS } from '@/lib/cb-metric-view';
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -1221,6 +1222,20 @@ export default function UsConvictionBeatsPage() {
           ⚡ QUALITY PRESET · Sales≥{filters.sales ?? US_PRESET.sales} · EPS≥{filters.eps ?? US_PRESET.eps} · PEAD≥{filters.pead ?? US_PRESET.pead} · OPM Δ≥{filters.opmDelta ?? US_PRESET.opmDelta} · CFO/NI≥{filters.cfoPatMin ?? US_PRESET.cfoPatMin} · MktCap≥${filters.mktCapMin ?? US_PRESET.mktCapMinMusd}M · &gt;50DMA · &gt;200DMA{' '}
           {presetOn ? '✓ ON' : presetCustom ? '✓ ON · customised' : '· OFF — click to enable'}
         </button>
+        {/* zzz1207 — Stage 2 yes / no (weekly Stage Analysis), part of the preset and remembered */}
+        <span data-testid="us-cb-stage2" style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}
+          title="Weekly Stage Analysis (the Stage Analysis page's own rules, completed weeks only). A company with no stage yet passes neither Yes nor No.">
+          <span style={{ fontSize: 10.5, color: 'var(--mc-text-3)', fontWeight: 700 }}>Stage 2:</span>
+          {STAGE2_PICKS.map((o) => {
+            const on = (filters.stage2 ?? 'any') === o.v;
+            const n = entries.filter((e) => passesUsConvictionFilter(e, { ...filters, stage2: o.v === 'any' ? null : o.v })).length;
+            return (
+              <button key={o.v} title={o.title} onClick={() => { writeStage2('US', o.v); setFilters((prev) => ({ ...prev, stage2: o.v === 'any' ? null : o.v })); }}
+                style={{ ...chip(on, '#10B981'), borderRadius: 999 }}>{o.label} {n}</button>
+            );
+          })}
+          {(() => { const unk = entries.filter((e) => stageOf(e).st == null).length; return unk ? <span style={{ fontSize: 10.5, color: 'var(--mc-text-4)' }}>· stage unknown {unk}</span> : null; })()}
+        </span>
         {/* Deliberately a SEPARATE control. Folding "show the numbers" into the
             same click as "turn it on" means a reader cannot look without also
             changing what they are looking at. */}

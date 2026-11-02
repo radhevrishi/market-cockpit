@@ -5,16 +5,22 @@
 // Excel export all read the same value. A name the snapshot does not have keeps no value ("—").
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { deIndex } from '@/lib/cb-metric-view';
+import { stageIndex } from '@/lib/cb-stage2';   // zzz1207
 
 const tick = (t: unknown) => String(t || '').toUpperCase().replace(/^(NSE|BSE|NASDAQ|NYSE|AMEX):/, '').replace(/\.(NS|BO)$/, '');
 
-export function withDebtEquity<T extends { ticker?: string }>(entries: T[], idx: Record<string, { de: number; basis: string }>): T[] {
-  if (!entries.length || !Object.keys(idx).length) return entries;
+export function withDebtEquity<T extends { ticker?: string }>(entries: T[], idx: Record<string, { de: number; basis: string }>, st: StageIdx = {}): T[] {
+  if (!entries.length || (!Object.keys(idx).length && !Object.keys(st).length)) return entries;
   return entries.map((e) => {
-    const v = idx[tick(e.ticker)];
-    return v ? ({ ...e, de_ratio: v.de, de_basis: v.basis } as T) : e;
+    const k = tick(e.ticker);
+    const v = idx[k], s = st[k];   // zzz1207 — the weekly stage rides along with D/E (same slim screener answer)
+    if (!v && !s) return e;
+    return { ...e, ...(v ? { de_ratio: v.de, de_basis: v.basis } : {}), ...(s ? s : {}) } as T;
   });
 }
+export type StageIdx = Record<string, { wst: number | null; wst_h: number | null; wst_wk: number | null; st30: number | null }>;
+const _stCache: Record<string, StageIdx> = { IN: {}, US: {} };
+let _ver = 0;   // bumps on every answer, so a stage-only answer still refreshes the cards
 
 export type DeIndex = Record<string, { de: number; basis: string }>;
 const CHUNK = 300;   // the slim stock-screener answer takes a few hundred tickers per call
@@ -34,9 +40,9 @@ function askDe(market: 'IN' | 'US', list: string[]): void {
   for (const c of chunks) {
     const pending = new Set(c);
     fetch(`/api/v1/stock-screener?market=${market}&tickers=${encodeURIComponent(c.join(','))}`, { signal: AbortSignal.timeout(30_000) })
-      .then((r) => (r.ok ? r.json() : null)).then((j) => (j && Array.isArray(j.rows) ? deIndex(j.rows) : null)).catch(() => null)
+      .then((r) => (r.ok ? r.json() : null)).then((j) => (j && Array.isArray(j.rows) ? { de: deIndex(j.rows), st: stageIndex(j.rows) } : null)).catch(() => null)
       .then((part) => {
-        if (part) { Object.assign(_deCache[market], part); for (const t of pending) _deAsked[market].add(t); }
+        if (part) { Object.assign(_deCache[market], part.de); Object.assign(_stCache[market], part.st); for (const t of pending) _deAsked[market].add(t); _ver++; }
         for (const f of _deListeners) f();
       });
   }
@@ -56,7 +62,9 @@ export function useDebtEquityIndex(tickers: ReadonlyArray<string | undefined | n
 export function useDebtEquityEntries<T extends { ticker?: string }>(entries: T[], market: 'IN' | 'US'): T[] {
   const tickers = useMemo(() => entries.map((e) => e.ticker), [entries]);
   const idx = useDebtEquityIndex(tickers as string[], market);
-  return useMemo(() => withDebtEquity(entries, idx), [entries, idx]);
+  // zzz1207 — and the weekly stage (Stage Analysis) from the same answer
+  const ver = _ver;
+  return useMemo(() => withDebtEquity(entries, idx, { ..._stCache[market] }), [entries, idx, market, ver]);   // eslint-disable-line react-hooks/exhaustive-deps
 }
 
 /** zzz1077 — the Earnings Opportunities cards (India + USA) read D/E from here; the page provides the index. */

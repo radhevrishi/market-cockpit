@@ -165,3 +165,33 @@ export class KvUsage {
     };
   }
 }
+
+/**
+ * zzz1203 — a read the Upstash client answers "missing" was asked AGAIN over raw REST (the client sometimes returns empty for
+ * large blobs), so every miss cost two commands (bhav, results-pdf, enrich… — about a third of all commands). Learned per key
+ * family: once 30 REST retries of a family found nothing, that family's misses are trusted (one command). A family whose REST
+ * retry has ever found a value keeps the retry. Re-learned every 6 hours. Pure (clock injected).
+ */
+export class RestFallbackLearner {
+  private fam = new Map<string, { tried: number; found: number }>();
+  private since: number;
+  private now: () => number;
+  private minTries: number;
+  private relearnMs: number;
+  constructor(now: () => number = Date.now, minTries = 30, relearnMs = 6 * 3_600_000) { this.now = now; this.minTries = minTries; this.relearnMs = relearnMs; this.since = now(); }
+  private roll(): void { if (this.now() - this.since > this.relearnMs) { this.fam.clear(); this.since = this.now(); } }
+  /** Should a client miss on `key` be retried over REST? */
+  shouldRetry(key: string): boolean {
+    this.roll();
+    const f = this.fam.get(keyFamily(key));
+    return !f || f.found > 0 || f.tried < this.minTries;
+  }
+  note(key: string, found: boolean): void {
+    const id = keyFamily(key);
+    const f = this.fam.get(id) || { tried: 0, found: 0 };
+    f.tried++; if (found) f.found++;
+    this.fam.set(id, f);
+  }
+  skipped = 0;
+  snapshot(): Array<{ family: string; tried: number; found: number }> { return [...this.fam.entries()].map(([family, v]) => ({ family, ...v })); }
+}

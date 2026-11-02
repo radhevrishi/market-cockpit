@@ -764,3 +764,31 @@ export function tierEmptyMessage(sel: readonly string[], scope: 'window' | 'date
     ? `No ${names} results in this window — widen the window or clear a filter`
     : `No ${names} results on this date — widen the window or clear a filter`;
 }
+
+// ─── zzz1204 — "best first" inside a tier ──────────────────────────────────
+// The owner: "companies not in correct order — at top all good". Inside a tier the cards were newest-filing first, so a
+// large-cap in a downtrend (VEDL, stage 4) sat above clean small/mid compounders. Rank = the grade's composite score plus
+// plain adjustments the card already shows: trend stage, relative strength, cash behind profit, margin move, size (the
+// owner's focus is small and mid caps) and caveats. Ties fall back to newest first. Pure.
+const LENDER_RE = /bank|financ|nbfc|lend|broker|insur|capital market|asset manag/i;
+export function bestRankScore(r: any): number {
+  let s = Number(r?.composite_score ?? 0) || 0;
+  const st = r?.stage;
+  s += st === 2 ? 8 : st === 3 ? -4 : st === 4 ? -12 : 0;
+  const rs = Number(r?.rs_rating);
+  if (Number.isFinite(rs)) s += rs >= 80 ? 4 : rs < 50 ? -4 : 0;
+  const lender = LENDER_RE.test(String(r?.sector || '')) || /lender|bank|broker|nbfc/i.test((r?.caveat_tags || []).join(' '));
+  const cash = Number(r?.cfo_to_pat_ratio ?? r?.ocf_to_pat_ratio);
+  if (!lender && Number.isFinite(cash)) s += cash >= 0.8 ? 3 : cash < 0 ? -6 : cash < 0.6 ? -3 : 0;
+  const o = Number(r?.opm_pct), op = Number(r?.opm_prev_pct);
+  if (Number.isFinite(o) && Number.isFinite(op)) s += o - op >= 3 ? 3 : o - op <= -2 ? -3 : 0;
+  const mc = Number(r?.market_cap_cr);
+  if (Number.isFinite(mc) && mc > 0) s += mc <= 50_000 ? 4 : mc > 2_00_000 ? -8 : -4;
+  const cav = Array.isArray(r?.caveat_tags) ? r.caveat_tags.length : 0;
+  s -= Math.min(4, cav) * 3;
+  return s;
+}
+export function bestFirst(a: any, b: any): number {
+  const d = bestRankScore(b) - bestRankScore(a);
+  return d !== 0 ? d : freshestFirst(a, b);
+}

@@ -14,7 +14,7 @@ test('schema is strict-able; no theme quota (1–8); the prompt asks for company
   const themes = (CHOKE_TOOL.input_schema as any).properties.regions.items.properties.themes;
   assert.equal(themes.minItems, 1);
   assert.match(CHOKE_SYSTEM, /Which specific small or mid-cap company/); assert.match(CHOKE_SYSTEM, /Europe\+1/);
-  assert.match(CHOKE_SYSTEM, /a past rally does not end a J-curve/); assert.doesNotMatch(CHOKE_SYSTEM, /-30%, -50%, -70%/);
+  assert.match(CHOKE_SYSTEM, /FIRST STAGE ONLY/);   // zzz1206: the owner reversed "a past rally does not end a J-curve" assert.doesNotMatch(CHOKE_SYSTEM, /-30%, -50%, -70%/);
   const c = cleanChoke({ regions: [{ region: 'IN', themes: [theme('T', [cand('A')])], playbook: pb }, { region: 'US', themes: [], playbook: pb }] })!;
   assert.deepEqual(c.regions.map((g) => g.region), ['US', 'IN']); assert.equal(c.regions[0].themes.length, 0, 'a region may have no qualifying theme');
 });

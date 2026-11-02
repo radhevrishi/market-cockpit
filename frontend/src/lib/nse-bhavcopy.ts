@@ -152,6 +152,9 @@ async function fetchBhavcopyMap(isoDate: string): Promise<Map<string, BhavData>>
 /** Get single-symbol bhavcopy data — per-symbol KV cache, then full-map fetch. */
 export async function getBhavForSymbol(symbol: string, isoDate: string): Promise<BhavData | null> {
   const sym = symbol.toUpperCase();
+  // zzz1203: the day's file already parsed in this process answers first (no Redis read; was ~1,600 reads an hour)
+  const inMem = _memCache.get(isoDate);
+  if (inMem && inMem.size > 0) return inMem.get(sym) || null;
   // 1. Per-symbol KV cache (only symbols actually looked up get written here)
   if (isRedisAvailable()) {
     try {

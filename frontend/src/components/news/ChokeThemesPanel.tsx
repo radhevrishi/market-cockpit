@@ -145,6 +145,7 @@ function CandTable({ list, region, title }: { list: ChokeCandidate[]; region: Ch
                       <a href={`/charts?m=${region}&t=${encodeURIComponent(sym)}`} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ fontWeight: 900, color: C.text }}>{sym}</a>{c.found === false && <span title="Not found in the stock screener" style={{ color: C.warn }}> ⚠</span>}
                       <div style={{ color: C.dim, fontSize: 12.5 }}>{c.name}{c.facts?.cap != null ? ` · ${fmtChokeCap(c.facts.cap, region)}` : ''}</div>
                       {c.sizeNote && <div style={{ color: C.warn, fontSize: 12 }}>{c.sizeNote}</div>}
+                      {(c.lateWhy || []).length > 0 && <div style={{ color: C.red, fontSize: 12 }} title="The share price has already been re-rated — not a first-stage J-curve">⏱ late in the curve: {(c.lateWhy || []).join(' · ')}</div>}
                     </td>
                     <td style={{ padding: '7px 8px' }}>{tag(c.exposure, EXPO_C[c.exposure], EXPOSURE_WHY[c.exposure])}</td>
                     <td style={{ padding: '7px 8px', whiteSpace: 'nowrap' }}>{tag(J_WORD[c.jstage], J_C[c.jstage], J_WHY[c.jstage])}<div style={{ marginTop: 3 }}><span title={chk.why} style={{ fontSize: 12, color: chk.c, fontWeight: 700 }}>{chk.w}</span></div></td>
@@ -183,6 +184,7 @@ function ThemeCard({ t, i, region, pulse }: { t: ChokeTheme; i: number; region: 
       )}
       <CandTable list={t.candidates || []} region={region} title={`DISCOVERY CANDIDATES · SMALL & MID (${fmtChokeCap(DISCOVERY_CAP[region][0], region)}–${fmtChokeCap(DISCOVERY_CAP[region][1], region)})`} />
       {!(t.candidates || []).length && <div style={{ fontSize: 14, color: C.warn }}>No qualifying small / mid-cap candidates in this run.</div>}
+      <CandTable list={t.late || []} region={region} title="ALREADY RAN — LATE IN THE CURVE (CONTEXT, NOT DISCOVERY)" />
       <CandTable list={t.reference || []} region={region} title="REFERENCE LEADERS (LARGER — CONTEXT, NOT DISCOVERY)" />
       {(t.unknowns || t.evidence) && (
         <div style={{ fontSize: 13.5, color: C.dim, lineHeight: 1.5, borderTop: `1px dashed ${C.border}`, paddingTop: 7 }}>

@@ -96,8 +96,9 @@ test('zzz1158 — the other-day card itself is kept outside the tiers and shown 
   assert.match(r, /otherDayCards\.push\(\{ \.\.\.\(g as any\), _first_shown: _earlier \}\);/);
   assert.match(r, /_other_day_cards: otherDayCards\.slice\(0, 50\)/);
   const p = src('app/(dashboard)/earnings-opportunities/page.tsx');
-  assert.match(p, /<EarningsCard stock=\{c\} \/>/);
-  assert.match(p, /First graded on \{String\(c\._first_shown\)\}/);
+  // zzz1204 — the owner: the other-day names are a short list at the END of the page, not repeated company cards
+  assert.doesNotMatch(p, /First graded on \{String\(c\._first_shown\)\}/);
+  assert.match(p, /<details data-other-day-wrap/);
   assert.doesNotMatch(p, /No Q4 results announced/);
   assert.match(p, /already graded on an earlier day<\/b>/);   // zzz1159: not "No earnings filings" when a card is shown
 });

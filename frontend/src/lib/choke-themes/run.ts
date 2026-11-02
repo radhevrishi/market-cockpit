@@ -11,7 +11,7 @@ export const CHOKE_PREV_KEY = 'choke-themes:v1:previous';
 export const CHOKE_DAILY_MAX = 6;
 const TTL = 400 * 86_400;
 
-const toFacts = (c: Cand): CandFacts => ({ cap: c.mc, revQ: c.revQ, revA: c.revA, epsQ: c.epsQ, opm: c.opm, opmFY: c.opmFY ?? null, pe: c.pe, fcfm: c.fcfm, de: c.de, p1y: c.p1y, p5y: c.p5y });
+const toFacts = (c: Cand): CandFacts => ({ cap: c.mc, revQ: c.revQ, revA: c.revA, epsQ: c.epsQ, opm: c.opm, opmFY: c.opmFY ?? null, pe: c.pe, fcfm: c.fcfm, de: c.de, p1y: c.p1y, p5y: c.p5y, p6m: c.p6m ?? null, st: c.st ?? null, stWk: c.stWk ?? null });
 async function screenerFacts(): Promise<{ facts: Record<ChokeRegion, Map<string, CandFacts>>; cands: Record<ChokeRegion, Cand[]> }> {
   const { loadCands } = await import('../screener/ai-candidates-load');
   const [us, ind] = await Promise.all([loadCands('US'), loadCands('IN')]);
@@ -100,7 +100,7 @@ export async function runChoke(): Promise<{ ok: true; report: ChokeReport } | { 
       infl[mk].length ? `Industries by revenue acceleration (latest quarter vs year):\n${infl[mk].join('\n')}` : null,
       `CHECKLIST — test each of these bottlenecks against the company lists before you decide (keep only those that qualify; add others you find):\n${CHOKE_CHECKLIST[mk]}`,
       `CROSS-BORDER CHECKLIST — test each sub-theme too (these are often the real J-curves in sectors that look mature at home):\n${CROSS_BORDER_CHECKLIST[mk]}`,
-      'Company data columns: ticker | name | industry | market cap | sales growth: latest quarter vs a year earlier, and last fiscal year | EPS growth latest quarter vs a year earlier | operating margin, trailing 12 months (TTM) | ROCE | debt/equity | P/E | P/S | FCF margin | share move 1y and 5y (context only) | share-count change a year.',
+      'Company data columns: ticker | name | industry | market cap | sales growth: latest quarter vs a year earlier, and last fiscal year | EPS growth latest quarter vs a year earlier | operating margin, trailing 12 months (TTM) | ROCE | debt/equity | P/E | P/S | FCF margin | share move 6m, 1y and 5y + weekly stage (1 base, 2 uptrend, 3 topping, 4 downtrend) — used to tell FIRST-STAGE names from ones that already ran | share-count change a year.',
       `Small / mid caps whose own figures are turning up (discovery leads, not conclusions):\n${tc.map((c) => candLine(c, mk)).join('\n')}`,
       `Other small / mid caps in bottleneck-prone industries (possible J1 / J2 names before the figures turn):\n${sc.map((c) => candLine(c, mk)).join('\n')}`,
       newsFor(mk).length ? `Recent news (most important first):\n${newsFor(mk).join('\n')}` : 'No recent news available — say nothing about recent events.',

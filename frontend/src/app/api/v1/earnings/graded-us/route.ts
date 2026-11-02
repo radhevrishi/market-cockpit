@@ -32,6 +32,7 @@ import { guidesNextQuarterBelowThisOne } from '@/lib/us-guidance-figures';
 import { annualCashFromFacts } from '@/lib/us-annual-cash';   // zzz1068
 import { NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
+import { applyGrossMargin } from '@/lib/us-gross-margin';   // zzz1205
 import { sessionIndexOf, priorSessions, dropShownEarlier, US_SESSION_INDEX_KEY, US_SESSION_INDEX_TTL_S } from '@/lib/us-session-dedupe';
 import { gzipSync, gunzipSync } from 'zlib';
 
@@ -869,6 +870,8 @@ async function sessionIndexFor(date: string): Promise<string[] | null> {
 // lowered guidance (filing, slides, call or news) is shown as MIXED. Results are computed by the us-guide-check job.
 async function withSessionDedupe(payload: any, date: string, days: number, explicit: string): Promise<any> {
   try { payload = await overlayGuideChecks(payload); if (payload?.by_tier) payload = { ...payload, overlay_v: US_OVERLAY_VERSION }; } catch { /* never let the check break the page */ }
+  // zzz1205 — gross-margin move on rows graded before it existed (pure, from the row's own series; never changes the tier)
+  try { if (payload?.by_tier) for (const rows of Object.values(payload.by_tier) as any[][]) for (const r of rows || []) if (r && !r.gross_margin) applyGrossMargin(r); } catch { /* informational only */ }
   return withSessionDedupeInner(payload, date, days, explicit);
 }
 async function withSessionDedupeInner(payload: any, date: string, days: number, explicit: string): Promise<any> {
@@ -1721,6 +1724,7 @@ export async function GET(req: Request) {
       // working-capital timing.
       (row as any).rule40 = rule40From(ser, row.sales_yoy_pct, row.revenue_curr_musd, row.fcf_curr_musd);
       (row as any).roce = roceFrom(ser, ctx);
+      applyGrossMargin(row);   // zzz1205
       // The quadrant was computed at grade time without ROCE, because ROCE needs
       // the balance sheet and the balance sheet is attached here. Recompute it
       // now that the strongest quality input exists — same function, one more
@@ -2283,6 +2287,7 @@ export async function GET(req: Request) {
           if (ctxUse) (row as any).context = ctxUse;
           (row as any).rule40 = rule40From((row as any).series ?? null, row.sales_yoy_pct, row.revenue_curr_musd, row.fcf_curr_musd);
           (row as any).roce = roceFrom((row as any).series ?? null, ctxUse);
+          applyGrossMargin(row);   // zzz1205
         }
         // Own-guide comparison works on a PRELIM row too: the guide came from
         // last quarter's release and the actuals came from this quarter's.
@@ -2607,7 +2612,11 @@ export async function GET(req: Request) {
     // zzz805 — an incomplete window (a day whose filer list failed, or filers
     // left for the time budget) is not final: short-lived, never shared.
     const incomplete = (filerFetch?.failed?.length ?? 0) > 0 || budgetSkipped > 0;
-    const ttl = explicit ? 15 * 60_000 : (includesToday || incomplete) ? 15 * 60_000 : 90 * 24 * 3600_000;
+    // zzz1205 — most US results land 06:00–10:00 ET (NVT 30 Oct, ~06:50): today's session is re-read every 5 minutes then,
+    // so a pre-market release reaches the page within minutes instead of up to 25 (15 here + 10 in the browser)
+    const etHr = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false }).format(new Date())) % 24;
+    const todayTtl = includesToday && etHr >= 6 && etHr < 10 ? 5 * 60_000 : 15 * 60_000;
+    const ttl = explicit ? 15 * 60_000 : (includesToday || incomplete) ? todayTtl : 90 * 24 * 3600_000;
     if (_cache.size >= CACHE_MAX) {
       const oldest = Array.from(_cache.entries()).sort((a, b) => a[1].at - b[1].at).slice(0, 15);
       for (const [k] of oldest) _cache.delete(k);

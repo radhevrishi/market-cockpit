@@ -33,7 +33,7 @@ export const EXPOSURE_WHY: Record<Exposure, string> = {
 };
 
 /** Stock-screener figures laid over a candidate (never written by the model). */
-export interface CandFacts { cap: number | null; revQ: number | null; revA: number | null; epsQ: number | null; opm: number | null; /** zzz1186 — last fiscal year (TTM can carry one-offs) */ opmFY?: number | null; pe: number | null; fcfm: number | null; de: number | null; p1y: number | null; p5y: number | null }
+export interface CandFacts { cap: number | null; revQ: number | null; revA: number | null; epsQ: number | null; opm: number | null; /** zzz1186 — last fiscal year (TTM can carry one-offs) */ opmFY?: number | null; pe: number | null; fcfm: number | null; de: number | null; p1y: number | null; p5y: number | null; /** zzz1206 */ p6m?: number | null; st?: number | null; stWk?: number | null }
 export interface ScenarioIn { years: number; epsCagr: { bear: number; base: number; bull: number }; exitPe: { bear: number; base: number; bull: number }; dilutionPct: number; basis: string }
 export interface ScenarioOut { bear: number; base: number; bull: number; currentPe: number }
 export interface ChokeCandidate {
@@ -43,6 +43,8 @@ export interface ChokeCandidate {
   // laid over by the server
   facts?: CandFacts | null; found?: boolean | null; multiples?: ScenarioOut | null; scenarioNote?: string | null;
   dataCheck?: 'CONFIRMS' | 'MIXED' | 'CONTRADICTS' | 'NO_DATA'; secondary?: string[]; sizeNote?: string | null;
+  /** zzz1206 — why the share price is already late in the curve (empty = not late) */
+  lateWhy?: string[];
 }
 export interface ChokeTheme {
   name: string; emoji: string; keywords?: string[];
@@ -56,6 +58,8 @@ export interface ChokeTheme {
   candidates: ChokeCandidate[]; reference: ChokeCandidate[];
   // laid over by the server
   qualifies?: boolean; rankScore?: number;
+  /** zzz1206 — candidates whose share price has already run (late in the curve): context, never discovery */
+  late?: ChokeCandidate[];
   // v1 fields kept so an old stored run still renders
   leaders?: any[]; smallMid?: any[]; bear?: string; bull?: string; signals?: string; notPricedIn?: string; stage?: string; jcurve?: string;
 }
@@ -163,7 +167,8 @@ A THEME qualifies only when you can show the mechanism: necessity (customers nee
 
 CROSS-BORDER DEMAND SHIFTS are a major source of real J-curves — look for them actively: Europe+1 (Europe moving supply away from China / Russia), European rearmament (ammunition, explosives, forgings, propellants, components), US reshoring and tariffs, China+1, the India–EU / India–UK trade agreements, Western energy-security and grid build-outs buying from India. The narrative alone is not evidence; a specific supplier with QUALIFIED foreign customers, signed export orders and export revenue rising in its own figures is — those are often small and mid caps at J1–J3 in sectors that look mature at home.
 
-CANDIDATES: prefer DIRECT and ENABLER exposure, J2 / J3 first; J1 only as an early watch; never promote J0 because the market is large. Judge the J-stage on OPERATING evidence only — orders, qualification, commissioning, utilisation, revenue, margins, cash. Share prices are market context: a past rally does not end a J-curve (a new division can start its own), and a fall does not make a company early. Use the company data given (stock-screener figures) and the recent news; never invent customers, contracts, capacity, market share or dates. An MoU, a tender, a qualification, an order, a shipment and recognised revenue are different events — say which one. Planned capacity is not usable capacity. A big order still needs margin, funding and execution. If something is not disclosed, write "Not disclosed".
+CANDIDATES: prefer DIRECT and ENABLER exposure, J2 / J3 first; J1 only as an early watch; never promote J0 because the market is large. Judge the J-stage on OPERATING evidence only — orders, qualification, commissioning, utilisation, revenue, margins, cash. A fall does not make a company early.
+FIRST STAGE ONLY — the owner wants companies EARLY in the curve, before the market has paid for the turn. A company whose share price is already up 10x or more in 5 years, 3x or more in one year or 2x or more in six months, or whose weekly chart is topping (stage 3), has already been re-rated: it is LATE (the transformer makers after their 20x runs, Vicor or TTM after their runs). Put such a company in "reference" with the reason, never in "candidates" — unless its figures show a NEW business line still at J1 / J2 that the price has not reflected, and you say exactly which line and why. Prefer names whose figures are turning while the share price has moved little (1-year move modest, P/E not stretched). The system checks the share moves and moves late names out of the discovery list itself. Use the company data given (stock-screener figures) and the recent news; never invent customers, contracts, capacity, market share or dates. An MoU, a tender, a qualification, an order, a shipment and recognised revenue are different events — say which one. Planned capacity is not usable capacity. A big order still needs margin, funding and execution. If something is not disclosed, write "Not disclosed".
 Governance: exclude companies with known auditor resignations or qualifications, regulator enforcement, pledge problems, promoter or board disputes or chronic dilution; separate allegations from findings; never call governance clean — write what you checked against.
 SCENARIOS: only for a profitable company whose current earnings are representative; give EPS growth a year and exit P/E for bear / base / bull and the expected dilution — the system calculates the return; never assume 5–20x because a company is small. Otherwise scenario = null.
 PLAYBOOK per country: strongest evidence-backed ideas, what needs confirmation, upcoming milestones, disconfirming evidence, valuation conditions. Never recommend buying because a price fell.
@@ -256,6 +261,22 @@ export function dataCheck(c: ChokeCandidate): ChokeCandidate['dataCheck'] {
   return growing ? 'MIXED' : 'NO_DATA';
 }
 
+/** zzz1206 — is the share price already late in the curve? The owner: "many of these are in the last stage — transformers in
+ *  India, VICR — not first stage; they ran 10 times and are at the peak". Price moves are from the stock screener; a falling
+ *  stage-4 chart is not "late" (it is a different problem and stays visible). Returns the reasons (empty = not late). Pure. */
+export function lateCurve(f: CandFacts | null | undefined): string[] {
+  if (!f) return [];
+  const why: string[] = [];
+  const x = (p: number) => Math.round(p / 100 + 1);
+  if (f.p5y != null && f.p5y >= 900) why.push(`up ${x(f.p5y)}x in 5 years`);
+  if (f.p1y != null && f.p1y >= 200) why.push(`up ${x(f.p1y)}x in a year`);
+  if (f.p6m != null && f.p6m >= 100) why.push(`up ${x(f.p6m)}x in six months`);
+  if (f.st === 3 && (f.p1y ?? 0) >= 50) why.push('weekly chart topping (stage 3) after a big run');
+  if (f.st === 2 && (f.stWk ?? 0) >= 100 && (f.p1y ?? 0) >= 100) why.push(`${f.stWk} weeks in the same uptrend and up ${x(f.p1y!)}x in a year — an extended run`);
+  if (why.length && f.pe != null && f.pe >= 80) why.push(`P/E ${Math.round(f.pe)} — the price already pays for a lot`);
+  return why;
+}
+
 const STAGE_W: Record<JStage, number> = { J0: 0.2, J1: 0.8, J2: 2.5, J3: 3, J4: 1.4, J5: 0 };
 const EXPO_W: Record<Exposure, number> = { DIRECT: 1, ENABLER: 0.9, PROXY: 0.35, SPECULATIVE: 0.2 };
 const CHECK_W = { CONFIRMS: 1, MIXED: 0.75, NO_DATA: 0.6, CONTRADICTS: 0.25 } as const;
@@ -276,16 +297,20 @@ export function enrich(r: Pick<ChokeReport, 'regions'>, facts: Record<ChokeRegio
       return c;
     };
     for (const t of g.themes) {
-      t.candidates = (t.candidates || []).map(lay); t.reference = (t.reference || []).map(lay);
+      // zzz1206 — a stored run already split off its late names: judge them again with today's prices
+      t.candidates = [...(t.candidates || []), ...(t.late || [])].map(lay); t.reference = (t.reference || []).map(lay);
       // size band from validated market data: above it → reference leaders; below it → kept, marked
       const [lo, hi] = DISCOVERY_CAP[g.region];
       const big = t.candidates.filter((c) => c.facts?.cap != null && c.facts.cap > hi);
       t.candidates = t.candidates.filter((c) => !big.includes(c));
       for (const c of t.candidates) {
         c.sizeNote = c.facts?.cap != null && c.facts.cap < lo ? 'below the discovery size band — thin liquidity' : null;
-        // zzz1187 — a share price already up 10x+ in 5 years is late in the curve (context, not a verdict)
-        if (c.facts?.p5y != null && c.facts.p5y >= 900) c.sizeNote = [c.sizeNote, `share price already up ${Math.round(c.facts.p5y / 100 + 1)}x in 5 years — check it is not late in the curve`].filter(Boolean).join(' · ');
+        c.lateWhy = lateCurve(c.facts);
       }
+      for (const c of t.reference) c.lateWhy = lateCurve(c.facts);
+      // zzz1206 — a share price that already ran is LATE in the curve: out of the discovery list, shown apart, never qualifies a theme
+      t.late = t.candidates.filter((c) => (c.lateWhy || []).length > 0);
+      t.candidates = t.candidates.filter((c) => !(c.lateWhy || []).length);
       t.reference = [...t.reference, ...big].slice(0, 4);
       // one primary theme per company; later appearances become secondary tags
       t.candidates = t.candidates.filter((c) => {
@@ -296,7 +321,7 @@ export function enrich(r: Pick<ChokeReport, 'regions'>, facts: Record<ChokeRegio
         return true;
       });
       // rank: quality and breadth of qualifying candidates (DIRECT / ENABLER at J2 / J3, backed by data)
-      const score = t.candidates.reduce((s, c) => s + STAGE_W[c.jstage] * EXPO_W[c.exposure] * CHECK_W[c.dataCheck || 'NO_DATA'] * (c.found === false ? 0.3 : 1) * (c.facts?.p5y != null && c.facts.p5y >= 900 ? 0.6 : 1), 0);
+      const score = t.candidates.reduce((s, c) => s + STAGE_W[c.jstage] * EXPO_W[c.exposure] * CHECK_W[c.dataCheck || 'NO_DATA'] * (c.found === false ? 0.3 : 1), 0);
       t.rankScore = Math.round(score * 10) / 10;
       // zzz1187 — a choke point needs evidence that supply is tight now (runs before the field existed are judged as before)
       // zzz1188 — the hard gate is only AMPLE supply (a known non-bottleneck); UNKNOWN is shown as such, not thrown out

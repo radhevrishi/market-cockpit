@@ -40,6 +40,7 @@
 // is added it goes in one place and every card gets it on the next sweep.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { passesStage2, readStage2, stageOf } from './cb-stage2';   // zzz1207
 import { rule40From, roceFrom, type SwingKind } from '@/lib/us-earnings-core';
 import type { EarningsQuadrant } from '@/lib/earnings-grade-shared';
 import { runCriteriaCheck, type CriteriaCheck } from '@/lib/criteria-check';
@@ -2236,6 +2237,8 @@ export interface UsConvFilters {
   newOnly: boolean;
   sector: string | null;
   q: string;                     // free-text ticker/company search
+  /** zzz1207 — Stage 2 (weekly Stage Analysis): 'yes' / 'no' / null = not used. No stage → passes neither. */
+  stage2?: 'yes' | 'no' | null;
 }
 
 export const US_FILTER_DEFAULT: UsConvFilters = {
@@ -2257,6 +2260,7 @@ export function usPresetFilters(): UsConvFilters {
     opmDelta: US_PRESET.opmDelta, cfoPatMin: US_PRESET.cfoPatMin, opmMin: 0,   // zzz893 — positive operating margin
     mktCapMin: US_PRESET.mktCapMinMusd, verdicts: [...US_PRESET.verdicts],
     aboveMa50: US_PRESET.requireAboveMa50, aboveMa200: US_PRESET.requireAboveMa200,
+    stage2: ((p) => (p === 'any' ? null : p))(readStage2('US')),   // zzz1207 — the owner's remembered choice
   };
 }
 
@@ -2405,6 +2409,7 @@ export function passesUsConvictionFilter(e: UsConvictionEntry, f: UsConvFilters,
   // page reports how many were unverified, so the gap is visible rather than
   // hidden. Each sweep re-prices older entries, so the count falls to zero on
   // its own.
+  if (f.stage2 && !passesStage2(e, f.stage2)) return false;   // zzz1207
   if (f.aboveMa50) {
     const d50 = num(e.pct_vs_ma50);
     if (d50 != null && d50 <= 0) return false;
@@ -2645,6 +2650,7 @@ export function usCbFailReasons(e: UsConvictionEntry, f: UsConvFilters, win?: Ne
     shareShrinkOnly: () => 'share count not falling', thesis: () => `thesis not ${f.thesis}`, cap: () => `market-cap band not ${f.cap === 'smid' ? 'small/mid' : f.cap === 'u30' ? 'under $30B' : f.cap}`,
     tiers: () => 'tier outside your list', verdicts: () => `quality read "${usVerdictWord(usVerdict(e).verdictLabel)}" is outside your chosen list (${(f.verdicts || []).map((v) => usVerdictWord(v)).join(' / ')})`, elite: () => 'not marked elite', multibagger: () => 'no multibagger setup',
     rule40: () => 'Rule of 40 not met (or not computable)', roce20: () => 'return on capital below 20% (or not known)', turnaround: () => 'not a turnaround', compounder: () => 'not a compounder',
+    stage2: () => `${stageOf(e).text} (needs ${f.stage2 === 'yes' ? 'Stage 2' : 'not Stage 2'})`,   // zzz1207
     prelimOnly: () => 'not a preliminary release', sector: () => `sector not ${f.sector}`, quarter: () => 'another fiscal quarter', fy: () => 'another fiscal year', fromDate: () => 'filed outside your dates', toDate: () => 'filed outside your dates',
   };
   const out: string[] = [];

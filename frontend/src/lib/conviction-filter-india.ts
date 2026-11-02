@@ -16,6 +16,7 @@
 // probed THROUGH passesConvictionFilter, so a label can never disagree).
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { passesStage2, readStage2, stageOf } from './cb-stage2';   // zzz1207
 import { peadScore } from '@/lib/pead-score';
 import { finSubKind } from '@/lib/fin-kind';
 import { INDIA_PRESET } from '@/lib/quality-preset';
@@ -149,6 +150,9 @@ export type ConvFilters = {
   driftBucket: number | null;  // zzz245 — cumulative drift % filter
   // PATCH 1022/1024 — market-cap range filter (uses market_cap_cr in ₹ Cr).
   cap: 'all' | 'sweet' | 'mega' | 'large' | 'mid' | 'small' | 'micro';
+  /** zzz1207 — Stage 2 (weekly Stage Analysis): 'yes' = only Stage 2, 'no' = only not Stage 2, null = not used. A card with
+   *  no stage passes neither. */
+  stage2?: 'yes' | 'no' | null;
 };
 
 export const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, newOnly: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null, d2Bucket: null, driftBucket: null, opmDelta: null, score: null, opmMin: null, peMax: null, freshBypass: false, mktCapMin: null, cfoPatMin: null, pledgedMax: null, verdicts: null /* zzz362 */, cap: 'all' };
@@ -216,6 +220,7 @@ export const indiaPresetFilters = (floor: CbCapFloor = readCbPresetCapFloor()) =
   mktCapMax: null as number | null,   // zzz1068 — no size ceiling in the preset (was ₹30,000 Cr, zzz883)
   pledgedMax: INDIA_PRESET.pledgedMax,
   verdicts: [...INDIA_PRESET.verdicts],
+  stage2: ((p) => (p === 'any' ? null : p))(readStage2('IN')) as 'yes' | 'no' | null,   // zzz1207 — the owner's remembered choice
 });
 
 export const VERDICTS_SORTED = JSON.stringify([...INDIA_PRESET.verdicts].sort());
@@ -747,6 +752,7 @@ export function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): bool
     const __d = Math.floor((Date.now() - __ts) / 86400000);
     if (__d < 0 || __d > 5) return false;
   }
+  if (f.stage2 && !passesStage2(e, f.stage2)) return false;   // zzz1207
   if (f.sales != null && sales < f.sales) return false;
   // zzz827 — a turn from loss to profit meets a growth gate (no % exists);
   // a loss that only narrowed never does, whatever % the feed computed.
@@ -1039,6 +1045,7 @@ export function cbFailReasons(e: ConvictionEntry, f: ConvFilters): string[] {
     guidance: () => `guidance is not ${f.guidance}`,
     d1Bucket: () => 'day-one move outside your chip', d2Bucket: () => 'two-day move outside your chip', driftBucket: () => 'move since results outside your chip',
     cap: () => 'market-cap band outside your chip',
+    stage2: () => `${stageOf(e).text} (needs ${f.stage2 === 'yes' ? 'Stage 2' : 'not Stage 2'})`,   // zzz1207
     newOnly: () => { const d = filingAgeDays((e as any).filing_date); return d == null ? 'filing date not known (NEW window)' : `filed ${d} days ago (NEW shows the last ${__NEW_WIN.days} days)`; },
   };
   const out: string[] = [];

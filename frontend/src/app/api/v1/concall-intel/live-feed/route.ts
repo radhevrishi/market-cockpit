@@ -626,7 +626,10 @@ async function handleLiveFeed(req: NextRequest) {
   // PATCH 0931 — Haiku catalyst result (if attached above) gets persisted
   // alongside the scored payload so future cache reads skip the LLM call entirely.
   if (isRedisAvailable() && freshlyScored.length > 0) {
-    const writes = freshlyScored.map(s =>
+    // zzz1203: only filings that a later request actually LOOKS UP are written back (audio / webcast and anything past the
+    // first 2,000 are never read from this cache, so writing them on every request was ~1,250 wasted writes an hour).
+    const looked = new Set(HASHES_TO_CHECK);
+    const writes = freshlyScored.filter((s) => looked.has(s.content_hash)).map(s =>
       kvSet(SCORED_KEY(s.content_hash), s, SCORED_TTL).catch(() => {})
     );
     // Fire and forget — we don't block the response on cache writes

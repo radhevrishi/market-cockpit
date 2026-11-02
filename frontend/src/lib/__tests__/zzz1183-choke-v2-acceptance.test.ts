@@ -9,11 +9,12 @@ const pb = { strongest: [], confirm: [], milestones: [], disconfirming: [], valu
 const F = (o: Partial<CandFacts>): CandFacts => ({ cap: 2000, revQ: 30, revA: 15, epsQ: 40, opm: 15, pe: 30, fcfm: 5, de: 0.2, p1y: 10, p5y: 50, ...o });
 const build = (us: any[], inThemes: any[] = []) => cleanChoke({ regions: [{ region: 'US', themes: us, playbook: pb }, { region: 'IN', themes: inThemes, playbook: pb }] })!;
 
-test('price is context: a big past rally does not end the J-curve, a big fall does not make one early', () => {
+test('zzz1206 — a share price already up 10x is LATE (the owner: first stage only); a big fall does not make one early', () => {
   const r = build([theme('A', [cand('RAN', { jstage: 'J2' })]), theme('B', [cand('FELL', { jstage: 'J0' })])]);
   enrich(r, { US: new Map([['RAN', F({ p5y: 900, p1y: 120 })], ['FELL', F({ p5y: -70, p1y: -60, revQ: -10, revA: -5 })]]), IN: new Map() });
   const [a, b] = [r.regions[0].themes.find((t) => t.name === 'A')!, r.regions[0].themes.find((t) => t.name === 'B')!];
-  assert.equal(a.qualifies, true, 'a qualified J2 with growing figures stays, whatever the 5-year move');
+  assert.equal(a.qualifies, false, 'a 10x run is late in the curve: shown apart, never a discovery');
+  assert.deepEqual((a.late || []).map((c) => c.ticker), ['RAN']);
   assert.equal(b.qualifies, false, 'a fallen J0 is not early');
 });
 

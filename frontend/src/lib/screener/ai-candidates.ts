@@ -6,6 +6,8 @@ export interface Cand {
   t: string; n: string; ind: string | null; mc: number;           // $ M (US) / ₹ Cr (India)
   revQ: number | null; revA: number | null; epsQ: number | null; opm: number | null; opmFY?: number | null; gm: number | null; roce: number | null; roe: number | null;
   de: number | null; pe: number | null; ps: number | null; fcfm: number | null; p1y: number | null; p5y: number | null; bb: number | null; fs: number | null;
+  /** zzz1206 — 6-month move, weekly stage 1–4, weeks in that stage (for the late-in-the-curve check) */
+  p6m?: number | null; st?: number | null; stWk?: number | null;
 }
 const n = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
@@ -15,6 +17,7 @@ export function toCand(r: any): Cand | null {
     t: String(r.t).toUpperCase(), n: String(r.n || r.t).slice(0, 48), ind: r.ind ?? r.sec ?? null, mc: r.mc,
     revQ: n(r.revQYoY), revA: n(r.revAYoY), epsQ: n(r.epsQYoY), opm: n(r.opmTTM ?? r.opmFY), opmFY: n(r.opmFY), gm: n(r.gmFY), roce: n(r.roceTTM ?? r.roceFY), roe: n(r.roeTTM ?? r.roeFY),
     de: n(r.de ?? r.deFY), pe: n(r.pe), ps: n(r.ps), fcfm: n(r.fcfmTTM), p1y: n(r.perf1Y), p5y: n(r.perf5Y), bb: n(r.bb), fs: n(r.fs),
+    p6m: n(r.perf6M), st: n(r.twSt ?? r.stage), stWk: n(r.twWk),
   };
 }
 
@@ -22,7 +25,7 @@ const r0 = (v: number | null, suf = '%') => (v == null ? '—' : `${Math.round(v
 export const capText = (mc: number, m: CandMarket) => (m === 'US' ? (mc >= 1000 ? `$${(mc / 1000).toFixed(1)}B` : `$${Math.round(mc)}M`) : `₹${Math.round(mc).toLocaleString('en-IN')} Cr`);
 /** One compact line per company for the prompt. */
 export const candLine = (c: Cand, m: CandMarket) =>
-  `${c.t} | ${c.n} | ${c.ind || '—'} | cap ${capText(c.mc, m)} | sales q ${r0(c.revQ)} yr ${r0(c.revA)} | EPS q ${r0(c.epsQ)} | op margin TTM ${r0(c.opm)}${c.opmFY != null && c.opm != null && Math.abs(c.opm - c.opmFY) >= 15 ? ` (last FY ${r0(c.opmFY)} — TTM likely includes one-offs)` : ''} | ROCE ${r0(c.roce)} | D/E ${c.de == null ? '—' : c.de.toFixed(1)} | P/E ${c.pe == null ? '—' : Math.round(c.pe)} | P/S ${c.ps == null ? '—' : c.ps.toFixed(1)} | FCF margin ${r0(c.fcfm)} | 1y ${r0(c.p1y)} 5y ${r0(c.p5y)} | share count ${c.bb == null ? '—' : `${c.bb > 0 ? 'down' : 'up'} ${Math.abs(c.bb).toFixed(1)}%`}`;
+  `${c.t} | ${c.n} | ${c.ind || '—'} | cap ${capText(c.mc, m)} | sales q ${r0(c.revQ)} yr ${r0(c.revA)} | EPS q ${r0(c.epsQ)} | op margin TTM ${r0(c.opm)}${c.opmFY != null && c.opm != null && Math.abs(c.opm - c.opmFY) >= 15 ? ` (last FY ${r0(c.opmFY)} — TTM likely includes one-offs)` : ''} | ROCE ${r0(c.roce)} | D/E ${c.de == null ? '—' : c.de.toFixed(1)} | P/E ${c.pe == null ? '—' : Math.round(c.pe)} | P/S ${c.ps == null ? '—' : c.ps.toFixed(1)} | FCF margin ${r0(c.fcfm)} | 6m ${r0(c.p6m ?? null)} 1y ${r0(c.p1y)} 5y ${r0(c.p5y)}${c.st != null ? ` · weekly stage ${c.st}${c.stWk != null ? ` (${c.stWk} wk)` : ''}` : ''} | share count ${c.bb == null ? '—' : `${c.bb > 0 ? 'down' : 'up'} ${Math.abs(c.bb).toFixed(1)}%`}`;
 
 /** $500M–$5B (USA) / ₹4,250–42,500 Cr (India, at ~₹85/$). */
 export const HB_CAP: Record<CandMarket, [number, number]> = { US: [500, 5000], IN: [4250, 42500] };

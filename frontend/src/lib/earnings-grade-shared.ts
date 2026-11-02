@@ -241,6 +241,7 @@ export const INFORMATIONAL_CAVEATS: ReadonlySet<string> = new Set([
   'per-share comparison unavailable',
   'profit leaked below the operating line',
   'small base — prior-year EPS under $0.10, so the per-share growth rate is magnified',   // zzz804 (US only)
+  'gross margin fell 1.5+ pts year on year',   // zzz1205 (US only) — explains, never costs a point
 ]);
 
 /** caveat_tags.length, less the tags that only explain. Use this for every
