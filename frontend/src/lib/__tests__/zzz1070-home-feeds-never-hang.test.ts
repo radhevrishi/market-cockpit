@@ -77,7 +77,7 @@ test('warrant feed: shared cache with a wait limit, 7-day last good, honest "bui
 test('transform radar: wait limit, 7-day last good, live-feed read times out', () => {
   const s = read('app/api/v1/concall-intel/transformation-screener/route.ts');
   assert.match(s, /SCREEN_MAX_STALE_MS = 7 \* 24 \* 3_600_000/);
-  assert.match(s, /waitMs: forceFresh \? undefined : SCREEN_WAIT_MS/);
+  assert.match(s, /waitMs: SCREEN_WAIT_MS/);
   assert.match(s, /SwrPendingError/);
   assert.match(s, /AbortSignal\.timeout\(45_000\)/);
   assert.doesNotMatch(s, /^export const SCREEN_WAIT_MS/m, 'route files export only handler fields');

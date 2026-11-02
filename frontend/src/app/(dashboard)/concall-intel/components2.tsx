@@ -288,6 +288,9 @@ export function TransformationScreenerTab() {
   const [days, setDays] = useState<number>(60);
   const [data, setData] = useState<TransformScreenPayload | null>(null);
   const [loading, setLoading] = useState(false);
+  const [building, setBuilding] = useState(false);
+  const requestSeq = useRef(0);
+  const refreshStartedAt = useRef<number | null>(null);
   const [err, setErr] = useState<string | null>(null);
   // zzz433 — Conviction × Transformation: which radar names are ALSO on the bench
   const [bench, setBench] = useState<Record<string, ConvictionEntry>>({});
@@ -313,22 +316,56 @@ export function TransformationScreenerTab() {
   const [capLoading, setCapLoading] = useState(false);
 
   const load = useCallback(async (d: number, force = false) => {
+    const requestId = ++requestSeq.current;
+    if (force) refreshStartedAt.current = Date.now();
     setLoading(true); setErr(null);
     try {
-      // zzz466 — Rescan forces a fresh server computation (bypasses the cache)
-      const r = await fetch(`/api/v1/concall-intel/transformation-screener?days=${d}&limit=80${force ? '&refresh=1' : ''}`, { cache: 'no-store' });
+      // An uncached force refresh is a bounded request; the backend completes
+      // its scan asynchronously and explicitly returns building=true.
+      const r = await fetch(`/api/v1/concall-intel/transformation-screener?days=${d}&limit=80${force ? '&refresh=1' : ''}`, {
+        cache: 'no-store', signal: AbortSignal.timeout(18_000),
+      });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const j: TransformScreenPayload = await r.json();
-      setData(j);
-      if (j.error) setErr(j.error);
+      if (requestId !== requestSeq.current) return;
+      const refreshAt = refreshStartedAt.current;
+      // A normal poll can return the previous *fresh* cache entry while a
+      // forced rebuild is still running. Do not falsely mark that as done.
+      const oldSnapshot = refreshAt != null && (!Date.parse(j.generated_at) ||
+        Date.parse(j.generated_at) < refreshAt - 1_000);
+      if (refreshAt != null && Date.now() - refreshAt > 120_000) {
+        refreshStartedAt.current = null;
+        setBuilding(false);
+        setErr('The refreshed scan exceeded two minutes. Previous research is retained; retry later.');
+      } else if (j.building || oldSnapshot) {
+        setBuilding(true);
+        setData((prev) => prev && prev.entries.length > 0 ? prev : j);
+      } else {
+        refreshStartedAt.current = null;
+        setBuilding(false);
+        setData(j);
+        if (j.error) setErr(j.error);
+      }
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'load failed');
+      if (requestId !== requestSeq.current) return;
+      refreshStartedAt.current = null;
+      setBuilding(false);
+      setErr(e instanceof Error && e.name === 'TimeoutError'
+        ? 'Radar request timed out. Existing results are retained; retry the scan.'
+        : e instanceof Error ? e.message : 'load failed');
     } finally {
-      setLoading(false);
+      if (requestId === requestSeq.current) setLoading(false);
     }
   }, []);
 
-  useEffect(() => { load(days); }, [days, load]);
+  useEffect(() => { refreshStartedAt.current = null; setData(null); setBuilding(false); void load(days); }, [days, load]);
+  // A pending scan is not an empty feed: poll the shared cached result
+  // without another forced extraction. Avoid overlap while fetching.
+  useEffect(() => {
+    if (!building || loading) return;
+    const timer = setTimeout(() => { void load(days); }, 8_000);
+    return () => clearTimeout(timer);
+  }, [building, loading, days, load]);
 
   // zzz810 — the feed could not be fetched: retry on our own (forced, so the
   // server re-fetches NSE/BSE) every 90s, up to 5 times.
@@ -336,17 +373,17 @@ export function TransformationScreenerTab() {
   const retries = useRef(0);
   useEffect(() => { retries.current = 0; }, [days]);
   useEffect(() => {
-    if (loading || (feedState !== 'FAILED' && feedState !== 'PARTIAL')) return;
+    if (building || loading || (feedState !== 'FAILED' && feedState !== 'PARTIAL')) return;
     if (retries.current >= 5) return;
     const t = setTimeout(() => { retries.current++; load(days, true); }, 90_000);
     return () => clearTimeout(t);
-  }, [feedState, loading, days, load]);
+  }, [feedState, building, loading, days, load]);
 
   const allEntries = data?.entries ?? [];
   // zzz898 — look up the size of every ranked name (chunks of 40, best-effort; failures leave the size unknown)
   useEffect(() => {
     const syms = Array.from(new Set((data?.entries ?? []).map((e) => String(e.symbol || '').toUpperCase()).filter(Boolean)));
-    if (syms.length === 0) return;
+    if (syms.length === 0 || !smallMidOnly) { setCapLoading(false); return; }
     let alive = true;
     setCapLoading(true);
     (async () => {
@@ -355,7 +392,7 @@ export function TransformationScreenerTab() {
       for (let i = 0; i < syms.length; i += 40) chunks.push(syms.slice(i, i + 40));
       await Promise.all(chunks.map(async (c) => {
         try {
-          const r = await fetch(`/api/v1/earnings/enrich?symbols=${encodeURIComponent(c.join(','))}`, { signal: AbortSignal.timeout(60_000) });
+          const r = await fetch(`/api/v1/earnings/enrich?symbols=${encodeURIComponent(c.join(','))}`, { signal: AbortSignal.timeout(12_000) });
           if (!r.ok) return;
           const j = await r.json();
           for (const s of c) m.set(s, knownCapCr(j?.data?.[s]?.market_cap_cr));
@@ -364,7 +401,7 @@ export function TransformationScreenerTab() {
       if (alive) { setCapMap(m); setCapLoading(false); }
     })();
     return () => { alive = false; };
-  }, [data]);
+  }, [data, smallMidOnly]);
   const capOf = (sym: unknown): number | null => capMap.get(String(sym || '').toUpperCase()) ?? null;
   const sizeCounts = smallMidCounts(allEntries, (e) => capOf(e.symbol));
   const sourceOf = useCallback(
@@ -398,10 +435,10 @@ export function TransformationScreenerTab() {
               color: days === d ? TF.cyan : TF.muted,
             }}>{d}d</button>
           ))}
-          <button onClick={() => load(days, true)} disabled={loading} title="Force a fresh scan now (bypasses the cache)" style={{
+          <button onClick={() => load(days, true)} disabled={loading || building} title="Start a new scan; the last verified results remain until it finishes" style={{
             fontSize: 11.5, fontWeight: 800, padding: '5px 12px', borderRadius: 6, cursor: loading ? 'wait' : 'pointer',
             border: `1px solid ${TF.green}`, background: 'color-mix(in srgb, var(--mc-bullish) 10%, transparent)', color: TF.green,
-          }}>{loading ? '⏳ Scanning…' : '↻ Rescan (fresh)'}</button>
+          }}>{building ? '⏳ Rebuilding…' : loading ? '⏳ Loading…' : '↻ Rescan (fresh)'}</button>
           {data && (
             <span style={{ fontSize: 10.5, color: TF.dim, ...TFM }}>
               {data.analyzed} filings scanned · {data.pdf_cache_hits} cached · {data.candidates_total} in feed
@@ -409,6 +446,11 @@ export function TransformationScreenerTab() {
             </span>
           )}
         </div>
+        {building && (
+          <p role="status" aria-live="polite" style={{ color: TF.amber, fontSize: 12, margin: '10px 0 0' }}>
+            ⏳ Radar scanning in the background. Rechecking every 8 seconds; existing results are retained.
+          </p>
+        )}
         {/* zzz810 — honest feed status: reached or not, real counts */}
         <div style={{ marginTop: 10 }}>
           {data?.feed_status
@@ -483,7 +525,7 @@ export function TransformationScreenerTab() {
         <div style={{ padding: '40px 0', textAlign: 'center', color: TF.dim, fontSize: 13 }}>⏳ Scanning the live feed for transformation patterns…</div>
       )}
 
-      {data && !loading && entries.length === 0 && !err && feedState !== 'FAILED' && (
+      {data && !building && !loading && entries.length === 0 && !err && feedState !== 'FAILED' && (
         <div style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '18px' }}>
           <div style={{ fontSize: 13, color: TF.text2, lineHeight: 1.6, textAlign: 'center' }}>
             {/* zzz810 — only claim "nothing found" about a feed that was actually
