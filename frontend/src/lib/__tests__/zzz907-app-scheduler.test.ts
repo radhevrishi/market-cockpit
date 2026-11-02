@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import {
   parseCron, prevCronSlot, nextCronSlot, prevSlot, nextSlot, dueSlot, slotWindowMs, lockTtlSec, lockKeyFor, shouldRetry,
   lockSettlesSlot, maxGapHours, staleAfterHoursFor, aiVerifyNext, guidanceExtractNext, ledgerPassComplete, aiEvalPasses,
-  APP_JOBS, MAX_WINDOW_MIN, type AppJob, type JobCtx, type CallResult,
+  APP_JOBS, MAX_WINDOW_MIN, MAX_CONCURRENT, type AppJob, type JobCtx, type CallResult,
 } from '../app-scheduler';
 
 const at = (iso: string) => new Date(iso);
@@ -206,4 +206,10 @@ test('moved workflows have no schedule left (no double runs) but keep the manual
   for (const f of readdirSync(WF).filter((x) => x.endsWith('.yml'))) {
     if (/^\s+schedule:/m.test(readFileSync(join(WF, f), 'utf8'))) assert.ok(!moved.has(f) || f === 'daily-research.yml', f);
   }
+});
+
+// Production incident 2026-11-02: expensive scheduled work must not saturate
+// the web server with multiple concurrent research tasks.
+test('web scheduler allows one heavy job at a time', () => {
+  assert.equal(MAX_CONCURRENT, 1);
 });

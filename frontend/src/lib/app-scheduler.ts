@@ -15,7 +15,7 @@
 //     restart never re-runs a slot that already succeeded, and a hand run from GitHub after the slot counts too.
 //   • one HTTP retry after 45 s on a 5xx / network error (not for paid-AI calls: a failed answer may already have spent;
 //     the next slot continues)
-//   • at most 2 jobs at once; each job one at a time; nothing blocks a request (timers + fetch to 127.0.0.1)
+//   • at most 1 heavy job on the web instance; protect interactive latency; each job one at a time.
 //
 // Pure decision logic (cron parsing, slots, windows, due, staleness, loop rounds) is exported and unit-tested
 // (src/lib/__tests__/zzz907-app-scheduler.test.ts). `startAppScheduler` is the timer, started from instrumentation.ts.
@@ -167,7 +167,10 @@ export interface AppJob {
 /** how long after its slot a job may still start; never past the next slot */
 export const MAX_WINDOW_MIN = 180;
 export const RETRY_DELAY_MS = 45_000;
-export const MAX_CONCURRENT = 2;
+// One heavy cron task at once in the web process. The old value 2 allowed
+// overlapping PDF/AI jobs to compete with live quote, news and dashboard reads.
+// Schedule slots are still queued by the existing Redis-locked scheduler.
+export const MAX_CONCURRENT = 1;
 export const LOCK_PREFIX = 'appsched:v1';
 
 const ym = (d: Date, addMonths = 0) => { const x = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + addMonths, 1)); return `${x.getUTCFullYear()}-${String(x.getUTCMonth() + 1).padStart(2, '0')}`; };
