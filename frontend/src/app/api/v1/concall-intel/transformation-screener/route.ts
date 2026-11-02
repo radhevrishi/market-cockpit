@@ -34,8 +34,8 @@ const CACHE_TTL = 12 * 60;               // zzz466 — 12 min (was 30) so new gr
 // fix keeps serving the OLD graded results until the 12-min TTL lapses or the user
 // force-refreshes — which is why fixed quotes appeared "still broken". A new
 // version orphans the stale entries so the very next request recomputes fresh.
-// zzz810 — v4: payload carries feed_status; cached empties from the broken feed are orphaned.
-// zzz855: the cache now lives in lib/swr-cache under transform-screener:swr:v4:<days>:<limit>:<minPatterns>.
+// v5: guidance-cut context and action triage changed. Invalidate v4 so stale scores cannot survive release.
+// zzz855: the cache now lives in lib/swr-cache under transform-screener:swr:v5:<days>:<limit>:<minPatterns>.
 
 export interface TransformScreenEntry {
   symbol: string;
@@ -152,7 +152,7 @@ async function handle(req: NextRequest, days: number, limit: number, minPatterns
   const forceFresh = sp.get('refresh') === '1' || sp.get('nocache') === '1';
   try {
     const r = await swrGet<Built>({
-      key: `transform-screener:swr:v4:${days}:${limit}:${minPatterns}`, freshMs: SCREEN_FRESH_MS, maxStaleMs: SCREEN_MAX_STALE_MS, force: forceFresh,
+      key: `transform-screener:swr:v5:${days}:${limit}:${minPatterns}`, freshMs: SCREEN_FRESH_MS, maxStaleMs: SCREEN_MAX_STALE_MS, force: forceFresh,
       build: () => buildScreen(req, days, limit, minPatterns, forceFresh),
       isUsable: (b) => !!b && b.cacheable,
       waitMs: SCREEN_WAIT_MS,
