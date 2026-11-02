@@ -454,7 +454,7 @@ export const APP_JOBS: readonly AppJob[] = [
   // zzz939 — India screener: NSE price files + screener.in company pages (a slice each hour until every company is read, then ~weekly)
   // zzz1212 — Transformation Radar coverage: read the next ≤150 unread transcripts / investor presentations / results documents
   // (newest first) so coverage reaches the whole window instead of the newest 80; every result is stored per document.
-  { name: 'radar-coverage', crons: ['7,27,47 1-18 * * *'], timeoutMs: 3 * MIN, workflow: BRIDGE, does: 'GET /api/v1/concall-intel/transformation-screener?days=90&coverage=1 (reads the next unread concall documents into the radar)', run: http('GET', '/api/v1/concall-intel/transformation-screener?days=90&limit=1&coverage=1', 120_000) },
+  { name: 'radar-coverage', crons: ['7,27,47 * * * *'], timeoutMs: 3 * MIN, workflow: BRIDGE, does: 'GET /api/v1/concall-intel/transformation-screener?days=90&coverage=1 (reads the next unread concall documents into the radar)', run: http('GET', '/api/v1/concall-intel/transformation-screener?days=90&limit=1&coverage=1', 120_000) },
   { name: 'build-screener-in', crons: ['5,25,45 * * * *'], timeoutMs: 15 * MIN, workflow: BRIDGE, does: 'POST /api/v1/cron/build-screener?market=IN (Railway fallback when external runner is enabled)', run: screenerBuildJob('IN') },
   // book-watch.yml — all GET
   { name: 'refresh-bench', crons: ['4 3 * * *'], timeoutMs: 4 * MIN, workflow: BOOK, does: 'GET /api/v1/cron/refresh-bench', run: http('GET', '/api/v1/cron/refresh-bench', 90_000) },
