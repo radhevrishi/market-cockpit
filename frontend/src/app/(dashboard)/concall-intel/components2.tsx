@@ -9,7 +9,7 @@ import type { TransformationRadarData, TransformScreenPayload } from './types';
 import { TF, TFM, TIER_COLOR, CONV_TIER_COLOR } from './constants';
 import { velocityColor } from './helpers';
 import { FeedStatusNote } from './FeedStatusNote';
-import { radarDecision, rankForDecision, type RadarQueue } from '@/lib/concall-radar-decision';
+import { radarDecision, rankForDecision, assessRadarQuote, type RadarQueue } from '@/lib/concall-radar-decision';
 
 export function TfSection({ n, title, lede, children }: { n: string; title: string; lede?: ReactNode; children: ReactNode }) {
   return (
@@ -417,6 +417,7 @@ export function TransformationScreenerTab() {
   const decisionCounts = {
     ALL: scopedEntries.length,
     RESEARCH: scopedEntries.filter((e) => radarDecision(e).queue === 'RESEARCH').length,
+    RECONCILE: scopedEntries.filter((e) => radarDecision(e).queue === 'RECONCILE').length,
     WAIT: scopedEntries.filter((e) => radarDecision(e).queue === 'WAIT').length,
     RISK: scopedEntries.filter((e) => radarDecision(e).queue === 'RISK').length,
     UNVERIFIED: scopedEntries.filter((e) => radarDecision(e).queue === 'UNVERIFIED').length,
@@ -432,7 +433,7 @@ export function TransformationScreenerTab() {
       <div style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '16px 18px' }}>
         <div style={{ fontSize: 15, fontWeight: 900, color: TF.cyan, letterSpacing: '0.3px' }}>🔭 Transformation Radar — the whole feed, auto-scanned</div>
         <div style={{ fontSize: 12.5, color: TF.muted, lineHeight: 1.6, marginTop: 6 }}>
-          Scans a bounded, newest-first sample of filings (not the entire exchange universe). <b style={{ color: TF.text2 }}>Decision queue first:</b> guidance cuts and negative results are isolated; unverified disclosures are not research-ready. T-Score is a transcript signal, never a buy rating.
+          Scans a bounded, newest-first sample, not the complete universe. <b style={{ color: TF.text2 }}>Proof-quality first:</b> analyst questions and broken PDF extracts cannot establish commercial orders; contradictory periods are isolated for reconciliation. T-Score is not a buy rating.
         </div>
         {/* controls */}
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 }}>
@@ -511,13 +512,14 @@ export function TransformationScreenerTab() {
         <div style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '12px 14px' }}>
           <div style={{ fontSize: 13, fontWeight: 900, color: TF.text, marginBottom: 4 }}>Decision queue · evidence before narratives</div>
           <div style={{ fontSize: 11, lineHeight: 1.6, color: TF.muted, marginBottom: 10 }}>
-            RESEARCH FIRST means investigate, <strong>not buy</strong>. A buy decision remains blocked until latest guidance, actual earnings, cash conversion, valuation and price setup are verified.
+            Underwrite means research, <strong>not buy</strong>. An evidence rung of 8–10 does not imply the stock is late-cycle. Conflicting excerpts require matching the actual quarter and segment. Valuation, cash conversion and current guidance remain unverified.
             {sizeCounts.unknown > 0 && ` ${sizeCounts.unknown} companies have unknown market cap; their small/mid status is unverified.`}
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
             {([
               ['ALL', 'All signals', TF.cyan],
-              ['RESEARCH', 'Research first', TF.green],
+              ['RESEARCH', 'Underwrite thesis', TF.green],
+              ['RECONCILE', 'Conflicting evidence', TF.amber],
               ['WAIT', 'Wait for proof', TF.amber],
               ['RISK', 'Guidance / risk', TF.red],
               ['UNVERIFIED', 'Unverified PDFs', TF.dim],
@@ -539,7 +541,7 @@ export function TransformationScreenerTab() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 10 }}>
           {[
             { label: 'Ranked names', v: entries.length, c: TF.cyan },
-            { label: 'In sweet spot (stage 3-7)', v: sweetSpotCount, c: TF.green },
+            { label: 'Evidence rung 3–7', v: sweetSpotCount, c: TF.green },
             { label: 'Full triple (ind+co+fin)', v: tripleCount, c: TF.amber },
             { label: '🏆 Also on Conviction Bench', v: onBenchCount, c: TF.green },
             { label: '📗 In my book', v: ownedCount, c: '#34D399' },
@@ -644,12 +646,15 @@ export function TransformationScreenerTab() {
           {/* Fundamental triage: a high T-score never overrides caution or missing proof. */}
           {(() => {
             const d = radarDecision(e);
-            const color = d.queue === 'RESEARCH' ? TF.green : d.queue === 'RISK' ? TF.red : d.queue === 'WAIT' ? TF.amber : TF.dim;
+            const color = d.queue === 'RESEARCH' ? TF.green : d.queue === 'RISK' ? TF.red : d.queue === 'RECONCILE' ? TF.amber : d.queue === 'WAIT' ? TF.amber : TF.dim;
             return (
               <div style={{ borderLeft: `3px solid ${color}`, background: TF.card2, borderRadius: 6, padding: '9px 11px', marginTop: 10 }}>
                 <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 9 }}>
                   <strong style={{ fontSize: 11.5, color }}>{d.label}</strong>
                   <span style={{ fontSize: 11, color: TF.text2 }}>{d.reason}</span>
+                </div>
+                <div style={{ fontSize: 10, color: assessRadarQuote(e.evidence_quote).quality === 'USABLE' ? TF.green : TF.amber, marginTop: 5 }}>
+                  Excerpt quality: {assessRadarQuote(e.evidence_quote).quality.toLowerCase()} · text screen only, not financial confirmation
                 </div>
                 <div style={{ fontSize: 11, marginTop: 5, lineHeight: 1.5, color: TF.muted }}>
                   <strong style={{ color: TF.text2 }}>Next check:</strong> {d.nextCheck}
@@ -688,7 +693,7 @@ export function TransformationScreenerTab() {
           {/* meta row */}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, marginTop: 10, fontSize: 11, color: TF.muted, alignItems: 'center' }}>
             <span title="Pattern breadth is a count of keyword families, not a measured rate of business change">🧩 Pattern breadth: <b style={{ color: TF.text2 }}>{e.pattern_count} vectors</b> (not growth speed)</span>
-            <span>🪜 Stage <b style={{ color: e.stage_sweet_spot ? TF.green : TF.text2 }}>{e.stage}/10</b>{e.stage_sweet_spot ? ' · sweet spot' : ''}</span>
+            <span title="Evidence-rung proxy, not business-cycle maturity">🪜 Evidence rung <b style={{ color: e.stage_sweet_spot ? TF.green : TF.text2 }}>{e.stage}/10</b>{e.stage_sweet_spot ? ' · sweet spot' : ''}</span>
             <span>🎯 Evidence <b style={{ color: TF.text2 }}>{e.evidence_score}/11</b> — {e.evidence_label}</span>
             <span title="Industry tailwind / company transformation / financial inflection">
               {['industry', 'company', 'financial'].map((k) => (
@@ -702,7 +707,7 @@ export function TransformationScreenerTab() {
           {e.evidence_quote && (
             <div style={{ background: TF.card2, borderLeft: `2px solid ${TF.cyan}`, padding: '8px 10px', borderRadius: 5,
               fontSize: 11, lineHeight: 1.6, marginTop: 9, color: TF.text2 }}>
-              <strong style={{ color: TF.cyan }}>Verbatim evidence excerpt:</strong> “{e.evidence_quote}”
+              <strong style={{ color: TF.cyan }}>PDF-extracted excerpt (verify attribution):</strong> “{e.evidence_quote}”
               <span style={{ color: TF.dim }}> · confirm surrounding context in the filing</span>
             </div>
           )}
@@ -724,7 +729,7 @@ export function TransformationScreenerTab() {
 
       {data && entries.length > 0 && (
         <div style={{ ...TFM, fontSize: 9.5, color: TF.dim, lineHeight: 1.6 }}>
-          T-Score measures transformation narrative/evidence, not a buy opportunity. Cards are now ordered by decision queue, then by T-Score. Negative guidance, profit deterioration and missing PDFs override keyword strength; latest guidance, valuation and price still need independent verification. Chain: TAILWIND → TRANSFORMATION → VALIDATION → EARNINGS INFLECTION → FCF → RE-RATING. Open any name in the 🚀 Transformation tab framework, or paste its transcript in 🔥 Live Feeds for the full analysis. Educational, not investment advice.
+          T-Score measures narrative and evidence-rung signals, NOT a buy opportunity or the age of the investment cycle. Positive and adverse passages must be reconciled for the same reporting period; OCR fragments, analyst questions and boilerplate do not prove operating results. Guidance, valuation and price setup still require independent checks. Chain: TAILWIND → TRANSFORMATION → VALIDATION → EARNINGS INFLECTION → FCF → RE-RATING. Open any name in the 🚀 Transformation tab framework, or paste its transcript in 🔥 Live Feeds for the full analysis. Educational, not investment advice.
         </div>
       )}
     </div>
