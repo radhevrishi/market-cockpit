@@ -156,6 +156,7 @@ async function handle(req: NextRequest, days: number, limit: number, minPatterns
       build: () => buildScreen(req, days, limit, minPatterns, forceFresh),
       isUsable: (b) => !!b && b.cacheable,
       waitMs: SCREEN_WAIT_MS,
+      readWaitMs: 2_000, // 18s browser budget also includes Redis; avoid unbounded cold lookup
     });
     return NextResponse.json(r.value.payload, { headers: swrHeaders(r, privateCache(120, 1800)) });
   } catch (e) {

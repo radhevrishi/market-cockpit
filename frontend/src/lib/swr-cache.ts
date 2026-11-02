@@ -61,6 +61,8 @@ export interface SwrOptions<T> {
    *  value (state 'stale', refreshing) when one exists, else SwrPendingError — while the build KEEPS RUNNING (single-flight) and
    *  writes its result for the next request. Unset = wait for the build (old behaviour). */
   waitMs?: number;
+  /** Maximum Redis lookup delay; on timeout, retain memory fallback and start an ordinary build. Unset preserves default semantics. */
+  readWaitMs?: number;
   store?: SwrStore;
   now?: () => number;
 }
@@ -163,6 +165,19 @@ function refreshInBackground<T>(o: SwrOptions<T>, store: SwrStore, now: () => nu
   })();
 }
 
+// Bound a slow KV read independently of the rebuild deadline. Late rejection is
+// observed by Promise.race; timer is cleared when the read completes early.
+async function boundedRead<T>(read: Promise<T>, ms?: number): Promise<T | null> {
+  if (ms == null || ms < 0) return read;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race<T | null>([
+      read,
+      new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), ms); }),
+    ]);
+  } finally { if (timer) clearTimeout(timer); }
+}
+
 export async function swrGet<T>(o: SwrOptions<T>): Promise<SwrResult<T>> {
   const store = o.store || kvSwrStore;
   const now = o.now || Date.now;
@@ -180,7 +195,7 @@ export async function swrGet<T>(o: SwrOptions<T>): Promise<SwrResult<T>> {
     // memory miss, or memory only holds a stale value: KV may hold a newer one written by another instance
     if (useKv && (!env || (now() - env.ts >= o.freshMs && !INFLIGHT.has(o.key) && !REFRESHING.has(o.key)))) {
       try {
-        const k = await store.get<Envelope<T>>(kvKeyOf(o.key));
+        const k = await boundedRead(store.get<Envelope<T>>(kvKeyOf(o.key)), o.readWaitMs);
         if (isEnvelope(k) && usable(k.value as T) && (!env || k.ts > env.ts)) {
           env = k as Envelope<T>;
           source = 'kv';
@@ -223,7 +238,7 @@ export async function swrGet<T>(o: SwrOptions<T>): Promise<SwrResult<T>> {
       const m = useMem ? (MEM.get(o.key) as Envelope<T> | undefined) : undefined;
       if (m) fallback = m;
       if (!fallback && useKv) {
-        try { const k = await store.get<Envelope<T>>(kvKeyOf(o.key)); if (isEnvelope(k) && usable(k.value as T)) fallback = k as Envelope<T>; } catch { /* none */ }
+        try { const k = await boundedRead(store.get<Envelope<T>>(kvKeyOf(o.key)), o.readWaitMs); if (isEnvelope(k) && usable(k.value as T)) fallback = k as Envelope<T>; } catch { /* none */ }
       }
     }
     if (fallback) {

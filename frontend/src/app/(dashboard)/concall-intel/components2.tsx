@@ -294,6 +294,7 @@ export function TransformationScreenerTab() {
   const [building, setBuilding] = useState(false);
   const requestSeq = useRef(0);
   const refreshStartedAt = useRef<number | null>(null);
+  const pendingSince = useRef<number | null>(null);
   const [err, setErr] = useState<string | null>(null);
   // zzz433 — Conviction × Transformation: which radar names are ALSO on the bench
   const [bench, setBench] = useState<Record<string, ConvictionEntry>>({});
@@ -336,32 +337,47 @@ export function TransformationScreenerTab() {
       // forced rebuild is still running. Do not falsely mark that as done.
       const oldSnapshot = refreshAt != null && (!Date.parse(j.generated_at) ||
         Date.parse(j.generated_at) < refreshAt - 1_000);
-      if (refreshAt != null && Date.now() - refreshAt > 120_000) {
+      if ((refreshAt != null && Date.now() - refreshAt > 120_000) || (pendingSince.current != null && Date.now() - pendingSince.current > 120_000)) {
         refreshStartedAt.current = null;
+        pendingSince.current = null;
         setBuilding(false);
-        setErr('The refreshed scan exceeded two minutes. Previous research is retained; retry later.');
+        setErr('The Radar scan exceeded two minutes. The last verified results are retained; try again later.');
       } else if (j.building || oldSnapshot) {
+        pendingSince.current ??= Date.now();
         setBuilding(true);
         setData((prev) => prev && prev.entries.length > 0 ? prev : j);
       } else {
         refreshStartedAt.current = null;
+        pendingSince.current = null;
         setBuilding(false);
         setData(j);
         if (j.error) setErr(j.error);
       }
     } catch (e) {
       if (requestId !== requestSeq.current) return;
-      refreshStartedAt.current = null;
-      setBuilding(false);
-      setErr(e instanceof Error && e.name === 'TimeoutError'
-        ? 'Radar request timed out. Existing results are retained; retry the scan.'
-        : e instanceof Error ? e.message : 'load failed');
+      const timedOut = e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError');
+      if (timedOut) {
+        pendingSince.current ??= Date.now();
+        if (Date.now() - pendingSince.current < 120_000) {
+          setBuilding(true); // automatic cache-only polling, no new forced PDF extraction
+          setErr('Data service is slow. Rechecking the saved scan automatically; existing research is retained.');
+        } else {
+          pendingSince.current = null;
+          refreshStartedAt.current = null;
+          setBuilding(false);
+          setErr('Radar has not responded within two minutes. Existing research is retained; retry later.');
+        }
+      } else {
+        refreshStartedAt.current = null;
+        setBuilding(false);
+        setErr(e instanceof Error ? e.message : 'load failed');
+      }
     } finally {
       if (requestId === requestSeq.current) setLoading(false);
     }
   }, []);
 
-  useEffect(() => { refreshStartedAt.current = null; setData(null); setBuilding(false); void load(days); }, [days, load]);
+  useEffect(() => { refreshStartedAt.current = null; pendingSince.current = null; setData(null); setBuilding(false); void load(days); }, [days, load]);
   // A pending scan is not an empty feed: poll the shared cached result
   // without another forced extraction. Avoid overlap while fetching.
   useEffect(() => {
@@ -370,15 +386,15 @@ export function TransformationScreenerTab() {
     return () => clearTimeout(timer);
   }, [building, loading, days, load]);
 
-  // zzz810 — the feed could not be fetched: retry on our own (forced, so the
-  // server re-fetches NSE/BSE) every 90s, up to 5 times.
+  // Partial/blocked exchange feeds are common. Retrying must not force a fresh
+  // NSE/BSE + PDF scan every 90 seconds and saturate the application server.
   const feedState = data?.feed_status?.state ?? (data?.error ? 'FAILED' : undefined);
   const retries = useRef(0);
   useEffect(() => { retries.current = 0; }, [days]);
   useEffect(() => {
     if (building || loading || (feedState !== 'FAILED' && feedState !== 'PARTIAL')) return;
     if (retries.current >= 5) return;
-    const t = setTimeout(() => { retries.current++; load(days, true); }, 90_000);
+    const t = setTimeout(() => { retries.current++; void load(days); }, 90_000);
     return () => clearTimeout(t);
   }, [feedState, building, loading, days, load]);
 
