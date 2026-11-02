@@ -414,7 +414,7 @@ export function TransformationScreenerTab() {
           }}>{loading ? '⏳ Scanning…' : '↻ Rescan (fresh)'}</button>
           {data && (
             <span style={{ fontSize: 10.5, color: TF.dim, ...TFM }}>
-              {data.analyzed} filings scanned · {data.pdf_cache_hits} cached · {data.candidates_total} in feed
+              {data.analyzed} filings sampled · {data.pdf_cache_hits} cached · {data.candidates_total} announcements in feed · last scan {new Date(data.generated_at).toLocaleString('en-IN')}
               {data.concalls_in_feed != null && <> · {data.concalls_in_feed} concall filings ({data.transcripts_in_feed ?? 0} transcripts)</>}
             </span>
           )}
@@ -645,7 +645,7 @@ export function TransformationScreenerTab() {
 
           {/* meta row */}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, marginTop: 10, fontSize: 11, color: TF.muted, alignItems: 'center' }}>
-            <span>📶 <b style={{ color: velocityColor(e.velocity) }}>{e.velocity}</b> velocity ({e.pattern_count} vectors)</span>
+            <span title="Pattern breadth is a count of keyword families, not a measured rate of business change">🧩 Pattern breadth: <b style={{ color: TF.text2 }}>{e.pattern_count} vectors</b> (not growth speed)</span>
             <span>🪜 Stage <b style={{ color: e.stage_sweet_spot ? TF.green : TF.text2 }}>{e.stage}/10</b>{e.stage_sweet_spot ? ' · sweet spot' : ''}</span>
             <span>🎯 Evidence <b style={{ color: TF.text2 }}>{e.evidence_score}/11</b> — {e.evidence_label}</span>
             <span title="Industry tailwind / company transformation / financial inflection">
@@ -656,6 +656,14 @@ export function TransformationScreenerTab() {
               ))}
             </span>
           </div>
+
+          {e.evidence_quote && (
+            <div style={{ background: TF.card2, borderLeft: `2px solid ${TF.cyan}`, padding: '8px 10px', borderRadius: 5,
+              fontSize: 11, lineHeight: 1.6, marginTop: 9, color: TF.text2 }}>
+              <strong style={{ color: TF.cyan }}>Verbatim evidence excerpt:</strong> “{e.evidence_quote}”
+              <span style={{ color: TF.dim }}> · confirm surrounding context in the filing</span>
+            </div>
+          )}
 
           {/* events + link */}
           {e.top_events.length > 0 && (
