@@ -155,7 +155,7 @@ async function handle(req: NextRequest, days: number, limit: number, minPatterns
   const forceFresh = sp.get('refresh') === '1' || sp.get('nocache') === '1';
   try {
     const r = await swrGet<Built>({
-      key: `transform-screener:swr:v6:${days}:${limit}:${minPatterns}:${offset}`, freshMs: SCREEN_FRESH_MS, maxStaleMs: SCREEN_MAX_STALE_MS, force: forceFresh,
+      key: offset === 0 ? `transform-screener:swr:v5:${days}:${limit}:${minPatterns}` : `transform-screener:swr:v6:${days}:${limit}:${minPatterns}:${offset}`, freshMs: SCREEN_FRESH_MS, maxStaleMs: SCREEN_MAX_STALE_MS, force: forceFresh,
       build: () => buildScreen(req, days, limit, minPatterns, forceFresh, offset),
       isUsable: (b) => !!b && b.cacheable,
       waitMs: SCREEN_WAIT_MS,

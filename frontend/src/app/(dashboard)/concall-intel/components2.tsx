@@ -325,7 +325,7 @@ export function TransformationScreenerTab() {
 
   const load = useCallback(async (d: number, force = false) => {
     const requestId = ++requestSeq.current;
-    if (force) refreshStartedAt.current = Date.now();
+    if (force) { refreshStartedAt.current = Date.now(); setExtraOffset(80); setMoreNote(null); }
     setLoading(true); setErr(null);
     try {
       // An uncached force refresh is a bounded request; the backend completes
@@ -468,7 +468,6 @@ export function TransformationScreenerTab() {
   const scopedEntries = (sourceFilter
     ? allEntries.filter((e) => sourceOf(e.symbol) === sourceFilter)
     : allEntries).filter((e) => passesSmallMid(capOf(e.symbol), smallMidOnly) && (!smallMidOnly || capOf(e.symbol) == null || capOf(e.symbol)! >= RADAR_MIN_CAP_CR));
-  const radarTriage = (e: TransformScreenPayload['entries'][number]) => radarDecision(e);
   const decisionCounts = {
     ALL: scopedEntries.length,
     RESEARCH: scopedEntries.filter((e) => radarDecision(e).queue === 'RESEARCH').length,
