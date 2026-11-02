@@ -91,7 +91,7 @@ export async function labCard(m: LabMarket, tickerIn: string): Promise<LabCard> 
     currency: cur, unit,
     stage: { st, weeks: row?.twWk ?? null, health: row?.twH ?? null, mrs: row?.mrs ?? null, rsR: row?.rsR ?? null, tt: row?.tt ?? null },
     years: yearPoints(ann.rows, ann.sharesNow), rows: ann.rows, fcf, trend, breakout: wk.bars ? breakout(wk.bars) : { ok: null, value: 'no prices' },
-    prices: wk.prices, record: rec, summary: labSummary(fcf, trend, st),
+    prices: wk.prices, record: rec, summary: labSummary(fcf, trend, st, typeof row?.tt === 'number' ? row.tt : null),
     sources: [ann.source, 'Stock screener snapshot (stage, RS, size)', 'Daily prices (Yahoo / NSE), 5 years'],
     builtAt: new Date().toISOString(),
   };

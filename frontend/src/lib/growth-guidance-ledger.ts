@@ -40,8 +40,17 @@ export async function readGgIndex(market: GgLedgerMarket): Promise<string[]> {
 /** Appends new entries per ticker (read-modify-write of the append-only object) and adds the tickers to the index. Returns tickers written. */
 export async function writeGgLedgers(byTicker: Map<string, GgStoredEntry[]>, existing: Map<string, GgStoredEntry[]>, market: GgLedgerMarket): Promise<number> {
   let n = 0; const touched: string[] = [];
+  // zzz1209 — tickers the caller did not read (past its 300-ticker read, or a read that timed out) are read here first;
+  // treating them as empty rewrote them on every run AND replaced their stored history with only this run's entries
+  const known = new Map(existing);
+  const missing = Array.from(byTicker.keys()).filter((t) => !known.has(t));
+  for (let i = 0; i < missing.length; i += 300) {
+    const part = missing.slice(i, i + 300);
+    const got = await readGgLedgers(part, market);
+    for (const t of part) if (got.has(t)) known.set(t, got.get(t)!);
+  }
   for (const [t, fresh] of Array.from(byTicker.entries())) {
-    const next = appendEntries({ entries: existing.get(t) || [] }, fresh);
+    const next = appendEntries({ entries: known.get(t) || [] }, fresh);
     if (!next) continue;
     try { await kvSet(ggLedgerKey(t, market), next, GG_LEDGER_TTL_S); n++; touched.push(t); } catch { /* the page still works without history */ }
   }

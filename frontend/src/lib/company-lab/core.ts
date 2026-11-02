@@ -148,8 +148,9 @@ export function breakout(b: DayBars): { ok: boolean | null; value: string } {
 }
 
 /** One company's lab verdict in plain words (no buy / sell): what the cash says and what the chart says. */
-export function labSummary(f: FcfReport, rules: TrendRule[], stage: number | null): string {
-  const tt = rules.filter((r) => r.ok).length, ttKnown = rules.filter((r) => r.ok != null).length;
+export function labSummary(f: FcfReport, rules: TrendRule[], stage: number | null, ttScreener: number | null = null): string {
+  // the stock screener's own count (the Pine / stock screeners show it) wins over this page's recount, so the pages agree
+  const tt = ttScreener ?? rules.filter((r) => r.ok).length, ttKnown = ttScreener != null ? 6 : rules.filter((r) => r.ok != null).length;
   const cash = f.known < 4 ? 'Not enough years of figures to judge the cash.' : f.passed >= Math.ceil(f.known * 0.75) ? 'Cash quality strong' : f.passed >= Math.ceil(f.known / 2) ? 'Cash quality mixed' : 'Cash quality weak';
   const chart = ttKnown < 4 ? 'price history too short for the trend template' : tt === 6 ? 'all six trend-template rules pass' : `${tt} of 6 trend-template rules pass`;
   return `${cash} (${f.passed}/${f.known} checks). Chart: ${stage != null ? `Stage ${stage}, ` : ''}${chart}.`;

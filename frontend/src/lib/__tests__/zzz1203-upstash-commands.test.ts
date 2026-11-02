@@ -26,3 +26,9 @@ test('wired: kv skips learned misses, ledger reads missing tickers, live-feed wr
   const b = read('lib/nse-bhavcopy.ts');
   assert.ok(b.indexOf('_memCache.get(isoDate);\n  if (inMem') < b.indexOf('kvGet<BhavData>'));
 });
+
+test('zzz1209 — growth-guidance ledger reads tickers the caller did not before appending (no history overwrite)', () => {
+  const g = fs.readFileSync(path.join(__dirname, '..', 'growth-guidance-ledger.ts'), 'utf8');
+  assert.match(g, /const missing = Array\.from\(byTicker\.keys\(\)\)\.filter\(\(t\) => !known\.has\(t\)\)/);
+  assert.match(g, /appendEntries\(\{ entries: known\.get\(t\) \|\| \[\] \}, fresh\)/);
+});

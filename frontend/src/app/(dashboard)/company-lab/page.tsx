@@ -91,8 +91,9 @@ function Card({ c, onRemove }: { c: LabCard; onRemove: () => void }) {
     );
   }
   const st = c.stage.st;
-  const tt = c.trend.filter((r) => r.ok).length;
-  const ttKnown = c.trend.filter((r) => r.ok != null).length;
+  // the stock screener's count first (same as the Pine / stock screeners), else this page's recount of the daily series
+  const tt = c.stage.tt ?? c.trend.filter((r) => r.ok).length;
+  const ttKnown = c.stage.tt != null ? 6 : c.trend.filter((r) => r.ok != null).length;
   const sym = c.ticker;
   const links: Array<[string, string]> = [
     ['📈 Chart', `/charts?m=${c.market}&t=${encodeURIComponent(sym)}`],
@@ -165,7 +166,7 @@ function Card({ c, onRemove }: { c: LabCard; onRemove: () => void }) {
       )}
       {open === 'stage' && (
         <div style={{ display: 'grid', gap: 8 }}>
-          {label('STAGE 2 (WEEKLY STAGE ANALYSIS) · MINERVINI TREND TEMPLATE · BREAKOUT')}
+          {label(`STAGE 2 (WEEKLY STAGE ANALYSIS) · MINERVINI TREND TEMPLATE${c.stage.tt != null ? ` (screener count ${c.stage.tt}/6; rule detail below from the 5-year daily series, which can differ by a session)` : ''} · BREAKOUT`)}
           <div style={{ fontSize: 14 }}>
             {st == null ? 'No weekly stage on file yet.' : <>Weekly stage: <b style={{ color: STAGE_C[st] }}>{STAGE_WORD[st]}</b>{c.stage.weeks != null ? ` for ${c.stage.weeks} weeks` : ''}{st === 2 && c.stage.health != null ? ` — ${HEALTH[c.stage.health]}` : ''}.</>}
             {c.stage.mrs != null && <> Mansfield RS vs {c.market === 'US' ? 'S&P 500' : 'Nifty 50'}: <b>{num(c.stage.mrs, 1)}</b> ({c.stage.mrs > 0 ? 'beating' : 'lagging'} the index).</>}
