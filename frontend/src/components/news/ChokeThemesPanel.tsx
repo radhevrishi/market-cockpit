@@ -301,6 +301,9 @@ export default function ChokeThemesPanel() {
       </div>
       {msg && <div style={{ fontSize: 14, color: busy ? C.accent : C.dim, marginTop: 6 }}>{msg}</div>}
       {failed && <div style={{ fontSize: 14, color: C.warn, marginTop: 6 }} title={failed.error}>⚠ Last update attempt failed ({fmt(failed.at)}): {failed.error}. {report ? `Showing the last successful research from ${fmt(report.generatedAt)} — it is stale.` : ''}</div>}
+      {report?.marketDataTimedOut && <div role="status" style={{ fontSize: 13.5, color: C.warn, marginTop: 7, lineHeight: 1.5 }}>
+        ⚠ Fresh market-data overlay unavailable or timed out. Showing last saved research and previously recorded figures; rankings and valuations may be stale. Do not treat these as live-confirmed signals.
+      </div>}
 
       {open && report && !v2 && (
         <div style={{ marginTop: 12, fontSize: 14.5, padding: '10px 12px', borderRadius: 10, border: `1px solid ${C.warn}`, background: tint(C.warn, 6) }}>
