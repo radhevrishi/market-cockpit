@@ -12,10 +12,26 @@ export const CHOKE_DAILY_MAX = 6;
 const TTL = 400 * 86_400;
 
 const toFacts = (c: Cand): CandFacts => ({ cap: c.mc, revQ: c.revQ, revA: c.revA, epsQ: c.epsQ, opm: c.opm, opmFY: c.opmFY ?? null, pe: c.pe, fcfm: c.fcfm, de: c.de, p1y: c.p1y, p5y: c.p5y, p6m: c.p6m ?? null, st: c.st ?? null, stWk: c.stWk ?? null });
-async function screenerFacts(): Promise<{ facts: Record<ChokeRegion, Map<string, CandFacts>>; cands: Record<ChokeRegion, Cand[]> }> {
-  const { loadCands } = await import('../screener/ai-candidates-load');
-  const [us, ind] = await Promise.all([loadCands('US'), loadCands('IN')]);
-  return { cands: { US: us, IN: ind }, facts: { US: new Map(us.map((c) => [c.t, toFacts(c)])), IN: new Map(ind.map((c) => [c.t, toFacts(c)])) } };
+type ChokeScreenerSnapshot = { facts: Record<ChokeRegion, Map<string, CandFacts>>; cands: Record<ChokeRegion, Cand[]> };
+const SCREENER_SNAPSHOT_MS = 60_000;
+// Choke report polling previously reloaded both entire exchanges on every GET.
+// Coalesce concurrent reads and reuse fresh snapshots for one minute. Failed loads
+// are never cached. This does not persist market data or change the AI run.
+let screenerSnapshot: { at: number; promise: Promise<ChokeScreenerSnapshot> } | null = null;
+async function screenerFacts(): Promise<ChokeScreenerSnapshot> {
+  const now = Date.now();
+  if (screenerSnapshot && now - screenerSnapshot.at < SCREENER_SNAPSHOT_MS) return screenerSnapshot.promise;
+  const promise: Promise<ChokeScreenerSnapshot> = (async () => {
+    const { loadCands } = await import('../screener/ai-candidates-load');
+    const [us, ind] = await Promise.all([loadCands('US'), loadCands('IN')]);
+    return { cands: { US: us, IN: ind }, facts: { US: new Map(us.map((c) => [c.t, toFacts(c)])), IN: new Map(ind.map((c) => [c.t, toFacts(c)])) } };
+  })();
+  const entry = { at: now, promise };
+  screenerSnapshot = entry;
+  try { return await promise; } catch (error) {
+    if (screenerSnapshot === entry) screenerSnapshot = null;
+    throw error;
+  }
 }
 
 /** The last successful run with today's stock-screener facts laid over it (no AI). An older v1 run is returned as it is. */
