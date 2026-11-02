@@ -3732,3 +3732,21 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   ADD rows join A/B with "🤖 added by AI check". Sky Gold: `skyGoldScore(g, facts, ai?)` — priced-in cap 64 (P/E÷growth > 2.5 or
   P/E > 100), 'fresh' check from `ageDays`, AI checks 'cover' / 'track', red flags 'deferral' / 'powerpoint'. The screener fallback and
   the AI run recorder are now kept on globalThis (instrumentation and routes are separate bundles — module variables are not shared).
+
+## 32 · 2 Nov 2026 — cost + owner fixes (zzz1196 → zzz1209)
+
+- Memory / cost: bounded in-process KV copy (`KV_MEM_FALLBACK_MB`, default 48), memory sampler (`/api/v1/system-status` → memory),
+  screener snapshots published only when rows change (`snapshot-publish.ts`, rollback `SCREENER_ALWAYS_PUBLISH=1`), AI calls reserve
+  their worst-case cost first (rollback `AI_RESERVE_OFF=1`), hidden tabs stop polling saved data.
+- Upstash (zzz1203/1209): a key family whose REST retries never find anything stops retrying (`RestFallbackLearner`, rollback
+  `KV_REST_RETRY_ALWAYS=1`); bhav answers from memory; guidance-ledger and growth-guidance-ledger READ tickers the caller did not
+  before writing (both used to overwrite history of unread tickers on every run); live-feed writes back only looked-up filings.
+- India EO: best first inside a tier (`bestFirst` in lib/india-earnings-window, toggle `mc:eo-order:v1`); other-day names are a
+  collapsed list at the END, no cards.
+- US: today's session re-read every 5 min 06–10 ET; `lib/us-gross-margin.ts` (informational caveat, never costs a point); AI summary
+  EPS block from the graded row (`epsFactsOf`).
+- Choke themes: `lateCurve()` — price already up 10x/5y, 3x/1y, 2x/6m or topping = LATE: moved to `t.late`, never qualifies a theme.
+  The owner reversed "a past rally does not end a J-curve": first-stage names only.
+- Conviction Beats India + USA: Stage 2 yes / no in the preset (`lib/cb-stage2.ts`, weekly `twSt` from the slim screener answer,
+  laid on cards by use-debt-equity; no stage passes neither).
+- Company Lab `/company-lab` (nav + home favourite): `lib/company-lab/{core,annual,server}.ts`, `/api/v1/company-lab`.
