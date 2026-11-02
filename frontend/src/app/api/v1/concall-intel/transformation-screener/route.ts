@@ -22,6 +22,7 @@ import { swrGet, swrHeaders, privateCache, SwrUnusableError, SwrPendingError } f
 import { railwaySelfFetch } from '@/lib/railway-self-fetch';
 import { extractFirstPdf } from '@/lib/pdf-text-extractor';
 import { analyzeTransformation } from '@/lib/transformation-analyzer';
+import { buildRadarEvidenceRecord, type RadarEvidenceRecord } from '@/lib/concall-evidence-ledger';
 import { classifyConcallFiling, type FeedStatus } from '@/lib/concall-feed';
 
 export const runtime = 'nodejs';
@@ -35,7 +36,7 @@ const CACHE_TTL = 12 * 60;               // zzz466 — 12 min (was 30) so new gr
 // force-refreshes — which is why fixed quotes appeared "still broken". A new
 // version orphans the stale entries so the very next request recomputes fresh.
 // v5: guidance-cut context and action triage changed. Invalidate v4 so stale scores cannot survive release.
-// zzz855: the cache now lives in lib/swr-cache under transform-screener:swr:v5:<days>:<limit>:<minPatterns>.
+// zzz855: the cache now lives in lib/swr-cache under transform-screener:swr:v6:<days>:<limit>:<minPatterns>.
 
 export interface TransformScreenEntry {
   symbol: string;
@@ -62,6 +63,7 @@ export interface TransformScreenEntry {
   triple: { industry: boolean; company: boolean; financial: boolean; count: number };
   top_events: string[];
   scored_from: 'PDF' | 'SUBJECT';
+  evidence_record: RadarEvidenceRecord;
 }
 
 // zzz434 — lightweight record of a filing we scanned that produced no
@@ -277,6 +279,12 @@ async function buildScreen(req: NextRequest, days: number, limit: number, minPat
         triple: t.triple,
         top_events: t.events.slice(0, 8).map((e) => e.kw),
         scored_from: scoredFrom,
+        evidence_record: buildRadarEvidenceRecord({
+          symbol: f.symbol, source_url: f.source_url,
+          attachment_url: f.attachment_urls?.[0] || null,
+          filing_datetime: f.filing_datetime, evidence_quote: t.evidence_quote,
+          scored_from: scoredFrom,
+        }),
       };
       return entry;
     }));

@@ -1,3 +1,4 @@
+import type { RadarEvidenceRecord } from '@/lib/concall-evidence-ledger';
 // Moved verbatim out of page.tsx (pure refactor, no behaviour change).
 
 // zzz432 — automatic multibagger transformation radar block
@@ -286,6 +287,7 @@ export interface TransformScreenEntry {
   stage: number; stage_sweet_spot: boolean; velocity: string;
   triple: { industry: boolean; company: boolean; financial: boolean; count: number };
   top_events: string[]; scored_from: 'PDF' | 'SUBJECT';
+  evidence_record?: RadarEvidenceRecord; // optional for older cached scans
 }
 
 export interface ScannedNoSignal {
