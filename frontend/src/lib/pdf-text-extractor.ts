@@ -9,6 +9,7 @@
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import { createHash } from 'crypto';
 import { sanitizePdfText } from '@/lib/pdf-sanitizer';
+import { parsePdfIsolated } from '@/lib/pdf-parse-isolated';
 
 const CACHE_TTL = 30 * 24 * 60 * 60;  // 30 days
 const CACHE_KEY_PREFIX = 'pdf-text:v2';   // v2: post-sanitization
@@ -38,6 +39,8 @@ export interface ExtractOpts {
    *  5 MB default was written for results PDFs. (zzz744) */
   maxBytes?: number;
   timeoutMs?: number;
+  /** zzz1213 — hard limit on parsing time (separate process, killed after this) */
+  parseTimeoutMs?: number;
 }
 
 /** bseindia.com refuses datacenter IPs the way screener.in does; the mc-proxy
@@ -108,15 +111,26 @@ async function _extractPdfInner(url: string, opts: ExtractOpts = {}): Promise<Ex
       return { url, text: '', bytes: buf.length, source: 'FAILED', failure_reason: `PDF too large (${(buf.length / 1048576).toFixed(1)} MB > ${(maxBytes / 1048576).toFixed(0)} MB)` };
     }
 
-    // Lazy import pdf-parse (heavy lib, only on demand)
+    // zzz1213 — parse in a separate, time- and memory-limited process: a large or malformed PDF can no longer block
+    // or crash the web server (it took the whole site down on 2 Nov 2026). In-process parsing only if the child
+    // process cannot be started at all, and then only for small files.
     let pdfText = '';
     let pages = 0;
     try {
-      const modName = 'pdf-parse';
-      const pdfParse = (await import(/* webpackIgnore: true */ modName)).default;
-      const out = await pdfParse(buf);
-      pdfText = (out.text || '').replace(/\s+/g, ' ').trim();
-      pages = out.numpages || 0;
+      const iso = await parsePdfIsolated(buf, { timeoutMs: opts.parseTimeoutMs ?? 25_000 });
+      if ('error' in iso) {
+        if (!/could not start parser/.test(iso.error) || buf.length > 3 * 1024 * 1024) {
+          return { url, text: '', bytes: buf.length, source: 'FAILED', failure_reason: iso.error };
+        }
+        const modName = 'pdf-parse';
+        const pdfParse = (await import(/* webpackIgnore: true */ modName)).default;
+        const out = await pdfParse(buf);
+        pdfText = (out.text || '').replace(/\s+/g, ' ').trim();
+        pages = out.numpages || 0;
+      } else {
+        pdfText = iso.text.replace(/\s+/g, ' ').trim();
+        pages = iso.pages;
+      }
     } catch (err: any) {
       // pdf-parse unavailable or PDF unreadable — try naive UTF-8 extraction
       pdfText = buf.toString('utf-8').replace(/[^\x20-\x7E\n]/g, ' ').replace(/\s+/g, ' ').trim();
