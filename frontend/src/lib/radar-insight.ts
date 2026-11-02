@@ -187,7 +187,7 @@ export function radarInsight(e: InsightEntry, f: RadarFacts | null | undefined):
   score = Math.max(0, Math.min(100, score));
   const passesAll = lane !== 'NONE' && tone === 'POSITIVE' && quoteOk && !cut
     && results.verdict !== 'DECLINING' && results.verdict !== 'SLOWING'
-    && !(lane === 'INFLECTION' && valuation.gap === 'STRETCHED') && score >= 60;
+    && valuation.gap !== 'STRETCHED' && score >= 60;
   const best = passesAll && !openConflict;
   const promising = passesAll && openConflict;
 

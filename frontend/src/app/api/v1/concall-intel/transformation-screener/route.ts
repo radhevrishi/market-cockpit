@@ -230,25 +230,48 @@ async function handle(req: NextRequest, days: number, limit: number, minPatterns
   const fresh = sp.get('refresh') === '1' || sp.get('nocache') === '1';
   const more = sp.get('more') === '1';
   const mode = coverage ? MODE_COVERAGE : fresh ? MODE_FRESH : more ? MODE_MORE : MODE_READER;
+  // zzz1217 — every window up to 90 days is cut from ONE 90-day scan (the one the coverage job keeps warm), so
+  // switching 60d → 7d is instant instead of a cold exchange-feed fetch that can time out and show nothing.
+  const scanDays = baseScanDays(days);
   try {
     const r = await swrGet<Built>({
-      key: `transform-screener:swr:v7:${days}:${minPatterns}`, freshMs: SCREEN_FRESH_MS, maxStaleMs: SCREEN_MAX_STALE_MS, force: fresh || more || coverage,
-      build: () => buildScreen(req, days, minPatterns, mode),
+      key: `transform-screener:swr:v8:${scanDays}:${minPatterns}`, freshMs: SCREEN_FRESH_MS, maxStaleMs: SCREEN_MAX_STALE_MS, force: fresh || more || coverage,
+      build: () => buildScreen(req, scanDays, minPatterns, mode),
       isUsable: (b) => !!b && b.cacheable,
       waitMs: SCREEN_WAIT_MS + (coverage ? COVERAGE_EXTRA_WAIT_MS : 0),   // the scheduled job may wait for its own scan
       readWaitMs: 2_000, // 18s browser budget also includes Redis; avoid unbounded cold lookup
       failureRetryMs: 5 * 60_000, // feed failures retry at most once per 5 min per instance; never discard last-good
     });
-    const p = r.value.payload;
+    const p = windowPayload(r.value.payload, days, scanDays);
     const out: ScreenPayload = p.entries.length > limit ? { ...p, entries: p.entries.slice(0, limit) } : p;
     return NextResponse.json(out, { headers: swrHeaders(r, privateCache(120, 1800)) });
   } catch (e) {
     if (e instanceof SwrPendingError) {
       return NextResponse.json({ ...emptyPayload(days), building: true, error: undefined, message: 'Scanning the latest concalls — ask again in a minute' }, { headers: { 'Cache-Control': 'no-store', 'x-mc-cache': 'building' } });
     }
-    if (e instanceof SwrUnusableError && (e.value as Built | undefined)?.payload) return NextResponse.json((e.value as Built).payload);
+    if (e instanceof SwrUnusableError && (e.value as Built | undefined)?.payload) return NextResponse.json(windowPayload((e.value as Built).payload, days, scanDays));
     throw e;
   }
+}
+
+/** zzz1217 — the scan that serves a window: 90 days for any window up to 90, else the window itself. */
+function baseScanDays(days: number): number { return days <= 90 ? 90 : days; }
+
+/** zzz1217 — cut a longer scan down to the asked window (by filing date). Counts in the funnel stay those of the scan. */
+function windowPayload(p: ScreenPayload, days: number, scanDays: number): ScreenPayload {
+  if (days >= scanDays) return p;
+  const from = Date.now() - days * 86_400_000;
+  const inWin = (d: string) => { const t = new Date(d).getTime(); return Number.isFinite(t) && t >= from; };
+  const entries = p.entries.filter((e) => inWin(e.filing_datetime));
+  const note = `Last ${days} days of the ${scanDays}-day scan: ${entries.length} companies with a signal in this window. Reading counts above cover the full ${scanDays} days.`;
+  return {
+    ...p,
+    window_days: days,
+    entries,
+    scanned_no_signal: p.scanned_no_signal.filter((e) => inWin(e.filing_datetime)),
+    excluded: p.excluded?.filter((e) => inWin(e.filing_datetime)),
+    coverage_note: p.coverage_note ? `${p.coverage_note} ${note}` : note,
+  };
 }
 
 const PRE_ORDER: Partial<Record<RadarDocClass, number>> = { TRANSCRIPT: 0, PRESENTATION: 1, RESULTS: 2 };

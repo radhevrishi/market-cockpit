@@ -3803,3 +3803,7 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   unverified"); `checks {transformation, growth, causalLink:false}` kept separate; INFLECTION needs a clean management quote;
   an open RECONCILE/RISK review queue blocks ★ Best → "◐ Promising — reconcile first". Universe read 25 s, ticker match via
   record.ticker + tickers. radar-coverage now runs 7,27,47 every hour (was 01–18 UTC).
+- zzz1217 (2 Nov): radar windows. Every window up to 90 days is cut from ONE 90-day scan (`baseScanDays`, `windowPayload` in
+  the transformation-screener route; SWR key `transform-screener:swr:v8:<scanDays>:<minPatterns>`), so 7d/30d/60d are
+  instant and never a cold exchange-feed fetch (the 7d click had timed out on NSE and shown nothing). Funnel counts stay
+  those of the 90-day scan; coverage_note says so. "Best" now excludes STRETCHED valuation in every lane (was inflection only).

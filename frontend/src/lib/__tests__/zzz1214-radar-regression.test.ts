@@ -217,3 +217,14 @@ test('31 a best card shows open questions as checks; the universe read gets time
   assert.match(route, /25_000\),/);
   assert.match(route, /review_queue: radarDecision\(e\)\.queue/);
 });
+test('32 short windows are cut from the one warm 90-day scan, never a cold feed fetch', () => {
+  const route = readFileSync(new URL('../../app/api/v1/concall-intel/transformation-screener/route.ts', import.meta.url), 'utf8');
+  assert.match(route, /function baseScanDays\(days: number\): number \{ return days <= 90 \? 90 : days; \}/);
+  assert.match(route, /swr:v8:\$\{scanDays\}/);
+  assert.match(route, /buildScreen\(req, scanDays,/);
+  assert.match(route, /windowPayload\(r\.value\.payload, days, scanDays\)/);
+});
+test('33 NEOGEN: an early-stage name that is expensive on trailing figures is not "best" either', () => {
+  const src = readFileSync(new URL('../radar-insight.ts', import.meta.url), 'utf8');
+  assert.match(src, /valuation\.gap !== 'STRETCHED'/);
+});
