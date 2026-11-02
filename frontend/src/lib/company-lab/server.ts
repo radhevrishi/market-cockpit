@@ -38,7 +38,20 @@ async function annual(m: LabMarket, t: string): Promise<{ rows: AnnualRow[]; sou
     const facts = await companyFacts(cik);
     if (!facts) return { rows: [], source: 'SEC company facts not reachable', sharesNow: null };
     const sh = sharesOutstandingFromFacts(facts);
-    return { rows: usAnnualRows(facts), source: 'SEC company facts (10-K / 20-F full years)', sharesNow: sh != null ? sh / 1e6 : null };
+    const { reportingBasis } = await import('./annual');
+    const basis = reportingBasis(facts);
+    let toUsd = 1, note = '';
+    if (basis.cur !== 'USD') {
+      // a foreign filer (20-F, IFRS): its figures are converted to US dollars at today's rate so they sit against the $ price
+      try {
+        const { yahooChart } = await import('../us-prices');
+        const b: any = await withTimeout(yahooChart(`${basis.cur}USD=X`, '5d'), 10_000, null);
+        const r = Array.isArray(b?.close) ? Number(b.close.filter((x: any) => Number.isFinite(Number(x))).pop()) : NaN;
+        if (Number.isFinite(r) && r > 0) { toUsd = r; note = `; reported in ${basis.cur}, converted at today's ${r.toFixed(4)} $ per ${basis.cur}`; }
+        else note = `; reported in ${basis.cur} (rate not available — figures NOT converted)`;
+      } catch { note = `; reported in ${basis.cur} (figures NOT converted)`; }
+    }
+    return { rows: usAnnualRows(facts, 10, toUsd), source: `SEC company facts (10-K / 20-F full years${basis.tax === 'ifrs-full' ? ', IFRS' : ''}${note})`, sharesNow: sh != null ? sh / 1e6 : null };
   }
   const { dbQuery } = await import('../db');
   const r = await dbQuery<{ payload: any }>(`SELECT payload FROM screener_store WHERE market = 'IN' AND ticker = $1 AND kind = 'fund'`, [t]).catch(() => []);

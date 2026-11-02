@@ -81,3 +81,22 @@ test('collectors check their key first: first refusal of the day fails, later on
     assert.match(y, /id: main\n\s+if: steps\.key\.outputs\.key_ok != '0'/, f);
   }
 });
+
+test('foreign filer (20-F, IFRS in EUR): read from ifrs-full and converted to US dollars', async () => {
+  const { usAnnualRows, reportingBasis } = await import('../company-lab/annual');
+  const fy = (y: number, val: number, form = '20-F') => ({ start: `${y}-01-01`, end: `${y}-12-31`, val, filed: `${y + 1}-02-05`, form, fp: 'FY' });
+  const facts = { facts: { 'ifrs-full': {
+    Revenue: { units: { EUR: [fy(2024, 15_673e6), fy(2025, 17_186e6)] } },
+    CashFlowsFromUsedInOperatingActivities: { units: { EUR: [fy(2024, 2_301e6), fy(2025, 2_933e6)] } },
+    PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities: { units: { EUR: [fy(2024, 17e6), fy(2025, 61e6)] } },
+    DilutedEarningsLossPerShare: { units: { 'EUR/shares': [fy(2025, 10.51)] } },
+    WeightedAverageShares: { units: { shares: [fy(2025, 205_412_951)] } },
+  } } };
+  assert.deepEqual(reportingBasis(facts), { tax: 'ifrs-full', cur: 'EUR' });
+  const rows = usAnnualRows(facts, 10, 1.1);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[1].revenue, 18904.6);    // 17,186 € M × 1.1
+  assert.equal(rows[1].fcf, 3159.2);         // (2,933 − 61) × 1.1
+  assert.equal(rows[1].eps, 11.56);
+  assert.equal(rows[1].shares, 205.41);
+});
