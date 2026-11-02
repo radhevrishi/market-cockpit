@@ -87,3 +87,9 @@ test('unknown supply and absent revenue evidence never qualify as a proven choke
   enrich(noTicker, { US: new Map([['OTHER', F({})]]), IN: new Map() });
   assert.equal(noTicker.regions[0].themes[0].qualifies, false);
 });
+
+test('high sales growth with deteriorating profit is mixed, not a confirmed earnings inflection', () => {
+  assert.equal(dataCheck({ ...cand('LOSS', { jstage: 'J3' }), facts: F({ revQ: 110, revA: 55, epsQ: -70 }) } as any), 'MIXED');
+  assert.equal(dataCheck({ ...cand('NEGOPM', { jstage: 'J2' }), facts: F({ revQ: 80, opm: -4 }) } as any), 'MIXED');
+  assert.equal(dataCheck({ ...cand('PROFITABLE', { jstage: 'J2' }), facts: F({ revQ: 45, revA: 20, epsQ: 70, opm: 15 }) } as any), 'CONFIRMS');
+});
