@@ -9,6 +9,7 @@ import type { TransformationRadarData, TransformScreenPayload } from './types';
 import { TF, TFM, TIER_COLOR, CONV_TIER_COLOR } from './constants';
 import { velocityColor } from './helpers';
 import { FeedStatusNote } from './FeedStatusNote';
+import { radarDecision, rankForDecision, type RadarQueue } from '@/lib/concall-radar-decision';
 
 export function TfSection({ n, title, lede, children }: { n: string; title: string; lede?: ReactNode; children: ReactNode }) {
   return (
@@ -286,6 +287,7 @@ export function TransformationFrameworkTab({ lastRadar, lastTicker }: { lastRada
 
 export function TransformationScreenerTab() {
   const [days, setDays] = useState<number>(60);
+  const [decisionFilter, setDecisionFilter] = useState<RadarQueue | 'ALL'>('ALL');
   const [data, setData] = useState<TransformScreenPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -372,9 +374,17 @@ export function TransformationScreenerTab() {
     [owned, benchKeys],
   );
   const ownedCount = allEntries.filter((e) => sourceOf(e.symbol) === 'portfolio').length;
-  const entries = (sourceFilter
+  const scopedEntries = (sourceFilter
     ? allEntries.filter((e) => sourceOf(e.symbol) === sourceFilter)
-    : allEntries).filter((e) => passesSmallMid(capOf(e.symbol), smallMidOnly));   // zzz898
+    : allEntries).filter((e) => passesSmallMid(capOf(e.symbol), smallMidOnly));
+  const decisionCounts = {
+    ALL: scopedEntries.length,
+    RESEARCH: scopedEntries.filter((e) => radarDecision(e).queue === 'RESEARCH').length,
+    WAIT: scopedEntries.filter((e) => radarDecision(e).queue === 'WAIT').length,
+    RISK: scopedEntries.filter((e) => radarDecision(e).queue === 'RISK').length,
+    UNVERIFIED: scopedEntries.filter((e) => radarDecision(e).queue === 'UNVERIFIED').length,
+  };
+  const entries = rankForDecision(scopedEntries).filter((e) => decisionFilter === 'ALL' || radarDecision(e).queue === decisionFilter);
   const sweetSpotCount = entries.filter((e) => e.stage_sweet_spot).length;
   const tripleCount = entries.filter((e) => e.triple.count === 3).length;
   const onBenchCount = entries.filter((e) => bench[e.symbol?.toUpperCase()]).length;
@@ -385,7 +395,7 @@ export function TransformationScreenerTab() {
       <div style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '16px 18px' }}>
         <div style={{ fontSize: 15, fontWeight: 900, color: TF.cyan, letterSpacing: '0.3px' }}>🔭 Transformation Radar — the whole feed, auto-scanned</div>
         <div style={{ fontSize: 12.5, color: TF.muted, lineHeight: 1.6, marginTop: 6 }}>
-          Runs the exact multibagger-transformation radar from the 🚀 Transformation tab over <b style={{ color: TF.text2 }}>every concall in the live feed</b> — no pasting. Each company is scored on pattern breadth, evidence strength, inflection stage, and the industry/company/financial triple, then ranked. Deterministic keyword + evidence read, not a recommendation.
+          Scans a bounded, newest-first sample of filings (not the entire exchange universe). <b style={{ color: TF.text2 }}>Decision queue first:</b> guidance cuts and negative results are isolated; unverified disclosures are not research-ready. T-Score is a transcript signal, never a buy rating.
         </div>
         {/* controls */}
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 }}>
@@ -454,6 +464,34 @@ export function TransformationScreenerTab() {
         </div>
       )}
 
+      {/* A decision queue answers what to do next, not merely how many buzzwords appeared. */}
+      {data && (
+        <div style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '12px 14px' }}>
+          <div style={{ fontSize: 13, fontWeight: 900, color: TF.text, marginBottom: 4 }}>Decision queue · evidence before narratives</div>
+          <div style={{ fontSize: 11, lineHeight: 1.6, color: TF.muted, marginBottom: 10 }}>
+            RESEARCH FIRST means investigate, <strong>not buy</strong>. A buy decision remains blocked until latest guidance, actual earnings, cash conversion, valuation and price setup are verified.
+            {sizeCounts.unknown > 0 && ` ${sizeCounts.unknown} companies have unknown market cap; their small/mid status is unverified.`}
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
+            {([
+              ['ALL', 'All signals', TF.cyan],
+              ['RESEARCH', 'Research first', TF.green],
+              ['WAIT', 'Wait for proof', TF.amber],
+              ['RISK', 'Guidance / risk', TF.red],
+              ['UNVERIFIED', 'Unverified PDFs', TF.dim],
+            ] as const).map(([key, label, color]) => (
+              <button key={key} type="button" onClick={() => setDecisionFilter(key)}
+                aria-pressed={decisionFilter === key}
+                style={{ background: decisionFilter === key ? `color-mix(in srgb, ${color} 20%, transparent)` : TF.card2,
+                  color, border: `1px solid ${decisionFilter === key ? color : TF.border}`,
+                  borderRadius: 7, fontSize: 11, fontWeight: 800, cursor: 'pointer', padding: '7px 10px' }}>
+                {label} · {decisionCounts[key]}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* summary tiles */}
       {data && entries.length > 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 10 }}>
@@ -488,7 +526,9 @@ export function TransformationScreenerTab() {
           <div style={{ fontSize: 13, color: TF.text2, lineHeight: 1.6, textAlign: 'center' }}>
             {/* zzz810 — only claim "nothing found" about a feed that was actually
                 fetched; state the real counts, never a blanket off-season excuse. */}
-            {data.analyzed > 0
+            {scopedEntries.length > 0
+              ? <>No companies match the selected decision queue. Select All signals to review every candidate.</>
+              : data.analyzed > 0
               ? <>The radar read <b style={{ color: TF.text }}>{data.analyzed}</b> filing{data.analyzed === 1 ? '' : 's'} from the last {days} days{data.transcripts_in_feed != null ? <> ({data.transcripts_in_feed} transcript{data.transcripts_in_feed === 1 ? '' : 's'} in the feed)</> : null} and found <b style={{ color: TF.amber }}>no transformation signal yet</b>.</>
               : data.feed_status?.state === 'EMPTY'
                 ? <>{data.feed_status.message}</>
@@ -559,6 +599,32 @@ export function TransformationScreenerTab() {
             </div>
           </div>
 
+          {/* Fundamental triage: a high T-score never overrides caution or missing proof. */}
+          {(() => {
+            const d = radarDecision(e);
+            const color = d.queue === 'RESEARCH' ? TF.green : d.queue === 'RISK' ? TF.red : d.queue === 'WAIT' ? TF.amber : TF.dim;
+            return (
+              <div style={{ borderLeft: `3px solid ${color}`, background: TF.card2, borderRadius: 6, padding: '9px 11px', marginTop: 10 }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 9 }}>
+                  <strong style={{ fontSize: 11.5, color }}>{d.label}</strong>
+                  <span style={{ fontSize: 11, color: TF.text2 }}>{d.reason}</span>
+                </div>
+                <div style={{ fontSize: 11, marginTop: 5, lineHeight: 1.5, color: TF.muted }}>
+                  <strong style={{ color: TF.text2 }}>Next check:</strong> {d.nextCheck}
+                </div>
+                {d.blockers.length > 0 && (
+                  <div style={{ fontSize: 10, color: TF.dim, marginTop: 5 }}>
+                    NOT VERIFIED: {d.blockers.slice(0, 4).join(' · ')}
+                  </div>
+                )}
+                <a href={`/company-lab?market=IN&tickers=${encodeURIComponent(e.symbol)}`}
+                   style={{ display: 'inline-block', marginTop: 7, fontSize: 11, color: TF.cyan, fontWeight: 800 }}>
+                  Examine financials, valuation and trend in Company Lab →
+                </a>
+              </div>
+            );
+          })()}
+
           {/* pattern chips */}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 10 }}>
             {e.patterns.slice(0, 10).map((p) => (
@@ -608,7 +674,7 @@ export function TransformationScreenerTab() {
 
       {data && entries.length > 0 && (
         <div style={{ ...TFM, fontSize: 9.5, color: TF.dim, lineHeight: 1.6 }}>
-          T-Score = pattern_count×3 + evidence_score + triple_count×2 + sweet-spot bonus. Ranks the strength of the transformation SIGNAL in the transcript, not the stock. Chain: TAILWIND → TRANSFORMATION → VALIDATION → EARNINGS INFLECTION → FCF → RE-RATING. Open any name in the 🚀 Transformation tab framework, or paste its transcript in 🔥 Live Feeds for the full analysis. Educational, not investment advice.
+          T-Score measures transformation narrative/evidence, not a buy opportunity. Cards are now ordered by decision queue, then by T-Score. Negative guidance, profit deterioration and missing PDFs override keyword strength; latest guidance, valuation and price still need independent verification. Chain: TAILWIND → TRANSFORMATION → VALIDATION → EARNINGS INFLECTION → FCF → RE-RATING. Open any name in the 🚀 Transformation tab framework, or paste its transcript in 🔥 Live Feeds for the full analysis. Educational, not investment advice.
         </div>
       )}
     </div>
