@@ -428,7 +428,7 @@ export function TransformationScreenerTab() {
           pdf_cache_hits: current.pdf_cache_hits + page.pdf_cache_hits,
           scanned_no_signal: [...(current.scanned_no_signal || []), ...(page.scanned_no_signal || [])] };
       });
-      setExtraOffset(o => o + 40);
+      setExtraOffset(o => o + page.analyzed); // do not skip PDFs when the server time budget stops a partial batch
       setMoreNote(`Examined another ${page.analyzed} filings; newly qualifying signals have been added. Not a complete-universe scan.`);
     } catch (e) {
       setMoreNote(e instanceof Error && e.name === 'TimeoutError' ? 'Older batch still loading; saved shortlist is unchanged.' : e instanceof Error ? e.message : 'Additional scan unavailable.');

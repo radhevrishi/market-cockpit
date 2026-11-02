@@ -71,5 +71,5 @@ test('radar can scan additional bounded older batches without automatic full-fee
   assert.match(code, /offset === 0 \? `transform-screener:swr:v5:/);
   assert.match(ui, /Scan next 40 unreviewed filings/);
   assert.match(ui, /\&offset=\$\{extraOffset\}/);
-  assert.match(ui, /setExtraOffset\(o => o \+ 40\)/);
+  assert.match(ui, /setExtraOffset\(o => o \+ page\.analyzed\)/);
 });
