@@ -155,7 +155,7 @@ async function handle(req: NextRequest, days: number, limit: number, minPatterns
       key: `transform-screener:swr:v4:${days}:${limit}:${minPatterns}`, freshMs: SCREEN_FRESH_MS, maxStaleMs: SCREEN_MAX_STALE_MS, force: forceFresh,
       build: () => buildScreen(req, days, limit, minPatterns, forceFresh),
       isUsable: (b) => !!b && b.cacheable,
-      waitMs: forceFresh ? undefined : SCREEN_WAIT_MS,
+      waitMs: SCREEN_WAIT_MS,
     });
     return NextResponse.json(r.value.payload, { headers: swrHeaders(r, privateCache(120, 1800)) });
   } catch (e) {
@@ -306,7 +306,7 @@ async function buildScreen(req: NextRequest, days: number, limit: number, minPat
   const payload: ScreenPayload = {
     generated_at: new Date().toISOString(),
     window_days: days,
-    analyzed: withPdf.length,
+    analyzed: entries.length, // actual processed PDFs; budget may stop early
     pdf_cache_hits: cacheHits,
     candidates_total: filings.length,
     entries: ranked,
