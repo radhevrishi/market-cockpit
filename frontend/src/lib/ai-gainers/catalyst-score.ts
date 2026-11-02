@@ -290,6 +290,14 @@ export function catalystScoreOf(it: ResearchItem): CatalystScore {
     band = 'WATCH / CONFIRM'; evidenceCapped = true;
     notes.push('capped: the primary document has not been read (Evidence below 2 is never high conviction)');
   }
+  // A signed contract can be measurable in the future without being material
+  // TODAY. High research priority requires a verified impact magnitude and
+  // a revenue mechanism, except for earnings already reported in the accounts.
+  if (band === 'RESEARCH NOW' && it.eventType !== 'Earnings' &&
+      (factors[3].points == null || factors[1].points == null)) {
+    band = 'WATCH / CONFIRM';
+    notes.push('capped: event impact or route to revenue has not been measured');
+  }
   if (weak) {
     const i = Math.max(0, BAND_RANK.indexOf(band) - 1);
     if (BAND_RANK[i] !== band) { band = BAND_RANK[i]; notes.push(`dropped one band: ${weak} is a weak-catalyst type`); }
