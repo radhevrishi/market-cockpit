@@ -25,7 +25,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import {
-  caveatPenaltyFor, countingCaveats, marginQualityDelta, decideTier,
+  caveatPenaltyFor, countingCaveats, marginQualityDelta, marginQualityCap, decideTier,
   marketReactionDelta, typicalDailyMovePct, quadrantForIndiaRow,
   fundamentalComposite, setupGrade,
   profitTrajectory, MARKET_REACTION_CAVEATS, priceContextWords,
@@ -1362,6 +1362,12 @@ function _gradeIndiaRow(rowIn: any, drop: (reason: string) => null): IndiaGraded
         if (!caveat_tags.includes(why)) caveat_tags.push(why);
       }
     };
+
+    // zzz1211 — margin quality ceiling (shared with the USA): growth that is not turning into a better operating margin
+    {
+      const _mq = marginQualityCap({ opmExp, opProfitYoy: typeof row?.op_profit_yoy_pct === 'number' ? row.op_profit_yoy_pct : null, salesY, patY });
+      if (_mq) capTier(_mq.max, _mq.why);
+    }
 
     // ── A LENDER'S NEGATIVE OPERATING CASH FLOW IS ITS BUSINESS. (zzz710)
     //

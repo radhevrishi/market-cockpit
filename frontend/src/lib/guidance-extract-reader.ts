@@ -19,6 +19,9 @@ export const EXTRACT_READ_CAP = 600;
 export const EXTRACT_OK_INDEX_KEY = 'guidance-extract:v1:index:ok';
 export const EXTRACT_OK_READ_CAP = 2_500;
 const MGET_CONCURRENCY = 4;
+export const EXTRACT_MEMO_MS = 30 * 60_000;
+/** zzz1211 — the extractor calls this after writing a result, so the next list read fetches it again. */
+export function forgetExtractMemo(docId?: string): void { const m = (globalThis as any).__MC_EXTRACT_MEMO__ as Map<string, unknown> | undefined; if (!m) return; if (docId) m.delete(docId); else m.clear(); }
 
 export interface ExtractIo { get: <T = any>(key: string) => Promise<T | null>; mget: <T = any>(keys: string[]) => Promise<Array<T | null>> }
 async function defaultIo(): Promise<ExtractIo> {
@@ -64,10 +67,31 @@ export async function listExtractResults(opts: { market?: 'IN' | 'US' | 'ALL'; l
     const chunks: string[][] = [];
     for (let i = 0; i < ids.length; i += 100) chunks.push(ids.slice(i, i + 100));
     const out: GuidanceExtractResult[] = [];
-    for (let i = 0; i < chunks.length; i += MGET_CONCURRENCY) {
-      const got = await Promise.all(chunks.slice(i, i + MGET_CONCURRENCY).map((c) => io.mget<GuidanceExtractResult>(c.map(extractKey)).catch(() => [] as Array<GuidanceExtractResult | null>)));
-      for (const g of got) for (const r of g || []) if (isExtractResult(r)) out.push(r);
+    // zzz1211 — every full read pulled ~30 MB of extraction records from Redis (95 MB in 17 minutes on 2 Nov: the largest
+    // transfer on the Upstash bill). A record changes only when its document is re-read, so a copy kept in this process for
+    // 30 minutes answers the next readers; only ids not held (or older) are fetched. Tests pass their own io and skip it.
+    const memo: Map<string, { at: number; r: GuidanceExtractResult | null }> | null = opts.io ? null
+      : ((globalThis as any).__MC_EXTRACT_MEMO__ ||= new Map());
+    const now = Date.now();
+    const need: string[] = [];
+    for (const id of ids) { const m = memo?.get(id); if (m && now - m.at < EXTRACT_MEMO_MS) { if (m.r) out.push(m.r); } else need.push(id); }
+    const chunks2: string[][] = [];
+    for (let i = 0; i < need.length; i += 100) chunks2.push(need.slice(i, i + 100));
+    void chunks;
+    for (let i = 0; i < chunks2.length; i += MGET_CONCURRENCY) {
+      const part = chunks2.slice(i, i + MGET_CONCURRENCY);
+      const got = await Promise.all(part.map((c) => io.mget<GuidanceExtractResult>(c.map(extractKey)).catch(() => null as Array<GuidanceExtractResult | null> | null)));
+      got.forEach((g, gi) => {
+        if (!g) return;   // a failed read is not remembered
+        part[gi].forEach((id, k) => {
+          const r = g[k];
+          const ok = isExtractResult(r) ? r : null;
+          if (ok) out.push(ok);
+          memo?.set(id, { at: now, r: ok });
+        });
+      });
     }
+    if (memo && memo.size > 8000) memo.clear();
     const mk = opts.market && opts.market !== 'ALL' ? opts.market : null;
     const results = sortResults(out.filter((r) => (!mk || r.market === mk) && (opts.includeEmpty || (r.status === 'ok' && r.rows.length > 0))));
     return { results, indexed: ids.length, read: out.length };

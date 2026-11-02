@@ -2,7 +2,7 @@
 // Called by POST /api/v1/results-pdf (hourly GitHub job). Every network / KV / model
 // step is injected so the run can be tested without any of them.
 import {
-  RP_QUEUE_KEY, RP_STATUS_KEY, RP_LOCK_KEY, RP_RESULT_KEY, RP_LATEST_KEY, RP_FAIL_KEY, RP_RESULT_TTL_S, RP_QUEUE_TTL_S, RP_MAX_TRIES, RP_MODEL, RP_FEATURE,
+  RP_QUEUE_KEY, RP_STATUS_KEY, RP_LOCK_KEY, RP_HAVE_KEY, RP_RESULT_KEY, RP_LATEST_KEY, RP_FAIL_KEY, RP_RESULT_TTL_S, RP_QUEUE_TTL_S, RP_MAX_TRIES, RP_MODEL, RP_FEATURE,
   RESULTS_TOOL, RESULTS_SYSTEM, resultsUserPrompt, resultsExcerpt, looksLikeResultsText, checkResultsAnswer, dueItems, mergeQueue,
   type RpQueueItem, type RpRecord, type RpFail,
 } from './india-results-pdf';
@@ -12,6 +12,8 @@ export interface RpKv {
   set: (k: string, v: unknown, ttl?: number) => Promise<void>;
   setNX: (k: string, v: unknown, ttl: number) => Promise<boolean>;
   del: (k: string) => Promise<void>;
+  /** zzz1211 — optional batched read: the queue scan read 2 keys per queued company on every run (~600 commands a run). */
+  mget?: <T>(keys: string[]) => Promise<Array<T | null>>;
 }
 export interface RpDeps {
   kv: RpKv;
@@ -38,7 +40,19 @@ export async function runResultsPdf(d: RpDeps, o: RpRunOptions = {}): Promise<Rp
   try {
     const queue = mergeQueue(await d.kv.get<RpQueueItem[]>(RP_QUEUE_KEY), []);
     const done = new Set<string>(); const fails = new Map<string, RpFail>();
-    for (const q of queue) {
+    if (d.kv.mget) {
+      for (let i = 0; i < queue.length; i += 100) {
+        const part = queue.slice(i, i + 100);
+        const keys = part.flatMap((q) => [RP_RESULT_KEY(q.ticker, q.want), RP_FAIL_KEY(q.ticker, q.want)]);
+        const vals = await d.kv.mget<any>(keys).catch(() => keys.map(() => null));
+        part.forEach((q, j) => {
+          const k = `${q.ticker}|${q.want}`;
+          const have = vals[2 * j] as RpRecord | null, f = vals[2 * j + 1] as RpFail | null;
+          if (have && (have as any).quotes) done.add(k);
+          if (f) fails.set(k, f);
+        });
+      }
+    } else for (const q of queue) {
       const k = `${q.ticker}|${q.want}`;
       // zzz898: a record read before row quotes were stored is re-read once (it is not used for the overlay)
       const have = await d.kv.get<RpRecord>(RP_RESULT_KEY(q.ticker, q.want));
@@ -89,6 +103,13 @@ export async function runResultsPdf(d: RpDeps, o: RpRunOptions = {}): Promise<Rp
       await d.kv.set(RP_LATEST_KEY(q.ticker), rec, RP_RESULT_TTL_S);
       resolved.add(k); mark(q.filed, q.ticker);
       outcomes.push({ ticker: q.ticker, want: q.want, outcome: 'read', detail: `revenue ₹${rec.sales_curr_cr} Cr (${rec.basis})`, costUsd: m.costUsd });
+    }
+    // zzz1211 — the list of tickers with a stored record (always written, so readers know the list exists)
+    {
+      const prevHave = await d.kv.get<string[]>(RP_HAVE_KEY).catch(() => null);
+      const have = new Set<string>(Array.isArray(prevHave) ? prevHave : []);
+      for (const o of outcomes) if (o.outcome === 'read') have.add(o.ticker);
+      await d.kv.set(RP_HAVE_KEY, Array.from(have).slice(-3000), RP_RESULT_TTL_S).catch(() => {});
     }
     // the queue keeps only what is still open
     const left = queue.filter((q) => !resolved.has(`${q.ticker}|${q.want}`));

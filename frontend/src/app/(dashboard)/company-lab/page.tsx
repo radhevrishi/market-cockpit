@@ -44,7 +44,7 @@ const label = (t: string) => <div style={{ fontSize: 11.5, fontWeight: 900, lett
 type Pt = { t: string; v: number | null };
 type Ser = { name: string; color: string; pts: Pt[]; axis: 'L' | 'R'; dots?: boolean; dash?: string; width?: number };
 const PRICE_C = '#475569';
-function LabChart({ title, note, series, unitL = '', unitR = '', logL = false, h = 230, zeroR = true }: { title: string; note?: string; series: Ser[]; unitL?: string; unitR?: string; logL?: boolean; h?: number; zeroR?: boolean }) {
+function LabChart({ title, note, series, unitL = '', unitR = '', logL = false, h = 230, zeroR = true, clipR }: { title: string; note?: string; series: Ser[]; unitL?: string; unitR?: string; logL?: boolean; h?: number; zeroR?: boolean; clipR?: number }) {
   const W = 680, H = h, P = { l: 54, r: 54, t: 12, b: 26 };
   const all = series.flatMap((s) => s.pts.filter((p) => p.v != null && Number.isFinite(p.v)));
   if (all.length < 2) return <div style={{ fontSize: 13, color: R.faint, padding: '6px 0' }}><b style={{ color: R.dim }}>{title}</b> — not enough figures to draw.</div>;
@@ -56,6 +56,7 @@ function LabChart({ title, note, series, unitL = '', unitR = '', logL = false, h
     if (!vs.length) return null;
     let lo = Math.min(...vs), hi = Math.max(...vs);
     if (!log && axis === 'R' && zeroR) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
+    if (axis === 'R' && clipR != null) { lo = Math.max(lo, -clipR); hi = Math.min(hi, clipR); }   // zzz1211: one wild year no longer flattens the rest
     if (lo === hi) { lo -= 1; hi += 1; }
     const pad = log ? 1.05 : (hi - lo) * 0.06;
     return log ? { lo: lo / pad, hi: hi * pad } : { lo: lo - pad, hi: hi + pad };
@@ -63,7 +64,8 @@ function LabChart({ title, note, series, unitL = '', unitR = '', logL = false, h
   const rL = range('L', logL), rR = range('R', false);
   const yOf = (axis: 'L' | 'R') => (v: number) => {
     const r = axis === 'L' ? rL : rR; if (!r) return 0;
-    const f = axis === 'L' && logL ? (Math.log(v) - Math.log(r.lo)) / (Math.log(r.hi) - Math.log(r.lo)) : (v - r.lo) / (r.hi - r.lo);
+    const vv = Math.max(r.lo, Math.min(r.hi, v));
+    const f = axis === 'L' && logL ? (Math.log(vv) - Math.log(r.lo)) / (Math.log(r.hi) - Math.log(r.lo)) : (vv - r.lo) / (r.hi - r.lo);
     return P.t + (1 - f) * (H - P.t - P.b);
   };
   const line = (s: Ser) => {
@@ -85,7 +87,10 @@ function LabChart({ title, note, series, unitL = '', unitR = '', logL = false, h
         {rR && rR.lo < 0 && rR.hi > 0 && <line x1={P.l} x2={W - P.r} y1={yOf('R')(0)} y2={yOf('R')(0)} stroke={cR} strokeOpacity={0.45} strokeDasharray="4 3" />}
         {series.map((s) => <path key={s.name} d={line(s)} fill="none" stroke={s.color} strokeWidth={s.width ?? (s.dots ? 2.2 : 1.6)} strokeDasharray={s.dash} />)}
         {series.filter((s) => s.dots).map((s) => s.pts.filter((p) => p.v != null && Number.isFinite(p.v)).map((p) => (
-          <circle key={`${s.name}-${p.t}`} cx={x(p.t)} cy={yOf(s.axis)(p.v!)} r={3.6} fill={s.color} stroke="#fff" strokeWidth={1}><title>{`${s.name} ${p.t.slice(0, 7)}: ${fmt(p.v!)}${s.axis === 'R' ? unitR : unitL}`}</title></circle>
+          <g key={`${s.name}-${p.t}`}>
+            <circle cx={x(p.t)} cy={yOf(s.axis)(p.v!)} r={3.6} fill={s.color} stroke="#fff" strokeWidth={1}><title>{`${s.name} ${p.t.slice(0, 7)}: ${fmt(p.v!)}${s.axis === 'R' ? unitR : unitL}`}</title></circle>
+            {s.axis === 'R' && clipR != null && Math.abs(p.v!) > clipR && <text x={x(p.t) + 5} y={yOf('R')(p.v!) + (p.v! > 0 ? 10 : -4)} fontSize={9.5} fontWeight={800} fill={s.color}>{p.v! > 0 ? '↑' : '↓'}{fmt(p.v!)}{unitR}</text>}
+          </g>
         )))}
         {ticks(rL, logL).map((v, i) => <text key={`l${i}`} x={4} y={yOf('L')(v) + 3} fontSize={10} fill={cL}>{fmt(v)}{unitL}</text>)}
         {ticks(rR, false).map((v, i) => <text key={`r${i}`} x={W - P.r + 4} y={yOf('R')(v) + 3} fontSize={10} fill={cR}>{fmt(v)}{unitR}</text>)}
@@ -98,6 +103,82 @@ function LabChart({ title, note, series, unitL = '', unitR = '', logL = false, h
 }
 const pricePts = (c: LabCard): Pt[] => c.prices.map((p) => ({ t: p.t, v: p.c }));
 const yearPts = (c: LabCard, f: (y: LabCard['years'][number]) => number | null): Pt[] => c.years.map((y) => ({ t: y.end, v: f(y) }));
+
+// ── zzz1211: yearly bars for the checklist plots (owner: "can't really understand the charts"). One bar per year per
+// series with its value printed on it, a zero line, a scale set by the ordinary values (a −2,689% year no longer
+// squashes every other year: it is drawn to the edge with its real value written), and one plain sentence on top.
+type BarSer = { name: string; color: string; unit: string; vals: Array<number | null> };
+const fmtV = (v: number, unit: string) => `${v > 0 && unit === '%' ? '+' : ''}${Math.abs(v) >= 1000 ? Math.round(v).toLocaleString('en-US') : Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(1)}${unit}`;
+function YearBars({ title, take, labels, series, h = 210, signed = true }: { title: string; take?: string; labels: string[]; series: BarSer[]; h?: number; signed?: boolean }) {
+  const known = series.flatMap((x) => x.vals).filter((v): v is number => v != null && Number.isFinite(v));
+  if (known.length < 2) return <div style={{ fontSize: 13, color: R.faint, padding: '6px 0' }}><b style={{ color: R.dim }}>{title}</b> — not enough yearly figures to draw.</div>;
+  const W = 640, H = h, P = { l: 44, r: 10, t: 22, b: 26 };
+  // scale: the middle 80% of values decides it, so one wild year cannot flatten the rest
+  const sorted = known.slice().sort((a, b) => a - b);
+  const q = (f: number) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.round(f * (sorted.length - 1))))];
+  let hi = Math.max(q(0.9), 0), lo = signed ? Math.min(q(0.1), 0) : 0;
+  if (sorted.length <= 4) { hi = Math.max(sorted[sorted.length - 1], 0); lo = signed ? Math.min(sorted[0], 0) : 0; }
+  if (hi === lo) hi = lo + 1;
+  const pad = (hi - lo) * 0.12; hi += pad; if (lo < 0) lo -= pad;
+  const y = (v: number) => P.t + (1 - (Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo)) * (H - P.t - P.b);
+  const n = labels.length, gw = (W - P.l - P.r) / Math.max(1, n), bw = Math.min(26, (gw - 8) / series.length);
+  return (
+    <div data-lab-bars={title}>
+      <div style={{ fontSize: 13.5, fontWeight: 900, margin: '4px 0 2px' }}>{title}</div>
+      {take && <div style={{ fontSize: 13, color: R.dim, marginBottom: 4 }}>{take}</div>}
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', background: R.bg, border: `1px solid ${R.border}`, borderRadius: 8 }} role="img" aria-label={title}>
+        <line x1={P.l} x2={W - P.r} y1={y(0)} y2={y(0)} stroke="var(--mc-text-3)" strokeWidth={1} />
+        <text x={4} y={y(0) + 3} fontSize={10} fill="var(--mc-text-3)">0</text>
+        {labels.map((lab, i) => {
+          const gx = P.l + i * gw + (gw - bw * series.length) / 2;
+          return (
+            <g key={lab}>
+              <text x={P.l + i * gw + gw / 2} y={H - 8} fontSize={10.5} textAnchor="middle" fill="var(--mc-text-2)">{lab.replace(/^FY/, "FY'").replace(/^(FY')20/, '$1').replace(/^([A-Z][a-z]{2}) 20(\d\d)$/, "$1 '$2")}</text>
+              {series.map((sr, k) => {
+                const v = sr.vals[i];
+                if (v == null || !Number.isFinite(v)) return <text key={sr.name} x={gx + k * bw + bw / 2} y={y(0) - 3} fontSize={9} textAnchor="middle" fill="var(--mc-text-3)">–</text>;
+                const top = y(Math.max(v, 0)), bot = y(Math.min(v, 0)), clipped = v > hi || v < lo;
+                return (
+                  <g key={sr.name}>
+                    <rect x={gx + k * bw + 1} y={top} width={bw - 2} height={Math.max(1, bot - top)} fill={sr.color} opacity={v < 0 ? 0.55 : 0.9} rx={2}>
+                      <title>{`${sr.name} ${lab}: ${fmtV(v, sr.unit)}`}</title>
+                    </rect>
+                    <text x={gx + k * bw + bw / 2} y={v >= 0 ? top - 3 : bot + 10} fontSize={9.5} fontWeight={clipped ? 900 : 600} textAnchor="middle" fill={sr.color}>{clipped ? (v > 0 ? '↑' : '↓') : ''}{fmtV(v, sr.unit)}</text>
+                  </g>
+                );
+              })}
+            </g>
+          );
+        })}
+      </svg>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 12, color: R.dim, marginTop: 3 }}>
+        {series.map((sr) => <span key={sr.name}><b style={{ color: sr.color }}>■</b> {sr.name}</span>)}
+        {known.some((v) => v > hi || v < lo) && <span style={{ color: R.faint }}>↑↓ = bar cut at the edge, real value written</span>}
+      </div>
+    </div>
+  );
+}
+// plain-English one-liners
+const cntYears = (xs: Array<number | null>, f: (v: number) => boolean) => xs.filter((v): v is number => v != null && f(v)).length;
+const knownN = (xs: Array<number | null>) => xs.filter((v) => v != null).length;
+function takeFcfVsRev(y: LabCard['years']): string {
+  const both = y.filter((p) => p.fcfG != null && p.revG != null);
+  if (both.length < 2) return 'Growth in free cash flow against growth in sales, year by year.';
+  const faster = both.filter((p) => p.fcfG! > p.revG!).length;
+  return `Free cash flow grew faster than sales in ${faster} of ${both.length} years${faster * 2 > both.length ? ' — operating leverage.' : faster === 0 ? ' — the cash is not keeping up with sales.' : '.'}`;
+}
+function takeMargin(y: LabCard['years']): string {
+  const m = y.map((p) => p.fcfM), pos = cntYears(m, (v) => v > 0), last = [...y].reverse().find((p) => p.fcfM != null);
+  if (!last) return 'Free cash flow as a share of sales, and against the market value at each year end.';
+  return `Free cash flow was positive in ${pos} of ${knownN(m)} years; latest ${last.label}: ${fmtV(last.fcfM!, '%')} of sales${last.fcfYield != null ? `, ${fmtV(last.fcfYield, '%')} of market value` : ''}. Above 10% of sales and above 5% of value are good.`;
+}
+function takeCapexDebt(y: LabCard['years'], india: boolean): string {
+  const last = [...y].reverse().find((p) => p.debtToFcf != null || p.capexToFcf != null);
+  const d = last?.debtToFcf, c = last?.capexToFcf;
+  const parts = [c != null ? `capex took ${c.toFixed(0)}% of free cash flow (under 50% is good)` : india ? null : null,
+    d != null ? `debt equals ${d.toFixed(1)} years of free cash flow (under 3 is good)` : null].filter(Boolean);
+  return parts.length ? `${last!.label}: ${parts.join('; ')}.${india ? ' India: no capex line on screener.in, so only debt is shown.' : ''}` : 'Shown only in years when free cash flow was positive.';
+}
 
 function Card({ c, onRemove }: { c: LabCard; onRemove: () => void }) {
   const [open, setOpen] = useState<'fcf' | 'growth' | 'stage' | 'years'>('fcf');
@@ -153,54 +234,58 @@ function Card({ c, onRemove }: { c: LabCard; onRemove: () => void }) {
         ))}
       </div>
       {open === 'fcf' && (
-        <div>
-          {label(`FREE CASH FLOW QUALITY · FCF = ${c.fcf.fcfBasis}`)}
+        <div style={{ display: 'grid', gap: 12 }}>
+          {label(`FREE CASH FLOW PICTURE · FCF = ${c.fcf.fcfBasis}`)}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 14 }}>
+            <YearBars title="FCF growth vs sales growth" take={takeFcfVsRev(c.years)} labels={c.years.map((p) => p.label)} series={[
+              { name: 'FCF growth', color: '#16A34A', unit: '%', vals: c.years.map((p) => p.fcfG) },
+              { name: 'Sales growth', color: '#2563EB', unit: '%', vals: c.years.map((p) => p.revG) },
+            ]} />
+            <YearBars title="FCF margin and FCF yield" take={takeMargin(c.years)} labels={c.years.map((p) => p.label)} series={[
+              { name: 'FCF ÷ sales', color: '#EA580C', unit: '%', vals: c.years.map((p) => p.fcfM) },
+              { name: 'FCF ÷ market value (year-end price)', color: '#7C3AED', unit: '%', vals: c.years.map((p) => p.fcfYield) },
+            ]} />
+            {c.years.some((p) => p.capexToFcf != null || p.debtToFcf != null) ? (
+              <YearBars title={c.market === 'IN' ? 'Debt ÷ FCF (years to repay)' : 'Capex ÷ FCF and debt ÷ FCF'} take={takeCapexDebt(c.years, c.market === 'IN')} signed={false} labels={c.years.map((p) => p.label)} series={[
+                ...(c.market === 'IN' ? [] : [{ name: 'Capex ÷ FCF', color: '#DC2626', unit: '%', vals: c.years.map((p) => p.capexToFcf) }]),
+                { name: 'Debt ÷ FCF', color: '#0891B2', unit: '×', vals: c.years.map((p) => p.debtToFcf) },
+              ]} />
+            ) : <div style={{ fontSize: 13, color: R.faint }}><b style={{ color: R.dim }}>Capex ÷ FCF and debt ÷ FCF</b> — shown only in years with positive free cash flow; none here.</div>}
+            {c.years.some((p) => p.sbcPct != null)
+              ? <YearBars title="Share-based pay % of sales" take="Stock given to staff is a real cost the cash-flow statement adds back. Under 10% of sales is fine." signed={false} labels={c.years.map((p) => p.label)} series={[{ name: 'Share pay ÷ sales', color: '#DB2777', unit: '%', vals: c.years.map((p) => p.sbcPct) }]} />
+              : <div style={{ fontSize: 13, color: R.faint }}><b style={{ color: R.dim }}>Share-based pay</b> — {c.market === 'IN' ? 'not reported on screener.in.' : 'not reported by the company.'}</div>}
+          </div>
+          {label(`CHECKLIST · ${c.fcf.passed} of ${c.fcf.known} checks passed`)}
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5 }}>
             <tbody>
               {c.fcf.checks.map((k) => (
                 <tr key={k.id} style={{ borderTop: `1px solid ${R.border}` }} title={k.why}>
                   <td style={{ padding: '5px 6px', width: 24, color: STATE[k.state].c, fontWeight: 900 }}>{STATE[k.state].m}</td>
-                  <td style={{ padding: '5px 6px' }}>{k.label}</td>
+                  <td style={{ padding: '5px 6px' }}>{k.label}<div style={{ fontSize: 12, color: R.faint }}>{k.why}</div></td>
                   <td style={{ padding: '5px 6px', color: R.dim }}>{k.value}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 13, color: R.dim, marginTop: 6 }}>
+          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 13, color: R.dim }}>
             {c.fcf.metrics.map((m) => <span key={m.label}>{m.label}: <b style={{ color: R.text }}>{m.value}</b></span>)}
           </div>
-          <div style={{ fontSize: 12, color: R.faint, marginTop: 4 }}>✓ passed · ✗ failed · ? could not be worked out (never counted as a fail). Hover a line for what it means.</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12, marginTop: 10 }}>
-            <LabChart title="FCF growth vs revenue growth" note="Year on year, %" unitR="%" h={200} series={[
-              { name: 'FCF growth', color: '#16A34A', axis: 'R', dots: true, pts: yearPts(c, (y) => y.fcfG) },
-              { name: 'Revenue growth', color: '#2563EB', axis: 'R', dots: true, dash: '5 3', pts: yearPts(c, (y) => y.revG) },
-            ]} />
-            <LabChart title="FCF margin and FCF yield" note="Yield at each year-end price" unitR="%" h={200} series={[
-              { name: 'FCF margin', color: '#EA580C', axis: 'R', dots: true, pts: yearPts(c, (y) => y.fcfM) },
-              { name: 'FCF yield', color: '#7C3AED', axis: 'R', dots: true, dash: '5 3', pts: yearPts(c, (y) => y.fcfYield) },
-            ]} />
-            <LabChart title="Capex ÷ FCF and debt ÷ FCF" note={c.market === 'IN' ? 'screener.in prints no capex line, so capex ÷ FCF is not shown for India' : 'Capex as % of FCF (left), years of FCF to repay debt (right)'} unitL="%" unitR="×" h={200} series={[
-              { name: 'Capex ÷ FCF', color: '#DC2626', axis: 'L', dots: true, pts: yearPts(c, (y) => y.capexToFcf) },
-              { name: 'Debt ÷ FCF', color: '#0891B2', axis: 'R', dots: true, dash: '5 3', pts: yearPts(c, (y) => y.debtToFcf) },
-            ]} />
-            <LabChart title="Share-based pay % of revenue" note={c.market === 'IN' ? 'not reported on screener.in' : 'Stock-based compensation ÷ revenue'} unitR="%" h={200} series={[
-              { name: 'SBC % of revenue', color: '#DB2777', axis: 'R', dots: true, pts: yearPts(c, (y) => y.sbcPct) },
-            ]} />
-          </div>
+          <div style={{ fontSize: 12, color: R.faint }}>✓ passed · ✗ failed · ? could not be worked out (never counted as a fail).</div>
         </div>
       )}
       {open === 'growth' && (
         <div style={{ display: 'grid', gap: 14 }}>
-          <LabChart title="Share price vs revenue growth" note="FCF_and_Revenue_growth — revenue growth each fiscal year (dots at the year end)" unitR="%" series={[
+          <div style={{ fontSize: 13, color: R.dim }}>How to read: the grey line is the share price (left scale). The coloured dots are one figure per financial year, placed at the year end (right scale). When the dots rise and the price does not, the business is running ahead of the share; when the price runs far ahead of the dots, the market is paying for future years. Growth above +150% or below −150% is drawn at the edge with its real value written.</div>
+          <LabChart title="Share price vs revenue growth" clipR={150} note="FCF_and_Revenue_growth — revenue growth each fiscal year (dots at the year end)" unitR="%" series={[
             { name: `Price (${c.currency})`, color: PRICE_C, axis: 'L', pts: pricePts(c) },
             { name: 'Revenue growth', color: '#2563EB', axis: 'R', dots: true, pts: yearPts(c, (y) => y.revG) },
           ]} />
-          <LabChart title="Share price vs revenue and EPS growth" note="EPS_and_Revenue_growth — year-on-year change of revenue and of EPS" unitR="%" series={[
+          <LabChart title="Share price vs revenue and EPS growth" clipR={150} note="EPS_and_Revenue_growth — year-on-year change of revenue and of EPS" unitR="%" series={[
             { name: `Price (${c.currency})`, color: PRICE_C, axis: 'L', pts: pricePts(c) },
             { name: 'Revenue growth', color: '#059669', axis: 'R', dots: true, pts: yearPts(c, (y) => y.revG) },
             { name: 'EPS growth', color: '#9333EA', axis: 'R', dots: true, dash: '5 3', pts: yearPts(c, (y) => y.epsG) },
           ]} />
-          <LabChart title="Share price vs revenue growth and FCF margin" note="FCF_Margins_and_Revenue_growth" unitR="%" series={[
+          <LabChart title="Share price vs revenue growth and FCF margin" clipR={150} note="FCF_Margins_and_Revenue_growth" unitR="%" series={[
             { name: `Price (${c.currency})`, color: PRICE_C, axis: 'L', pts: pricePts(c) },
             { name: 'Revenue growth', color: '#0D9488', axis: 'R', dots: true, pts: yearPts(c, (y) => y.revG) },
             { name: 'FCF margin', color: '#EA580C', axis: 'R', dots: true, dash: '5 3', pts: yearPts(c, (y) => y.fcfM) },

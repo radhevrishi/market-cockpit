@@ -32,11 +32,18 @@ export const RP_FAIL_KEY = (sym: string, qEnd: string) => `results-pdf:v1:fail:$
 export const RP_QUEUE_KEY = 'results-pdf:v1:queue';
 export const RP_STATUS_KEY = 'results-pdf:v1:status';
 export const RP_LOCK_KEY = 'results-pdf:v1:lock';
+/** zzz1211 — the tickers that HAVE a stored PDF record. The enrich route read RP_LATEST_KEY for every ticker of every graded
+ *  day (≈1,000 reads every 10 min — the top Upstash source); with this list it reads only the few that have one. */
+export const RP_HAVE_KEY = 'results-pdf:v1:have';
 export const RP_RESULT_TTL_S = 270 * 86_400;
 export const RP_QUEUE_TTL_S = 60 * 86_400;
 export const RP_QUEUE_CAP = 300;
 /** Screener gets this many days to add the quarter before the AI reads the PDF. */
-export const RP_WAIT_DAYS = 2;
+export const RP_WAIT_DAYS = 2;   // kept for old readers; the rule is RP_WAIT_MS (zzz1211)
+/** zzz1211 — a filed company waited 2 DAYS for its figures (81 names on 2 Nov showed "filed — figures being read" all evening:
+ *  screener.in adds a quarter a day or more after the filing). Now the results PDF is read 2 hours after the filing was seen
+ *  (Screener is still checked first, so no AI is spent when it has caught up). A read costs about $0.003. */
+export const RP_WAIT_MS = 2 * 3_600_000;
 /** Give up after this many failed reads of the same company+quarter. */
 export const RP_MAX_TRIES = 4;
 export const RP_FEATURE = 'india-results-pdf';
@@ -90,7 +97,10 @@ export function dueItems(queue: RpQueueItem[], done: Set<string>, fails: Map<str
     const k = `${q.ticker}|${q.want}`;
     if (done.has(k)) return false;
     const filedAt = Date.parse(`${q.filed}T00:00:00Z`);
-    if (!Number.isFinite(filedAt) || now - filedAt < RP_WAIT_DAYS * DAY) return false;
+    if (!Number.isFinite(filedAt)) return false;
+    const seenAt = Date.parse(String(q.added_at || ''));
+    const from = Number.isFinite(seenAt) ? Math.max(filedAt, seenAt) : filedAt;
+    if (now - from < RP_WAIT_MS) return false;
     const f = fails.get(k);
     if (f) { const wait = failBackoffMs(f.tries); if (wait == null || now - Date.parse(f.at) < wait) return false; }
     return true;

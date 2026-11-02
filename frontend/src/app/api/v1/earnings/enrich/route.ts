@@ -12,7 +12,7 @@
 // ~2-5s total when cold, <1s when warm (KV-cached).
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { RP_LATEST_KEY, overlayResultsPdf } from '@/lib/india-results-pdf';   // zzz879
+import { RP_LATEST_KEY, RP_HAVE_KEY, overlayResultsPdf } from '@/lib/india-results-pdf';   // zzz879
 import { NextResponse } from 'next/server';
 import { isQuarterEndStale, yoyFromDatedSeries, sameFigure } from '@/lib/india-eo-card-data';  // zzz820
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
@@ -1429,9 +1429,21 @@ async function fetchGhFundamentals(sym: string): Promise<any | null> {
 // in-memory cache so a 40-name chunk costs at most one KV read per name per
 // ten minutes.
 const _rpMem = new Map<string, { at: number; rec: any }>();
+// zzz1211 — one read of the "who has a record" list every 5 min instead of one read per ticker (null = list not written yet)
+let _rpHave: { at: number; set: Set<string> | null } | null = null;
+async function resultsPdfHave(): Promise<Set<string> | null> {
+  if (_rpHave && Date.now() - _rpHave.at < 5 * 60_000) return _rpHave.set;
+  let list: unknown = null;
+  try { list = await Promise.race([kvGet(RP_HAVE_KEY), new Promise((r) => setTimeout(() => r(undefined), 2_500))]); } catch { list = undefined; }
+  if (list === undefined) return _rpHave?.set ?? null;   // timed out: keep the last answer
+  _rpHave = { at: Date.now(), set: Array.isArray(list) ? new Set(list.map((x) => String(x).toUpperCase())) : null };
+  return _rpHave.set;
+}
 async function resultsPdfRecord(symbol: string, fresh = false): Promise<any> {
   const m = _rpMem.get(symbol);
   if (!fresh && m && Date.now() - m.at < 10 * 60_000) return m.rec;
+  const have = fresh ? null : await resultsPdfHave();   // a fresh read (the regrade right after a PDF read) always looks
+  if (have && !have.has(symbol)) { _rpMem.set(symbol, { at: Date.now(), rec: null }); return null; }
   let rec: any = null;
   try { rec = await Promise.race([kvGet(RP_LATEST_KEY(symbol)), new Promise((r) => setTimeout(() => r(null), 2_500))]); } catch { rec = null; }
   _rpMem.set(symbol, { at: Date.now(), rec });
@@ -1443,6 +1455,11 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
   if (!filedHint || !out || typeof out !== 'object') return out;
   const rec = await resultsPdfRecord(String(symbol).toUpperCase(), bypassCache);
   return rec ? overlayResultsPdf(out, rec, filedHint) : out;
+}
+const _enrichMem = new Map<string, { at: number; v: any }>();
+function _enrichMemPut(k: string, v: any): void {
+  _enrichMem.delete(k); _enrichMem.set(k, { at: Date.now(), v });
+  while (_enrichMem.size > 2500) { const first = _enrichMem.keys().next().value; if (first == null) break; _enrichMem.delete(first); }
 }
 async function enrichOneInner(symbol: string, filedHint?: string, bypassCache = false): Promise<any> {
   // Cache key includes filed date so a new filing busts old cache
@@ -1459,10 +1476,15 @@ async function enrichOneInner(symbol: string, filedHint?: string, bypassCache = 
   // consolidated pages no longer win over a fresh standalone page, and
   // Screener cherry-picks must be the same statement/quarter as the primary.
   const cacheKey = filedHint ? `enrich:v18:${symbol}:${filedHint}` : `enrich:v18:${symbol}`;  // zzz826 v17→v18: adtv only as a real multi-day average (turnover_1d_cr apart), cash ratios up to ±50x, cash_rule_v, yoy_basis  // zzz821 v16→v17: same-FY cash basis (cash_fy)  // zzz377 v14->v15: flush so worker-sourced quarterly trends land. zzz375 v13->v14. zzz372 v12->v13
+  // zzz1211 — a 5-minute copy in this process: every graded refresh of a day read the same ~150 keys again (top Upstash source)
+  if (!bypassCache) {
+    const mm = _enrichMem.get(cacheKey);
+    if (mm && Date.now() - mm.at < 5 * 60_000) return mm.v;
+  }
   if (isRedisAvailable() && !bypassCache) {
     try {
       const cached = await kvGet(cacheKey);
-      if (cached) return cached;
+      if (cached) { _enrichMemPut(cacheKey, cached); return cached; }
     } catch {}
   }
   // PATCH 0514 — Symbol variants for tickers with special chars.
@@ -2175,6 +2197,7 @@ async function enrichOneInner(symbol: string, filedHint?: string, bypassCache = 
   // genuine no-data tickers stay '—', and they're re-tried cheaply under the gate.
   if (isRedisAvailable() && hasFinancials) {
     try { await kvSet(cacheKey, out, ttl); } catch {}
+  _enrichMemPut(cacheKey, out);
   }
   return out;
 }

@@ -63,11 +63,14 @@ describe('zzz879 — queue', () => {
     const q = mergeQueue([it('a', '2026-10-01')], [it('A', '2026-10-01'), it('B', '2026-10-03'), { ...it('C', 'bad') }]);
     assert.deepEqual(q.map((x) => x.ticker), ['B', 'A']);
   });
-  test('due: filed 2+ days ago, not done, back-off respected, given up after 4', () => {
+  test('due: seen 2+ hours ago (zzz1211; was 2 days), not done, back-off respected, given up after 4', () => {
     const now = Date.parse('2026-10-06T10:00:00Z');
     const q = [it('OLD', '2026-10-01'), it('NEW', '2026-10-05'), it('DONE', '2026-10-01'), it('WAIT', '2026-10-01'), it('GONE', '2026-10-01'), it('RETRY', '2026-10-01')];
     const fails = new Map([['WAIT|2026-09-30', { at: '2026-10-06T08:00:00Z', tries: 1, reason: '' }], ['GONE|2026-09-30', { at: '2026-09-01T00:00:00Z', tries: 4, reason: '' }], ['RETRY|2026-09-30', { at: '2026-10-05T00:00:00Z', tries: 1, reason: '' }]]);
-    assert.deepEqual(dueItems(q, new Set(['DONE|2026-09-30']), fails, now).map((x) => x.ticker), ['OLD', 'RETRY']);
+    assert.deepEqual(dueItems(q, new Set(['DONE|2026-09-30']), fails, now).map((x) => x.ticker), ['OLD', 'NEW', 'RETRY']);
+    const fresh = { ticker: 'TODAY', filed: '2026-10-06', want: '2026-09-30', added_at: '2026-10-06T09:00:00Z' };
+    assert.deepEqual(dueItems([fresh], new Set(), new Map(), now), [], 'seen 1 h ago: Screener gets 2 h first');
+    assert.equal(dueItems([fresh], new Set(), new Map(), now + 3_600_000).length, 1);
   });
 });
 

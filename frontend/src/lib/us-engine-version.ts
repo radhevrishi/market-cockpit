@@ -68,13 +68,18 @@
 // 2026.10.20-b (zzz1164) — patent / royalty filers are no longer "financial", so the cash gate applies to them (Digital Turbine).
 // 2026.10.26-a (zzz1172) — a one-off in the year-ago quarter (GAAP prev far below adjusted prev, OSBC): graded on core EPS growth.
 // 2026.10.26-b (zzz1173) — a bank's per-share capital / tangible book row is never read as adjusted EPS (LKFN read $12.32).
-export const US_ENGINE_VERSION = '2026.10.26-b';
+// 2026.11.02-a (zzz1211) — margin quality ceiling shared with India: operating margin down ≥ 1 pt with operating profit growing
+// slower than sales caps at MIXED (STRONG when profit ≥ +50% on sales ≥ +25%); gross margin down ≥ 3 pts, or ≥ 1.5 pts the
+// operating margin did not make up for, caps at MIXED (nVent: −1.6 pts with operating margin +2.8 pts stays STRONG).
+// The previous-version list below had stopped at 09.25-b, so later bumps re-graded old days from SEC instead of in-process.
+export const US_ENGINE_VERSION = '2026.11.02-a';
 
 /** zzz807 — earlier engine versions whose cached days can be REGRADED in-process
  *  (their rows carry every figure the grade reads). Newest first. A rules-only
  *  bump appends the version it replaces here, so no cached day is ever sent
  *  back to SEC just because a rule changed. */
 export const US_ENGINE_PREVIOUS_VERSIONS: readonly string[] = [
+  '2026.10.26-b', '2026.10.26-a', '2026.10.20-b', '2026.10.20-a', '2026.10.12-a',
   '2026.09.25-b', '2026.09.25-a', '2026.09.17-c', '2026.09.17-b', '2026.09.17-a', '2026.09.16-a',
 ];
 

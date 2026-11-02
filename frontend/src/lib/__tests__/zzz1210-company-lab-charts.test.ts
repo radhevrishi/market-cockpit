@@ -50,7 +50,7 @@ test('Stage2.py relative strength: stock cumulative return ÷ index cumulative r
 const read = (p: string) => fs.readFileSync(path.join(__dirname, '..', '..', p), 'utf8');
 test('page: one chart per script, distinct colours, multi-company view, market fallback', () => {
   const pg = read('app/(dashboard)/company-lab/page.tsx');
-  for (const t of ['Share price vs revenue growth"', 'Share price vs revenue and EPS growth', 'Share price vs revenue growth and FCF margin', 'free cash flow per share', 'FCF growth vs revenue growth', 'FCF margin and FCF yield', 'Capex ÷ FCF and debt ÷ FCF', 'Share-based pay % of revenue', 'Relative strength vs', '50 / 150 / 200-day averages'])
+  for (const t of ['Share price vs revenue growth"', 'Share price vs revenue and EPS growth', 'Share price vs revenue growth and FCF margin', 'free cash flow per share', 'FCF growth vs sales growth', 'FCF margin and FCF yield', 'Capex ÷ FCF and debt ÷ FCF', 'Share-based pay % of sales', 'Relative strength vs', '50 / 150 / 200-day averages'])
     assert.ok(pg.includes(t), t);
   assert.doesNotMatch(pg, /function DualChart/);
   assert.match(pg, /function MultiFcf/);

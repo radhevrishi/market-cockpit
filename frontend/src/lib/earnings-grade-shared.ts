@@ -969,3 +969,46 @@ export function quadrantForIndiaRow(row: any, d: IndiaQuadrantDerived): Quadrant
     loss_narrowing: lossNarrowing,
   });
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz1211 — MARGIN QUALITY CEILING (India + USA, one rule).
+//
+// Mold-Tek Packaging Q2 FY27: sales +31%, profit +40%, EPS +36% — graded STRONG while the operating margin FELL (19% → 18%):
+// operating profit grew slower than sales, so the profit growth came from below the operating line (other income, interest,
+// tax), not from the business getting better. nVent Q3 FY26: gross margin 37.4% → 35.8% while revenue +44% and operating
+// margin +2.8 pts — there the operating margin answers the question (mix / acquisitions, costs held), so it stays a top tier.
+//
+// The rule:
+//   • operating margin down ≥ 1 pt AND operating profit growing slower than sales (when known) → at most MIXED,
+//     unless the growth is so large it carries the quarter (profit ≥ +50% AND sales ≥ +25%) → at most STRONG.
+//   • gross margin down ≥ 3 pts → at most MIXED.
+//   • gross margin down ≥ 1.5 pts and the operating margin did NOT rise ≥ 1 pt → at most MIXED.
+//   • gross margin down ≥ 1.5 pts but operating margin up ≥ 1 pt → no ceiling; the card says why.
+// Pure; the callers apply the ceiling (never raise a tier) and add `why` as a caveat.
+// ═══════════════════════════════════════════════════════════════════════════
+export interface MarginQualityIn {
+  opmExp: number | null | undefined;            // operating margin change, pts (this quarter vs a year ago)
+  opProfitYoy?: number | null;                   // operating profit growth %, when known
+  salesY: number | null | undefined;
+  patY: number | null | undefined;
+  gmDelta?: number | null;                       // gross margin change, pts (US)
+}
+export interface MarginQualityCap { max: EarningsTier; why: string }
+export function marginQualityCap(i: MarginQualityIn): MarginQualityCap | null {
+  const n = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+  const f1 = (v: number) => `${v > 0 ? '+' : ''}${v.toFixed(1)}`;
+  const gm = n(i.gmDelta) ? i.gmDelta : null, op = n(i.opmExp) ? i.opmExp : null;
+  if (gm != null && gm <= -3) return { max: 'MIXED', why: `gross margin fell ${f1(gm)} pts year on year` };
+  if (gm != null && gm <= -1.5 && !(op != null && op >= 1)) {
+    return { max: 'MIXED', why: `gross margin fell ${f1(gm)} pts and the operating margin did not make up for it${op != null ? ` (${f1(op)} pts)` : ''}` };
+  }
+  if (op != null && op <= -1) {
+    const s = n(i.salesY) ? i.salesY : null, p = n(i.patY) ? i.patY : null, o = n(i.opProfitYoy) ? i.opProfitYoy : null;
+    // the reported margin is rounded to whole points on some sources: a 1-pt fall needs the operating profit to agree
+    if (o != null && s != null && o >= s - 2) return null;
+    const carried = p != null && p >= 50 && s != null && s >= 25;
+    const tail = o != null && s != null ? ` — operating profit ${f1(o)}% vs sales ${f1(s)}%, so profit growth came from below the operating line` : '';
+    return { max: carried ? 'STRONG' : 'MIXED', why: `operating margin fell ${f1(op)} pts${tail}` };
+  }
+  return null;
+}

@@ -3762,3 +3762,13 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   (`/api/v1/service-key-check`): first refusal of the UTC day fails with the fix, later runs skip quietly. Also open:
   Screener.in CSV sync 0/19 = SCREENER_SESSIONID expired (owner refreshes); mc-pulse-bots "Keep Render Alive" pings the
   retired Render service — disable that workflow.
+- zzz1211 (2 Nov): margin quality ceiling, ONE rule India + USA (`marginQualityCap` in earnings-grade-shared): operating margin
+  down ≥ 1 pt with operating profit not keeping up with sales → MIXED (STRONG if profit ≥ +50% on sales ≥ +25%); US gross margin
+  down ≥ 3 pts, or ≥ 1.5 pts not made up by operating margin (+1 pt) → MIXED (applied in `applyGrossMargin`, cached US days
+  re-bucketed on read). Engines bumped: India v27 (v26 regrades in-process), US 2026.11.02-a — US_ENGINE_PREVIOUS_VERSIONS had
+  stopped at 09.25-b, so bumps since then re-graded old days from SEC; the October versions are now in the list.
+  Results PDFs are read 2 h after a filing is seen (was 2 DAYS — 81 filed names sat "figures being read"), 20 a run, extra
+  evening slot; queue scan batched (mget); `results-pdf:v1:have` list so enrich no longer reads a PDF key per ticker.
+  Upstash: enrich answers kept 5 min in-process, extraction records 30 min (`__MC_EXTRACT_MEMO__`, dropped on write in kv.ts),
+  bhavcopy misses remembered. Railway health check `railway.json` → `/api/healthz` (deploys no longer take the site down).
+  Company Lab: checklist plots are bar charts with values + one plain sentence each, above the checklist; growth outliers clipped.

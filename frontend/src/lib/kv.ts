@@ -353,7 +353,14 @@ export async function kvSetDurable(key: string, value: any, ttlSeconds?: number)
   MEM_STORE.set(key, serialized, ttlSeconds);
 }
 
+/** zzz1211 — a write to an extraction record drops the reader's 30-minute process copy of it (lib/guidance-extract-reader). */
+function forgetExtractCopy(key: string): void {
+  if (!key.startsWith('guidance-extract:v1:')) return;
+  const m = (globalThis as any).__MC_EXTRACT_MEMO__ as Map<string, unknown> | undefined;
+  if (m) m.delete(key.slice('guidance-extract:v1:'.length));
+}
 export async function kvSet(key: string, value: any, ttlSeconds?: number): Promise<void> {
+  forgetExtractCopy(key);
   const original = value;
   const serialized = typeof value === 'string' ? value : JSON.stringify(value);
 
@@ -417,6 +424,7 @@ export async function kvSet(key: string, value: any, ttlSeconds?: number): Promi
  * Delete a key from the KV store
  */
 export async function kvDel(key: string): Promise<void> {
+  forgetExtractCopy(key);
   MEM_STORE.delete(key);
   READ_CACHE.invalidate(key); LAST_WRITE.delete(key);
   const r = getRedis();

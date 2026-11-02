@@ -295,8 +295,9 @@ describe('6 · size and trading caps leave the tier', () => {
     assert.ok(!/a company too small to invest in/.test(page));
   });
   test('engine v26; v25 days regrade in-process from their stored input', () => {
-    assert.equal(GRADED_CACHE_VERSION, 'v26');
-    assert.equal(GRADED_CACHE_LEGACY[0], 'v25');
+    assert.equal(GRADED_CACHE_VERSION, 'v27');
+    assert.equal(GRADED_CACHE_LEGACY[0], 'v26');   // zzz1211
+    assert.ok(GRADED_CACHE_LEGACY.includes('v25'));
     assert.ok(INDIA_REGRADABLE_FROM.includes('v25'));
     const v25 = gradeIndiaRow(row({ ...CLEAN, market_cap_cr: 80 }))!;
     const stored = { ...v25, tier: 'MIXED', caveat_tags: [...v25.caveat_tags, 'below investable size'] };

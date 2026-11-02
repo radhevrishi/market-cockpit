@@ -117,10 +117,40 @@ function _memPut(isoDate: string, map: Map<string, BhavData>) {
   }
 }
 
+// zzz1211 — a date whose file is not there (not traded yet, holiday, NSE refusing this host) was fetched again for EVERY
+// symbol: one KV read + one 12 s NSE call per symbol per request (≈4,600 reads in the first minutes after a restart, and
+// the slow pages). Now: one fetch per date at a time (shared), and a miss is remembered — 10 min for today / a recent date,
+// 6 h for a date more than 5 days back — so the next symbols answer at once with no Redis and no NSE call.
+const _missUntil = new Map<string, number>();
+const _inflight = new Map<string, Promise<Map<string, BhavData>>>();
+export function bhavMissTtlMs(isoDate: string, now = Date.now()): number {
+  const ageDays = (now - Date.parse(`${isoDate}T00:00:00Z`)) / 86_400_000;
+  return ageDays > 5 ? 6 * 3600_000 : 10 * 60_000;
+}
+export function _bhavKnownMissing(isoDate: string, now = Date.now()): boolean {
+  const u = _missUntil.get(isoDate);
+  if (u == null) return false;
+  if (u > now) return true;
+  _missUntil.delete(isoDate);
+  return false;
+}
 async function fetchBhavcopyMap(isoDate: string): Promise<Map<string, BhavData>> {
   // In-memory first
   const mem = _memCache.get(isoDate);
   if (mem) return mem;
+  if (_bhavKnownMissing(isoDate)) return new Map();
+  // a future date has no file yet
+  if (isoDate > new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10)) return new Map();
+  const fly = _inflight.get(isoDate);
+  if (fly) return fly;
+  const p = fetchBhavcopyMapOnce(isoDate).then((m) => {
+    if (!m.size) { _missUntil.set(isoDate, Date.now() + bhavMissTtlMs(isoDate)); if (_missUntil.size > 200) _missUntil.clear(); }
+    return m;
+  }).finally(() => _inflight.delete(isoDate));
+  _inflight.set(isoDate, p);
+  return p;
+}
+async function fetchBhavcopyMapOnce(isoDate: string): Promise<Map<string, BhavData>> {
 
   const ddmm = isoToDdmmyyyy(isoDate);
   const url = BHAV_URL(ddmm);
@@ -155,6 +185,7 @@ export async function getBhavForSymbol(symbol: string, isoDate: string): Promise
   // zzz1203: the day's file already parsed in this process answers first (no Redis read; was ~1,600 reads an hour)
   const inMem = _memCache.get(isoDate);
   if (inMem && inMem.size > 0) return inMem.get(sym) || null;
+  if (_bhavKnownMissing(isoDate)) return null;   // zzz1211: the day's file was just looked for and is not there
   // 1. Per-symbol KV cache (only symbols actually looked up get written here)
   if (isRedisAvailable()) {
     try {

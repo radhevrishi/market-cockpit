@@ -363,7 +363,7 @@ async function aiEvalJob(ctx: JobCtx): Promise<JobOutcome> {
 }
 
 async function resultsPdfJob(ctx: JobCtx): Promise<JobOutcome> {
-  const r = await ctx.call('/api/v1/results-pdf?max_items=12&max_usd=0.30', { method: 'POST', timeoutMs: 330_000, retry: false });
+  const r = await ctx.call('/api/v1/results-pdf?max_items=20&max_usd=0.30', { method: 'POST', timeoutMs: 330_000, retry: false });
   return r.status === 200 ? { ok: true, status: 200 } : fail(r, 'results-pdf');
 }
 
@@ -467,7 +467,8 @@ export const APP_JOBS: readonly AppJob[] = [
   { name: 'data-watch', crons: ['30 5 * * *', '30 10 * * 1-5', '30 14 * * 1-5'], timeoutMs: 15 * MIN, workflow: 'data-watch.yml', does: 'GET /api/v1/cron/data-watch (heals what it can)', run: dataWatchJob },
   { name: 'ai-verify', crons: ['35 * * * *'], timeoutMs: 8 * MIN, workflow: 'ai-verify.yml', does: 'POST /api/v1/ai-verify, up to 4 rounds (100 claims, $1.50 a run)', run: aiVerifyJob },
   { name: 'ai-guidance-extract', crons: ['50 * * * *'], timeoutMs: 23 * MIN, workflow: 'ai-guidance-extract.yml', does: 'POST /api/v1/guidance-extract, rounds for up to 20 min (a twelfth of GUIDANCE_EXTRACT_DAILY_USD a run, $0.25–$2; up to $2 a run while a zzz928 extra allowance is active)', run: guidanceExtractJob },
-  { name: 'results-pdf', crons: ['20 * * * *'], timeoutMs: 7 * MIN, workflow: 'results-pdf.yml', does: 'POST /api/v1/results-pdf?max_items=12&max_usd=0.30', run: resultsPdfJob },
+  // zzz1211: a second slot in the Indian results evening (17:20–00:20 IST)
+  { name: 'results-pdf', crons: ['20 * * * *', '50 11-18 * * 1-6'], timeoutMs: 7 * MIN, workflow: 'results-pdf.yml', does: 'POST /api/v1/results-pdf?max_items=20&max_usd=0.30', run: resultsPdfJob },
   { name: 'score-ai-ledger', crons: ['20 2 * * *'], timeoutMs: 25 * MIN, workflow: 'score-ai-ledger.yml', does: 'GET /api/v1/ai/desk (us, india), then GET /api/v1/ai/ledger?score=1 up to 6 passes', run: scoreLedgerJob },
   { name: 'ai-eval', crons: ['41 3 * * 1'], timeoutMs: 6 * MIN, workflow: 'ai-eval.yml', does: 'GET /api/v1/ai-eval?run=1 (fails below precision 0.90 / recall 0.80)', run: aiEvalJob },
   { name: 'daily-research-gainers-us', crons: ['30 21 * * 1-5'], timeoutMs: 45 * MIN, workflow: 'daily-research.yml', does: 'US gainers: GET /api/v1/ai-gainers, POST /api/v1/ai-gainers/research rounds', run: (ctx) => gainersJob(ctx, 'US') },

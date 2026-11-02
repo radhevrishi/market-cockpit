@@ -1,0 +1,9 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "deploy": {
+    "healthcheckPath": "/api/healthz",
+    "healthcheckTimeout": 300,
+    "overlapSeconds": 45,
+    "drainingSeconds": 30
+  }
+}

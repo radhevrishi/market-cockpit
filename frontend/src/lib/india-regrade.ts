@@ -38,7 +38,7 @@ const TIERS = ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID'] as const;
 type Tier = typeof TIERS[number];
 
 /** Engines whose CARDS carry every figure a card-basis regrade needs. */
-export const INDIA_REGRADABLE_FROM: readonly string[] = ['v25', 'v24', 'v23', 'v22', 'v21', 'v20'];
+export const INDIA_REGRADABLE_FROM: readonly string[] = ['v26', 'v25', 'v24', 'v23', 'v22', 'v21', 'v20'];
 
 /** Filing-derived flags a stored card holds but cannot re-derive. */
 const CARRYABLE = [

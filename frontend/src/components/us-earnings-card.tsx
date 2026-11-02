@@ -884,12 +884,12 @@ function TileRow({ r, gaapEpsY, opmD, adjEpsCur, adjEpsPrev, epsEst, surp, hasAd
 
   // zzz1210 — gross margin as its own tile (it was only a chip under Methodology & Caveats, hidden on the summary view):
   // NVT Q3 FY26 37.4% → 35.8% while OPM rose. Same-quarter-a-year-earlier, from the filing's own quarterly series.
-  const gmv = (r as any).gross_margin as { now: number; prev: number; delta: number; end: string; prevEnd: string } | undefined;
+  const gmv = (r as any).gross_margin as { now: number; prev: number; delta: number; end: string; prevEnd: string; offset?: string } | undefined;
   if (gmv && Number.isFinite(gmv.now) && Number.isFinite(gmv.delta)) {
     parts.push({ w: Math.min(70, Math.abs(gmv.delta) * 7 + (gmv.delta <= -1.5 ? 20 : 0)), node: (size) => (
       <Tile key="gm" label={gmv.delta <= -1.5 ? 'GROSS MARGIN ⚠' : 'GROSS MARGIN'} size={size} value={`${gmv.now.toFixed(1)}%`}
         color={gmv.delta >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)'}
-        sub={`${gmv.delta >= 0 ? '+' : ''}${gmv.delta.toFixed(1)}pp YoY · was ${gmv.prev.toFixed(1)}%`} />
+        sub={`${gmv.delta >= 0 ? '+' : ''}${gmv.delta.toFixed(1)}pp YoY · was ${gmv.prev.toFixed(1)}%${gmv.offset ? ` · ${gmv.offset}` : gmv.delta <= -1.5 ? ' · not offset — caps the grade' : ''}`} />
     ) });
   }
 
@@ -4277,7 +4277,7 @@ export function DetailPanel({ r }: { r: UsRowX }) {
               {r.caveat_tags.map((t) => {
                 // zzz1205 — the gross-margin note carries its own figures
                 const gm = t === 'gross margin fell 1.5+ pts year on year' ? (r as any).gross_margin : null;
-                return <Chip key={`c-${t}`} text={gm ? `gross margin ${gm.prev}% → ${gm.now}% (${gm.delta} pts)` : t} color="#EF4444"
+                return <Chip key={`c-${t}`} text={gm ? `gross margin ${gm.prev}% → ${gm.now}% (${gm.delta} pts)${gm.offset ? ` · ${gm.offset}` : ''}` : t} color="#EF4444"
                   title={gm ? `Gross profit as a share of revenue, quarter to ${gm.end} vs the same quarter a year earlier (${gm.prevEnd}). Shown for information — it does not change the grade.` : undefined} />;
               })}
             </div>

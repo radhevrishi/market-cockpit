@@ -30,6 +30,7 @@ function realKv(timeoutMs = 5_000): RpKv {
     set: async (k, v, ttl) => { const m = await import('@/lib/kv'); await race(m.kvSet(k, v, ttl), undefined); },
     setNX: async (k, v, ttl) => { const m = await import('@/lib/kv'); return race(m.kvSetNX(k, v, ttl), false); },
     del: async (k) => { const m = await import('@/lib/kv'); await race(m.kvDel(k), undefined); },
+    mget: async <T,>(keys: string[]) => { const m = await import('@/lib/kv'); return race(m.kvMGet<T>(keys), keys.map(() => null)); },
   };
 }
 

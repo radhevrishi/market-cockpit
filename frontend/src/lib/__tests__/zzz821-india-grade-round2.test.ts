@@ -255,8 +255,9 @@ describe('E8 — the cap reason is stated once', () => {
 
 describe('v24 → v25 regrade', () => {
   test('the key moved and v24 is the first legacy namespace', () => {
-    assert.equal(GRADED_CACHE_VERSION, 'v26');   // zzz826
-    assert.equal(GRADED_CACHE_LEGACY[0], 'v25');
+    assert.equal(GRADED_CACHE_VERSION, 'v27');   // zzz826
+    assert.equal(GRADED_CACHE_LEGACY[0], 'v26');   // zzz1211
+    assert.ok(GRADED_CACHE_LEGACY.includes('v25'));
     assert.ok(GRADED_CACHE_LEGACY.includes('v24'));
   });
   test('a v24 card (stored input, no cash year) regrades: cash unknown, its cash flag carried', () => {

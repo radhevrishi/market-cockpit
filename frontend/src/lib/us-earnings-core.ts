@@ -75,6 +75,7 @@ import {
   countingCaveats,
   INFORMATIONAL_CAVEATS,
   marginQualityDelta,
+  marginQualityCap,
   decideTier,
   marketReactionDelta,
   typicalDailyMovePct,
@@ -4109,6 +4110,14 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
       if (!caveat_tags.includes(why)) caveat_tags.push(why);
     }
   };
+
+  // zzz1211 — margin quality ceiling, the same rule as India (gross margin is applied where the series is attached)
+  {
+    const _opY = (f.operating_income != null && f.operating_income_prev != null && f.operating_income_prev > 0)
+      ? ((f.operating_income - f.operating_income_prev) / f.operating_income_prev) * 100 : null;
+    const _mq = marginQualityCap({ opmExp, opProfitYoy: _opY, salesY, patY });
+    if (_mq) capTier(_mq.max, _mq.why);
+  }
 
   // 1. Profit the business did not collect. Reported earnings with cash going
   //    the other way is the oldest warning in accounting, and it is not a

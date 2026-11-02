@@ -871,7 +871,26 @@ async function sessionIndexFor(date: string): Promise<string[] | null> {
 async function withSessionDedupe(payload: any, date: string, days: number, explicit: string): Promise<any> {
   try { payload = await overlayGuideChecks(payload); if (payload?.by_tier) payload = { ...payload, overlay_v: US_OVERLAY_VERSION }; } catch { /* never let the check break the page */ }
   // zzz1205 — gross-margin move on rows graded before it existed (pure, from the row's own series; never changes the tier)
-  try { if (payload?.by_tier) for (const rows of Object.values(payload.by_tier) as any[][]) for (const r of rows || []) if (r && !r.gross_margin) applyGrossMargin(r); } catch { /* informational only */ }
+  // zzz1211 — the gross-margin ceiling also reaches cached days: a row it moves is re-bucketed and its sentence re-written
+  try {
+    if (payload?.by_tier) {
+      let moved = false;
+      for (const rows of Object.values(payload.by_tier) as any[][]) for (const r of rows || []) {
+        if (r && (!r.gross_margin || r.gm_rule_v !== 1)) { if (applyGrossMargin(r)) moved = true; r.gm_rule_v = 1; }
+      }
+      if (moved) {
+        const all = (Object.values(payload.by_tier) as any[][]).flat();
+        const nb: any = { BLOCKBUSTER: [], STRONG: [], MIXED: [], AVOID: [] };
+        for (const r of all) {
+          if (r.tier_before_margin_cap && r.narrative_stem) {
+            try { r.narrative = composeUsNarrative(r.narrative_stem, r.caveat_tags || [], r.methodology_tags || [], r.tier, r.company || r.ticker, r.quarter, r.market_context || []) + (r.narrative_tail || ''); } catch { /* keep */ }
+          }
+          (nb[r.tier] || nb.MIXED).push(r);
+        }
+        payload = { ...payload, by_tier: nb };
+      }
+    }
+  } catch { /* never let the margin rule break the page */ }
   return withSessionDedupeInner(payload, date, days, explicit);
 }
 async function withSessionDedupeInner(payload: any, date: string, days: number, explicit: string): Promise<any> {

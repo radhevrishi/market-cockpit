@@ -239,9 +239,9 @@ describe('the quadrant label no longer reads as a verdict', () => {
 
 describe('v23 → v24 (now v25, zzz821), and stored days regrade in-process', () => {
   test('the key is current and v23 is still a legacy namespace', () => {
-    assert.equal(GRADED_CACHE_VERSION, 'v26');   // zzz826
+    assert.equal(GRADED_CACHE_VERSION, 'v27');   // zzz826
     assert.ok(GRADED_CACHE_LEGACY.includes('v23'));
-    assert.deepEqual(gradedKeyCandidates('2026-09-01').slice(0, 3), ['graded:v26:2026-09-01', 'graded:v25:2026-09-01', 'graded:v24:2026-09-01']);
+    assert.deepEqual(gradedKeyCandidates('2026-09-01').slice(0, 3), ['graded:v27:2026-09-01', 'graded:v26:2026-09-01', 'graded:v25:2026-09-01']);
     assert.equal(versionOfGradedKey('graded:v23:2026-09-01'), 'v23');
   });
 
@@ -310,15 +310,15 @@ describe('v23 → v24 (now v25, zzz821), and stored days regrade in-process', ()
       by_tier: { BLOCKBUSTER: [b], STRONG: [a], MIXED: [], AVOID: [] }, engine_stale: true };
     const re = regradeIndiaDayPayload(day, 'v23')!;
     assert.ok(re);
-    assert.equal(re.grade_engine, 'v26');
+    assert.equal(re.grade_engine, 'v27');
     assert.equal(re.regraded_from, 'v23');
     assert.equal(re.generated_at, '2026-08-20T18:00:00Z');
     assert.equal(re.engine_stale, undefined);
     assert.deepEqual(re.by_tier.BLOCKBUSTER.map((r: any) => r.ticker), ['AAA']);
     assert.ok(!re.by_tier.BLOCKBUSTER.some((r: any) => r.ticker === 'BBB'));
     // withCurrentIndiaRules does the same from a key, and leaves a current day alone.
-    assert.equal(withCurrentIndiaRules(day, 'graded:v23:2026-08-20').grade_engine, 'v26');
-    assert.equal(withCurrentIndiaRules(re, 'graded:v26:2026-08-20'), re);
+    assert.equal(withCurrentIndiaRules(day, 'graded:v23:2026-08-20').grade_engine, 'v27');
+    assert.equal(withCurrentIndiaRules(re, 'graded:v27:2026-08-20'), re);
     // The page never gets the stored input.
     const stripped = stripGradeInput(re);
     assert.ok(stripped.by_tier.BLOCKBUSTER.every((r: any) => !('grade_input' in r)));

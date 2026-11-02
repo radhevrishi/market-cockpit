@@ -32,7 +32,7 @@ describe('refresh-bench batched scan', () => {
     assert.equal(r.partial, false);
     assert.equal(calls.mget, 0);
     assert.ok(calls.exists <= 3, `exists pipelines ${calls.exists}`);   // 1020 keys / 500 per chunk handled by kvExistsMany; here one fake call
-    assert.equal(calls.existsKeys, 60 * (1 + 16));
+    assert.equal(calls.existsKeys, 60 * (1 + 17));   // zzz1211: v26 joined the legacy list
   });
 
   test('reads only the newest existing namespace per day; empty payload falls to the next', async () => {
