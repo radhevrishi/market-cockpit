@@ -170,6 +170,7 @@ const ANALYZER_FP = createHash('sha256').update([
 const DOC_KEY = (url: string) => `radar-doc:v1:${ANALYZER_FP}:${createHash('sha256').update(url).digest('hex').slice(0, 24)}`;
 const DOC_TTL_S = 75 * 24 * 3600;           // longer than the widest window used (60–120 days)
 const DOC_TTL_TOO_LARGE_S = 14 * 24 * 3600;
+const DOC_TTL_UNREADABLE_S = 24 * 3600;
 const READ_MAX_BYTES = 25 * 1024 * 1024;    // presentations are 5–11 MB; pdf-parse reads a 10 MB deck in < 1 s
 interface DocResult { v: RadarDocVerdict; entry?: TransformScreenEntry; at: string }
 
@@ -376,7 +377,8 @@ async function buildScreen(req: NextRequest, days: number, minPatterns: number, 
     for (const { url, res } of results) {
       fresh.set(url, res);
       if (isRedisAvailable() && !isRetryableFailure(res.v)) {
-        const ttl = /too large/i.test(res.v.reason) ? DOC_TTL_TOO_LARGE_S : DOC_TTL_S;
+        // an unexplained empty / failed parse is retried after a day (it may be a transient bad download), not kept 75 days
+        const ttl = /too large/i.test(res.v.reason) ? DOC_TTL_TOO_LARGE_S : res.v.cls === 'UNREADABLE' && !/Scanned image|Mostly images/.test(res.v.reason) ? DOC_TTL_UNREADABLE_S : DOC_TTL_S;
         kvSet(DOC_KEY(url), res, ttl).catch(() => { /* read again next scan */ });
       }
     }
