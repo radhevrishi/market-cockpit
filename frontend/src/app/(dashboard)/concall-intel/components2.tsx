@@ -288,6 +288,8 @@ export function TransformationScreenerTab() {
   const [days, setDays] = useState<number>(60);
   const [data, setData] = useState<TransformScreenPayload | null>(null);
   const [loading, setLoading] = useState(false);
+  const [building, setBuilding] = useState(false);
+  const requestSeq = useRef(0);
   const [err, setErr] = useState<string | null>(null);
   // zzz433 — Conviction × Transformation: which radar names are ALSO on the bench
   const [bench, setBench] = useState<Record<string, ConvictionEntry>>({});
@@ -313,22 +315,44 @@ export function TransformationScreenerTab() {
   const [capLoading, setCapLoading] = useState(false);
 
   const load = useCallback(async (d: number, force = false) => {
+    const requestId = ++requestSeq.current;
     setLoading(true); setErr(null);
     try {
-      // zzz466 — Rescan forces a fresh server computation (bypasses the cache)
-      const r = await fetch(`/api/v1/concall-intel/transformation-screener?days=${d}&limit=80${force ? '&refresh=1' : ''}`, { cache: 'no-store' });
+      // An uncached force refresh is a bounded request; the backend completes
+      // its scan asynchronously and explicitly returns building=true.
+      const r = await fetch(`/api/v1/concall-intel/transformation-screener?days=${d}&limit=80${force ? '&refresh=1' : ''}`, {
+        cache: 'no-store', signal: AbortSignal.timeout(18_000),
+      });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const j: TransformScreenPayload = await r.json();
-      setData(j);
-      if (j.error) setErr(j.error);
+      if (requestId !== requestSeq.current) return;
+      if (j.building) {
+        setBuilding(true);
+        setData((prev) => prev && prev.entries.length > 0 ? prev : j);
+      } else {
+        setBuilding(false);
+        setData(j);
+        if (j.error) setErr(j.error);
+      }
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'load failed');
+      if (requestId !== requestSeq.current) return;
+      setBuilding(false);
+      setErr(e instanceof Error && e.name === 'TimeoutError'
+        ? 'Radar request timed out. Existing results are retained; retry the scan.'
+        : e instanceof Error ? e.message : 'load failed');
     } finally {
-      setLoading(false);
+      if (requestId === requestSeq.current) setLoading(false);
     }
   }, []);
 
-  useEffect(() => { load(days); }, [days, load]);
+  useEffect(() => { setData(null); setBuilding(false); void load(days); }, [days, load]);
+  // A pending scan is not an empty feed: poll the shared cached result
+  // without another forced extraction. Avoid overlap while fetching.
+  useEffect(() => {
+    if (!building || loading) return;
+    const timer = setTimeout(() => { void load(days); }, 8_000);
+    return () => clearTimeout(timer);
+  }, [building, loading, days, load]);
 
   // zzz810 — the feed could not be fetched: retry on our own (forced, so the
   // server re-fetches NSE/BSE) every 90s, up to 5 times.
@@ -398,10 +422,10 @@ export function TransformationScreenerTab() {
               color: days === d ? TF.cyan : TF.muted,
             }}>{d}d</button>
           ))}
-          <button onClick={() => load(days, true)} disabled={loading} title="Force a fresh scan now (bypasses the cache)" style={{
+          <button onClick={() => load(days, true)} disabled={loading || building} title="Start a new scan; the last verified results remain until it finishes" style={{
             fontSize: 11.5, fontWeight: 800, padding: '5px 12px', borderRadius: 6, cursor: loading ? 'wait' : 'pointer',
             border: `1px solid ${TF.green}`, background: 'color-mix(in srgb, var(--mc-bullish) 10%, transparent)', color: TF.green,
-          }}>{loading ? '⏳ Scanning…' : '↻ Rescan (fresh)'}</button>
+          }}>{building ? '⏳ Rebuilding…' : loading ? '⏳ Loading…' : '↻ Rescan (fresh)'}</button>
           {data && (
             <span style={{ fontSize: 10.5, color: TF.dim, ...TFM }}>
               {data.analyzed} filings scanned · {data.pdf_cache_hits} cached · {data.candidates_total} in feed
@@ -409,6 +433,11 @@ export function TransformationScreenerTab() {
             </span>
           )}
         </div>
+        {building && (
+          <p role="status" aria-live="polite" style={{ color: TF.amber, fontSize: 12, margin: '10px 0 0' }}>
+            ⏳ Radar scanning in the background. Rechecking every 8 seconds; existing results are retained.
+          </p>
+        )}
         {/* zzz810 — honest feed status: reached or not, real counts */}
         <div style={{ marginTop: 10 }}>
           {data?.feed_status
@@ -483,7 +512,7 @@ export function TransformationScreenerTab() {
         <div style={{ padding: '40px 0', textAlign: 'center', color: TF.dim, fontSize: 13 }}>⏳ Scanning the live feed for transformation patterns…</div>
       )}
 
-      {data && !loading && entries.length === 0 && !err && feedState !== 'FAILED' && (
+      {data && !building && !loading && entries.length === 0 && !err && feedState !== 'FAILED' && (
         <div style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '18px' }}>
           <div style={{ fontSize: 13, color: TF.text2, lineHeight: 1.6, textAlign: 'center' }}>
             {/* zzz810 — only claim "nothing found" about a feed that was actually
