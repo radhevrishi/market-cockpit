@@ -20,8 +20,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { swrGet, swrHeaders, privateCache, SwrUnusableError, SwrPendingError } from '@/lib/swr-cache';
 import { railwaySelfFetch } from '@/lib/railway-self-fetch';
-import { extractFirstPdf } from '@/lib/pdf-text-extractor';
-import { analyzeTransformation } from '@/lib/transformation-analyzer';
+import { createHash } from 'crypto';
+import { extractPdfText } from '@/lib/pdf-text-extractor';
+import { analyzeTransformation, TRANSFORM_PATTERNS, EVIDENCE_LADDER } from '@/lib/transformation-analyzer';
+import { kvMGet, kvSet, isRedisAvailable } from '@/lib/kv';
+import { secretFromRequest } from '@/lib/request-secret';
+import {
+  preClassifyRadarFiling, shouldReadRadarDoc, classifyRadarContent, isRetryableFailure, emptyFunnel, coverageSentence,
+  type RadarDocVerdict, type RadarFunnel, type RadarDocClass,
+} from '@/lib/radar-doc-class';
 import { buildRadarEvidenceRecord, type RadarEvidenceRecord } from '@/lib/concall-evidence-ledger';
 import { classifyConcallFiling, type FeedStatus } from '@/lib/concall-feed';
 
@@ -64,6 +71,10 @@ export interface TransformScreenEntry {
   top_events: string[];
   scored_from: 'PDF' | 'SUBJECT';
   evidence_record: RadarEvidenceRecord;
+  /** zzz1212 — what the attached document really is (transcript / presentation / results), decided from its text */
+  doc_class?: RadarDocClass;
+  doc_label?: string;
+  doc_confidence?: 'HIGH' | 'MEDIUM' | 'LOW';
 }
 
 // zzz434 — lightweight record of a filing we scanned that produced no
@@ -78,6 +89,23 @@ export interface ScannedNoSignal {
   attachment_url: string | null;
   bullish_tier: string;
   scored_from: 'PDF' | 'SUBJECT';
+  /** zzz1212 — read in full, no transformation pattern (only substantive documents land here now) */
+  doc_class?: RadarDocClass;
+  doc_label?: string;
+}
+
+/** zzz1212 — a filing the radar did not score, with the honest reason (routine notice, covering letter, unreadable PDF …). */
+export interface RadarExcluded {
+  symbol: string;
+  company_name: string;
+  subject: string;
+  filing_datetime: string;
+  attachment_url: string | null;
+  doc_class: RadarDocClass;
+  label: string;
+  reason: string;
+  basis: 'SUBJECT' | 'CONTENT';
+  link?: string;
 }
 
 interface ScreenPayload {
@@ -93,6 +121,13 @@ interface ScreenPayload {
   feed_status?: FeedStatus | null;
   concalls_in_feed?: number;
   transcripts_in_feed?: number;
+  /** zzz1212 — honest processing funnel: what was in the feed, what was routine, what was really read */
+  funnel?: RadarFunnel;
+  coverage_note?: string;
+  /** zzz1212 — newest documents NOT scored, each with its reason (max 80) */
+  excluded?: RadarExcluded[];
+  /** zzz1212 — counts of excluded documents per class */
+  excluded_counts?: Partial<Record<RadarDocClass, number>>;
   error?: string;
 }
 
@@ -113,6 +148,7 @@ function transformScore(t: ReturnType<typeof analyzeTransformation>): number {
 }
 
 const emptyPayload = (days: number, error?: string): ScreenPayload => ({
+  funnel: emptyFunnel(),
   generated_at: new Date().toISOString(),
   window_days: days,
   analyzed: 0,
@@ -123,15 +159,40 @@ const emptyPayload = (days: number, error?: string): ScreenPayload => ({
   ...(error ? { error } : {}),
 });
 
+// zzz1212 — every eligible document's result (its class + the scored entry) is remembered per attachment URL, so
+// coverage GROWS across scans instead of re-reading the same newest 80: a scan reuses all stored results (cheap
+// MGETs) and spends its download budget only on documents not read yet, newest first. The key carries a fingerprint
+// of the analyzer + classifier code, so a rule change re-scores everything (PDF text itself stays cached 30 days).
+const ANALYZER_FP = createHash('sha256').update([
+  analyzeTransformation.toString(), classifyRadarContent.toString(), buildRadarEvidenceRecord.toString(),
+  JSON.stringify(TRANSFORM_PATTERNS.map((p) => [p.key, p.re.source])), JSON.stringify(EVIDENCE_LADDER.map((r) => [r.score, r.re.source])),
+].join('|')).digest('hex').slice(0, 10);
+const DOC_KEY = (url: string) => `radar-doc:v1:${ANALYZER_FP}:${createHash('sha256').update(url).digest('hex').slice(0, 24)}`;
+const DOC_TTL_S = 75 * 24 * 3600;           // longer than the widest window used (60–120 days)
+const DOC_TTL_TOO_LARGE_S = 14 * 24 * 3600;
+const READ_MAX_BYTES = 25 * 1024 * 1024;    // presentations are 5–11 MB; pdf-parse reads a 10 MB deck in < 1 s
+interface DocResult { v: RadarDocVerdict; entry?: TransformScreenEntry; at: string }
+
+/** Download budget per scan: a reader's background refresh, a manual "read next batch", or the scheduled coverage job. */
+type ScanMode = { feedForce: boolean; readBudget: number; timeBudgetMs: number };
+const MODE_READER: ScanMode = { feedForce: false, readBudget: 60, timeBudgetMs: 30_000 };
+const MODE_MORE: ScanMode = { feedForce: false, readBudget: 40, timeBudgetMs: 30_000 };
+const MODE_COVERAGE: ScanMode = { feedForce: false, readBudget: 150, timeBudgetMs: 50_000 };
+const MODE_FRESH: ScanMode = { feedForce: true, readBudget: 60, timeBudgetMs: 30_000 };
+
 export async function GET(req: NextRequest) {
-  const days = Math.min(180, Math.max(1, Number(req.nextUrl.searchParams.get('days')) || 60));
-  const limit = Math.min(150, Math.max(1, Number(req.nextUrl.searchParams.get('limit')) || 80));
-  const minPatterns = Math.max(0, Number(req.nextUrl.searchParams.get('minPatterns')) || 1);
-  // Explicitly paged scan for previously skipped filings; never launch the
-  // full 1,000+ filing backlog automatically on a dashboard visit.
-  const offset = Math.min(10_000, Math.max(0, Math.floor(Number(req.nextUrl.searchParams.get('offset')) || 0)));
+  const sp = req.nextUrl.searchParams;
+  const days = Math.min(180, Math.max(1, Number(sp.get('days')) || 60));
+  // zzz1212 — `limit` now only trims the RESPONSE (best-ranked first); what is read is decided by the scan mode.
+  const limit = Math.min(1000, Math.max(1, Number(sp.get('limit')) || 80));
+  const minPatterns = Math.max(0, Number(sp.get('minPatterns')) || 1);
+  const coverage = sp.get('coverage') === '1';
+  if (coverage) {
+    const expected = process.env.CRON_SECRET || '';
+    if (!expected || secretFromRequest(req, sp) !== expected) return NextResponse.json({ error: 'service key required' }, { status: 401 });
+  }
   try {
-    return await handle(req, days, limit, minPatterns, offset);
+    return await handle(req, days, limit, minPatterns, coverage);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[transform-screener] uncaught', msg);
@@ -139,32 +200,32 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// zzz855 — stale-while-revalidate. A scan (live-feed read + up to 80 PDF analyses) took ~4.4 s even warm-ish and up to
-// 48 s cold, and ran on the reader's clock whenever the 12-min KV entry lapsed. Now the last good scan is served at once
-// (its generated_at is the age label; x-mc-cache / x-mc-cache-age headers too) while ONE background rescan runs.
-// ?refresh=1 / ?nocache=1 still rescans synchronously (the cron warmer uses it). A scan of a failed / empty feed is
-// never cached (zzz810 rule) and never replaces the last good scan. minPatterns is now part of the key (the old key
-// ignored it, so a request with a different floor could be served another floor's result).
+// zzz855 — stale-while-revalidate: the last good scan is served at once while ONE background rescan runs.
+// zzz1070 — last good scan kept 7 days; a cold scan is awaited at most SCREEN_WAIT_MS, then "building".
+// zzz1212 — one cache entry per window (+ pattern floor). ?more=1 (the page's "read next batch") and ?coverage=1 (the
+// scheduled job) force a rebuild that reads further unread documents; ?refresh=1 also re-fetches the exchange feed.
 const SCREEN_FRESH_MS = CACHE_TTL * 1000;
-// zzz1070 — last good scan kept 7 days (was 24 h: off-season, a day without a reader meant the next open scanned cold), and a
-// cold scan is awaited at most SCREEN_WAIT_MS: past it the reader gets an honest "building" answer (`building: true`) while the
-// scan finishes in the background and is served on the next ask. It used to hang the home page for 70 s+ ("radar returned nothing").
 const SCREEN_MAX_STALE_MS = 7 * 24 * 3_600_000;
 const SCREEN_WAIT_MS = 9_000;
+const COVERAGE_EXTRA_WAIT_MS = 100_000;
 type Built = { payload: ScreenPayload; cacheable: boolean };
-async function handle(req: NextRequest, days: number, limit: number, minPatterns: number, offset = 0) {
+async function handle(req: NextRequest, days: number, limit: number, minPatterns: number, coverage: boolean) {
   const sp = req.nextUrl.searchParams;
-  const forceFresh = sp.get('refresh') === '1' || sp.get('nocache') === '1';
+  const fresh = sp.get('refresh') === '1' || sp.get('nocache') === '1';
+  const more = sp.get('more') === '1';
+  const mode = coverage ? MODE_COVERAGE : fresh ? MODE_FRESH : more ? MODE_MORE : MODE_READER;
   try {
     const r = await swrGet<Built>({
-      key: offset === 0 ? `transform-screener:swr:v5:${days}:${limit}:${minPatterns}` : `transform-screener:swr:v6:${days}:${limit}:${minPatterns}:${offset}`, freshMs: SCREEN_FRESH_MS, maxStaleMs: SCREEN_MAX_STALE_MS, force: forceFresh,
-      build: () => buildScreen(req, days, limit, minPatterns, forceFresh, offset),
+      key: `transform-screener:swr:v7:${days}:${minPatterns}`, freshMs: SCREEN_FRESH_MS, maxStaleMs: SCREEN_MAX_STALE_MS, force: fresh || more || coverage,
+      build: () => buildScreen(req, days, minPatterns, mode),
       isUsable: (b) => !!b && b.cacheable,
-      waitMs: SCREEN_WAIT_MS,
+      waitMs: SCREEN_WAIT_MS + (coverage ? COVERAGE_EXTRA_WAIT_MS : 0),   // the scheduled job may wait for its own scan
       readWaitMs: 2_000, // 18s browser budget also includes Redis; avoid unbounded cold lookup
       failureRetryMs: 5 * 60_000, // feed failures retry at most once per 5 min per instance; never discard last-good
     });
-    return NextResponse.json(r.value.payload, { headers: swrHeaders(r, privateCache(120, 1800)) });
+    const p = r.value.payload;
+    const out: ScreenPayload = p.entries.length > limit ? { ...p, entries: p.entries.slice(0, limit) } : p;
+    return NextResponse.json(out, { headers: swrHeaders(r, privateCache(120, 1800)) });
   } catch (e) {
     if (e instanceof SwrPendingError) {
       return NextResponse.json({ ...emptyPayload(days), building: true, error: undefined, message: 'Scanning the latest concalls — ask again in a minute' }, { headers: { 'Cache-Control': 'no-store', 'x-mc-cache': 'building' } });
@@ -174,14 +235,65 @@ async function handle(req: NextRequest, days: number, limit: number, minPatterns
   }
 }
 
-async function buildScreen(req: NextRequest, days: number, limit: number, minPatterns: number, forceFresh: boolean, offset = 0): Promise<Built> {
+const PRE_ORDER: Partial<Record<RadarDocClass, number>> = { TRANSCRIPT: 0, PRESENTATION: 1, RESULTS: 2 };
+
+async function readDocResults(urls: string[]): Promise<Map<string, DocResult>> {
+  const out = new Map<string, DocResult>();
+  if (!isRedisAvailable() || urls.length === 0) return out;
+  for (let i = 0; i < urls.length; i += 100) {
+    const chunk = urls.slice(i, i + 100);
+    try {
+      const got = await kvMGet<DocResult>(chunk.map(DOC_KEY));
+      got.forEach((v, j) => { if (v && v.v && v.v.cls) out.set(chunk[j], v); });
+    } catch { /* unread: these documents are simply read again */ }
+  }
+  return out;
+}
+
+function scoreEntry(f: any, text: string, v: RadarDocVerdict): TransformScreenEntry {
+  const t = analyzeTransformation(text);
+  return {
+    symbol: f.symbol,
+    company_name: f.company_name,
+    exchange: f.exchange,
+    subject: f.subject,
+    filing_datetime: f.filing_datetime,
+    source_url: f.source_url,
+    attachment_url: f.attachment_urls?.[0] || null,
+    bullish_tier: f.bullish?.tier || 'NEUTRAL',
+    transformation_score: transformScore(t),
+    pattern_count: t.pattern_count,
+    patterns: t.patterns,
+    evidence_score: t.evidence_score,
+    evidence_label: t.evidence_label,
+    evidence_quote: t.evidence_quote,
+    evidence_breadth: t.evidence_breadth,
+    caution_level: t.caution_level,
+    caution_flags: t.caution_flags,
+    stage: t.stage,
+    stage_sweet_spot: t.stage_sweet_spot,
+    velocity: t.velocity,
+    triple: t.triple,
+    top_events: t.events.slice(0, 8).map((e) => e.kw),
+    scored_from: 'PDF',
+    evidence_record: buildRadarEvidenceRecord({
+      symbol: f.symbol, source_url: f.source_url,
+      attachment_url: f.attachment_urls?.[0] || null,
+      filing_datetime: f.filing_datetime, evidence_quote: t.evidence_quote,
+      scored_from: 'PDF',
+    }),
+    doc_class: v.cls,
+    doc_label: v.label,
+    doc_confidence: v.confidence,
+  };
+}
+
+async function buildScreen(req: NextRequest, days: number, minPatterns: number, mode: ScanMode): Promise<Built> {
   const origin = new URL(req.url).origin;
-  // zzz810 — a forced Rescan also forces the feed, so an empty/failed feed
-  // is re-fetched from NSE/BSE instead of re-read from cache.
   // zzz1070 — never wait on the feed forever (Railway does not enforce maxDuration): 45 s, then a "couldn't load" scan (not cached).
   let r: Response;
   try {
-    r = await railwaySelfFetch(`${origin}/api/v1/concall-intel/live-feed?days=${days}${forceFresh ? '&force=1' : ''}`, { cache: 'no-store', signal: AbortSignal.timeout(45_000) });
+    r = await railwaySelfFetch(`${origin}/api/v1/concall-intel/live-feed?days=${days}${mode.feedForce ? '&force=1' : ''}`, { cache: 'no-store', signal: AbortSignal.timeout(45_000) });
   } catch (e: any) {
     return { payload: emptyPayload(days, `Couldn't load the concall feed (${e?.name === 'TimeoutError' ? 'timed out' : 'unreachable'}) — retrying`), cacheable: false };
   }
@@ -199,144 +311,126 @@ async function buildScreen(req: NextRequest, days: number, limit: number, minPat
     if (c.is_transcript && c.is_concall) transcriptsInFeed++;
   }
 
-  // zzz444 — a real transcript / investor-presentation is where the signal
-  // lives; a "management change / AGM / record date" notice is pure noise that
-  // wastes the scan budget and pollutes the leaderboard. Detect both so we (a)
-  // spend the scan budget on transcripts FIRST and (b) keep obvious notices out
-  // of the ranked list.
-  const isTranscript = (f: any) => f.filing_type === 'TRANSCRIPT' || classifyConcallFiling(f.subject || '', f.detail).is_concall || /transcript|earnings call|con\s?call|conference call|investor (?:presentation|meet|update)|analyst (?:meet|call)|results? (?:presentation|call)|q[1-4]\s?fy/i.test(`${f.subject || ''} ${(f.attachment_urls?.[0] || '')}`);
-  const isNoiseNotice = (f: any) => /management change|change in (?:management|director|kmp)|record date|book closure|board meeting|annual general meeting|\bAGM\b|postal ballot|voting result|scrutinizer|newspaper (?:publication|advertisement|clipping)|loss of (?:share|certificate)|duplicate (?:share|certificate)|sub[- ]division|stock split|dividend distribution|trading window|compliance certificate|reg\.?\s?74|reconciliation of share/i.test(f.subject || '');
+  // ── step 1: classify every feed row from its subject + file name; routine notices are never downloaded ──
+  const funnel = emptyFunnel();
+  funnel.announcements_total = feedStatus?.announcements_total ?? null;
+  funnel.feed_rows = filings.length;
+  const excluded: RadarExcluded[] = [];
+  const excludedCounts: Partial<Record<RadarDocClass, number>> = {};
+  const exclude = (f: any, v: RadarDocVerdict) => {
+    excludedCounts[v.cls] = (excludedCounts[v.cls] || 0) + 1;
+    excluded.push({
+      symbol: f.symbol, company_name: f.company_name, subject: f.subject, filing_datetime: f.filing_datetime,
+      attachment_url: f.attachment_urls?.[0] || null, doc_class: v.cls, label: v.label, reason: v.reason, basis: v.basis,
+      ...(v.link ? { link: v.link } : {}),
+    });
+  };
+  const eligible: Array<{ f: any; pre: RadarDocVerdict; url: string }> = [];
+  for (const f of filings) {
+    const pre = preClassifyRadarFiling(f);
+    if (shouldReadRadarDoc(pre)) { eligible.push({ f, pre, url: f.attachment_urls[0] }); continue; }
+    if (pre.cls === 'OUT_OF_SCOPE') { funnel.out_of_scope++; continue; }   // orders, ratings … — not listed, only counted
+    if (pre.cls === 'MEETING_SCHEDULE') funnel.routine.meeting_schedule++;
+    else if (pre.cls === 'CALL_INVITE') funnel.routine.call_invite++;
+    else if (pre.cls === 'RECORDING_LINK') funnel.routine.recording_link++;
+    else if (pre.cls === 'NO_ATTACHMENT') funnel.routine.no_attachment++;
+    else funnel.routine.admin_notice++;
+    exclude(f, pre);
+  }
+  funnel.eligible = eligible.length;
 
-  // zzz463 — FRESHNESS-FIRST scan order so the radar always reads the NEWEST
-  // concalls, never gets stuck re-chewing the same old high-tier set. Root fix
-  // for "does it read new or the same old 80?": we scan newest DAY first, and
-  // within a day put transcripts + high-bullish ahead (quality within freshness).
-  // Noise notices (AGM / record date / board meeting …) are dropped from the
-  // scan queue entirely so the budget is never spent on them. Because PDF text
-  // is cached (pdf-text KV), older filings are near-free to include — so the
-  // cold-fetch budget is spent on genuinely NEW filings, newest first.
+  // newest day first; within a day transcripts, then presentations, then results; then filing sentiment
   const TIER_RANK: Record<string, number> = { ULTRA_BULLISH: 0, BULLISH: 1, MIXED_POSITIVE: 2, NEUTRAL: 3, MIXED_NEGATIVE: 4, BEARISH: 5 };
   const dayOf = (f: any) => { const d = new Date(f.filing_datetime); return isNaN(d.getTime()) ? '0000-00-00' : d.toISOString().slice(0, 10); };
-  const withPdf = filings
-    .filter((f) => Array.isArray(f.attachment_urls) && f.attachment_urls.length > 0)
-    .filter((f) => !isNoiseNotice(f))                       // never waste budget on notices
-    .sort((a, b) => {
-      const da = dayOf(a), db = dayOf(b);
-      if (da !== db) return da < db ? 1 : -1;               // newest day first — guarantees fresh reads
-      const ta = isTranscript(a) ? 0 : 1, tb = isTranscript(b) ? 0 : 1;
-      if (ta !== tb) return ta - tb;                        // within a day: transcripts first
-      const t = (TIER_RANK[a.bullish?.tier] ?? 9) - (TIER_RANK[b.bullish?.tier] ?? 9);
-      if (t !== 0) return t;                                // then high-bullish
-      return new Date(b.filing_datetime).getTime() - new Date(a.filing_datetime).getTime();
-    })
-    .slice(offset, offset + limit);
+  eligible.sort((a, b) => {
+    const da = dayOf(a.f), db = dayOf(b.f);
+    if (da !== db) return da < db ? 1 : -1;
+    const pa = PRE_ORDER[a.pre.cls] ?? 9, pb = PRE_ORDER[b.pre.cls] ?? 9;
+    if (pa !== pb) return pa - pb;
+    const t = (TIER_RANK[a.f.bullish?.tier] ?? 9) - (TIER_RANK[b.f.bullish?.tier] ?? 9);
+    if (t !== 0) return t;
+    return new Date(b.f.filing_datetime).getTime() - new Date(a.f.filing_datetime).getTime();
+  });
 
-  let cacheHits = 0;
-  const entries: TransformScreenEntry[] = [];
-
-  // Bounded concurrency (8 at a time). A soft time budget stops fresh PDF
-  // fetches before maxDuration so a big cold scan degrades gracefully (cached
-  // + already-scanned rows still return) instead of timing out.
+  // ── step 2: reuse stored results; download only unread documents, newest first, within the budget ──
+  const stored = await readDocResults(eligible.map((e) => e.url));
+  const unread = eligible.filter((e) => !stored.has(e.url));
+  const toRead = unread.slice(0, mode.readBudget);
+  const fresh = new Map<string, DocResult>();
   const START = Date.now();
-  // Concall PDFs are CPU-heavy to parse in this SAME Node process that serves
-  // the trading terminal. Eight simultaneous parses caused broad request stalls.
-  // Bound parallel extraction and yield between batches to keep UI responsive.
-  const TIME_BUDGET_MS = 32_000;
+  // Concall PDFs are CPU-heavy to parse in this SAME Node process that serves the terminal: 3 at a time, yield between batches.
   const CONC = 3;
-  for (let i = 0; i < withPdf.length; i += CONC) {
-    if (Date.now() - START > TIME_BUDGET_MS) break;   // out of time — return what we have
-    const batch = withPdf.slice(i, i + CONC);
-    const results = await Promise.all(batch.map(async (f) => {
-      let text = '';
-      let scoredFrom: 'PDF' | 'SUBJECT' = 'SUBJECT';
+  for (let i = 0; i < toRead.length; i += CONC) {
+    if (Date.now() - START > mode.timeBudgetMs) break;   // out of time — the rest stays unread (and is reported as such)
+    const batch = toRead.slice(i, i + CONC);
+    const results = await Promise.all(batch.map(async ({ f, pre, url }) => {
+      let text = '', pages = 0, bytes = 0, failure = '';
       try {
-        const pdf = await extractFirstPdf(f.attachment_urls);
-        if (pdf && pdf.text && pdf.text.length > 200) {
-          text = pdf.text;
-          scoredFrom = 'PDF';
-          if (pdf.source === 'CACHE') cacheHits++;
-        }
-      } catch { /* fall through to subject */ }
-      if (!text) text = `${f.company_name || ''} ${f.subject || ''}`;
-      const t = analyzeTransformation(text);
-      const entry: TransformScreenEntry = {
-        symbol: f.symbol,
-        company_name: f.company_name,
-        exchange: f.exchange,
-        subject: f.subject,
-        filing_datetime: f.filing_datetime,
-        source_url: f.source_url,
-        attachment_url: f.attachment_urls?.[0] || null,
-        bullish_tier: f.bullish?.tier || 'NEUTRAL',
-        transformation_score: transformScore(t),
-        pattern_count: t.pattern_count,
-        patterns: t.patterns,
-        evidence_score: t.evidence_score,
-        evidence_label: t.evidence_label,
-        evidence_quote: t.evidence_quote,
-        evidence_breadth: t.evidence_breadth,
-        caution_level: t.caution_level,
-        caution_flags: t.caution_flags,
-        stage: t.stage,
-        stage_sweet_spot: t.stage_sweet_spot,
-        velocity: t.velocity,
-        triple: t.triple,
-        top_events: t.events.slice(0, 8).map((e) => e.kw),
-        scored_from: scoredFrom,
-        evidence_record: buildRadarEvidenceRecord({
-          symbol: f.symbol, source_url: f.source_url,
-          attachment_url: f.attachment_urls?.[0] || null,
-          filing_datetime: f.filing_datetime, evidence_quote: t.evidence_quote,
-          scored_from: scoredFrom,
-        }),
-      };
-      return entry;
+        const pdf = await extractPdfText(url, { maxBytes: READ_MAX_BYTES, timeoutMs: 20_000 });
+        text = pdf.text || ''; pages = pdf.pages || 0; bytes = pdf.bytes || 0; failure = pdf.failure_reason || '';
+      } catch (e: any) { failure = e?.message || 'extract failed'; }
+      const v = classifyRadarContent(pre, { text, pages, bytes, failure });
+      const res: DocResult = { v, at: new Date().toISOString(), ...(v.analyzable ? { entry: scoreEntry(f, text, v) } : {}) };
+      return { url, res };
     }));
-    entries.push(...results);
+    for (const { url, res } of results) {
+      fresh.set(url, res);
+      if (isRedisAvailable() && !isRetryableFailure(res.v)) {
+        const ttl = /too large/i.test(res.v.reason) ? DOC_TTL_TOO_LARGE_S : DOC_TTL_S;
+        kvSet(DOC_KEY(url), res, ttl).catch(() => { /* read again next scan */ });
+      }
+    }
     await new Promise<void>((resolve) => setImmediate(resolve)); // yield to interactive requests
   }
+  funnel.fresh_reads = fresh.size;
 
-  // Keep the ones with real transformation signal, best first. Obvious
-  // non-earnings notices (management change / AGM / record date …) are kept OUT
-  // of the ranking even if their notice text happens to hit a keyword.
-  const ranked = entries
-    .filter((e) => e.pattern_count >= minPatterns && !isNoiseNotice(e))
-    .sort((a, b) => b.transformation_score - a.transformation_score);
+  // ── step 3: assemble from stored + fresh results ──
+  const entries: TransformScreenEntry[] = [];
+  for (const { f, url } of eligible) {
+    const res = fresh.get(url) || stored.get(url);
+    if (!res) { funnel.not_yet_read++; continue; }
+    funnel.examined++;
+    const v = res.v;
+    if (v.analyzable && res.entry) {
+      funnel.read_full++;
+      // the stored entry carries the filing details as of its first read; sentiment can be re-graded by the feed
+      entries.push({ ...res.entry, bullish_tier: f.bullish?.tier || res.entry.bullish_tier });
+    } else if (v.cls === 'UNREADABLE') { funnel.unreadable++; exclude(f, v); }
+    else { funnel.cover_only++; exclude(f, v); }
+  }
 
-  // zzz434 — the rest were scanned but produced no signal (or were notices).
-  // Surface a light record so the UI can show "we looked, nothing yet".
+  const ranked = entries.filter((e) => e.pattern_count >= minPatterns).sort((a, b) => b.transformation_score - a.transformation_score);
+  funnel.with_signal = ranked.length;
+  // read in full, no transformation pattern: only substantive documents now (never a notice or covering letter)
   const scannedNoSignal: ScannedNoSignal[] = entries
-    .filter((e) => e.pattern_count < minPatterns || isNoiseNotice(e))
+    .filter((e) => e.pattern_count < minPatterns)
     .sort((a, b) => new Date(b.filing_datetime).getTime() - new Date(a.filing_datetime).getTime())
     .slice(0, 20)
     .map((e) => ({
-      symbol: e.symbol,
-      company_name: e.company_name,
-      subject: e.subject,
-      filing_datetime: e.filing_datetime,
-      source_url: e.source_url,
-      attachment_url: e.attachment_url,
-      bullish_tier: e.bullish_tier,
-      scored_from: e.scored_from,
+      symbol: e.symbol, company_name: e.company_name, subject: e.subject, filing_datetime: e.filing_datetime,
+      source_url: e.source_url, attachment_url: e.attachment_url, bullish_tier: e.bullish_tier, scored_from: 'PDF' as const,
+      doc_class: e.doc_class, doc_label: e.doc_label,
     }));
+  excluded.sort((a, b) => new Date(b.filing_datetime).getTime() - new Date(a.filing_datetime).getTime());
 
   const payload: ScreenPayload = {
     generated_at: new Date().toISOString(),
     window_days: days,
-    analyzed: entries.length, // actual processed PDFs; budget may stop early
-    pdf_cache_hits: cacheHits,
+    analyzed: funnel.read_full,              // substantive documents read in full — never notices, letters or subject lines
+    pdf_cache_hits: funnel.examined - funnel.fresh_reads,
     candidates_total: filings.length,
     entries: ranked,
     scanned_no_signal: scannedNoSignal,
     feed_status: feedStatus,
     concalls_in_feed: concallsInFeed,
     transcripts_in_feed: transcriptsInFeed,
+    funnel,
+    coverage_note: coverageSentence(funnel),
+    excluded: excluded.slice(0, 80),
+    excluded_counts: excludedCounts,
   };
 
-  // zzz810 — never cache a scan of a feed that failed or came back empty;
-  // the next open must retry the exchanges, not replay "0 in feed".
-  // zzz1070 — PARTIAL with NSE itself OK (BSE down / empty, e.g. 18 Oct 2026: NSE 30,597 announcements, BSE none) is a real scan
-  // and is kept (its feed_status says BSE is missing and being retried); otherwise every visit rescanned for 6–48 s.
+  // zzz810 — never cache a scan of a feed that failed or came back empty. zzz1070 — PARTIAL with NSE OK is a real scan.
   const nseOk = feedStatus?.nse === 'OK';
   const feedHealthy = filings.length > 0 && (!feedStatus || feedStatus.state === 'OK' || feedStatus.state === 'EMPTY' || (feedStatus.state === 'PARTIAL' && nseOk));
   return { payload, cacheable: feedHealthy };

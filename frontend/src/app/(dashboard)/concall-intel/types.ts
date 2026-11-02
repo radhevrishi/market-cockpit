@@ -99,6 +99,7 @@ export interface FeedStatusLite {
   state: 'OK' | 'PARTIAL' | 'EMPTY' | 'FAILED';
   message: string;
   reason?: string;
+  nse?: 'OK' | 'EMPTY' | 'BLOCKED'; bse?: 'OK' | 'EMPTY' | 'BLOCKED';   // zzz1212
   last_success_at: string | null;
   announcements_total: number;
   concall_filings: number;
@@ -288,11 +289,25 @@ export interface TransformScreenEntry {
   triple: { industry: boolean; company: boolean; financial: boolean; count: number };
   top_events: string[]; scored_from: 'PDF' | 'SUBJECT';
   evidence_record?: RadarEvidenceRecord; // optional for older cached scans
+  doc_class?: string; doc_label?: string; doc_confidence?: 'HIGH' | 'MEDIUM' | 'LOW';   // zzz1212 — what the document really is
 }
 
 export interface ScannedNoSignal {
   symbol: string; company_name: string; subject: string; filing_datetime: string;
   source_url: string; attachment_url: string | null; bullish_tier: string; scored_from: 'PDF' | 'SUBJECT';
+  doc_class?: string; doc_label?: string;
+}
+
+/** zzz1212 — a filing the radar did not score, with the honest reason */
+export interface RadarExcludedLite {
+  symbol: string; company_name: string; subject: string; filing_datetime: string; attachment_url: string | null;
+  doc_class: string; label: string; reason: string; basis: 'SUBJECT' | 'CONTENT'; link?: string;
+}
+export interface RadarFunnelLite {
+  announcements_total: number | null; feed_rows: number;
+  routine: { meeting_schedule: number; call_invite: number; recording_link: number; admin_notice: number; no_attachment: number };
+  out_of_scope: number; eligible: number; examined: number; read_full: number; cover_only: number; unreadable: number;
+  not_yet_read: number; with_signal: number; fresh_reads: number;
 }
 
 export interface TransformScreenPayload {
@@ -300,4 +315,5 @@ export interface TransformScreenPayload {
   candidates_total: number; entries: TransformScreenEntry[]; scanned_no_signal?: ScannedNoSignal[]; error?: string;
   building?: boolean; message?: string; // async radar refresh: not an empty research result
   feed_status?: FeedStatusLite | null; concalls_in_feed?: number; transcripts_in_feed?: number;   // zzz810
+  funnel?: RadarFunnelLite; coverage_note?: string; excluded?: RadarExcludedLite[]; excluded_counts?: Record<string, number>;   // zzz1212
 }

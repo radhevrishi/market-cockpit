@@ -24,6 +24,10 @@ export function periodInQuote(quote: string): string | null {
   const m = q.match(/\bQ([1-4])\s*(?:FY|[-/]?\s*FY)\s*['’]?(20)?(\d{2})\b/i)
     || q.match(/\b(?:FY)\s*['’]?(20)?(\d{2})\b/i);
   if (!m) return null;
+  // zzz1212 — "margin expanded to 9.6% from 6.4% in Q2 FY'26": the only period named is the COMPARISON base, not the
+  // period the claim is about. A period introduced by from / versus / compared with / against / over is not the claim's.
+  const before = q.slice(Math.max(0, (m.index ?? 0) - 40), m.index ?? 0);
+  if (/\b(?:from|vs\.?|versus|compared (?:to|with)|against|over|as against|relative to|last year'?s?|previous|prior)\b(?:[^.;]|\.(?=\d)){0,30}$/i.test(before)) return null;
   if (/^Q/i.test(m[0])) return `Q${m[1]} FY${m[3]}`;
   return `FY${m[2]}`;
 }

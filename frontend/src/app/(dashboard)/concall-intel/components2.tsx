@@ -67,7 +67,7 @@ export function TransformationRadar({ t, ticker }: { t: TransformationRadarData;
         <div style={{ ...TFM, fontSize: 11, fontWeight: 700, padding: '5px 11px', borderRadius: 6, color: sweet ? TF.green : TF.cyan, background: `color-mix(in srgb, ${sweet ? TF.green : TF.cyan} 13%, transparent)` }}>{sweet ? '✅ SWEET SPOT · stage 3–7' : 'stage-based read'}</div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(120px,1fr))', gap: 10, marginBottom: 12 }}>
-        {[['Inflection stage', `${t.stage}/10`, sweet ? TF.green : TF.text], ['Evidence score', `${t.evidence_score}/11`, evCol], ['Patterns detected', String(t.pattern_count), t.pattern_count >= 3 ? TF.green : TF.text], ['Velocity', t.velocity, /fast/i.test(t.velocity) ? TF.green : TF.text]].map((s, i) => (
+        {[['Inflection stage', `${t.stage}/10`, sweet ? TF.green : TF.text], ['Evidence score', `${t.evidence_score}/11`, evCol], ['Patterns detected', String(t.pattern_count), t.pattern_count >= 3 ? TF.green : TF.text], ['Pattern breadth', t.velocity, /fast/i.test(t.velocity) ? TF.green : TF.text]].map((s, i) => (
           <div key={i} style={{ background: TF.card2, border: `1px solid ${TF.border}`, borderRadius: 8, padding: '10px 12px' }}>
             <div style={{ ...TFM, fontSize: 9, letterSpacing: 0.5, textTransform: 'uppercase', color: TF.dim }}>{s[0]}</div>
             <div style={{ fontSize: 18, fontWeight: 900, color: s[2] as string, marginTop: 3 }}>{s[1]}</div>
@@ -286,9 +286,15 @@ export function TransformationFrameworkTab({ lastRadar, lastTicker }: { lastRada
   );
 }
 
+const EXCLUDED_LABEL: Record<string, string> = {
+  MEETING_SCHEDULE: 'meeting schedules', CALL_INVITE: 'call invites', RECORDING_LINK: 'recording links', ADMIN_NOTICE: 'routine notices',
+  NO_ATTACHMENT: 'without attachment', TRANSCRIPT_LINK_ONLY: 'transcript links only', COVER_LETTER_ONLY: 'covering letters only', UNREADABLE: 'unreadable PDFs',
+};
+
 export function TransformationScreenerTab() {
   const [days, setDays] = useState<number>(60);
-  const [decisionFilter, setDecisionFilter] = useState<RadarQueue | 'ALL'>('RESEARCH');
+  // zzz1212 — null = automatic: Underwrite when it holds names, otherwise All (an empty default queue read as "radar broken")
+  const [decisionPick, setDecisionFilter] = useState<RadarQueue | 'ALL' | null>(null);
   const [showFullSignals, setShowFullSignals] = useState(false);
   const [data, setData] = useState<TransformScreenPayload | null>(null);
   const [loading, setLoading] = useState(false);
@@ -319,7 +325,6 @@ export function TransformationScreenerTab() {
   const setSmallMidOnly = (on: boolean) => { setSmallMidOnlyState(on); writeSmallMidPref('mc:radar:small-mid-only:v1', on); };
   const [capMap, setCapMap] = useState<Map<string, number | null>>(new Map());
   const [capLoading, setCapLoading] = useState(false);
-  const [extraOffset, setExtraOffset] = useState(80);
   const [moreLoading, setMoreLoading] = useState(false);
   const [moreNote, setMoreNote] = useState<string | null>(null);
 
@@ -330,7 +335,7 @@ export function TransformationScreenerTab() {
     try {
       // An uncached force refresh is a bounded request; the backend completes
       // its scan asynchronously and explicitly returns building=true.
-      const r = await fetch(`/api/v1/concall-intel/transformation-screener?days=${d}&limit=80${force ? '&refresh=1' : ''}`, {
+      const r = await fetch(`/api/v1/concall-intel/transformation-screener?days=${d}&limit=500${force ? '&refresh=1' : ''}`, {
         cache: 'no-store', signal: AbortSignal.timeout(18_000),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -355,9 +360,6 @@ export function TransformationScreenerTab() {
         pendingSince.current = null;
         setBuilding(false);
         setData(j);
-        // First batch can be cut short by the server time budget: start at the
-        // number actually examined, NOT the requested limit of 80.
-        if (!j.error) setExtraOffset(j.analyzed);
         if (j.error) setErr(j.error);
       }
     } catch (e) {
@@ -384,7 +386,7 @@ export function TransformationScreenerTab() {
     }
   }, []);
 
-  useEffect(() => { refreshStartedAt.current = null; pendingSince.current = null; setExtraOffset(0); setMoreNote(null); setData(null); setBuilding(false); void load(days); }, [days, load]);
+  useEffect(() => { refreshStartedAt.current = null; pendingSince.current = null; setMoreNote(null); setData(null); setBuilding(false); void load(days); }, [days, load]);
   // A pending scan is not an empty feed: poll the shared cached result
   // without another forced extraction. Avoid overlap while fetching.
   useEffect(() => {
@@ -405,36 +407,31 @@ export function TransformationScreenerTab() {
     return () => clearTimeout(t);
   }, [feedState, building, loading, days, load]);
 
-  // Voluntary incremental coverage. One small, cached batch per click: NO
-  // automatic 1,171-PDF backlog, preserving the app's real-time responsiveness.
+  // zzz1212 — read the next unread documents now. Every document's result is stored, so this never re-reads or skips
+  // anything: the server reads the newest documents not read yet (40 at most) and returns the whole updated radar.
+  // The same happens automatically every 20 minutes (scheduled coverage job).
   const loadMore = async () => {
     if (moreLoading || !data) return;
     setMoreLoading(true); setMoreNote(null);
     try {
-      const r = await fetch(`/api/v1/concall-intel/transformation-screener?days=${days}&limit=40&offset=${extraOffset}`, {
+      const r = await fetch(`/api/v1/concall-intel/transformation-screener?days=${days}&limit=500&more=1`, {
         cache: 'no-store', signal: AbortSignal.timeout(16_000),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const page: TransformScreenPayload = await r.json();
       if (page.building) {
-        setMoreNote('This older batch is being built in the background; click Scan next batch again to retrieve it.');
+        refreshStartedAt.current = Date.now();
+        pendingSince.current ??= Date.now();
+        setBuilding(true);
+        setMoreNote('Reading the next unread documents in the background; the radar updates when they are done.');
         return;
       }
       if (page.error) throw new Error(page.error);
-      if (!page.analyzed) { setMoreNote('No more matching filings in this window.'); return; }
-      setData((current) => {
-        if (!current || current.window_days !== page.window_days) return current;
-        const seen = new Set(current.entries.map(e => `${e.symbol}|${e.filing_datetime}|${e.attachment_url}`));
-        const added = page.entries.filter(e => !seen.has(`${e.symbol}|${e.filing_datetime}|${e.attachment_url}`));
-        return { ...current, entries: [...current.entries, ...added],
-          analyzed: current.analyzed + page.analyzed,
-          pdf_cache_hits: current.pdf_cache_hits + page.pdf_cache_hits,
-          scanned_no_signal: [...(current.scanned_no_signal || []), ...(page.scanned_no_signal || [])] };
-      });
-      setExtraOffset(o => o + page.analyzed); // do not skip PDFs when the server time budget stops a partial batch
-      setMoreNote(`Examined another ${page.analyzed} filings; newly qualifying signals have been added. Not a complete-universe scan.`);
+      setData(page);
+      const n = page.funnel?.fresh_reads ?? 0;
+      setMoreNote(n > 0 ? `Read ${n} more document${n === 1 ? '' : 's'}.` : 'Every eligible document in this window has already been examined.');
     } catch (e) {
-      setMoreNote(e instanceof Error && e.name === 'TimeoutError' ? 'Older batch still loading; saved shortlist is unchanged.' : e instanceof Error ? e.message : 'Additional scan unavailable.');
+      setMoreNote(e instanceof Error && e.name === 'TimeoutError' ? 'Still reading; the current results stay until it finishes.' : e instanceof Error ? e.message : 'Reading more documents is unavailable right now.');
     } finally { setMoreLoading(false); }
   };
 
@@ -479,7 +476,11 @@ export function TransformationScreenerTab() {
     RISK: scopedEntries.filter((e) => radarDecision(e).queue === 'RISK').length,
     UNVERIFIED: scopedEntries.filter((e) => radarDecision(e).queue === 'UNVERIFIED').length,
   };
+  const decisionFilter: RadarQueue | 'ALL' = decisionPick ?? (decisionCounts.RESEARCH > 0 ? 'RESEARCH' : 'ALL');
   const entries = rankForDecision(scopedEntries).filter((e) => decisionFilter === 'ALL' || radarDecision(e).queue === decisionFilter);
+  const fn = data?.funnel;
+  const routineTotal = fn ? fn.routine.meeting_schedule + fn.routine.call_invite + fn.routine.recording_link + fn.routine.admin_notice + fn.routine.no_attachment : 0;
+  const hiddenByFilters = allEntries.length - scopedEntries.length;
   const sweetSpotCount = entries.filter((e) => e.stage_sweet_spot).length;
   const tripleCount = entries.filter((e) => e.triple.count === 3).length;
   const onBenchCount = entries.filter((e) => bench[e.symbol?.toUpperCase()]).length;
@@ -509,28 +510,46 @@ export function TransformationScreenerTab() {
           }}>{building ? '⏳ Rebuilding…' : loading ? '⏳ Loading…' : '↻ Rescan (fresh)'}</button>
           {data && (
             <span style={{ fontSize: 10.5, color: TF.dim, ...TFM }}>
-              {data.analyzed} filings analyzed · {data.pdf_cache_hits} cached · {data.candidates_total} announcements in feed · last scan {new Date(data.generated_at).toLocaleString('en-IN')}
-              {data.concalls_in_feed != null && <> · {data.concalls_in_feed} concall filings ({data.transcripts_in_feed ?? 0} transcripts)</>}
+              last scan {new Date(data.generated_at).toLocaleString('en-IN')}
             </span>
           )}
         </div>
-        {data && (data.concalls_in_feed ?? 0) > 0 && (
-          <div style={{ fontSize: 11, color: TF.amber, marginTop: 8 }}>
-            Coverage: {data.analyzed} of {data.concalls_in_feed} identified concall filings sampled ({(100 * data.analyzed / Math.max(1, data.concalls_in_feed!)).toFixed(1)}%). This is not a complete market scan; missed companies are not negative calls.
+        {/* zzz1212 — data health: every number says what it counts; routine notices and covering letters are never "analysed" */}
+        {data && fn && (
+          <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(128px, 1fr))', gap: 6 }}>
+            {([
+              ['Exchange feed', `NSE ${data.feed_status?.nse === 'OK' ? '✓' : '✗'} · BSE ${data.feed_status?.bse === 'OK' ? '✓' : '✗'}`, data.feed_status?.bse === 'OK' && data.feed_status?.nse === 'OK' ? TF.green : TF.amber,
+                data.feed_status?.reason ? `Not complete: ${data.feed_status.reason}` : 'Both exchanges answered'],
+              ['All announcements', fn.announcements_total != null ? fn.announcements_total.toLocaleString('en-IN') : '—', TF.text2, `Every NSE/BSE announcement in the last ${days} days (all types)`],
+              ['Concall feed rows', fn.feed_rows.toLocaleString('en-IN'), TF.text2, 'Announcements the concall feed keeps (concall, results, orders, ratings …), NSE/BSE duplicates removed'],
+              ['Routine notices', routineTotal.toLocaleString('en-IN'), TF.dim, `Never read: ${fn.routine.meeting_schedule} meeting schedules · ${fn.routine.call_invite} call invites · ${fn.routine.recording_link} recording links · ${fn.routine.admin_notice} admin notices · ${fn.routine.no_attachment} without attachment`],
+              ['Documents to read', fn.eligible.toLocaleString('en-IN'), TF.cyan, 'Transcripts, investor presentations and results documents (by subject / file name)'],
+              ['Read in full', fn.read_full.toLocaleString('en-IN'), TF.green, 'Substantive documents read and scored — the only "analysed" count'],
+              ['Letter / link only', fn.cover_only.toLocaleString('en-IN'), TF.dim, 'The PDF was only a covering letter (e.g. "transcript is on our website"), so there was nothing to score'],
+              ['Unreadable', fn.unreadable.toLocaleString('en-IN'), fn.unreadable ? TF.amber : TF.dim, 'Too large, scanned image, garbled text or download failed'],
+              ['Not read yet', fn.not_yet_read.toLocaleString('en-IN'), fn.not_yet_read ? TF.amber : TF.green, 'Read automatically every 20 minutes, newest first'],
+              ['With a signal', fn.with_signal.toLocaleString('en-IN'), TF.purple, 'Read in full and at least one transformation pattern found'],
+            ] as const).map(([k, v, c, tip]) => (
+              <div key={k} title={tip} style={{ background: TF.card2, border: `1px solid ${TF.border}`, borderRadius: 7, padding: '6px 9px' }}>
+                <div style={{ fontSize: 14, fontWeight: 900, color: c, ...TFM }}>{v}</div>
+                <div style={{ fontSize: 9.5, color: TF.dim, marginTop: 1 }}>{k}</div>
+              </div>
+            ))}
           </div>
         )}
-        {data && !building && (
+        {data && (data.coverage_note || (data.concalls_in_feed ?? 0) > 0) && (
+          <div style={{ fontSize: 11, color: fn && fn.not_yet_read > 0 ? TF.amber : TF.muted, marginTop: 8, lineHeight: 1.55 }}>
+            {data.coverage_note ?? `Coverage: ${data.analyzed} of ${data.concalls_in_feed} identified concall filings sampled. This is not a complete market scan; missed companies are not negative calls.`}
+          </div>
+        )}
+        {data && !building && fn && fn.not_yet_read > 0 && (
           <div style={{ marginTop: 8, display: 'flex', gap: 9, alignItems: 'center', flexWrap: 'wrap' }}>
             <button type="button" disabled={loading || moreLoading} onClick={() => { void loadMore(); }}
-              title="Manually scan the next 40 older filings; no automatic expensive full-market extraction"
+              title="Read the next 40 unread transcripts / presentations now (newest first). This also happens automatically every 20 minutes."
               style={{ border: `1px solid ${TF.border}`, borderRadius: 6, background: TF.card2, color: TF.cyan,
                 padding: '7px 11px', cursor: moreLoading ? 'wait' : 'pointer', fontSize: 11, fontWeight: 800 }}>
-              {moreLoading ? 'Scanning older batch…' : 'Scan next 40 unreviewed filings'}
+              {moreLoading ? 'Reading…' : `Read next ${Math.min(40, fn.not_yet_read)} unread documents now`}
             </button>
-            <span style={{ fontSize: 11, color: TF.muted }}>
-              Up to {Math.max(0, (data.concalls_in_feed ?? 0) - data.analyzed)} relevant concalls may remain unchecked.
-              Older batches are manual to protect page speed.
-            </span>
             {moreNote && <span role="status" style={{ fontSize: 11, color: TF.amber }}>{moreNote}</span>}
           </div>
         )}
@@ -610,6 +629,11 @@ export function TransformationScreenerTab() {
               </button>
             ))}
           </div>
+          {hiddenByFilters > 0 && (
+            <div style={{ fontSize: 10.5, color: TF.dim, marginTop: 7 }}>
+              Queue counts use the filters above: {allEntries.length} companies with a signal, {hiddenByFilters} hidden by the SHOW / size filter, {scopedEntries.length} counted here.
+            </div>
+          )}
           <button type="button" onClick={() => setShowFullSignals(v => !v)}
             aria-pressed={showFullSignals} style={{ background: TF.card2, border: `1px solid ${TF.border}`, borderRadius: 6, padding: '6px 10px', cursor: 'pointer', marginTop: 9, color: TF.text2, fontSize: 11 }}>
             {showFullSignals ? 'Hide keyword details' : 'Show all keyword details'}
@@ -648,42 +672,78 @@ export function TransformationScreenerTab() {
 
       {data && !building && !loading && entries.length === 0 && !err && feedState !== 'FAILED' && (
         <div style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '18px' }}>
-          <div style={{ fontSize: 13, color: TF.text2, lineHeight: 1.6, textAlign: 'center' }}>
-            {/* zzz810 — only claim "nothing found" about a feed that was actually
-                fetched; state the real counts, never a blanket off-season excuse. */}
+          <div style={{ fontSize: 13, color: TF.text2, lineHeight: 1.6 }}>
+            {/* zzz1212 — say WHY the list is empty, from the funnel: never a blanket "nothing found" */}
             {scopedEntries.length > 0
-              ? <>No companies match the selected decision queue. Select All signals to review every candidate.</>
-              : data.analyzed > 0
-              ? <>The radar read <b style={{ color: TF.text }}>{data.analyzed}</b> filing{data.analyzed === 1 ? '' : 's'} from the last {days} days{data.transcripts_in_feed != null ? <> ({data.transcripts_in_feed} transcript{data.transcripts_in_feed === 1 ? '' : 's'} in the feed)</> : null} and found <b style={{ color: TF.amber }}>no transformation signal yet</b>.</>
-              : data.feed_status?.state === 'EMPTY'
-                ? <>{data.feed_status.message}</>
-                : <>The feed returned <b style={{ color: TF.text }}>{data.candidates_total}</b> filings for the last {days} days but none had a readable PDF to scan.</>}
+              ? <>No company is in <b>{decisionFilter === 'RESEARCH' ? 'Underwrite thesis' : decisionFilter}</b> — that queue needs a positive filing tone, three distinct proof steps and two structural drivers, and none of the {scopedEntries.length} companies with a signal meets all of them yet. Select <b>All signals</b> to see them.</>
+              : fn && fn.eligible === 0
+                ? <>The feed holds no transcripts, investor presentations or results documents for the last {days} days ({routineTotal} routine notices skipped).</>
+                : fn && fn.read_full === 0 && fn.not_yet_read > 0
+                  ? <>None of the {fn.eligible} transcripts / presentations has been read yet — reading runs in the background (newest first); results appear here as they are read.</>
+                  : fn && hiddenByFilters > 0 && allEntries.length > 0
+                    ? <>{allEntries.length} compan{allEntries.length === 1 ? 'y has' : 'ies have'} a signal, but all are hidden by the SHOW / size filter.</>
+                    : fn
+                      ? <>The radar read <b style={{ color: TF.text }}>{fn.read_full}</b> document{fn.read_full === 1 ? '' : 's'} in full and found no transformation pattern{fn.not_yet_read > 0 ? <> — {fn.not_yet_read} more are not read yet, so this is not a final answer</> : ''}.</>
+                      : data.analyzed > 0
+                        ? <>The radar read <b style={{ color: TF.text }}>{data.analyzed}</b> filing{data.analyzed === 1 ? '' : 's'} from the last {days} days and found <b style={{ color: TF.amber }}>no transformation signal yet</b>.</>
+                        : data.feed_status?.state === 'EMPTY'
+                          ? <>{data.feed_status.message}</>
+                          : <>The feed returned <b style={{ color: TF.text }}>{data.candidates_total}</b> filings for the last {days} days but none had a readable document to scan.</>}
           </div>
-          {data.scanned_no_signal && data.scanned_no_signal.length > 0 && (
-            <div style={{ marginTop: 14 }}>
-              <div style={{ fontSize: 10, fontWeight: 800, color: TF.dim, letterSpacing: '0.5px', marginBottom: 8 }}>SCANNED · NO TRANSCRIPT SIGNAL</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {data.scanned_no_signal.map((s, i) => (
-                  <div key={`${s.symbol}-${i}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '8px 12px', background: TF.card2, border: `1px solid ${TF.border}`, borderRadius: 8, flexWrap: 'wrap' }}>
-                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', minWidth: 0 }}>
-                      <span style={{ fontSize: 13, fontWeight: 800, color: TF.text2 }}>{s.symbol}</span>
-                      <span style={{ fontSize: 10.5, color: TF.dim, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 360 }}>{s.subject}</span>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                      <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: `${TF.dim}18`, color: TF.dim }}>
-                        {s.scored_from === 'SUBJECT' ? '📄 announcement · no transcript yet' : 'transcript · no pattern'}
-                      </span>
-                      {s.attachment_url && <a href={s.attachment_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, color: TF.cyan, fontWeight: 700 }}>open →</a>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div style={{ fontSize: 10, color: TF.dim, marginTop: 8, fontStyle: 'italic' }}>
-                Most of these are meeting intimations or routine notices, not full transcripts — the radar re-reads them automatically once the actual concall PDF is filed.
-              </div>
-            </div>
-          )}
         </div>
+      )}
+
+      {/* zzz1212 — substantive documents read in full without a transformation pattern (never notices / letters) */}
+      {data && !building && data.scanned_no_signal && data.scanned_no_signal.length > 0 && (
+        <details style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '10px 14px' }}>
+          <summary style={{ cursor: 'pointer', fontSize: 11, fontWeight: 800, color: TF.dim, letterSpacing: '0.4px' }}>
+            READ IN FULL · NO TRANSFORMATION PATTERN ({data.scanned_no_signal.length} newest)
+          </summary>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
+            {data.scanned_no_signal.map((s, i) => (
+              <div key={`${s.symbol}-${i}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '7px 11px', background: TF.card2, border: `1px solid ${TF.border}`, borderRadius: 8, flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', minWidth: 0 }}>
+                  <span style={{ fontSize: 12.5, fontWeight: 800, color: TF.text2 }}>{s.symbol}</span>
+                  <span style={{ fontSize: 10.5, color: TF.dim, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 360 }}>{s.subject}</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                  <span style={{ fontSize: 9.5, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: `${TF.dim}18`, color: TF.dim }}>
+                    {s.scored_from === 'PDF' ? `${s.doc_label || 'document'} read · no pattern` : 'subject only · not read'}
+                  </span>
+                  {s.attachment_url && <a href={s.attachment_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, color: TF.cyan, fontWeight: 700 }}>open →</a>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+
+      {/* zzz1212 — processing and excluded documents: every filing that was NOT scored, with the true reason */}
+      {data && !building && data.excluded && data.excluded.length > 0 && (
+        <details style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '10px 14px' }}>
+          <summary style={{ cursor: 'pointer', fontSize: 11, fontWeight: 800, color: TF.dim, letterSpacing: '0.4px' }}>
+            PROCESSING AND EXCLUDED DOCUMENTS
+            {data.excluded_counts && <span style={{ fontWeight: 600, marginLeft: 8 }}>
+              {Object.entries(data.excluded_counts).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${n} ${EXCLUDED_LABEL[k] || k.toLowerCase()}`).join(' · ')}
+            </span>}
+          </summary>
+          <div style={{ fontSize: 10.5, color: TF.dim, margin: '8px 0', lineHeight: 1.5 }}>
+            Not scored, newest first ({data.excluded.length} shown). Meeting schedules, invites and recording links are judged from the exchange subject; covering letters and unreadable PDFs from the document itself. When a company files the actual transcript as a new filing, that filing is read on the next scan.
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            {data.excluded.map((x, i) => (
+              <div key={`${x.symbol}-${x.filing_datetime}-${i}`} style={{ display: 'grid', gridTemplateColumns: 'minmax(90px, 120px) minmax(120px, 170px) 1fr auto', gap: 8, alignItems: 'baseline', padding: '6px 10px', background: TF.card2, border: `1px solid ${TF.border}`, borderRadius: 7 }}>
+                <span style={{ fontSize: 12, fontWeight: 800, color: TF.text2 }}>{x.symbol}</span>
+                <span style={{ fontSize: 9.5, fontWeight: 800, color: x.doc_class === 'UNREADABLE' ? TF.amber : TF.dim }}>{x.label}{x.basis === 'SUBJECT' ? ' (from subject)' : ''}</span>
+                <span style={{ fontSize: 10.5, color: TF.muted, lineHeight: 1.4 }}>{x.reason}</span>
+                <span style={{ display: 'flex', gap: 8 }}>
+                  {x.link && <a href={x.link} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, color: TF.cyan, fontWeight: 700 }}>company link →</a>}
+                  {x.attachment_url && <a href={x.attachment_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, color: TF.cyan, fontWeight: 700 }}>filing →</a>}
+                </span>
+              </div>
+            ))}
+          </div>
+        </details>
       )}
 
       {/* leaderboard */}
@@ -709,6 +769,7 @@ export function TransformationScreenerTab() {
                 );
               })()}
               {e.scored_from === 'SUBJECT' && <span style={{ fontSize: 9, color: TF.dim, fontStyle: 'italic' }}>subject-only</span>}
+              {e.doc_label && <span title={`What the attached document is, judged from its text${e.doc_confidence ? ` (confidence ${e.doc_confidence.toLowerCase()})` : ''}`} style={{ fontSize: 9, fontWeight: 800, padding: '1px 6px', borderRadius: 4, border: `1px solid ${TF.border}`, color: e.doc_confidence === 'LOW' ? TF.amber : TF.dim }}>📄 {e.doc_label}</span>}
               {(() => {   // zzz898 — size, or an honest "size n/a"
                 const c = capOf(e.symbol);
                 return c != null

@@ -3772,3 +3772,13 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   Upstash: enrich answers kept 5 min in-process, extraction records 30 min (`__MC_EXTRACT_MEMO__`, dropped on write in kv.ts),
   bhavcopy misses remembered. Railway health check `railway.json` → `/api/healthz` (deploys no longer take the site down).
   Company Lab: checklist plots are bar charts with values + one plain sentence each, above the checklist; growth outliers clipped.
+- zzz1212 (2 Nov): Transformation Radar honest document handling. `lib/radar-doc-class.ts`: step 1 `preClassifyRadarFiling`
+  (subject + attachment file name; meeting schedules / call invites / recording links / admin notices / other announcements are
+  never downloaded), step 2 `classifyRadarContent` (PDF text: transcript markers, figure count, covering-letter detection with the
+  company link, unreadable reasons). Only TRANSCRIPT / PRESENTATION / RESULTS text is scored; `analyzed` = read in full. Every
+  document's result is stored per attachment URL (`radar-doc:v1:<analyzer fingerprint>:<url hash>`, 75 days), so coverage grows
+  across scans (no offsets); reader scans read ≤ 60 unread, "Read next" ≤ 40 (`?more=1`), app job `radar-coverage` (every 20 min
+  01–18 UTC, `?days=90&coverage=1`, service key) ≤ 150. Presentation limit 25 MB (decks are 5–11 MB; pdf-parse < 1.3 s). Payload has
+  `funnel`, `coverage_note`, `excluded` (+ counts); the page shows a data-health row and a collapsed "Processing and excluded
+  documents" panel. Decision queue defaults to Underwrite only when it has names, else All. Ledger: a period after "from / versus /
+  compared with" is the comparison base, not the claim period.

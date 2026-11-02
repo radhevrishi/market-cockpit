@@ -18,7 +18,8 @@ test('even an explicit fresh rescan has the same bounded wait as a cold radar re
 
 test('scanned count is actual completed analysis, not the selection before the time budget', () => {
   const s = route();
-  assert.match(s, /analyzed:\s*entries\.length/);
+  // zzz1212 — "analysed" = substantive documents read in full (never notices, covering letters or subject lines)
+  assert.match(s, /analyzed:\s*funnel\.read_full/);
   assert.doesNotMatch(s, /analyzed:\s*withPdf\.length/);
 });
 
@@ -59,17 +60,19 @@ test('KV lookup is bounded BEFORE the nine-second scan deadline, including fallb
 test('radar throttles PDF parsing to keep the rest of the application responsive', () => {
  const src = route();
  assert.match(src, /const CONC = 3/);
- assert.match(src, /TIME_BUDGET_MS = 32_000/);
+ assert.match(src, /timeBudgetMs: 30_000/);
+ assert.match(src, /Date\.now\(\) - START > mode\.timeBudgetMs/);
  assert.match(src, /setImmediate\(resolve\)/);
 });
 
-test('radar can scan additional bounded older batches without automatic full-feed work', () => {
+test('radar reads further documents in bounded batches without automatic full-feed work (zzz1212)', () => {
   const code = route(), ui = view();
-  assert.match(code, /get\('offset'\)/);
-  assert.match(code, /slice\(offset, offset \+ limit\)/);
-  assert.match(code, /transform-screener:swr:v6:/);
-  assert.match(code, /offset === 0 \? `transform-screener:swr:v5:/);
-  assert.match(ui, /Scan next 40 unreviewed filings/);
-  assert.match(ui, /\&offset=\$\{extraOffset\}/);
-  assert.match(ui, /setExtraOffset\(o => o \+ page\.analyzed\)/);
+  // every document result is stored per attachment URL; a scan reads only documents not stored yet, newest first, within a budget
+  assert.match(code, /const unread = eligible\.filter\(\(e\) => !stored\.has\(e\.url\)\)/);
+  assert.match(code, /unread\.slice\(0, mode\.readBudget\)/);
+  assert.match(code, /MODE_MORE: ScanMode = \{ feedForce: false, readBudget: 40/);
+  assert.match(code, /transform-screener:swr:v7:/);
+  assert.match(ui, /limit=500&more=1/);
+  assert.match(ui, /Read next \$\{Math\.min\(40, fn\.not_yet_read\)\} unread documents now/);
+  assert.doesNotMatch(ui, /&offset=/);
 });
