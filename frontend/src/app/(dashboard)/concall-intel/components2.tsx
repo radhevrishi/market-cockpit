@@ -617,7 +617,7 @@ export function TransformationScreenerTab() {
                     NOT VERIFIED: {d.blockers.slice(0, 4).join(' · ')}
                   </div>
                 )}
-                <a href={`/company-lab?market=IN&tickers=${encodeURIComponent(e.symbol)}`}
+                <a href={`/company-lab?add=IN:${encodeURIComponent(e.symbol)}`}
                    style={{ display: 'inline-block', marginTop: 7, fontSize: 11, color: TF.cyan, fontWeight: 800 }}>
                   Examine financials, valuation and trend in Company Lab →
                 </a>
