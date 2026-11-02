@@ -325,7 +325,7 @@ export function TransformationScreenerTab() {
 
   const load = useCallback(async (d: number, force = false) => {
     const requestId = ++requestSeq.current;
-    if (force) { refreshStartedAt.current = Date.now(); setExtraOffset(80); setMoreNote(null); }
+    if (force) { refreshStartedAt.current = Date.now(); setMoreNote(null); }
     setLoading(true); setErr(null);
     try {
       // An uncached force refresh is a bounded request; the backend completes
@@ -355,6 +355,9 @@ export function TransformationScreenerTab() {
         pendingSince.current = null;
         setBuilding(false);
         setData(j);
+        // First batch can be cut short by the server time budget: start at the
+        // number actually examined, NOT the requested limit of 80.
+        if (!j.error) setExtraOffset(j.analyzed);
         if (j.error) setErr(j.error);
       }
     } catch (e) {
@@ -381,7 +384,7 @@ export function TransformationScreenerTab() {
     }
   }, []);
 
-  useEffect(() => { refreshStartedAt.current = null; pendingSince.current = null; setExtraOffset(80); setMoreNote(null); setData(null); setBuilding(false); void load(days); }, [days, load]);
+  useEffect(() => { refreshStartedAt.current = null; pendingSince.current = null; setExtraOffset(0); setMoreNote(null); setData(null); setBuilding(false); void load(days); }, [days, load]);
   // A pending scan is not an empty feed: poll the shared cached result
   // without another forced extraction. Avoid overlap while fetching.
   useEffect(() => {
