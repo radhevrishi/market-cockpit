@@ -666,6 +666,12 @@ export function TransformationScreenerTab() {
                 <div style={{ fontSize: 10, color: assessRadarQuote(e.evidence_quote).quality === 'USABLE' ? TF.green : TF.amber, marginTop: 5 }}>
                   Excerpt quality: {assessRadarQuote(e.evidence_quote).quality.toLowerCase()} · text screen only, not financial confirmation
                 </div>
+                {e.evidence_record && (
+                  <div style={{ fontSize: 10, color: TF.amber, marginTop: 5, lineHeight: 1.5 }}>
+                    Evidence ledger · speaker: {e.evidence_record.attribution.toLowerCase()} · period: {e.evidence_record.fiscal_period || 'not established'} · segment: not established · {e.evidence_record.verification.replaceAll('_', ' ').toLowerCase()}
+                    <div style={{ color: TF.dim }}>Still missing: {e.evidence_record.missing.slice(0, 4).join(' · ')}</div>
+                  </div>
+                )}
                 <div style={{ fontSize: 11, marginTop: 5, lineHeight: 1.5, color: TF.muted }}>
                   <strong style={{ color: TF.text2 }}>Next check:</strong> {d.nextCheck}
                 </div>
