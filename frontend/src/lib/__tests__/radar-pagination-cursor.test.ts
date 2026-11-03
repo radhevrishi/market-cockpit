@@ -16,7 +16,7 @@ test('no offset cursor: the next read always starts at the newest unread documen
 test('server reads unread documents only, stores each result, and counts what stayed unread', () => {
   const src = readFileSync(join(__dirname, '..', '..', 'app/api/v1/concall-intel/transformation-screener/route.ts'), 'utf8');
   assert.match(src, /const stored = await readDocResults\(eligible\.map\(\(e\) => e\.url\)\)/);
-  assert.match(src, /unread\.slice\(0, mode\.readBudget\)/);
+  assert.match(src, /\[\.\.\.unread, \.\.\.refresh\]\.slice\(0, mode\.readBudget\)/);   // zzz1224: unread first, then the coverage backfill
   assert.match(src, /kvSet\(DOC_KEY\(url\), res, ttl\)/);
   assert.match(src, /if \(!res\) \{ funnel\.not_yet_read\+\+; continue; \}/);
   assert.match(src, /analyzed: funnel\.read_full/);

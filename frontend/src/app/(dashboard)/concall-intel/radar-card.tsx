@@ -7,11 +7,15 @@ import type { ConvictionEntry } from '@/lib/conviction-beats';
 import { TF, TFM, CONV_TIER_COLOR } from './constants';
 import { radarDecision } from '@/lib/concall-radar-decision';
 
-const LANE_META: Record<string, { label: string; color: string; tip: string }> = {
-  INFLECTION: { label: 'Earnings inflection', color: '#10B981', tip: 'The change is already in reported numbers: realised proof in the document AND growth in the latest results.' },
-  EARLY: { label: 'Early transformation', color: '#0EA5E9', tip: 'Capacity, customers, orders or approvals are moving, but the reported numbers do not show it yet.' },
-  NONE: { label: 'No clear transformation', color: '#94A3B8', tip: 'Keyword mentions only, no milestone evidence, or a cautious document.' },
+// zzz1224 — the card's colour and label follow the research state (radar-transformation.ts)
+export const STATE_META: Record<string, { label: string; color: string; tip: string }> = {
+  EARNINGS_POWER: { label: 'Earnings-power change confirmed', color: '#10B981', tip: 'A measured shift (e.g. share of higher-value products) large enough to show in consolidated results, and results growing. That the change caused the growth is not proven.' },
+  COMMERCIAL: { label: 'Commercial change confirmed', color: '#0EA5E9', tip: 'Customers, orders or production of the new thing are real; earnings effect not yet visible.' },
+  EMERGING: { label: 'Emerging change (pre-earnings)', color: '#8B5CF6', tip: 'An early milestone (first order, approval, a turned-around unit, a large capacity step). Size or attribution still unknown.' },
+  ROUTINE: { label: 'Ordinary business', color: '#94A3B8', tip: 'A real event, but ordinary business: product variants, normal capacity, a small order, margin commentary.' },
+  INSUFFICIENT: { label: 'Insufficient evidence', color: '#94A3B8', tip: 'Plans, a capability, a slide fragment, or an old milestone — nothing to judge yet.' },
 };
+const GATE_ICON: Record<string, string> = { PASS: '✓', FAIL: '✗', UNKNOWN: '?' };
 const TONE_COLOR: Record<string, string> = { POSITIVE: '#10B981', MIXED: '#F59E0B', NEGATIVE: '#EF4444', NEUTRAL: '#94A3B8' };
 const VERDICT_COLOR: Record<string, string> = {
   STRONGER_LATEST: '#10B981', NOT_UNDERWRITTEN: '#64748B', STRETCHED: '#EF4444', ACCELERATING: '#10B981', GROWING: '#10B981', SLOWING: '#F59E0B', DECLINING: '#EF4444', UNKNOWN: '#94A3B8',
@@ -40,7 +44,8 @@ export function RadarCard({ e, rank, bench, inBook, capCr, showFullSignals }: {
   e: TransformScreenEntry; rank: number; bench: ConvictionEntry | undefined; inBook: boolean; capCr: number | null; showFullSignals: boolean;
 }) {
   const ins = e.insight;
-  const lane = LANE_META[ins?.lane || 'NONE'];
+  const tr = ins?.transformation;
+  const lane = STATE_META[tr?.state || 'INSUFFICIENT'];
   const d = radarDecision(e);
   const dColor = d.queue === 'RESEARCH' ? TF.green : d.queue === 'RISK' ? TF.red : d.queue === 'UNVERIFIED' ? TF.dim : TF.amber;
   const role = e.quote_role || (e.evidence_record?.attribution === 'COMPANY_DOCUMENT' ? 'COMPANY' : e.evidence_record?.attribution) || 'UNKNOWN';
@@ -56,7 +61,7 @@ export function RadarCard({ e, rank, bench, inBook, capCr, showFullSignals }: {
           <span style={{ fontSize: 16, fontWeight: 900, color: TF.text }}>{e.symbol}</span>
           <span style={{ fontSize: 11.5, color: TF.muted, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.company_name}</span>
           <span title={lane.tip} style={{ fontSize: 10, fontWeight: 900, padding: '2px 8px', borderRadius: 999, color: '#fff', background: lane.color }}>{lane.label}</span>
-          {ins?.best && <span title={`Passes every "best" rule: ${ins.bestWhy.join(', ')}`} style={{ fontSize: 10, fontWeight: 900, padding: '2px 8px', borderRadius: 999, color: '#7C2D12', background: '#FDE68A' }}>★ Best</span>}
+          {ins?.best && <span title={`On the transformation shortlist: no eligibility gate failed. ${ins.bestWhy.join(', ')}`} style={{ fontSize: 10, fontWeight: 900, padding: '2px 8px', borderRadius: 999, color: '#7C2D12', background: '#FDE68A' }}>★ Shortlist</span>}
           {ins?.promising && <span title="Passes every best rule except one: the document has a contradiction (a positive and a negative statement) that must be read and reconciled first" style={{ fontSize: 10, fontWeight: 900, padding: '2px 8px', borderRadius: 999, color: '#92400E', border: '1px solid #F59E0B' }}>◐ Promising — reconcile first</span>}
           {e.tone && <span title={`Management tone read from the document: ${e.tone_pos ?? 0} positive and ${e.tone_neg ?? 0} negative phrases`} style={{ fontSize: 10, fontWeight: 800, color: TONE_COLOR[e.tone] || TF.dim }}>● {e.tone.toLowerCase()} tone</span>}
           {inBook && <span style={{ fontSize: 9.5, fontWeight: 900, padding: '1px 6px', borderRadius: 3, border: '1px solid #34D399', color: '#047857' }}>📗 in my book</span>}
@@ -64,14 +69,41 @@ export function RadarCard({ e, rank, bench, inBook, capCr, showFullSignals }: {
           <span style={{ fontSize: 10, color: TF.dim, ...TFM }}>{capCr != null ? `₹${Math.round(capCr).toLocaleString('en-IN')} Cr` : 'size n/a'}</span>
           {st != null && <span title="Weekly Stage Analysis (completed weeks)" style={{ fontSize: 10, fontWeight: 800, color: st === 2 ? TF.green : st === 4 ? TF.red : TF.dim }}>Stage {st}</span>}
         </div>
-        <div style={{ textAlign: 'right' }} title="Transformation quality 0–100: lane, tone, management proof, results, guidance and valuation together. Research priority, not a buy rating.">
-          <div style={{ fontSize: 20, fontWeight: 900, color: lane.color, ...TFM, lineHeight: 1 }}>{ins?.bestScore ?? '—'}</div>
-          <div style={{ fontSize: 8.5, color: TF.dim, letterSpacing: '0.5px' }}>QUALITY</div>
-        </div>
+        {tr && (
+          <div style={{ textAlign: 'right' }} title="Confidence in this reading: HIGH when every eligibility gate passes, MEDIUM with one unknown, LOW otherwise. The list is ranked by research state, then size, then confidence — not a score.">
+            <div style={{ fontSize: 12, fontWeight: 900, color: lane.color, lineHeight: 1.1 }}>{tr.confidence.toLowerCase()} confidence</div>
+            <div style={{ fontSize: 9, color: TF.dim }}>{tr.proofStage ? `proof stage: ${tr.proofStage}` : 'no proof stage'}</div>
+          </div>
+        )}
       </div>
 
-      {/* line 2 — one sentence */}
-      {ins && <div style={{ fontSize: 12, color: TF.text2, marginTop: 6, lineHeight: 1.5 }}>{ins.headline}</div>}
+      {/* zzz1224 — the card starts with the thesis and the evidence, in plain words */}
+      {tr ? (
+        <div style={{ marginTop: 7, display: 'flex', flexDirection: 'column', gap: 5 }}>
+          <div style={{ fontSize: 12, color: TF.text2, lineHeight: 1.5 }}>
+            <b style={{ color: TF.text }}>Transformation thesis:</b> {tr.mechanismWord}. {tr.thesis.whatChanges}{' '}
+            <span style={{ color: TF.muted }}>Earnings impact: {tr.thesis.earningsImpact}</span>
+          </div>
+          <div style={{ fontSize: 11.5, color: TF.text2, lineHeight: 1.5 }}>
+            <b style={{ color: TF.text }}>Evidence:</b> “{tr.evidence.quote.length > 260 ? `${tr.evidence.quote.slice(0, 260)}…` : tr.evidence.quote}”
+            <span style={{ color: TF.dim, fontSize: 10.5 }}> — {e.quote_speaker ? `${e.quote_speaker}, ` : ''}{ROLE_WORD[role] || 'speaker unknown'} · {date || 'date n/a'} · {tr.evidence.actual === 'ACTUAL' ? 'achieved' : 'plan'} · {tr.evidence.scope === 'UNKNOWN' ? 'scope not stated' : tr.evidence.scope.toLowerCase().replace('_', ' ')}</span>
+            {tr.evidence.entity.ok !== true && <div style={{ color: TF.amber, fontSize: 10.5 }}>{tr.evidence.entity.note}</div>}
+          </div>
+          {tr.state !== 'ROUTINE' && tr.state !== 'INSUFFICIENT' && (
+            <div style={{ fontSize: 10.5, color: TF.muted, lineHeight: 1.5 }}>
+              <b style={{ color: TF.red }}>Key risk:</b> {tr.thesis.keyRisk} · <b style={{ color: TF.cyan }}>Next milestone:</b> {tr.thesis.nextMilestone}
+              {tr.thesis.sectorCheck && <div style={{ color: TF.dim }}>{tr.thesis.sectorCheck}</div>}
+            </div>
+          )}
+          {tr.contradiction && <div style={{ fontSize: 10.5, color: TF.amber }}>⚠ {tr.contradiction}</div>}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+            {tr.gates.map((g) => (
+              <span key={g.key} title={g.note} style={{ fontSize: 9.5, fontWeight: 700, padding: '1px 6px', borderRadius: 4, border: `1px solid ${TF.border}`,
+                color: g.result === 'PASS' ? TF.green : g.result === 'FAIL' ? TF.red : TF.amber }}>{GATE_ICON[g.result]} {g.label}</span>
+            ))}
+          </div>
+        </div>
+      ) : ins && <div style={{ fontSize: 12, color: TF.text2, marginTop: 6, lineHeight: 1.5 }}>{ins.headline}</div>}
 
       {/* line 3 — the three checks against market data */}
       {ins && (
@@ -92,8 +124,8 @@ export function RadarCard({ e, rank, bench, inBook, capCr, showFullSignals }: {
         </div>
       )}
 
-      {/* line 4 — the proof, with who said it */}
-      {e.evidence_quote && quoteUsable && role !== 'ANALYST' ? (
+      {/* line 4 — the proof, with who said it (zzz1224: only when the thesis block above is missing — older cached scans) */}
+      {tr ? null : e.evidence_quote && quoteUsable && role !== 'ANALYST' ? (
         <div style={{ fontSize: 11.5, color: TF.text2, marginTop: 8, lineHeight: 1.5, borderLeft: `2px solid ${TF.cyan}`, paddingLeft: 8 }}>
           “<span style={{ display: '-webkit-inline-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{e.evidence_quote}</span>”
           <span style={{ color: TF.dim, fontSize: 10.5 }}> — {e.quote_speaker ? `${e.quote_speaker}, ` : ''}{ROLE_WORD[role] || 'speaker unknown'}{e.evidence_record?.fiscal_period ? ` · ${e.evidence_record.fiscal_period}` : ''}</span>
@@ -121,7 +153,9 @@ export function RadarCard({ e, rank, bench, inBook, capCr, showFullSignals }: {
         <div style={{ fontSize: 10.5, color: TF.muted, lineHeight: 1.6, marginTop: 6 }}>
           <div><b style={{ color: TF.text2 }}>Review queue:</b> {d.label} — {d.reason}</div>
           <div><b style={{ color: TF.text2 }}>Next check:</b> {d.nextCheck}</div>
-          {e.evidence_record && <div><b style={{ color: TF.text2 }}>Evidence:</b> {ROLE_WORD[role] || 'speaker unknown'} · period {e.evidence_record.fiscal_period || 'not stated in the quote'} · {e.evidence_record.verification.replace(/_/g, ' ').toLowerCase()}{e.evidence_record.missing.length ? ` · missing: ${e.evidence_record.missing.slice(0, 3).join(', ')}` : ''}</div>}
+          {tr && tr.evidence.quote !== e.evidence_quote && e.evidence_quote && <div><b style={{ color: TF.text2 }}>Keyword proof sentence:</b> “{e.evidence_quote.slice(0, 240)}”</div>}
+          {e.change_lines && e.change_lines.length > 0 && <div><b style={{ color: TF.text2 }}>Change lines read from management text:</b>{e.change_lines.slice(0, 5).map((l, i) => <div key={i} style={{ paddingLeft: 8 }}>• {l.slice(0, 220)}{l.length > 220 ? '…' : ''}</div>)}</div>}
+          {e.evidence_record && <div><b style={{ color: TF.text2 }}>Evidence record:</b> {ROLE_WORD[role] || 'speaker unknown'} · period {e.evidence_record.fiscal_period || 'not stated in the quote'} · {e.evidence_record.verification.replace(/_/g, ' ').toLowerCase()}{e.evidence_record.missing.length ? ` · missing: ${e.evidence_record.missing.slice(0, 3).join(', ')}` : ''}</div>}
           {e.speakers_parsed != null && <div><b style={{ color: TF.text2 }}>Transcript:</b> {e.speakers_parsed ? `speakers identified; only management answers scored${e.analyst_share != null ? ` (analyst questions ${e.analyst_share}% of the text, ignored)` : ''}` : 'speakers could not be identified; whole text scored'}</div>}
           <div><b style={{ color: TF.text2 }}>Signals:</b> {e.patterns.slice(0, 8).map((p) => `${p.label}${p.hits > 1 ? ` ×${p.hits}` : ''}`).join(' · ') || 'none'} · proof step {e.evidence_score}/11 ({e.evidence_label}) · keyword score {e.transformation_score}</div>
           {e.caution_flags && e.caution_flags.length > 0 && <div style={{ color: TF.amber }}><b>Caution phrases:</b> {e.caution_flags.slice(0, 6).join(' · ')}</div>}

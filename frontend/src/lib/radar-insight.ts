@@ -12,6 +12,8 @@
 // "Best" is a strict, explainable filter on top. Rules only, no AI; every verdict carries its reason. Pure.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { classifyTransformation, type Transformation } from './radar-transformation';
+
 export interface RadarFacts {
   mcCr?: number | null;      // market cap, ₹ crore (India) / $ million (US)
   pe?: number | null;
@@ -65,6 +67,8 @@ export interface RadarInsight {
   bestWhy: string[];      // what is good
   blockers: string[];     // what keeps it out of "best"
   headline: string;       // one plain sentence for the card
+  /** zzz1224 — is it a real business transformation? mechanism, gates, research state, thesis (radar-transformation.ts) */
+  transformation: Transformation;
 }
 
 export interface InsightEntry {
@@ -82,6 +86,10 @@ export interface InsightEntry {
   order_value_cr?: number | null;               // largest order / order-book value management states, ₹ crore
   evidence_quote?: string | null;               // the sentence that proves the top evidence rung
   filing_datetime?: string | null;
+  symbol?: string | null;
+  company_name?: string | null;
+  /** zzz1224 — sentences from management's text that state a structural change (picked when the document is read) */
+  change_lines?: string[] | null;
 }
 
 const STRUCTURAL = new Set(['customer', 'capacity', 'cdmo', 'export', 'recurring', 'acqui', 'mix', 'debt', 'parent', 'tam', 'tech', 'utilisation']);
@@ -279,54 +287,53 @@ export function radarInsight(e: InsightEntry, f: RadarFacts | null | undefined, 
   // zzz1219: a business change needs drivers in the document AND a sentence that itself proves a completed, current event
   const transformation = structural >= 2 && ev >= 3 && proof.kind === 'MILESTONE';
 
+  // zzz1224 — the lane now follows the transformation state, not keyword counts: ordinary business (a colour grade, normal
+  // capacity, a small order, margin commentary) is never a transformation, however clean the sentence.
+  const tr = classifyTransformation(
+    { symbol: e.symbol, company_name: e.company_name, evidence_label: e.evidence_label, evidence_quote: e.evidence_quote, change_lines: e.change_lines, quote_role: e.quote_role, filing_datetime: e.filing_datetime, review_queue: e.review_queue },
+    { salesCr: facts.salesCr, industry: facts.industry, sector: facts.sector, resultsVerdict: results.verdict, lowBase: results.lowBase },
+    now,
+  );
   let lane: Lane = 'NONE', laneReason: string;
   if (negativeTone || cut || caution >= 2) laneReason = cut ? 'Guidance cut or lowered outlook.' : 'Cautious document tone.';
-  else if (proof.kind !== 'MILESTONE' && structural >= 2 && ev >= 3) laneReason = proof.kind === 'RESULTS_COMMENTARY' ? `Results commentary only — ${proof.reason}` : `Not proven: ${proof.reason}`;
-  else if (ev >= 7 && numbersUp && quoteOk && transformation) {
-    lane = 'INFLECTION';
-    laneReason = `Business change in the document (${e.evidence_label || 'results'}, quoted from management) and growth in the reported numbers — that the change caused the growth is not proven.`;
-  } else if (transformation) {
-    lane = 'EARLY';
-    laneReason = ev >= 7 && numbersUp && !quoteOk ? 'Growth in the numbers, but the proof is not a clean management statement.'
-      : ev >= 7 ? 'Realised proof in the document, but the reported numbers do not show it yet.'
-      : numbersUp ? `New business under way (${e.evidence_label || 'milestones'}) on top of results that already grow.`
-      : `Change under way (${e.evidence_label || 'milestones'}); not yet in the numbers.`;
-  } else laneReason = structural < 2 ? 'Fewer than two business-change drivers — keyword mentions only.' : 'No milestone evidence yet (plans or talk only).';
+  else if (tr.state === 'EARNINGS_POWER') { lane = 'INFLECTION'; laneReason = tr.stateReason; }
+  else if (tr.state === 'COMMERCIAL' || tr.state === 'EMERGING') { lane = 'EARLY'; laneReason = tr.stateReason; }
+  else laneReason = tr.stateReason;
+  void transformation; void quoteOk; void structural; void ev;
 
   const openConflict = e.review_queue === 'RECONCILE' || e.review_queue === 'RISK';
   const bestWhy: string[] = [], blockers: string[] = [];
+  // zzz1224 — the 0–100 score is kept only for older readers; the radar ranks by research state, size and confidence
   let score = 0;
-  if (lane === 'INFLECTION') { score += 35; bestWhy.push('change and growth both seen'); } else if (lane === 'EARLY') { score += 25; bestWhy.push('change under way'); } else blockers.push(laneReason);
-  // zzz1219: tone is a gate for "best", not points — the score rewards recency, proof and economic size instead
-  if (tone === 'POSITIVE') bestWhy.push('positive management tone'); else if (tone === 'MIXED') blockers.push('mixed tone'); else blockers.push(tone ? `${tone.toLowerCase()} tone` : 'tone not read');
+  if (lane === 'INFLECTION') { score += 35; bestWhy.push('change visible in revenue mix and results'); } else if (lane === 'EARLY') { score += 25; bestWhy.push(tr.stateWord.toLowerCase()); } else blockers.push(laneReason);
+  if (tone === 'POSITIVE') bestWhy.push('positive management tone'); else if (tone === 'MIXED') blockers.push('mixed tone'); else if (tone === 'NEGATIVE') blockers.push('negative tone');
   const ageD = e.filing_datetime ? (now.getTime() - new Date(e.filing_datetime).getTime()) / 86_400_000 : NaN;
   if (Number.isFinite(ageD) && ageD <= 14) { score += 10; bestWhy.push('filed in the last 2 weeks'); } else if (Number.isFinite(ageD) && ageD <= 35) score += 5;
-  if (quoteOk) { score += 15; bestWhy.push('proof quoted from management'); } else blockers.push(e.quote_role === 'ANALYST' ? 'proof is an analyst question' : 'no clean management quote');
-  if (results.verdict === 'STRONGER_LATEST') { score += results.lowBase ? 8 : 15; bestWhy.push('latest quarter stronger'); } else if (results.verdict === 'GROWING') score += 8; else if (results.verdict === 'UNKNOWN') blockers.push('results not checked'); else blockers.push(`results ${results.verdict.toLowerCase()}`);
+  if (tr.materiality.level === 'LARGE') { score += 15; bestWhy.push('large against the business'); } else if (tr.materiality.level === 'MEDIUM') score += 8;
+  else if (lane !== 'NONE') blockers.push('size against the business unknown');
+  if (results.verdict === 'STRONGER_LATEST') score += results.lowBase ? 8 : 15; else if (results.verdict === 'GROWING') score += 8;
   if (results.lowBase) blockers.push('possible low-base effect');
   if (guidance.verdict === 'RAISED') { score += 10; bestWhy.push('guidance raised'); } else if (guidance.verdict === 'LOWERED') blockers.push('guidance lowered');
-  if (valuation.gap === 'STRETCHED') { score -= 5; blockers.push('expensive on trailing figures'); }
-  if (materiality.pctOfSales != null && materiality.pctOfSales >= 25) { score += 10; bestWhy.push(`orders ≈ ${materiality.pctOfSales}% of sales`); }
-  else if (materiality.pctOfSales != null && materiality.pctOfSales >= 10) score += 5;
   if (guidance.verdict === 'NOT_COMPARABLE') blockers.push('guidance not comparable with reported figures');
-  if (structural >= 3) score += 5;
-  if (caution >= 1) score -= 5;
+  if (tr.evidence.entity.ok !== true && lane !== 'NONE') blockers.push('event not clearly the listed company’s');
+  if (tr.contradiction) blockers.push('consolidated figure weakened');
   if (openConflict) blockers.push('contradiction in the document not reconciled');
-  score = Math.max(0, Math.min(100, score));
-  const passesAll = lane !== 'NONE' && proof.kind === 'MILESTONE' && tone === 'POSITIVE' && quoteOk && !cut
-    && results.verdict !== 'DECLINING' && results.verdict !== 'SLOWING'
-    && valuation.gap !== 'STRETCHED' && score >= 60;
+  score = Math.max(0, Math.min(100, score + (tr.confidence === 'HIGH' ? 10 : tr.confidence === 'MEDIUM' ? 5 : 0)));
+  // valuation is a separate check (state 4 "investable" is never decided here) — shown, not used to admit or drop
+  if (valuation.gap === 'STRETCHED' && lane !== 'NONE') blockers.push('expensive on trailing figures (valuation is a separate check)');
+  const passesAll = lane !== 'NONE' && tr.shortlist && !negativeTone && !cut;
   const best = passesAll && !openConflict;
   const promising = passesAll && openConflict;
 
-  const laneWord = lane === 'INFLECTION' ? 'Earnings inflection' : lane === 'EARLY' ? 'Early transformation' : 'No clear transformation';
+  const laneWord = lane === 'NONE' ? (tr.state === 'ROUTINE' ? 'Ordinary business' : tr.state === 'INSUFFICIENT' ? 'Insufficient evidence' : 'No clear transformation') : tr.stateWord;
   const saysResults = /results|numbers/.test(laneReason) && numbersUp;
   const rWord = results.verdict === 'STRONGER_LATEST' ? 'Latest quarter stronger than the year.' : results.verdict === 'GROWING' ? 'Results growing.' : results.verdict === 'SLOWING' ? 'Results slowing.' : 'Results falling.';
   const headline = `${laneWord}: ${laneReason}${results.verdict !== 'UNKNOWN' && !saysResults ? ` ${rWord}` : ''}`;
   return {
     lane, laneReason, results, guidance, valuation, materiality, proof,
-    checks: { transformation, growth: numbersUp, causalLink: false },
+    checks: { transformation: lane !== 'NONE', growth: numbersUp, causalLink: false },
     best, promising, bestScore: score, bestWhy,
     blockers: lane === 'NONE' ? blockers : blockers.filter((b) => b !== laneReason), headline,
+    transformation: tr,
   };
 }

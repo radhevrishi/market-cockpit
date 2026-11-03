@@ -29,7 +29,8 @@ const goodEntry = {
   patterns: [{ key: 'capacity' }, { key: 'customer' }, { key: 'mix' }],
   evidence_score: 9, evidence_breadth: 4, evidence_label: 'Margin improvement realised',
   caution_level: 0, caution_flags: [], tone: 'POSITIVE', bullish_tier: 'BULLISH', quote_role: 'MANAGEMENT', quote_quality: 'USABLE',
-  evidence_quote: 'EBITDA margin improved to 18% as the new plant ramped up to 85% utilisation this quarter.',
+  // zzz1224 — a measured mix shift: the kind of change that can confirm earnings power
+  evidence_quote: 'The share of value-added products rose from 35% to 60% of revenue this quarter, lifting EBITDA margin to 18%.',
 };
 const goodFacts: RadarFacts = { revQ: 32, revTTM: 18, epsQ: 55, epsTTM: 40, pe: 30, perf6M: 12, perf1Y: 40, guidance: { revision: 'RAISED', display: 'revenue +25% FY27', period: 'FY27', atRisk: false } };
 
@@ -134,7 +135,7 @@ test('18 lane: milestones but numbers not showing = early transformation', () =>
   assert.equal(i.lane, 'EARLY');
 });
 test('19 lane: one keyword family = no clear transformation', () => {
-  assert.equal(radarInsight({ ...goodEntry, patterns: [{ key: 'export' }], evidence_score: 0 }, goodFacts).lane, 'NONE');
+  assert.equal(radarInsight({ ...goodEntry, patterns: [{ key: 'export' }], evidence_score: 0, evidence_quote: 'We are excited about the export opportunities ahead.' }, goodFacts).lane, 'NONE');
 });
 test('20 a guidance cut blocks the lane and "best"', () => {
   const i = radarInsight(goodEntry, { ...goodFacts, guidance: { revision: 'LOWERED', display: 'x', period: 'FY27', atRisk: false } });
@@ -144,10 +145,13 @@ test('20 a guidance cut blocks the lane and "best"', () => {
 test('21 an analyst-question proof can never be "best"', () => {
   const i = radarInsight({ ...goodEntry, quote_role: 'ANALYST' }, goodFacts);
   assert.equal(i.best, false);
-  assert.ok(i.blockers.includes('proof is an analyst question'));
+  assert.equal(i.transformation.gates.find((g) => g.key === 'primary_source')?.result, 'FAIL');
 });
-test('22 an inflection that is expensive on trailing figures is not "best"', () => {
-  assert.equal(radarInsight(goodEntry, { ...goodFacts, pe: 150 }).best, false);
+test('22 zzz1224: valuation is a separate check — an expensive name stays on the transformation shortlist, flagged', () => {
+  const i = radarInsight(goodEntry, { ...goodFacts, pe: 150 });
+  assert.equal(i.best, true);
+  assert.equal(i.valuation.gap, 'STRETCHED');
+  assert.ok(i.blockers.some((b) => /valuation is a separate check/.test(b)));
 });
 
 // ── documents and feeds ────────────────────────────────────────────────────
@@ -222,13 +226,13 @@ test('31 a best card shows open questions as checks; the universe read gets time
 test('32 short windows are cut from the one warm 90-day scan, never a cold feed fetch', () => {
   const route = readFileSync(new URL('../../app/api/v1/concall-intel/transformation-screener/route.ts', import.meta.url), 'utf8');
   assert.match(route, /function baseScanDays\(days: number\): number \{ return days <= 90 \? 90 : days; \}/);
-  assert.match(route, /swr:v9:\$\{scanDays\}/);
+  assert.match(route, /swr:v10:\$\{scanDays\}/);
   assert.match(route, /buildScreen\(req, scanDays,/);
   assert.match(route, /windowPayload\(r\.value\.payload, days, scanDays\)/);
 });
-test('33 NEOGEN: an early-stage name that is expensive on trailing figures is not "best" either', () => {
-  const src = readFileSync(new URL('../radar-insight.ts', import.meta.url), 'utf8');
-  assert.match(src, /valuation\.gap !== 'STRETCHED'/);
+test('33 NEOGEN: valuation never decides the transformation state (state 4 "investable" is not decided by the radar)', () => {
+  const src = readFileSync(new URL('../radar-transformation.ts', import.meta.url), 'utf8');
+  assert.doesNotMatch(src, /\b(pe|perf1Y|perf6M|mcCr)\b/);
 });
 test('34 stored document reads survive a deploy: the key uses a hand-bumped version, never compiled function text', () => {
   const route = readFileSync(new URL('../../app/api/v1/concall-intel/transformation-screener/route.ts', import.meta.url), 'utf8');
@@ -265,7 +269,7 @@ test('39 generic margin expansion is results commentary; a margin change with a 
   const i = radarInsight({ ...goodEntry, evidence_quote: 'Revenue grew 30% and EBITDA margin expanded by 246 basis points.' }, goodFacts, NOW);
   assert.equal(i.lane, 'NONE');
   assert.equal(i.best, false);
-  assert.match(i.laneReason, /Results commentary only/);
+  assert.match(i.laneReason, /operational results|operational improvement/);
 });
 test('40 IIFL: for a lender, new customers and branches are routine growth, not a business change', () => {
   assert.equal(eventProof('Second / third customer or product', 'Opened 105 new branches; 3.5L new customers added', { industry: 'Finance - NBFC' }, NOW).kind, 'RESULTS_COMMENTARY');
@@ -295,7 +299,7 @@ test('44 score: tone is a gate, not points; recency and proof drive the order', 
   const recent = radarInsight({ ...goodEntry, filing_datetime: '2026-10-30T10:00:00Z' }, goodFacts, NOW);
   const old = radarInsight({ ...goodEntry, filing_datetime: '2026-08-01T10:00:00Z' }, goodFacts, NOW);
   assert.ok(recent.bestScore > old.bestScore);
-  assert.equal(radarInsight({ ...goodEntry, tone: 'MIXED' }, goodFacts, NOW).best, false);
+  assert.equal(radarInsight({ ...goodEntry, tone: 'NEGATIVE' }, goodFacts, NOW).best, false);
 });
 test('45 BETA: slide chart text is not a proof sentence', () => {
   assert.equal(eventProof('Margin improvement realised', '- 10 20 30 40 50 60 70 H1 FY25H1 FY26H1 FY27 EBITDA% EBITDA Margins.coupled with expanding EBITDA margins with new customers', {}, NOW).kind, 'NOT_PROVEN');

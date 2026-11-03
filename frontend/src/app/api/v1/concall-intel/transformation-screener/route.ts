@@ -27,6 +27,7 @@ import { kvMGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import { secretFromRequest } from '@/lib/request-secret';
 import { parseTranscript, speakerOf, documentTone, tierFromTone, type DocTone } from '@/lib/radar-speakers';
 import { radarInsight, orderValueCr, type RadarFacts, type RadarInsight } from '@/lib/radar-insight';
+import { changeLinesOf } from '@/lib/radar-transformation';
 import { radarDecision } from '@/lib/concall-radar-decision';
 import { assessRadarQuote } from '@/lib/concall-radar-decision';
 import {
@@ -66,6 +67,10 @@ export interface TransformScreenEntry {
   evidence_label: string;
   evidence_quote: string;      // zzz462 — exact proof sentence (verifiability)
   evidence_breadth: number;    // zzz462 — distinct proof rungs that fired (depth)
+  /** zzz1224 — management sentences that state a structural change (share shifts, first orders, new lines, capacity steps) */
+  change_lines?: string[];
+  /** zzz1224 — version of the change-line reader the stored entry was built with */
+  lines_v?: number;
   caution_level: number;       // zzz467 — 0 none / 1 mixed / 2 cautious (guidance cut / negatives)
   caution_flags: string[];     // zzz467 — the negatives found
   stage: number;
@@ -205,6 +210,10 @@ const DOC_TTL_TOO_LARGE_S = 14 * 24 * 3600;
 const DOC_TTL_UNREADABLE_S = 24 * 3600;
 const READ_MAX_BYTES = 25 * 1024 * 1024;    // presentations are 5–11 MB; pdf-parse reads a 10 MB deck in < 1 s
 interface DocResult { v: RadarDocVerdict; entry?: TransformScreenEntry; at: string }
+// zzz1224 — the change-line reader was added after many documents were stored. Those stored reads keep serving (no key
+// change, nothing thrown away); the scheduled coverage job re-reads them, after any unread document, to add the lines.
+const LINES_V = 1;
+const needsLines = (r: DocResult | undefined) => !!r?.entry && r.v.analyzable && r.entry.lines_v !== LINES_V;
 
 /** Download budget per scan: a reader's background refresh, a manual "read next batch", or the scheduled coverage job. */
 type ScanMode = { feedForce: boolean; readBudget: number; timeBudgetMs: number };
@@ -252,7 +261,7 @@ async function handle(req: NextRequest, days: number, limit: number, minPatterns
   const scanDays = baseScanDays(days);
   try {
     const r = await swrGet<Built>({
-      key: `transform-screener:swr:v9:${scanDays}:${minPatterns}`, freshMs: SCREEN_FRESH_MS, maxStaleMs: SCREEN_MAX_STALE_MS, force: fresh || more || coverage,
+      key: `transform-screener:swr:v10:${scanDays}:${minPatterns}`, freshMs: SCREEN_FRESH_MS, maxStaleMs: SCREEN_MAX_STALE_MS, force: fresh || more || coverage,
       build: () => buildScreen(req, scanDays, minPatterns, mode),
       isUsable: (b) => !!b && b.cacheable,
       waitMs: SCREEN_WAIT_MS + (coverage ? COVERAGE_EXTRA_WAIT_MS : 0),   // the scheduled job may wait for its own scan
@@ -367,6 +376,8 @@ function scoreEntry(f: any, text: string, v: RadarDocVerdict): TransformScreenEn
     evidence_label: t.evidence_label,
     evidence_quote: t.evidence_quote,
     evidence_breadth: t.evidence_breadth,
+    change_lines: changeLinesOf(scoring),
+    lines_v: LINES_V,
     caution_level: t.caution_level,
     caution_flags: t.caution_flags,
     stage: t.stage,
@@ -493,7 +504,9 @@ async function buildScreen(req: NextRequest, days: number, minPatterns: number, 
   // ── step 2: reuse stored results; download only unread documents, newest first, within the budget ──
   const stored = await readDocResults(eligible.map((e) => e.url));
   const unread = eligible.filter((e) => !stored.has(e.url));
-  const toRead = unread.slice(0, mode.readBudget);
+  // the coverage job also re-reads stored documents read before the change-line reader existed (newest first)
+  const refresh = mode === MODE_COVERAGE ? eligible.filter((e) => needsLines(stored.get(e.url))) : [];
+  const toRead = [...unread, ...refresh].slice(0, mode.readBudget);
   const fresh = new Map<string, DocResult>();
   const START = Date.now();
   // Concall PDFs are CPU-heavy to parse in this SAME Node process that serves the terminal: 3 at a time, yield between batches.
@@ -549,10 +562,13 @@ async function buildScreen(req: NextRequest, days: number, minPatterns: number, 
     e.market_cap_cr = fx?.mcCr ?? null;
     e.insight = radarInsight({ ...e, quote_quality: e.evidence_record?.quote_quality ?? null, review_queue: radarDecision(e).queue }, fx);
   }
-  ranked.sort((a, b) => Number(!!b.insight?.best) - Number(!!a.insight?.best) || Number(!!b.insight?.promising) - Number(!!a.insight?.promising) || (b.insight?.bestScore ?? 0) - (a.insight?.bestScore ?? 0) || b.transformation_score - a.transformation_score);
+  // zzz1224 — order: shortlist, then to-reconcile, then research state → size → confidence → recency (an ordinal rank, no false precision)
+  ranked.sort((a, b) => Number(!!b.insight?.best) - Number(!!a.insight?.best) || Number(!!b.insight?.promising) - Number(!!a.insight?.promising)
+    || (b.insight?.transformation?.rankKey ?? 0) - (a.insight?.transformation?.rankKey ?? 0) || b.transformation_score - a.transformation_score);
   funnel.with_signal = ranked.length;
   // zzz1219c — a keyword pattern is not a business change: also count documents whose proof sentence holds up
   funnel.with_proof = ranked.filter((e) => e.insight?.lane && e.insight.lane !== 'NONE').length;
+  funnel.lines_pending = eligible.filter((e) => needsLines(fresh.get(e.url) || stored.get(e.url))).length;
   // read in full, no transformation pattern: only substantive documents now (never a notice or covering letter)
   const scannedNoSignal: ScannedNoSignal[] = entries
     .filter((e) => e.pattern_count < minPatterns)

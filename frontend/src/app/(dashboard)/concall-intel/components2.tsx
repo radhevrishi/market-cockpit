@@ -1,16 +1,16 @@
 'use client';
 
 // Moved verbatim out of page.tsx (pure refactor, no behaviour change).
-import { type ReactNode, useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { type ReactNode, type CSSProperties, useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { readPortfolioSymbols, normSymbol, type SymbolSource, classifySource, SOURCE_META } from '@/lib/portfolio-symbols';
 import { type ConvictionEntry, readConvictionBeats } from '@/lib/conviction-beats';
 import { readSmallMidPref, writeSmallMidPref, knownCapCr, smallMidCounts, passesSmallMid, SMALL_MID_MAX_CR } from '@/lib/small-mid-filter';
 const RADAR_MIN_CAP_CR = 500; // Microcaps remain available when Small & mid toggle is off.
-import type { TransformationRadarData, TransformScreenPayload } from './types';
+import type { TransformationRadarData, TransformScreenPayload, TransformScreenEntry } from './types';
 import { TF, TFM, TIER_COLOR, CONV_TIER_COLOR } from './constants';
 import { velocityColor } from './helpers';
 import { FeedStatusNote } from './FeedStatusNote';
-import { RadarCard } from './radar-card';   // zzz1214
+import { RadarCard, STATE_META } from './radar-card';   // zzz1214, zzz1224
 import { radarDecision, type RadarQueue } from '@/lib/concall-radar-decision';
 
 export function TfSection({ n, title, lede, children }: { n: string; title: string; lede?: ReactNode; children: ReactNode }) {
@@ -496,6 +496,9 @@ export function TransformationScreenerTab() {
     .filter((e) => !bestOnly || e.insight?.best || e.insight?.promising)
     .filter((e) => laneFilter === 'ALL' || (e.insight?.lane ?? 'NONE') === laneFilter)
     .filter((e) => decisionFilter === 'ALL' || radarDecision(e).queue === decisionFilter);
+  const shortlist = scopedEntries.filter((e) => e.insight?.best || e.insight?.promising);
+  const ordinaryRows = scopedEntries.filter((e) => e.insight?.transformation?.state === 'ROUTINE');
+  const insufficientRows = scopedEntries.filter((e) => e.insight?.transformation?.state === 'INSUFFICIENT');
   const fn = data?.funnel;
   const routineTotal = fn ? fn.routine.meeting_schedule + fn.routine.call_invite + fn.routine.recording_link + fn.routine.admin_notice + fn.routine.no_attachment : 0;
   const hiddenByFilters = allEntries.length - scopedEntries.length;
@@ -624,17 +627,17 @@ export function TransformationScreenerTab() {
         <div style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '12px 14px' }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, alignItems: 'center' }}>
             <button type="button" onClick={() => setBestPick(!bestOnly)} aria-pressed={bestOnly}
-              title="Best = a real transformation lane, positive management tone, proof quoted from management, results not slowing, guidance not cut, and (for an inflection) not already priced in."
+              title="Transformation shortlist = a structural mechanism (not ordinary business), primary-source evidence, dated and attributable, not routine, a credible size, and no failed gate. Guidance cut or a negative document keeps a name out. Valuation is a separate check."
               style={{ background: bestOnly ? '#FDE68A' : TF.card2, color: bestOnly ? '#7C2D12' : TF.text2, border: `1px solid ${bestOnly ? '#F59E0B' : TF.border}`,
                 borderRadius: 999, fontSize: 11.5, fontWeight: 900, cursor: 'pointer', padding: '7px 12px' }}>
-              {bestOnly ? '★ Best only · ' : '☆ Show best only · '}{bestCount}{promisingCount ? ` + ◐ ${promisingCount} to reconcile` : ''}
+              {bestOnly ? '★ Transformation shortlist · ' : '☆ Show shortlist only · '}{bestCount}{promisingCount ? ` + ◐ ${promisingCount} to reconcile` : ''}
             </button>
             <span style={{ width: 1, height: 18, background: TF.border }} />
             {([
-              ['ALL', 'All lanes', TF.cyan, 'Every company with a signal'],
-              ['INFLECTION', 'Earnings inflection', '#10B981', 'The change is already in the reported numbers'],
-              ['EARLY', 'Early transformation', '#0EA5E9', 'Capacity, customers, orders or approvals moving; not yet in the numbers'],
-              ['NONE', 'No clear transformation', TF.dim, 'Keywords only, no milestones, or cautious'],
+              ['ALL', 'All', TF.cyan, 'Every company with a signal'],
+              ['INFLECTION', 'Earnings-power confirmed', '#10B981', 'A measured shift large enough to show in consolidated results, and results growing'],
+              ['EARLY', 'Emerging / commercial', '#0EA5E9', 'A structural change under way (first orders, approvals, new line in production, large order or capacity step) — not yet in the numbers'],
+              ['NONE', 'Ordinary / insufficient', TF.dim, 'Ordinary business, plans only, or not enough evidence'],
             ] as const).map(([key, label, color, tip]) => (
               <button key={key} type="button" title={tip} onClick={() => setLaneFilter(key)} aria-pressed={laneFilter === key}
                 style={{ background: laneFilter === key ? `color-mix(in srgb, ${color} 18%, transparent)` : TF.card2, color,
@@ -666,7 +669,7 @@ export function TransformationScreenerTab() {
           <div style={{ fontSize: 10.5, color: TF.dim, marginTop: 7, lineHeight: 1.5 }}>
             {/* zzz1219 — each number counts one stage, in order: companies in the window → after SHOW / size → after lane / best / review */}
             {allEntries.length} compan{allEntries.length === 1 ? 'y' : 'ies'} with a signal in this window{data?.signal_documents ? ` (from ${data.signal_documents} documents)` : ''}{hiddenByFilters > 0 ? ` · ${scopedEntries.length} after the SHOW / size filter (${hiddenByFilters} set aside)` : ''} · <b>{entries.length} shown</b> after the lane / best / review filters. Research priority, never a buy signal.
-            {bestOnly && bestCount + promisingCount === 0 && ' No company passes every "best" rule yet — switch it off to see all.'}
+            {bestOnly && bestCount + promisingCount === 0 && ' No company passes the transformation gates in this window — an empty shortlist is a valid answer. Switch it off to see all.'}
           </div>
         </div>
       )}
@@ -757,17 +760,87 @@ export function TransformationScreenerTab() {
         </details>
       )}
 
+      {/* zzz1224 — the shortlist at a glance: one row per company, plain words */}
+      {data && shortlist.length > 0 && <ShortlistTable rows={shortlist} />}
+
       {/* leaderboard — zzz1214 compact cards (radar-card.tsx) */}
       {entries.map((e, i) => (
-        <RadarCard key={`${e.symbol}-${e.filing_datetime}-${i}`} e={e} rank={i + 1} bench={bench[e.symbol?.toUpperCase()]}
-          inBook={sourceOf(e.symbol) === 'portfolio'} capCr={capOf(e.symbol)} showFullSignals={showFullSignals} />
+        <div key={`${e.symbol}-${e.filing_datetime}-${i}`} id={`radar-${String(e.symbol || '').toUpperCase()}`}>
+          <RadarCard e={e} rank={i + 1} bench={bench[e.symbol?.toUpperCase()]}
+            inBook={sourceOf(e.symbol) === 'portfolio'} capCr={capOf(e.symbol)} showFullSignals={showFullSignals} />
+        </div>
       ))}
+
+      {/* zzz1224 — ordinary growth and thin evidence stay visible, folded, never mixed into the shortlist */}
+      {data && !building && <NotTransformations title="Operational improvements / ordinary growth — not structural transformations" rows={ordinaryRows} />}
+      {data && !building && <NotTransformations title="Insufficient evidence — plans, capabilities, slide fragments or old milestones" rows={insufficientRows} />}
 
       {data && entries.length > 0 && (
         <div style={{ ...TFM, fontSize: 9.5, color: TF.dim, lineHeight: 1.6 }}>
-          Quality 0–100 ranks research priority from the lane, management tone, a management-quoted proof, results, guidance and valuation. It is not a buy rating: read the filing, check the latest results and price before acting. Educational, not investment advice.
+          Ranked by research state (earnings-power → commercial → emerging), then size against the business, then confidence, then how recent. A business change and earnings growth are shown separately; the radar never assumes one caused the other, and it does not judge valuation. Research priority, not a buy rating. Educational, not investment advice.
         </div>
       )}
     </div>
+  );
+}
+
+// ── zzz1224 — shortlist table and the folded "not a transformation" lists ──
+function ShortlistTable({ rows }: { rows: TransformScreenEntry[] }) {
+  const cell: CSSProperties = { padding: '6px 8px', borderTop: `1px solid ${TF.border}`, verticalAlign: 'top', fontSize: 11, lineHeight: 1.45, color: TF.text2 };
+  return (
+    <div style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '10px 12px', overflowX: 'auto' }}>
+      <div style={{ fontSize: 11, fontWeight: 900, color: TF.text, letterSpacing: '0.3px', marginBottom: 6 }}>TRANSFORMATION SHORTLIST · {rows.length}</div>
+      <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 880 }}>
+        <thead>
+          <tr>{['Company', 'Old business', 'What changes', 'Potential earnings impact', 'Proof stage', 'Key risk', 'Next milestone'].map((h) => (
+            <th key={h} style={{ textAlign: 'left', fontSize: 9.5, color: TF.dim, fontWeight: 800, padding: '4px 8px', letterSpacing: '0.3px' }}>{h.toUpperCase()}</th>
+          ))}</tr>
+        </thead>
+        <tbody>
+          {rows.map((e, i) => {
+            const t = e.insight?.transformation;
+            const meta = STATE_META[t?.state || 'INSUFFICIENT'];
+            return (
+              <tr key={`${e.symbol}-${i}`}>
+                <td style={cell}>
+                  <a href={`#radar-${String(e.symbol || '').toUpperCase()}`} style={{ fontWeight: 900, color: TF.text, textDecoration: 'none' }}>{e.symbol}</a>
+                  <div style={{ fontSize: 9.5, fontWeight: 800, color: meta.color }}>{meta.label}{e.insight?.promising ? ' · reconcile first' : ''}</div>
+                </td>
+                <td style={cell}>{t?.thesis.oldBusiness ?? '—'}</td>
+                <td style={cell}>{t ? `${t.mechanismWord}: ${t.thesis.whatChanges}` : '—'}</td>
+                <td style={cell}>{t?.thesis.earningsImpact ?? '—'}</td>
+                <td style={cell}>{t?.proofStage ?? '—'}<div style={{ fontSize: 9.5, color: TF.dim }}>{t ? `${t.confidence.toLowerCase()} confidence` : ''}</div></td>
+                <td style={cell}>{t?.thesis.keyRisk ?? '—'}</td>
+                <td style={cell}>{t?.thesis.nextMilestone ?? '—'}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function NotTransformations({ title, rows }: { title: string; rows: TransformScreenEntry[] }) {
+  if (rows.length === 0) return null;
+  return (
+    <details style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '10px 14px' }}>
+      <summary style={{ cursor: 'pointer', fontSize: 11, fontWeight: 800, color: TF.dim, letterSpacing: '0.3px' }}>{title} ({rows.length})</summary>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 8 }}>
+        {rows.map((e, i) => {
+          const t = e.insight?.transformation;
+          return (
+            <div key={`${e.symbol}-${i}`} style={{ display: 'grid', gridTemplateColumns: 'minmax(90px, 120px) 1fr auto', gap: 8, alignItems: 'baseline', padding: '6px 10px', background: TF.card2, border: `1px solid ${TF.border}`, borderRadius: 7 }}>
+              <span style={{ fontSize: 12, fontWeight: 800, color: TF.text2 }}>{e.symbol}</span>
+              <span style={{ fontSize: 10.5, color: TF.muted, lineHeight: 1.45 }}>
+                {t?.stateReason}
+                {t?.evidence.quote && <span style={{ color: TF.dim }}> — “{t.evidence.quote.slice(0, 170)}{t.evidence.quote.length > 170 ? '…' : ''}”</span>}
+              </span>
+              {e.attachment_url ? <a href={e.attachment_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, color: TF.cyan, fontWeight: 700 }}>filing →</a> : <span />}
+            </div>
+          );
+        })}
+      </div>
+    </details>
   );
 }

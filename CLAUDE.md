@@ -3858,3 +3858,19 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   likely reported since. Fair value: a verified raise of a full-year revenue AMOUNT is used as the year's sales (`guidedRevenue`,
   within 0.7–2.5× of the base) instead of growing a US quarter × 4 base. Section C names each figure's measure, short text,
   growth rows first; company names lose trailing "-$" (`cleanCompany`).
+- zzz1224 (3 Nov): Transformation Radar rebuilt around REAL transformations (owner's master prompt). `lib/radar-transformation.ts`
+  (pure, no price input): `classifyTransformation` reads the proof quote + up to 8 `change_lines` (management sentences picked by
+  `changeLinesOf` when a document is read: share shifts a%→b%, first orders, new product lines, capacity from X to Y, won orders with
+  value, consolidated margin lines) → mechanism (MIX_SHIFT / NEW_PRODUCT_LINE / NEW_CUSTOMER / NEW_BUSINESS / ORDER_STEP ≥ 10% of sales /
+  CAPACITY_STEP ≥ 1.5× / FACILITY_TURNAROUND, or ROUTINE / PLAN / CAPABILITY / UNCLEAR), six gates, research state ROUTINE / INSUFFICIENT /
+  EMERGING / COMMERCIAL / EARNINGS_POWER (only a measured mix shift + growing consolidated results + primary source + no consolidated
+  contradiction), thesis (old business, what changes, earnings impact, key risk, next milestone, sector check), confidence, `rankKey`
+  (ordinal: state → size → confidence → recency). Ordinary business = colour grades / variants, capacity without a stated step, single
+  order < 10% of sales, order book totals, margin from mix / efficiency / pricing, acquisitions, one-off gains, renames, low base.
+  `radarInsight.transformation`; lane = state (INFLECTION = EARNINGS_POWER, EARLY = COMMERCIAL / EMERGING); `best` = shortlist (no failed
+  gate, not negative, guidance not cut) — valuation is shown but no longer admits / drops (state 4 "investable" is not decided here).
+  Route: entries carry `change_lines` + `lines_v` (LINES_V); RADAR_RULES_VERSION unchanged so stored reads keep serving, and the coverage
+  job re-reads stored documents without lines after unread ones (`funnel.lines_pending`). SWR key v10. UI: shortlist table (Company / Old
+  business / What changes / Potential earnings impact / Proof stage / Key risk / Next milestone), cards open with "Transformation thesis" +
+  "Evidence" + gate chips, folded "Operational improvements / ordinary growth" and "Insufficient evidence" lists. Benchmark tests
+  zzz1224-radar-transformation (13 named live cases + 16 controls, 0 FP / 0 FN on that set — no historical 30/30 set exists yet).

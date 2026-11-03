@@ -69,9 +69,9 @@ test('radar reads further documents in bounded batches without automatic full-fe
   const code = route(), ui = view();
   // every document result is stored per attachment URL; a scan reads only documents not stored yet, newest first, within a budget
   assert.match(code, /const unread = eligible\.filter\(\(e\) => !stored\.has\(e\.url\)\)/);
-  assert.match(code, /unread\.slice\(0, mode\.readBudget\)/);
+  assert.match(code, /\[\.\.\.unread, \.\.\.refresh\]\.slice\(0, mode\.readBudget\)/);
   assert.match(code, /MODE_MORE: ScanMode = \{ feedForce: false, readBudget: 40/);
-  assert.match(code, /transform-screener:swr:v9:/);
+  assert.match(code, /transform-screener:swr:v10:/);
   assert.match(ui, /limit=3000&more=1/);
   assert.match(ui, /Read next \$\{Math\.min\(40, fn\.not_yet_read\)\} unread documents now/);
   assert.doesNotMatch(ui, /&offset=/);

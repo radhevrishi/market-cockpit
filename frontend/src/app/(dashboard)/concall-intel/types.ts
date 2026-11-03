@@ -285,6 +285,7 @@ export interface TransformScreenEntry {
   transformation_score: number; pattern_count: number;
   patterns: Array<{ key: string; label: string; emoji: string; hits: number }>;
   evidence_score: number; evidence_label: string; evidence_quote?: string; evidence_breadth?: number; caution_level?: number; caution_flags?: string[];
+  change_lines?: string[];   // zzz1224 — management sentences that state a structural change
   stage: number; stage_sweet_spot: boolean; velocity: string;
   triple: { industry: boolean; company: boolean; financial: boolean; count: number };
   top_events: string[]; scored_from: 'PDF' | 'SUBJECT';
@@ -316,7 +317,7 @@ export interface RadarFunnelLite {
   announcements_total: number | null; feed_rows: number;
   routine: { meeting_schedule: number; call_invite: number; recording_link: number; admin_notice: number; no_attachment: number };
   out_of_scope: number; eligible: number; examined: number; read_full: number; cover_only: number; unreadable: number;
-  not_yet_read: number; with_signal: number; with_proof?: number; fresh_reads: number;
+  not_yet_read: number; with_signal: number; with_proof?: number; lines_pending?: number; fresh_reads: number;
 }
 
 export interface TransformScreenPayload {
