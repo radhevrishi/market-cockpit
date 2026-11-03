@@ -363,7 +363,7 @@ async function aiEvalJob(ctx: JobCtx): Promise<JobOutcome> {
 }
 
 async function resultsPdfJob(ctx: JobCtx): Promise<JobOutcome> {
-  const r = await ctx.call('/api/v1/results-pdf?max_items=40&max_usd=0.30', { method: 'POST', timeoutMs: 330_000, retry: false });
+  const r = await ctx.call('/api/v1/results-pdf?max_items=40&max_usd=0.30', { method: 'POST', timeoutMs: 400_000, retry: false });
   return r.status === 200 ? { ok: true, status: 200 } : fail(r, 'results-pdf');
 }
 

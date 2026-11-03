@@ -236,3 +236,23 @@ test('15 zzz1224e — live watch review: counts in crore, industry capacity, qua
   assert.equal(st('Our process wafers have been qualified and we are working with partners ahead of our first customer samples, which will happen next year.'), 'EXCLUDED');
   assert.equal(st('So the paracetamol capacity, we started with 3,600 MTPA which we tripled last year.'), 'WATCH');
 });
+
+test('16 zzz1226 — third live review (owner export, 3 Nov 17:55)', () => {
+  // TINNARUBR: "tripled its revenue … with capacity added" is a small segment's revenue, never a 3× capacity step
+  assert.equal(capacityStep('Our Polymer Composites & Masterbatch business more than tripled its revenue to INR27 crores in H1 with 12,000 tonne per annum capacity added at Gannaur.'), null);
+  const tin = T('Our Polymer Composites & Masterbatch business more than tripled its revenue to INR27 crores in H1 with 12,000 tonne per annum capacity added at Gannaur.', { salesCr: 610 });
+  assert.equal(tin.tier, 'EXCLUDED');
+  assert.match(tin.stateReason, /≈ 4% of the company's annual sales/);
+  assert.equal(capacityStep('We started adding capacity last year, and we increased almost 3x that capacity.'), 3);
+  // IRISDOREME: a new sales channel is ordinary distribution growth
+  assert.equal(T('We have also entered the quick commerce segment, initially offering our products in Bengaluru and Hyderabad.').tier, 'EXCLUDED');
+  // STLTECH / DHRUV: half-year order totals and lists of order sizes are order flow
+  assert.equal(T('In the first half of FY 27, we secured orders worth INR32,000 crores.', { salesCr: 5000 }).tier, 'EXCLUDED');
+  assert.equal(T('The projects for which LOA has been received are INR19 crores, INR30 crores, INR40 crores, those kind of assignments.', { salesCr: 90 }).tier, 'EXCLUDED');
+  // NRL: another named company entered the business
+  const nrl = T('Frank Metals Recyclers Limited has recently entered the aluminium extrusion business.', {}, { symbol: 'NRL', company_name: 'Nupur Recyclers Ltd' });
+  assert.equal(nrl.evidence.entity.ok, false);
+  assert.notEqual(nrl.tier, 'CONFIRMED');
+  // sector template: the industry decides first
+  assert.match(String(T('x', { industry: 'Rubber', sector: 'Capital Goods' }).thesis.sectorCheck), /^Materials/);
+});

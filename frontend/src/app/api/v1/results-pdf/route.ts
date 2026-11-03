@@ -125,7 +125,7 @@ export async function POST(req: NextRequest) {
   const maxItems = Math.max(1, Math.min(60, Number(sp.get('max_items')) || 12));   // zzz1221: 60 (4 read at once)
   const maxUsd = Math.max(0.01, Math.min(1, Number(sp.get('max_usd')) || 0.3));
   try {
-    const out = await runResultsPdf(realDeps(new URL(req.url).origin), { maxItems, maxUsd, budgetMs: 150_000 });
+    const out = await runResultsPdf(realDeps(new URL(req.url).origin), { maxItems, maxUsd, budgetMs: 270_000, concurrency: 6 });   // zzz1226: a results day queues 90+ names; 150 s × 4 lanes got through ~15 a run
     return NextResponse.json(out, { headers: NO_STORE });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500, headers: NO_STORE });

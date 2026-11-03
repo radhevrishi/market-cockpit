@@ -10,7 +10,7 @@ import type { TransformationRadarData, TransformScreenPayload, TransformScreenEn
 import { TF, TFM, TIER_COLOR, CONV_TIER_COLOR } from './constants';
 import { velocityColor } from './helpers';
 import { FeedStatusNote } from './FeedStatusNote';
-import { RadarCard, STATE_META } from './radar-card';   // zzz1214, zzz1224
+import { RadarCard, STATE_META, tierLabel } from './radar-card';   // zzz1214, zzz1224
 import { radarDecision, type RadarQueue } from '@/lib/concall-radar-decision';
 
 export function TfSection({ n, title, lede, children }: { n: string; title: string; lede?: ReactNode; children: ReactNode }) {
@@ -498,6 +498,7 @@ export function TransformationScreenerTab() {
     .filter((e) => laneFilter === 'ALL' || (e.insight?.lane ?? 'NONE') === laneFilter)
     .filter((e) => decisionFilter === 'ALL' || radarDecision(e).queue === decisionFilter);
   const shortlist = scopedEntries.filter((e) => e.insight?.best || e.insight?.promising);
+  const hasTransformation = allEntries.some((e) => !!e.insight?.transformation);
   const watchRows = scopedEntries.filter((e) => e.insight?.watch);
   const ordinaryRows = scopedEntries.filter((e) => e.insight?.transformation?.state === 'ROUTINE');
   const insufficientRows = scopedEntries.filter((e) => e.insight?.transformation?.state === 'INSUFFICIENT');
@@ -549,7 +550,7 @@ export function TransformationScreenerTab() {
               ['Unreadable', fn.unreadable.toLocaleString('en-IN'), fn.unreadable ? TF.amber : TF.dim, 'Too large, scanned image, garbled text or download failed'],
               ['Not read yet', fn.not_yet_read.toLocaleString('en-IN'), fn.not_yet_read ? TF.amber : TF.green, 'Read automatically every 20 minutes, newest first'],
               ['Documents with a signal', fn.with_signal.toLocaleString('en-IN'), TF.dim, 'Documents (not companies) read in full with at least one transformation keyword — a keyword is not proof. Several documents can belong to one company.'],
-              ...(fn.with_proof != null ? [['With a proven change', fn.with_proof.toLocaleString('en-IN'), TF.purple, 'Documents whose evidence sentence shows a structural change — confirmed or potential (research watch). Ordinary business and plans are not counted.'] as [string, string, string, string]] : []),
+              ...(fn.with_proof != null ? [['Confirmed or potential change', fn.with_proof.toLocaleString('en-IN'), TF.purple, 'Documents whose evidence sentence shows a structural change — confirmed or potential (research watch). Ordinary business and plans are not counted.'] as [string, string, string, string]] : []),
             ] as const).map(([k, v, c, tip]) => (
               <div key={k} title={tip} style={{ background: TF.card2, border: `1px solid ${TF.border}`, borderRadius: 7, padding: '6px 9px' }}>
                 <div style={{ fontSize: 14, fontWeight: 900, color: c, ...TFM }}>{v}</div>
@@ -648,9 +649,10 @@ export function TransformationScreenerTab() {
               </button>
             ))}
           </div>
+          {/* zzz1226 — the old keyword review queue is hidden once the transformation checks exist (it contradicted them) */}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', marginTop: 9 }}>
-            <span style={{ fontSize: 10, color: TF.dim, fontWeight: 800, letterSpacing: '0.4px' }}>REVIEW QUEUE</span>
-            {([
+            {!hasTransformation && <span style={{ fontSize: 10, color: TF.dim, fontWeight: 800, letterSpacing: '0.4px' }}>REVIEW QUEUE</span>}
+            {!hasTransformation && ([
               ['ALL', 'All', TF.cyan],
               ['RESEARCH', 'Underwrite', TF.green],
               ['RECONCILE', 'Conflicting', TF.amber],
@@ -808,7 +810,7 @@ function ShortlistTable({ title, rows, empty }: { title: string; rows: Transform
               <tr key={`${e.symbol}-${i}`}>
                 <td style={cell}>
                   <a href={`#radar-${String(e.symbol || '').toUpperCase()}`} style={{ fontWeight: 900, color: TF.text, textDecoration: 'none' }}>{e.symbol}</a>
-                  <div style={{ fontSize: 9.5, fontWeight: 800, color: meta.color }}>{meta.label}{e.insight?.promising ? ' · reconcile first' : ''}</div>
+                  <div style={{ fontSize: 9.5, fontWeight: 800, color: t?.tier === 'WATCH' ? '#7C3AED' : meta.color }}>{tierLabel(t, meta.label)}</div>
                 </td>
                 <td style={cell}>{t?.thesis.oldBusiness ?? '—'}</td>
                 <td style={cell}>{t ? `${t.mechanismWord}: ${t.thesis.whatChanges}` : '—'}</td>

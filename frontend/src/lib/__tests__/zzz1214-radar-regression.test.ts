@@ -187,9 +187,11 @@ test('26 PANACHE: a +423% EPS quarter is flagged as a possible low base, not a t
   assert.ok(radarInsight(goodEntry, { ...goodFacts, revQ: 232, revTTM: 137, epsQ: 423 }).blockers.includes('possible low-base effect'));
 });
 test('27 an unresolved contradiction blocks "best" and gives "promising — reconcile first" instead', () => {
+  // zzz1226 — one evidence record: an open contradiction is an UNKNOWN gate, so the name goes to the research watch
   const i = radarInsight({ ...goodEntry, review_queue: 'RECONCILE' }, goodFacts);
   assert.equal(i.best, false);
-  assert.equal(i.promising, true);
+  assert.equal(i.watch, true);
+  assert.equal(i.transformation.gates.find((g) => g.key === 'contradictions')?.result, 'UNKNOWN');
   assert.ok(i.blockers.includes('contradiction in the document not reconciled'));
   assert.equal(radarInsight({ ...goodEntry, review_queue: 'WAIT' }, goodFacts).best, true);
 });
@@ -322,5 +324,5 @@ test('47 the radar counts documents whose proof holds up, apart from keyword hit
   const route = readFileSync(new URL('../../app/api/v1/concall-intel/transformation-screener/route.ts', import.meta.url), 'utf8');
   assert.match(route, /funnel\.with_proof = ranked\.filter/);
   const ui = readFileSync(new URL('../../app/(dashboard)/concall-intel/components2.tsx', import.meta.url), 'utf8');
-  assert.match(ui, /With a proven change/);
+  assert.match(ui, /Confirmed or potential change/);
 });

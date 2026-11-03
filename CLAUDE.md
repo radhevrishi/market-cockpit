@@ -3904,3 +3904,14 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   zzz1224e: "crore litres / units / tonnes" is a count, not rupees (ZUARIIND); a capacity step must be the company's own (not
   "growers / industry / peers"); "total order of ₹X Cr in the quarter" is order flow (DHRUV); a qualification / approval sentence
   with a future marker or "ahead of" is not achieved (CYIENT).
+- zzz1226 (3 Nov evening): radar third review. capacityStep: "tripled / doubled" must sit next to the capacity word (TINNARUBR's
+  "business tripled its revenue … capacity added" was read as a 3× capacity step); a named segment's stated revenue < 10% of sales
+  = small business line (ROUTINE); a new sales channel (quick commerce, e-commerce, modern trade, marketplace, more outlets) =
+  ROUTINE; half-year "orders worth ₹X Cr" and lists of 3+ order sizes = order flow; another named company as subject (NRL's
+  "Frank Metals Recyclers Limited has entered …") = entity not the listed company; sector check reads the industry before the
+  sector; an open document contradiction (review_queue RECONCILE) is an UNKNOWN gate (watch, never confirmed). UI: one label per
+  card / table row from the tier ("★ Confirmed · …", "◔ Research watch · <mechanism>"), never "Commercial change confirmed" on a
+  watch name; the old checks block, old review-queue labels and the REVIEW QUEUE filter row are hidden once a card has the
+  transformation checks (they contradicted them); the card shows "Next check: <first open gate>" and "Reported results: growing /
+  not growing · link: not proven". Tile "Confirmed or potential change".
+  zzz1226b: results-PDF runs 270 s with 6 lanes (was 150 s × 4 → ~15 names a run on a 90-name queue); job call timeout 400 s.

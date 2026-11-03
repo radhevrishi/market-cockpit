@@ -15,6 +15,19 @@ export const STATE_META: Record<string, { label: string; color: string; tip: str
   ROUTINE: { label: 'Ordinary business', color: '#94A3B8', tip: 'A real event, but ordinary business: product variants, normal capacity, a small order, margin commentary.' },
   INSUFFICIENT: { label: 'Insufficient evidence', color: '#94A3B8', tip: 'Plans, a capability, a slide fragment, or an old milestone — nothing to judge yet.' },
 };
+/** zzz1226 — the card / table label from the tier */
+export function tierLabel(tr: { tier: string; stateWord: string; mechanismWord: string } | undefined, fallback: string): string {
+  if (!tr) return fallback;
+  if (tr.tier === 'CONFIRMED') return `★ Confirmed · ${tr.stateWord}`;
+  if (tr.tier === 'WATCH') return `◔ Research watch · ${tr.mechanismWord}`;
+  return tr.stateWord;
+}
+function tierTip(tr: { tier: string } | undefined, fallback: string): string {
+  if (!tr) return fallback;
+  if (tr.tier === 'CONFIRMED') return 'Confirmed transformation: every check passes on the same evidence sentence.';
+  if (tr.tier === 'WATCH') return 'Potential transformation: a structural change with something still unknown (see the ? checks). Research it; it is not proven.';
+  return fallback;
+}
 const GATE_ICON: Record<string, string> = { PASS: '✓', FAIL: '✗', UNKNOWN: '?' };
 const TONE_COLOR: Record<string, string> = { POSITIVE: '#10B981', MIXED: '#F59E0B', NEGATIVE: '#EF4444', NEUTRAL: '#94A3B8' };
 const VERDICT_COLOR: Record<string, string> = {
@@ -60,9 +73,8 @@ export function RadarCard({ e, rank, bench, inBook, capCr, showFullSignals }: {
           <span style={{ fontSize: 12, fontWeight: 900, color: TF.dim, ...TFM }}>#{rank}</span>
           <span style={{ fontSize: 16, fontWeight: 900, color: TF.text }}>{e.symbol}</span>
           <span style={{ fontSize: 11.5, color: TF.muted, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.company_name}</span>
-          <span title={lane.tip} style={{ fontSize: 10, fontWeight: 900, padding: '2px 8px', borderRadius: 999, color: '#fff', background: lane.color }}>{lane.label}</span>
-          {ins?.best && <span title={`Confirmed transformation: every gate passes on the same evidence sentence. ${ins.bestWhy.join(', ')}`} style={{ fontSize: 10, fontWeight: 900, padding: '2px 8px', borderRadius: 999, color: '#7C2D12', background: '#FDE68A' }}>★ Confirmed</span>}
-          {ins?.watch && <span title="Potential transformation: a plausible structural change with something still unknown (see the ? gates). Research it; it is not proven." style={{ fontSize: 10, fontWeight: 900, padding: '2px 8px', borderRadius: 999, color: '#5B21B6', border: '1px solid #8B5CF6' }}>◔ Research watch</span>}
+          {/* zzz1226 — ONE label per card, from the tier: never "confirmed" on a name that is only on the research watch */}
+          <span title={tierTip(tr, lane.tip)} style={{ fontSize: 10, fontWeight: 900, padding: '2px 8px', borderRadius: 999, color: tr?.tier === 'CONFIRMED' ? '#7C2D12' : '#fff', background: tr?.tier === 'CONFIRMED' ? '#FDE68A' : tr?.tier === 'WATCH' ? '#8B5CF6' : lane.color }}>{tierLabel(tr, lane.label)}</span>
           {ins?.promising && <span title="Passes every best rule except one: the document has a contradiction (a positive and a negative statement) that must be read and reconciled first" style={{ fontSize: 10, fontWeight: 900, padding: '2px 8px', borderRadius: 999, color: '#92400E', border: '1px solid #F59E0B' }}>◐ Promising — reconcile first</span>}
           {e.tone && <span title={`Management tone read from the document: ${e.tone_pos ?? 0} positive and ${e.tone_neg ?? 0} negative phrases`} style={{ fontSize: 10, fontWeight: 800, color: TONE_COLOR[e.tone] || TF.dim }}>● {e.tone.toLowerCase()} tone</span>}
           {inBook && <span style={{ fontSize: 9.5, fontWeight: 900, padding: '1px 6px', borderRadius: 3, border: '1px solid #34D399', color: '#047857' }}>📗 in my book</span>}
@@ -115,7 +127,7 @@ export function RadarCard({ e, rank, bench, inBook, capCr, showFullSignals }: {
         </div>
       )}
       {/* zzz1216 — three separate facts, never inferred from each other, plus how big the order is */}
-      {ins?.checks && (
+      {!tr && ins?.checks && (
         <div style={{ fontSize: 10.5, color: TF.muted, marginTop: 6, lineHeight: 1.5 }}>
           <span style={{ color: ins.checks.transformation ? TF.green : TF.dim }}>{ins.checks.transformation ? '✓' : '✗'} business change seen</span>
           {' · '}<span style={{ color: ins.checks.growth ? TF.green : TF.dim }}>{ins.checks.growth ? '✓' : '✗'} growth in reported results</span>
@@ -137,12 +149,22 @@ export function RadarCard({ e, rank, bench, inBook, capCr, showFullSignals }: {
         </div>
       )}
 
+      {/* zzz1226 — the business change and the results are two separate facts; the link is never assumed */}
+      {tr && ins && (
+        <div style={{ fontSize: 10.5, color: TF.muted, marginTop: 6 }}>
+          Reported results: <span style={{ color: ins.checks.growth ? TF.green : TF.amber, fontWeight: 700 }}>{ins.checks.growth ? 'growing' : 'not growing'}</span>
+          {' · '}link between the change and the results: <span style={{ color: TF.dim }}>not proven</span>
+        </div>
+      )}
+
       {/* line 5 — blockers, links */}
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginTop: 8, fontSize: 10.5 }}>
         {/* zzz1215 — a "best" card never carries a contradicting headline label; its open questions read as checks */}
-        {ins?.best
-          ? (d.queue === 'RECONCILE' || d.queue === 'RISK' ? <span title={d.reason} style={{ fontWeight: 800, color: TF.amber }}>Check: {(e.caution_flags || []).slice(0, 2).join(', ') || d.reason}</span> : null)
-          : <span title={d.reason} style={{ fontWeight: 800, color: dColor }}>{d.label}</span>}
+        {tr
+          ? (() => { const open = tr.gates.find((g) => g.result !== 'PASS'); return open ? <span title={open.note} style={{ fontWeight: 800, color: open.result === 'FAIL' ? TF.red : TF.amber }}>Next check: {open.label.toLowerCase()}</span> : <span style={{ fontWeight: 800, color: TF.green }}>All checks pass</span>; })()
+          : ins?.best
+            ? (d.queue === 'RECONCILE' || d.queue === 'RISK' ? <span title={d.reason} style={{ fontWeight: 800, color: TF.amber }}>Check: {(e.caution_flags || []).slice(0, 2).join(', ') || d.reason}</span> : null)
+            : <span title={d.reason} style={{ fontWeight: 800, color: dColor }}>{d.label}</span>}
         {ins && ins.blockers.length > 0 && <span style={{ color: TF.dim }}>Holding back: {ins.blockers.slice(0, 3).join(' · ')}</span>}
         <span style={{ color: TF.dim }}>{e.doc_label ? `📄 ${e.doc_label}` : ''}{date ? ` · ${date}` : ''}</span>
         {e.attachment_url && <a href={e.attachment_url} target="_blank" rel="noopener noreferrer" style={{ color: TF.cyan, fontWeight: 800 }}>Open filing →</a>}
@@ -152,7 +174,7 @@ export function RadarCard({ e, rank, bench, inBook, capCr, showFullSignals }: {
       <details style={{ marginTop: 6 }} open={showFullSignals}>
         <summary style={{ cursor: 'pointer', fontSize: 10.5, color: TF.dim, fontWeight: 700 }}>Details</summary>
         <div style={{ fontSize: 10.5, color: TF.muted, lineHeight: 1.6, marginTop: 6 }}>
-          <div><b style={{ color: TF.text2 }}>Review queue:</b> {d.label} — {d.reason}</div>
+          {!tr && <div><b style={{ color: TF.text2 }}>Review queue:</b> {d.label} — {d.reason}</div>}
           <div><b style={{ color: TF.text2 }}>Next check:</b> {d.nextCheck}</div>
           {tr && tr.evidence.quote !== e.evidence_quote && e.evidence_quote && <div><b style={{ color: TF.text2 }}>Keyword proof sentence:</b> “{e.evidence_quote.slice(0, 240)}”</div>}
           {e.change_lines && e.change_lines.length > 0 && <div><b style={{ color: TF.text2 }}>Change lines read from management text:</b>{e.change_lines.slice(0, 5).map((l, i) => <div key={i} style={{ paddingLeft: 8 }}>• {l.slice(0, 220)}{l.length > 220 ? '…' : ''}</div>)}</div>}

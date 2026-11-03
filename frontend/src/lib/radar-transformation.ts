@@ -93,7 +93,7 @@ export const STATE_WORD: Record<ResearchState, string> = {
   ROUTINE: 'Ordinary business',
   INSUFFICIENT: 'Insufficient evidence',
   EMERGING: 'Potential transformation (research watch)',
-  COMMERCIAL: 'Commercial change confirmed',
+  COMMERCIAL: 'Commercial step (production, mix or a large order)',
   EARNINGS_POWER: 'Earnings-power change confirmed',
 };
 
@@ -159,8 +159,11 @@ export function shareShift(s: string): { from: number; to: number } | null {
 /** Capacity from X to Y (same unit) — the ratio, or 2 for "doubled", 3 for "tripled". */
 export function capacityStep(s: string): number | null {
   if (!/\bcapacit\w*|\bTPA\b|\bTPM\b|\bMTPA\b|\bKLPA\b|\bunits?\b|\bMW\b|\bGW\b/i.test(s)) return null;
-  if (/\btripl\w*|three[- ]?fold|3x\b/i.test(s)) return 3;
-  if (/\bdoubl\w*|two[- ]?fold|2x\b/i.test(s)) return 2;
+  // zzz1226 — "tripled" must belong to the capacity, not to revenue in the same sentence (TINNARUBR: "business more than tripled
+  // its revenue to INR27 crores … with 12,000 TPA capacity added" is a revenue fact, not a 3× capacity step)
+  const near = (w: string) => new RegExp(`\\b(?:capacit\\w*|TPA|TPM|MTPA|KLPA|MW|GW)\\b[^.]{0,40}?\\b${w}|\\b${w}[^.]{0,6}?\\b(?:the |our |its |that )?(?:installed |production |manufacturing )?capacit`, 'i');
+  if (near('(?:tripl\\w*|three[- ]?fold|3x\\b)').test(s)) return 3;
+  if (near('(?:doubl\\w*|two[- ]?fold|2x\\b)').test(s)) return 2;
   const m = s.match(/from\s+([\d,]+(?:\.\d+)?)\s*([A-Za-z]{0,6})\s*(?:to|→)\s*([\d,]+(?:\.\d+)?)\s*([A-Za-z]{0,6})/i);
   if (!m) return null;
   const a = Number(m[1].replace(/,/g, '')), b = Number(m[3].replace(/,/g, ''));
@@ -176,6 +179,13 @@ function levelFromPct(p: number | null): MaterialityLevel { return p == null ? '
 export function entityOf(s: string, symbol?: string | null, company?: string | null): { ok: boolean | null; note: string } {
   const q = clean(s);
   if (/\b(subsidiar\w*|joint venture|\bJV\b|associate compan\w*|step-down)\b/i.test(q)) return { ok: null, note: 'Event sits in a subsidiary / joint venture — the listed company’s share is not stated.' };
+  // zzz1226 — "Frank Metals Recyclers Limited has recently entered …" (NRL): another named company is the subject
+  const co = q.match(/^\W*((?:[A-Z][\w&.'-]*\s+){0,5}[A-Z][\w&.'-]*)\s+(?:Limited|Ltd\.?|Private Limited|Pvt\.? Ltd\.?|LLP|Inc\.?)\b/);
+  if (co) {
+    const first = co[1].split(/\s+/)[0].toLowerCase();
+    const name = String(company || '').toLowerCase(), sym = String(symbol || '').toLowerCase();
+    if (first && !name.startsWith(first) && !(sym && first.startsWith(sym.slice(0, 3)))) return { ok: false, note: `The sentence is about ${co[0].trim()}, not the listed company — a subsidiary or affiliate; the listed company's share is not stated.` };
+  }
   const m = q.match(/(?:^|[:;]\s*)([A-Z][A-Za-z&]{1,12})(?=(?:won|secured|bagged|received)\b|\s+(?:has\s+)?(?:won|secured|bagged|received)\b)/);
   if (m) {
     const who = m[1].toLowerCase();
@@ -312,13 +322,25 @@ function readSentence(raw: string, salesCr: number | null, lender = false): Read
     if (first) return { ...base, mech: 'NEW_CUSTOMER', why: 'First order from a new customer type.', stage: 'Order', pct, level: lvl === 'SMALL' ? 'SMALL' : lvl, matText, scenario: lvl === 'UNKNOWN' || lvl === 'SMALL', actual };
     // zzz1224d — order inflow over a period is many orders: normal business for an order-driven company. One order counts for the
     // research watch only when it is at least a quarter of a year's sales (and even then it is visibility, not a new business)
-    if (pct != null && /\border inflows?\b|\borders? (?:totall?ing|aggregating|worth a total)\b|\bnew orders\b|\btotal orders?\b|\borders? (?:received|won) (?:during|in) the (?:quarter|period|half|year)\b/i.test(q)) return { ...base, mech: 'ROUTINE', why: `Order inflow of ≈ ${pct}% of annual sales over the period — normal order flow for an order-driven business, not a change in the business.`, stage: 'Order', pct, level: 'SMALL', matText, actual };
+    // zzz1226 — "secured orders worth ₹32,000 Cr in H1" (STLTECH) and a list of order sizes ("₹19 Cr, ₹30 Cr, ₹40 Cr", DHRUV) are order flow too
+    const amountsListed = (q.match(new RegExp(MONEY.source, 'gi')) || []).length;
+    if (pct != null && (/\border inflows?\b|\borders? (?:totall?ing|aggregating|worth a total)\b|\bnew orders\b|\btotal orders?\b|\borders? (?:received|won) (?:during|in) the (?:quarter|period|half|year)\b/i.test(q)
+      || (/\borders\s+(?:worth|of|valued|aggregating)\b/i.test(q) && /\b(?:in|during|for)\s+(?:the\s+)?(?:first|second|third|fourth|1st|2nd)?\s*(?:half|quarter|year|H[12]|Q[1-4]|nine months|9M)\b/i.test(q))
+      || amountsListed >= 3)) return { ...base, mech: 'ROUTINE', why: `Order inflow of ≈ ${pct}% of annual sales over the period — normal order flow for an order-driven business, not a change in the business.`, stage: 'Order', pct, level: 'SMALL', matText, actual };
     if (pct != null && pct >= 25) return { ...base, mech: 'ORDER_STEP', why: `One order ≈ ${pct}% of annual sales — earnings visibility; not by itself a change in the business.`, stage: 'Order', pct, level: lvl, matText, actual };
     if (pct != null) return { ...base, mech: 'ROUTINE', why: `A single order of ≈ ${pct}% of annual sales — normal order flow.`, stage: 'Order', pct, level: 'SMALL', matText, actual };
     return { ...base, mech: 'UNCLEAR', why: 'Order won, but its size against sales is not known.', stage: 'Order', pct: null, level: 'UNKNOWN', matText, actual };
   }
   if (/\border ?book\b/i.test(q) && !WON.test(q)) {
     return { ...base, mech: 'ROUTINE', why: 'A total order book is the stock of past orders — revenue visibility, not a change in the business.', stage: 'Order', pct: null, level: 'UNKNOWN', matText: amt != null ? `Order book ₹${Math.round(amt).toLocaleString('en-IN')} Cr (total, not new).` : 'Order book (total, not new).', actual };
+  }
+
+  // zzz1226 — a named business / segment whose revenue is stated: sized against the whole company first
+  const segRev = q.match(/\b(?:business|segment|division|vertical)\b[^.]{0,80}?\b(?:revenue|sales|turnover)\b[^.]{0,40}?(?:₹|rs\.?|inr)\s?([\d,]+(?:\.\d+)?)\s*(crores?|cr\b|lakhs?|mn\b|million)/i);
+  if (segRev && salesCr && !plan) {
+    const segCr = toCr(Number(segRev[1].replace(/,/g, '')), segRev[2]);
+    const share = Math.round((100 * segCr) / salesCr);
+    if (share < 10) return { ...base, mech: 'ROUTINE', why: `A small business line: about ₹${Math.round(segCr).toLocaleString('en-IN')} Cr ≈ ${share}% of the company's annual sales — growing, but too small yet to change the company.`, stage: 'Revenue', pct: share, level: 'SMALL', matText: `Segment ≈ ${share}% of sales.`, actual };
   }
 
   // ── production / capacity ──
@@ -355,6 +377,11 @@ function readSentence(raw: string, salesCr: number | null, lender = false): Read
     if (!plan && /\b(improved|rose|increased|expanded|turned|ran at|running at)\b/i.test(q)) {
       return { ...base, mech: 'FACILITY_TURNAROUND', why: 'One plant / unit improved (utilisation or margin).', stage: 'EBITDA', pct: null, level: 'UNKNOWN', matText: 'One facility only: its share of consolidated sales and profit is not stated.', actual };
     }
+  }
+
+  // zzz1226 — a new sales channel (quick commerce, e-commerce, modern trade, a marketplace) sells the same products: ordinary
+  if (/\b(quick[- ]commerce|q-?commerce|e-?commerce|modern trade|general trade|marketplace|amazon|flipkart|d2c|direct[- ]to[- ]consumer|online channel|retail channel|distribution channel|new (?:cities|states|towns|stores|outlets))\b/i.test(q) && !shareShift(q)) {
+    return { ...base, mech: 'ROUTINE', why: 'A new sales channel or more outlets for the same products — ordinary distribution growth, not a new business.', stage: 'Revenue', pct: null, level: 'UNKNOWN', matText: 'New channel: no change in what the business sells.', actual };
   }
 
   // ── new customers / business ──
@@ -414,7 +441,12 @@ const NEXT: Record<Mechanism, string> = {
 
 /** P1 — what to check for this kind of company (sector templates). */
 export function sectorCheckOf(industry?: string | null, sector?: string | null): string | null {
-  const t = `${industry || ''} ${sector || ''}`.toLowerCase();
+  // zzz1226 — the industry decides first (TINNARUBR: industry Rubber, sector Industrials → materials, not capital goods)
+  return sectorCheckText(String(industry || '').toLowerCase()) ?? sectorCheckText(String(sector || '').toLowerCase());
+}
+function sectorCheckText(t: string): string | null {
+  if (!t) return null;
+  if (/rubber|plastic|packag|paper|polymer/.test(t)) return 'Materials: utilisation and spreads; a single plant’s share of group sales.';
   if (/cable|wire|conductor/.test(t)) return 'Cables: share of high-value products (EHV / HTLS / special cables) in sales, and export share.';
   if (/pharma|drug|biotech|life science/.test(t)) return 'Pharma: approvals → first supply → share of regulated-market / CDMO revenue; one product’s weight in sales.';
   if (/chemical|fertili/.test(t)) return 'Chemicals: utilisation of new capacity and product spreads — capacity alone is not profit.';
@@ -497,7 +529,7 @@ export function classifyTransformation(e: TransformationInput, f: Transformation
   gates.push({ key: 'not_routine', label: 'Not normal business operations', result: pick.mech === 'ROUTINE' ? 'FAIL' : mechState === 'INSUFFICIENT' ? 'UNKNOWN' : 'PASS', note: pick.mech === 'ROUTINE' ? pick.why : mechState === 'INSUFFICIENT' ? 'Not enough to tell.' : 'Goes beyond the existing business.' });
   const matGate: GateResult = pick.level === 'SMALL' ? 'FAIL' : pick.level === 'UNKNOWN' ? 'UNKNOWN' : 'PASS';
   gates.push({ key: 'materiality', label: 'Credible path to materiality', result: matGate, note: pick.matText || 'Size not stated.' });
-  gates.push({ key: 'contradictions', label: 'Contradictions shown, not hidden', result: contradiction ? 'UNKNOWN' : 'PASS', note: contradiction || (e.review_queue === 'RECONCILE' ? 'No contradiction in the evidence lines; the document elsewhere has a positive and a negative statement to reconcile (shown as "reconcile first").' : 'No contradiction found in the lines read.') });
+  gates.push({ key: 'contradictions', label: 'Contradictions shown, not hidden', result: contradiction || e.review_queue === 'RECONCILE' ? 'UNKNOWN' : 'PASS', note: contradiction || (e.review_queue === 'RECONCILE' ? 'Elsewhere the document has a positive and a negative statement on the same topic — read it before trusting the change.' : 'No contradiction found in the lines read.') });
 
   // ── research state ──
   let state: ResearchState = mechState;
