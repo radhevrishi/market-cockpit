@@ -136,7 +136,10 @@ export function turnaroundOf(x: TaInput): Turnaround | null {
   // the monograph's earnings rule (keeps Timex-type names without an ownership event): sales > 20%, margin up from a LOW base,
   // cash not negative — a low base (margin under 8%) is what separates a revival from an ordinary good quarter
   const earningsRule = rev != null && rev > 20 && dm != null && dm >= 2 && mPrior != null && mPrior < 8 && (cfo == null || cfo >= 0.8);
-  const revival = ids.has('turnaround_profit') || ids.has('turned_profitable') || has(all, REVIVAL_RE) || earningsRule;
+  // a loss → profit swing on flat or falling sales (under +10%) is cost cuts or a one-off, not yet a revival (owner's monograph:
+  // 'one good quarter or a tax credit is not a trend') — it only counts when sales are growing or not known
+  const swing = ids.has('turnaround_profit') || ids.has('turned_profitable') || has(all, REVIVAL_RE);
+  const revival = (swing && !(rev != null && rev < 10)) || earningsRule;
 
   let archetype: TaArchetype | null = null;
   if (ids.has('open_offer') || ids.has('strategic_investor') || ids.has('activist_stake') || has(all, OWNERSHIP_RE)) archetype = 'OWNERSHIP_RESCUE';
@@ -166,7 +169,7 @@ export function turnaroundOf(x: TaInput): Turnaround | null {
 
   // ── stage ──
   const proofParts: string[] = [];
-  if (ids.has('turnaround_profit') || ids.has('turned_profitable') || has(all, REVIVAL_RE)) proofParts.push('profit turned positive');
+  if (swing) proofParts.push(rev != null && rev < 10 ? 'profit turned positive on flat sales' : 'profit turned positive');
   if (rev != null && rev >= 15) proofParts.push(`sales ${rev >= 0 ? '+' : ''}${Math.round(rev)}%`);
   if (dm != null && dm >= 2) proofParts.push(`margin +${dm.toFixed(1)} points`);
   if (cfo != null && cfo >= 0.8) proofParts.push(`cash conversion ${cfo.toFixed(2)}×`);

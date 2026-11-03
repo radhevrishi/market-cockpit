@@ -69,3 +69,14 @@ test('08 additive wiring: badge on the gainers card after the existing badge; fi
   assert.match(page, /🔄 Turnarounds/);
   assert.match(page, /\(!turnOnly \|\| taById\.has\(x\.id\)\)/);
 });
+
+test('09 live 3 Nov: a profit swing on flat or falling sales is not a revival (CPRI −5.5%, PTEN +9%); with growth it is', () => {
+  const swing = 'Net income $27M vs a loss of $34M (swung to a profit from a loss)';
+  assert.equal(turnaroundOf({ texts: [swing], facts: { revenueYoY: -5.5 } }), null);
+  assert.equal(turnaroundOf({ texts: [swing], facts: { revenueYoY: 9.3, marginNow: 4.7, marginPrior: -0.6 } }), null);
+  assert.equal(turnaroundOf({ texts: [swing], facts: { revenueYoY: 24 } })?.stage, 3);
+  // an ownership event with a flat-sales swing is still an ownership read, its proof says 'flat sales'
+  const o = turnaroundOf({ texts: ['Change in control completed.', swing], facts: { revenueYoY: 2 } });
+  assert.equal(o?.archetype, 'OWNERSHIP_RESCUE');
+  assert.equal(o?.stage, 2);
+});

@@ -3922,4 +3922,4 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   OPERATING_REVIVAL; stage 0–3 only (never claims 4 repeatability / 5 compounding); survive / dilution / governance gates; hard stops
   (auditor resigned, fraud, default, insolvency …) → HARD_STOP; earnings rule (revenue > 20%, margin +2 pts from < 8%, cash ≥ 0.8×);
   next proof, kill event, five-line memo. A SAST stake disclosure, the company buying a stake elsewhere, a plain order or a bare rights
-  issue is not a turnaround. `components/turnaround/TurnaroundBadge.tsx` (chip, expands). TG page: "🔄 Turnarounds" filter chip.
+  issue is not a turnaround; a loss → profit swing on sales under +10% is not a revival. `components/turnaround/TurnaroundBadge.tsx` (chip, expands). TG page: "🔄 Turnarounds" filter chip.
