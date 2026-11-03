@@ -10,7 +10,7 @@ import { join } from 'node:path';
 test('no offset cursor: the next read always starts at the newest unread document', () => {
   const src = readFileSync(join(__dirname, '..', '..', 'app/(dashboard)/concall-intel/components2.tsx'), 'utf8');
   assert.doesNotMatch(src, /setExtraOffset/);
-  assert.match(src, /limit=500&more=1/);
+  assert.match(src, /limit=3000&more=1/);
 });
 
 test('server reads unread documents only, stores each result, and counts what stayed unread', () => {

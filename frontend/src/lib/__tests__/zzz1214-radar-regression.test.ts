@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseTranscript, speakerOf, documentTone, tierFromTone } from '../radar-speakers';
-import { radarInsight, resultsVerdict, guidanceVerdict, valuationGap, orderValueCr, materialityOf, type RadarFacts } from '../radar-insight';
+import { radarInsight, resultsVerdict, guidanceVerdict, valuationGap, orderValueCr, materialityOf, eventProof, guidanceScopeProblem, type RadarFacts } from '../radar-insight';
 import { preClassifyRadarFiling, classifyRadarContent } from '../radar-doc-class';
 import { assessRadarQuote, radarDecision } from '../concall-radar-decision';
 import { buildRadarEvidenceRecord } from '../concall-evidence-ledger';
@@ -29,6 +29,7 @@ const goodEntry = {
   patterns: [{ key: 'capacity' }, { key: 'customer' }, { key: 'mix' }],
   evidence_score: 9, evidence_breadth: 4, evidence_label: 'Margin improvement realised',
   caution_level: 0, caution_flags: [], tone: 'POSITIVE', bullish_tier: 'BULLISH', quote_role: 'MANAGEMENT', quote_quality: 'USABLE',
+  evidence_quote: 'EBITDA margin improved to 18% as the new plant ramped up to 85% utilisation this quarter.',
 };
 const goodFacts: RadarFacts = { revQ: 32, revTTM: 18, epsQ: 55, epsTTM: 40, pe: 30, perf6M: 12, perf1Y: 40, guidance: { revision: 'RAISED', display: 'revenue +25% FY27', period: 'FY27', atRisk: false } };
 
@@ -129,7 +130,7 @@ test('17 lane: realised proof + growing results = earnings inflection, and best'
   assert.ok(i.bestScore >= 80);
 });
 test('18 lane: milestones but numbers not showing = early transformation', () => {
-  const i = radarInsight({ ...goodEntry, evidence_score: 6, evidence_label: 'Customer qualification' }, { ...goodFacts, revQ: 3, epsQ: 2, revTTM: 4 });
+  const i = radarInsight({ ...goodEntry, evidence_score: 6, evidence_label: 'Customer qualification', evidence_quote: 'Our new line was qualified by two global innovator customers this quarter.' }, { ...goodFacts, revQ: 3, epsQ: 2, revTTM: 4 });
   assert.equal(i.lane, 'EARLY');
 });
 test('19 lane: one keyword family = no clear transformation', () => {
@@ -199,7 +200,8 @@ test('28 earnings inflection needs a clean management quote; transformation, gro
 test('29 PARACABLES: an order book is sized against sales and called orders, not revenue', () => {
   const o = orderValueCr('We have already secured an HTLS order book of INR 200 crores plus as on date and the capacity augmentation is planned.');
   assert.equal(o, 200);
-  const m = materialityOf({ order_value_cr: o }, { salesCr: 1600 });
+  const quote = 'We have already secured an HTLS order book of INR 200 crores plus as on date and the capacity augmentation is planned.';
+  const m = materialityOf({ order_value_cr: 731, evidence_quote: quote }, { salesCr: 1600 });
   assert.equal(m.pctOfSales, 13);
   assert.match(m.text, /Orders, not yet revenue/);
   assert.match(materialityOf({}, {}).text, /Materiality unverified/);
@@ -220,7 +222,7 @@ test('31 a best card shows open questions as checks; the universe read gets time
 test('32 short windows are cut from the one warm 90-day scan, never a cold feed fetch', () => {
   const route = readFileSync(new URL('../../app/api/v1/concall-intel/transformation-screener/route.ts', import.meta.url), 'utf8');
   assert.match(route, /function baseScanDays\(days: number\): number \{ return days <= 90 \? 90 : days; \}/);
-  assert.match(route, /swr:v8:\$\{scanDays\}/);
+  assert.match(route, /swr:v9:\$\{scanDays\}/);
   assert.match(route, /buildScreen\(req, scanDays,/);
   assert.match(route, /windowPayload\(r\.value\.payload, days, scanDays\)/);
 });
@@ -233,4 +235,65 @@ test('34 stored document reads survive a deploy: the key uses a hand-bumped vers
   const fp = route.slice(route.indexOf('const ANALYZER_FP'), route.indexOf('const DOC_KEY'));
   assert.match(fp, /RADAR_RULES_VERSION/);
   assert.doesNotMatch(fp, /\.toString\(\)/);
+});
+
+// ── zzz1219 — outside review: the quote must prove the event; guidance scope; one company, one dossier ──
+const NOW = new Date('2026-11-03T10:00:00Z');
+test('35 HAPPIESTMINDS: a possible jump in order bookings is not a confirmed order', () => {
+  assert.equal(eventProof('Order received', 'We are watching for a potential jump in order bookings in the second half.', {}, NOW).kind, 'NOT_PROVEN');
+  assert.equal(eventProof('Order received', 'Exports remained a key growth driver, supported by a robust order book.', {}, NOW).kind, 'NOT_PROVEN');
+  assert.equal(eventProof('Order received', 'NRE order win: NREwon a 116 crore solar EPC order for a 200 MW project from KPI Green Energy.', {}, NOW).kind, 'MILESTONE');
+});
+test('36 KARAMTARA / PRASOLCHEM: a milestone timeline or a 3-year total is not a recent start of production', () => {
+  assert.equal(eventProof('Commercial production started', 'MILESTONES 1996 1998 2004 2006 2008 2010 2019 2023 2024 Commenced manufacturing of solar module mounting structures', {}, NOW).kind, 'NOT_PROVEN');
+  assert.equal(eventProof('Commercial production started', 'We have commercialized 13 new products over the last 3 years.', {}, NOW).kind, 'NOT_PROVEN');
+  assert.equal(eventProof('Commercial production started', 'During the period, commercial production commenced at the expanded Acetonitrile facility, increasing capacity to 1,440 TPM.', {}, NOW).kind, 'MILESTONE');
+});
+test('37 LTFOODS / TEJASNET: a television commercial or "well commercialized" is not production', () => {
+  assert.equal(eventProof('Commercial production started', 'We launched a new television commercial as part of our brand refresh.', {}, NOW).kind, 'NOT_PROVEN');
+  assert.equal(eventProof('Commercial production started', 'The network is working successfully and well commercialized with BSNL.', {}, NOW).kind, 'NOT_PROVEN');
+});
+test('38 GANDHAR / CGCL / MPIMANIPAL: historical, board or capability "qualification" is not a customer qualification', () => {
+  assert.equal(eventProof('Customer qualification', 'Our qualification cycles with customers took 18 to 24 months back in FY23.', {}, NOW).kind, 'NOT_PROVEN');
+  assert.equal(eventProof('Customer qualification', 'We have a board of qualified independent directors and meet all regulatory qualifications.', {}, NOW).kind, 'NOT_PROVEN');
+  assert.equal(eventProof('Customer qualification', 'In-house capability to build applets, enhancing interoperability and supplier qualification.', {}, NOW).kind, 'NOT_PROVEN');
+});
+test('39 generic margin expansion is results commentary; a margin change with a named driver is a business change', () => {
+  assert.equal(eventProof('Margin improvement realised', 'Operating revenue grew 30% and operating EBITDA grew 38%, with margin expanding by 246 basis points.', {}, NOW).kind, 'RESULTS_COMMENTARY');
+  assert.equal(eventProof('Margin improvement realised', 'Our Oman plant ran at 90% utilization in H1 and its EBITDA margins improved to 11.5% from 6.4%.', {}, NOW).kind, 'MILESTONE');
+  assert.equal(eventProof('Margin improvement realised', 'Products of 220 kV and 400kV made up nearly 78% of revenue, improving the margin profile.', {}, NOW).kind, 'MILESTONE');
+  const i = radarInsight({ ...goodEntry, evidence_quote: 'Revenue grew 30% and EBITDA margin expanded by 246 basis points.' }, goodFacts, NOW);
+  assert.equal(i.lane, 'NONE');
+  assert.equal(i.best, false);
+  assert.match(i.laneReason, /Results commentary only/);
+});
+test('40 IIFL: for a lender, new customers and branches are routine growth, not a business change', () => {
+  assert.equal(eventProof('Second / third customer or product', 'Opened 105 new branches; 3.5L new customers added', { industry: 'Finance - NBFC' }, NOW).kind, 'RESULTS_COMMENTARY');
+});
+test('41 HSCL: a segment target against company-wide sales is "not comparable", never a negative growth figure', () => {
+  const g = guidanceVerdict({ salesCr: 5591, guidance: { revision: 'NEW', display: 'FY26–FY28 revenue CAGR −26.7% (derived: ₹3,000 Cr vs ₹5,591 Cr)', period: 'FY28', atRisk: false } });
+  assert.equal(g.verdict, 'NOT_COMPARABLE');
+  assert.doesNotMatch(g.text, /−26\.7%/);
+  assert.equal(guidanceScopeProblem('+4.8% vs FY26 actual (derived: ₹2,500 Cr vs ₹2,386 Cr)', 2386), null);
+  assert.equal(guidanceScopeProblem('+15-20%', null), null);
+  assert.match(String(guidanceScopeProblem('₹3,000 Cr target', 5591)), /well below the company's annual sales/);
+});
+test('42 order materiality uses the amount in the proof sentence, never the largest figure elsewhere in the document', () => {
+  const m = materialityOf({ order_value_cr: 2711, evidence_quote: 'Products of 220 kV made up 78% of revenue.' }, { salesCr: 1000 });
+  assert.equal(m.pctOfSales, null);
+  assert.match(m.text, /not in the proof sentence/);
+});
+test('43 TINNARUBR: one company, one dossier — later documents sit under the headline as dated evidence records', () => {
+  const route = readFileSync(new URL('../../app/api/v1/concall-intel/transformation-screener/route.ts', import.meta.url), 'utf8');
+  assert.match(route, /function companyDossiers\(p: ScreenPayload\): ScreenPayload/);
+  assert.match(route, /companyDossiers\(windowPayload\(r\.value\.payload, days, scanDays\)\)/);
+  const ui = readFileSync(new URL('../../app/(dashboard)/concall-intel/components2.tsx', import.meta.url), 'utf8');
+  assert.match(ui, /limit=3000/);
+  assert.doesNotMatch(ui, /more hidden by the SHOW/);
+});
+test('44 score: tone is a gate, not points; recency and proof drive the order', () => {
+  const recent = radarInsight({ ...goodEntry, filing_datetime: '2026-10-30T10:00:00Z' }, goodFacts, NOW);
+  const old = radarInsight({ ...goodEntry, filing_datetime: '2026-08-01T10:00:00Z' }, goodFacts, NOW);
+  assert.ok(recent.bestScore > old.bestScore);
+  assert.equal(radarInsight({ ...goodEntry, tone: 'MIXED' }, goodFacts, NOW).best, false);
 });

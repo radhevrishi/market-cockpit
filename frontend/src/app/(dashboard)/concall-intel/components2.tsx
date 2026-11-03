@@ -338,7 +338,7 @@ export function TransformationScreenerTab() {
     try {
       // An uncached force refresh is a bounded request; the backend completes
       // its scan asynchronously and explicitly returns building=true.
-      const r = await fetch(`/api/v1/concall-intel/transformation-screener?days=${d}&limit=500${force ? '&refresh=1' : ''}`, {
+      const r = await fetch(`/api/v1/concall-intel/transformation-screener?days=${d}&limit=3000${force ? '&refresh=1' : ''}`, {
         cache: 'no-store', signal: AbortSignal.timeout(18_000),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -417,7 +417,7 @@ export function TransformationScreenerTab() {
     if (moreLoading || !data) return;
     setMoreLoading(true); setMoreNote(null);
     try {
-      const r = await fetch(`/api/v1/concall-intel/transformation-screener?days=${days}&limit=500&more=1`, {
+      const r = await fetch(`/api/v1/concall-intel/transformation-screener?days=${days}&limit=3000&more=1`, {
         cache: 'no-store', signal: AbortSignal.timeout(16_000),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -663,7 +663,8 @@ export function TransformationScreenerTab() {
             </button>
           </div>
           <div style={{ fontSize: 10.5, color: TF.dim, marginTop: 7, lineHeight: 1.5 }}>
-            Showing {entries.length} of {scopedEntries.length}{hiddenByFilters > 0 ? ` (${hiddenByFilters} more hidden by the SHOW / size filter)` : ''}. Research priority, never a buy signal.
+            {/* zzz1219 — each number counts one stage, in order: companies in the window → after SHOW / size → after lane / best / review */}
+            {allEntries.length} compan{allEntries.length === 1 ? 'y' : 'ies'} with a signal in this window{data?.signal_documents ? ` (from ${data.signal_documents} documents)` : ''}{hiddenByFilters > 0 ? ` · ${scopedEntries.length} after the SHOW / size filter (${hiddenByFilters} set aside)` : ''} · <b>{entries.length} shown</b> after the lane / best / review filters. Research priority, never a buy signal.
             {bestOnly && bestCount + promisingCount === 0 && ' No company passes every "best" rule yet — switch it off to see all.'}
           </div>
         </div>

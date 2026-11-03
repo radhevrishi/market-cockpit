@@ -297,6 +297,8 @@ export interface TransformScreenEntry {
   market_cap_cr?: number | null;
   facts?: import('@/lib/radar-insight').RadarFacts;
   insight?: import('@/lib/radar-insight').RadarInsight;
+  /** zzz1219 — this company's other documents in the window (one company, one dossier) */
+  more_docs?: Array<{ filing_datetime: string; doc_label?: string; evidence_label: string; evidence_quote: string; quote_speaker?: string | null; quote_role?: string | null; source_url: string; attachment_url: string | null; lane?: string; best?: boolean; proof?: string }>;
 }
 
 export interface ScannedNoSignal {
@@ -322,5 +324,6 @@ export interface TransformScreenPayload {
   candidates_total: number; entries: TransformScreenEntry[]; scanned_no_signal?: ScannedNoSignal[]; error?: string;
   building?: boolean; message?: string; // async radar refresh: not an empty research result
   feed_status?: FeedStatusLite | null; concalls_in_feed?: number; transcripts_in_feed?: number;   // zzz810
+  companies?: number; signal_documents?: number;   // zzz1219
   funnel?: RadarFunnelLite; coverage_note?: string; excluded?: RadarExcludedLite[]; excluded_counts?: Record<string, number>;   // zzz1212
 }

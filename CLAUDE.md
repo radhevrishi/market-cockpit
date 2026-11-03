@@ -3815,3 +3815,13 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   Now both markets run every name through `oneUs` (India clock `IN_PER_NAME_MS` 30 s, hard deadline 52 s, retried once,
   then "timed out twice"); `progress` is returned for India too and the page keeps sweeping while names are retrying;
   a `closed` flag stops a late-finishing name from saving its older state over the next call's.
+- zzz1219 (3 Nov): radar correctness release (outside review). `eventProof(label, quote)` in radar-insight: the displayed
+  sentence itself must prove the named event — orders need a won/secured verb or an order value (not "potential", "robust
+  order book"); production needs started/commissioned wording, not a TV commercial, "commercialized", a milestone timeline or
+  a multi-year total; customer qualification needs a named customer and a completed approval (not board / regulatory /
+  capability); margin / revenue / cash-flow lines are RESULTS_COMMENTARY unless a structural driver is named (mix,
+  utilisation, new plant …); lenders' customer / margin lines are routine. Only MILESTONE can make a lane or ★ Best.
+  `guidanceScopeProblem`: target below the base, > 4× it, a derived negative growth, or a target < 0.7× annual sales →
+  guidance NOT_COMPARABLE (no growth figure). Materiality only from an amount in the proof sentence. Score: tone is a gate,
+  not points; recency +10/+5. Route: `companyDossiers` — one card per company, other documents under `more_docs`;
+  payload `companies` / `signal_documents`; page asks limit=3000 and states each filter stage's count. SWR key v9.

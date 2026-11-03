@@ -89,6 +89,15 @@ export interface TransformScreenEntry {
   market_cap_cr?: number | null; facts?: RadarFacts; insight?: RadarInsight;
   /** zzz1216 — largest order / order-book value management states (₹ crore), for materiality */
   order_value_cr?: number | null;
+  /** zzz1219 — one company, one dossier: this company's other documents in the window, newest first */
+  more_docs?: RadarDocRef[];
+}
+
+/** zzz1219 — another document of the same company (dated evidence record under the company's dossier). */
+export interface RadarDocRef {
+  filing_datetime: string; doc_label?: string; evidence_label: string; evidence_quote: string;
+  quote_speaker?: string | null; quote_role?: string | null; source_url: string; attachment_url: string | null;
+  lane?: string; best?: boolean; proof?: string;
 }
 
 // zzz434 — lightweight record of a filing we scanned that produced no
@@ -143,6 +152,9 @@ interface ScreenPayload {
   /** zzz1212 — counts of excluded documents per class */
   excluded_counts?: Partial<Record<RadarDocClass, number>>;
   error?: string;
+  /** zzz1219 — unique companies with a signal in the window, and documents behind them */
+  companies?: number;
+  signal_documents?: number;
 }
 
 // composite transformation score — mirrors the framework weighting:
@@ -240,23 +252,42 @@ async function handle(req: NextRequest, days: number, limit: number, minPatterns
   const scanDays = baseScanDays(days);
   try {
     const r = await swrGet<Built>({
-      key: `transform-screener:swr:v8:${scanDays}:${minPatterns}`, freshMs: SCREEN_FRESH_MS, maxStaleMs: SCREEN_MAX_STALE_MS, force: fresh || more || coverage,
+      key: `transform-screener:swr:v9:${scanDays}:${minPatterns}`, freshMs: SCREEN_FRESH_MS, maxStaleMs: SCREEN_MAX_STALE_MS, force: fresh || more || coverage,
       build: () => buildScreen(req, scanDays, minPatterns, mode),
       isUsable: (b) => !!b && b.cacheable,
       waitMs: SCREEN_WAIT_MS + (coverage ? COVERAGE_EXTRA_WAIT_MS : 0),   // the scheduled job may wait for its own scan
       readWaitMs: 2_000, // 18s browser budget also includes Redis; avoid unbounded cold lookup
       failureRetryMs: 5 * 60_000, // feed failures retry at most once per 5 min per instance; never discard last-good
     });
-    const p = windowPayload(r.value.payload, days, scanDays);
+    const p = companyDossiers(windowPayload(r.value.payload, days, scanDays));
     const out: ScreenPayload = p.entries.length > limit ? { ...p, entries: p.entries.slice(0, limit) } : p;
     return NextResponse.json(out, { headers: swrHeaders(r, privateCache(120, 1800)) });
   } catch (e) {
     if (e instanceof SwrPendingError) {
       return NextResponse.json({ ...emptyPayload(days), building: true, error: undefined, message: 'Scanning the latest concalls — ask again in a minute' }, { headers: { 'Cache-Control': 'no-store', 'x-mc-cache': 'building' } });
     }
-    if (e instanceof SwrUnusableError && (e.value as Built | undefined)?.payload) return NextResponse.json(windowPayload((e.value as Built).payload, days, scanDays));
+    if (e instanceof SwrUnusableError && (e.value as Built | undefined)?.payload) return NextResponse.json(companyDossiers(windowPayload((e.value as Built).payload, days, scanDays)));
     throw e;
   }
+}
+
+/** zzz1219 — one company, one dossier. Entries arrive ranked (best first); the first entry of each company is its headline
+ *  document and every later document of that company is kept underneath as a dated evidence record. */
+function companyDossiers(p: ScreenPayload): ScreenPayload {
+  const byCo = new Map<string, TransformScreenEntry>();
+  const order: TransformScreenEntry[] = [];
+  for (const e of p.entries) {
+    const k = String(e.symbol || e.company_name || '').toUpperCase();
+    const head = byCo.get(k);
+    if (!head) { const c = { ...e, more_docs: [] as RadarDocRef[] }; byCo.set(k, c); order.push(c); continue; }
+    head.more_docs!.push({
+      filing_datetime: e.filing_datetime, doc_label: e.doc_label, evidence_label: e.evidence_label, evidence_quote: e.evidence_quote,
+      quote_speaker: e.quote_speaker ?? null, quote_role: e.quote_role ?? null, source_url: e.source_url, attachment_url: e.attachment_url,
+      lane: e.insight?.lane, best: !!e.insight?.best, proof: e.insight?.proof?.reason,
+    });
+  }
+  for (const c of order) c.more_docs = (c.more_docs || []).sort((a, b) => String(b.filing_datetime).localeCompare(String(a.filing_datetime))).slice(0, 10);
+  return { ...p, entries: order, companies: order.length, signal_documents: p.entries.length };
 }
 
 /** zzz1217 — the scan that serves a window: 90 days for any window up to 90, else the window itself. */
@@ -379,7 +410,7 @@ async function loadFacts(symbols: string[]): Promise<Map<string, RadarFacts>> {
     out.set(t, {
       mcCr: crOf(r.mc), salesCr: crOf(r.mc) != null && typeof r.ps === 'number' && r.ps > 0 ? crOf(r.mc)! / r.ps : null,
       asOf: (snap as any)?.builtAt ?? null, pe: r.pe ?? null, revQ: r.revQYoY ?? null, revTTM: r.revTTMYoY ?? null, epsQ: r.epsQYoY ?? null, epsTTM: r.epsTTMYoY ?? null,
-      ebitdaQ: r.ebitdaQYoY ?? null, perf6M: r.perf6M ?? null, perf1Y: r.perf1Y ?? null, stage: r.twSt ?? null, stageHealth: r.twH ?? null, resultsDate: r.earnD ?? null,
+      ebitdaQ: r.ebitdaQYoY ?? null, perf6M: r.perf6M ?? null, perf1Y: r.perf1Y ?? null, stage: r.twSt ?? null, stageHealth: r.twH ?? null, resultsDate: r.earnD ?? null, industry: r.ind ?? null, sector: r.sec ?? null,
       guidance: null,
     });
   }

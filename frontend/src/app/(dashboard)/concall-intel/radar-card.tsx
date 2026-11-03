@@ -15,12 +15,12 @@ const LANE_META: Record<string, { label: string; color: string; tip: string }> =
 const TONE_COLOR: Record<string, string> = { POSITIVE: '#10B981', MIXED: '#F59E0B', NEGATIVE: '#EF4444', NEUTRAL: '#94A3B8' };
 const VERDICT_COLOR: Record<string, string> = {
   STRONGER_LATEST: '#10B981', NOT_UNDERWRITTEN: '#64748B', STRETCHED: '#EF4444', ACCELERATING: '#10B981', GROWING: '#10B981', SLOWING: '#F59E0B', DECLINING: '#EF4444', UNKNOWN: '#94A3B8',
-  RAISED: '#10B981', MAINTAINED: '#64748B', NEW: '#0EA5E9', LOWERED: '#EF4444', NONE: '#94A3B8',
+  RAISED: '#10B981', MAINTAINED: '#64748B', NEW: '#0EA5E9', LOWERED: '#EF4444', NONE: '#94A3B8', NOT_COMPARABLE: '#F59E0B',
   NOT_PRICED_IN: '#10B981', PARTLY: '#F59E0B', PRICED_IN: '#EF4444',
 };
 const WORD: Record<string, string> = {
   STRONGER_LATEST: 'latest quarter stronger', NOT_UNDERWRITTEN: 'not underwritten', STRETCHED: 'expensive (trailing)', ACCELERATING: 'speeding up', GROWING: 'growing', SLOWING: 'slowing', DECLINING: 'falling', UNKNOWN: 'not checked',
-  RAISED: 'raised', MAINTAINED: 'kept', NEW: 'given', LOWERED: 'lowered', NONE: 'none on file',
+  RAISED: 'raised', MAINTAINED: 'kept', NEW: 'given', LOWERED: 'lowered', NONE: 'none on file', NOT_COMPARABLE: 'not comparable',
   NOT_PRICED_IN: 'not priced in', PARTLY: 'partly priced in', PRICED_IN: 'priced in',
 };
 const ROLE_WORD: Record<string, string> = { MANAGEMENT: 'management', COMPANY: 'company document', ANALYST: 'analyst question', UNKNOWN: 'speaker unknown' };
@@ -87,7 +87,8 @@ export function RadarCard({ e, rank, bench, inBook, capCr, showFullSignals }: {
           <span style={{ color: ins.checks.transformation ? TF.green : TF.dim }}>{ins.checks.transformation ? '✓' : '✗'} business change seen</span>
           {' · '}<span style={{ color: ins.checks.growth ? TF.green : TF.dim }}>{ins.checks.growth ? '✓' : '✗'} growth in reported results</span>
           {' · '}<span style={{ color: TF.dim }}>✗ link between the two not proven</span>
-          {ins.materiality && <div title="Order value against annual sales (market cap ÷ P/S). Orders are not revenue until delivered.">{ins.materiality.text}</div>}
+          {ins.proof && <div title="Does the quoted sentence itself prove the named business event? A keyword elsewhere in the document is not proof." style={{ color: ins.proof.kind === 'MILESTONE' ? TF.green : TF.amber }}>{ins.proof.kind === 'MILESTONE' ? '✓' : '✗'} Proof sentence: {ins.proof.reason}</div>}
+          {ins.materiality && <div title="Order value against annual sales (market cap ÷ P/S). Only an amount in the proof sentence is sized. Orders are not revenue until delivered.">{ins.materiality.text}</div>}
         </div>
       )}
 
@@ -128,6 +129,22 @@ export function RadarCard({ e, rank, bench, inBook, capCr, showFullSignals }: {
           {showFullSignals && e.top_events.length > 0 && <div style={{ ...TFM }}>Events: {e.top_events.join(' · ')}</div>}
         </div>
       </details>
+      {/* zzz1219 — one company, one dossier: the company's other documents in this window, as dated evidence records */}
+      {e.more_docs && e.more_docs.length > 0 && (
+        <details style={{ marginTop: 4 }}>
+          <summary style={{ cursor: 'pointer', fontSize: 10.5, color: TF.dim, fontWeight: 700 }}>{e.more_docs.length} more document{e.more_docs.length === 1 ? '' : 's'} from {e.symbol} in this window</summary>
+          <div style={{ fontSize: 10.5, color: TF.muted, lineHeight: 1.55, marginTop: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {e.more_docs.map((m, i) => (
+              <div key={i} style={{ borderLeft: `2px solid ${TF.border}`, paddingLeft: 8 }}>
+                <b style={{ color: TF.text2 }}>{(m.filing_datetime || '').slice(0, 10)}</b> · {m.doc_label || 'document'} · {m.evidence_label}{m.best ? ' · ★' : ''}
+                {m.evidence_quote && <div style={{ color: TF.text2 }}>“{m.evidence_quote.slice(0, 220)}{m.evidence_quote.length > 220 ? '…' : ''}”{m.quote_speaker ? ` — ${m.quote_speaker}` : ''}</div>}
+                {m.proof && <div style={{ color: TF.dim }}>{m.proof}</div>}
+                {m.attachment_url && <a href={m.attachment_url} target="_blank" rel="noopener noreferrer" style={{ color: TF.cyan, fontWeight: 800 }}>Open filing →</a>}
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
     </div>
   );
 }
