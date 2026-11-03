@@ -3916,3 +3916,4 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   not growing · link: not proven". Tile "Confirmed or potential change".
   zzz1226b: results-PDF runs 270 s with 6 lanes (was 150 s × 4 → ~15 names a run on a 90-name queue); job call timeout 400 s.
   zzz1226c: a queued name whose stored figures were read by an older checker (shown wrong until re-read) goes first in the results-PDF run, from its known PDF URL.
+  zzz1226d: ANTHEM was re-read as ₹59,403 Cr (lakhs as crore): the rupee sign prints as "`" in many PDFs ("(` in Lakhs)") — statedUnit reads it; the overlay drops a quarter > 5× or < ⅕ of the previous quarter's sales. RP_CHECK_VERSION / RP_MIN_RECORD_CK 6 (records from v5 re-read first).

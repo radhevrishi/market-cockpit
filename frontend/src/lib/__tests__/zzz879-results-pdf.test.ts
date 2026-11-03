@@ -51,6 +51,10 @@ describe('zzz879 — checking the answer', () => {
     assert.equal(statedUnit('(₹ in Lakhs) Particulars Quarter ended'), 'lakh');
     assert.equal(statedUnit('Rs. in crore except EPS'), 'crore');
     assert.equal(statedUnit('(₹ in Lakhs) … (₹ in crore)'), null);
+    // zzz1226 — the rupee sign printed as a backtick; a quarter 142× the previous one is a unit slip
+    assert.equal(statedUnit('Statement of Unaudited Consolidated Financial Results (` in Lakhs) Particulars'), 'lakh');
+    const rec6 = (checkResultsAnswer(ans(), P) as any).record;
+    assert.match(String(overlayResultsPdf({ sales_curr_cr: 1, latest_quarter_end_iso: '2026-06-30' }, rec6, '2026-10-03')._results_pdf_skipped), /quarter before — unit not trusted/);
     const big = (checkResultsAnswer({ ...ans(), unit: 'crore' }, P) as any).record;
     if (big) assert.match(String(overlayResultsPdf({ sales_curr_cr: 1, latest_quarter_end_iso: '2026-06-30', market_cap_cr: 1 }, big, '2026-10-03')._results_pdf_skipped), /unit not trusted/);
     assert.match(String(overlayResultsPdf({ latest_quarter_end_iso: '2026-06-30' }, { ...big, ck: 4 }, '2026-10-03')._results_pdf_skipped), /older checker/);
@@ -80,7 +84,7 @@ describe('zzz879 — queue', () => {
   test('due: seen 20+ minutes ago (zzz1221; was 2 h, then 2 days), not done, back-off respected, given up after 4', () => {
     const now = Date.parse('2026-10-06T10:00:00Z');
     const q = [it('OLD', '2026-10-01'), it('NEW', '2026-10-05'), it('DONE', '2026-10-01'), it('WAIT', '2026-10-01'), it('GONE', '2026-10-01'), it('RETRY', '2026-10-01')];
-    const fails = new Map([['WAIT|2026-09-30', { at: '2026-10-06T08:00:00Z', tries: 1, reason: '', cv: 5 }], ['GONE|2026-09-30', { at: '2026-09-01T00:00:00Z', tries: 4, reason: '', cv: 5 }], ['RETRY|2026-09-30', { at: '2026-10-05T00:00:00Z', tries: 1, reason: '', cv: 5 }]]);
+    const fails = new Map([['WAIT|2026-09-30', { at: '2026-10-06T08:00:00Z', tries: 1, reason: '', cv: 6 }], ['GONE|2026-09-30', { at: '2026-09-01T00:00:00Z', tries: 4, reason: '', cv: 6 }], ['RETRY|2026-09-30', { at: '2026-10-05T00:00:00Z', tries: 1, reason: '', cv: 6 }]]);
     assert.deepEqual(dueItems(q, new Set(['DONE|2026-09-30']), fails, now).map((x) => x.ticker), ['OLD', 'NEW', 'RETRY']);
     const fresh = { ticker: 'TODAY', filed: '2026-10-06', want: '2026-09-30', added_at: '2026-10-06T09:50:00Z' };
     assert.deepEqual(dueItems([fresh], new Set(), new Map(), now), [], 'seen 10 min ago: Screener gets 20 min first (zzz1221)');
@@ -194,7 +198,7 @@ test('zzz1221 — a failure judged by the older checker is retried at once', () 
   const now = Date.parse('2026-10-06T10:00:00Z');
   const q = [{ ticker: 'R', filed: '2026-10-01', want: '2026-09-30', added_at: 'x' }];
   assert.equal(dueItems(q, new Set(), new Map([['R|2026-09-30', { at: '2026-10-06T09:00:00Z', tries: 1, reason: 'EPS' }]]), now).length, 1);
-  assert.equal(dueItems(q, new Set(), new Map([['R|2026-09-30', { at: '2026-10-06T09:00:00Z', tries: 1, reason: 'EPS', cv: 5 }]]), now).length, 0);
+  assert.equal(dueItems(q, new Set(), new Map([['R|2026-09-30', { at: '2026-10-06T09:00:00Z', tries: 1, reason: 'EPS', cv: 6 }]]), now).length, 0);
 });
 
 test('zzz1221 — printed slips "8,208,14" and "14,302 .31" count as 8208.14 and 14302.31 (PRINCEPIPE)', async () => {

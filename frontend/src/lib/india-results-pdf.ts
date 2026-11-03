@@ -84,8 +84,9 @@ export interface RpQuotes {
 /** zzz898 — a field where the PDF and the other source (Screener / enrich) disagree for the same quarter. */
 export interface RpDisagreement { field: string; other: number; pdf: number; quote: string | null }
 /** zzz1221 — the checker version a failure was judged under: a failure under an older checker is retried at once. */
-export const RP_CHECK_VERSION = 5;   // 5 (zzz1225): consolidated table found in any heading order; stated unit wins; standalone rejected when consolidated exists
-export const RP_MIN_RECORD_CK = 5;   // 3: printed slips "8,208,14", space separators; 4: columns run together
+export const RP_CHECK_VERSION = 6;   // 6 (zzz1226): rupee sign printed as "`"; a quarter's sales far from the previous quarter's is a unit slip
+// 5 (zzz1225): consolidated table found in any heading order; stated unit wins; standalone rejected when consolidated exists
+export const RP_MIN_RECORD_CK = 6;   // 3: printed slips "8,208,14", space separators; 4: columns run together
 export interface RpFail { at: string; tries: number; reason: string; cv?: number }
 
 const DAY = 86_400_000;
@@ -165,7 +166,8 @@ export function resultsExcerpt(text: string, max = 22_000): string {
  *  null when none, or when the document states different units (then the model's answer is checked, not overridden). Pure. */
 export function statedUnit(text: string): 'crore' | 'lakh' | 'million' | 'thousand' | null {
   const t = String(text || '').slice(0, 9000);
-  const re = /(?:₹|rs\.?|inr|rupees)\s*\.?\s*(?:in\s+)?(crores?|cr\.?|lakhs?|lacs?|millions?|mn|thousands?|'000)\b|(?:amounts?|figures?|all amounts)\s+(?:are\s+)?in\s+(?:₹|rs\.?|inr|rupees)?\s*(crores?|lakhs?|lacs?|millions?|thousands?)\b|\(\s*in\s+(crores?|lakhs?|lacs?|millions?)\s*\)/gi;
+  // zzz1226 — many Indian PDFs print the rupee sign in a font that comes out as "`" ("(` in Lakhs)"), so it counts as a currency mark
+  const re = /(?:₹|`|rs\.?|inr|rupees)\s*\.?\s*(?:in\s+)?(crores?|cr\.?|lakhs?|lacs?|millions?|mn|thousands?|'000)\b|(?:amounts?|figures?|all amounts)\s+(?:are\s+)?in\s+(?:₹|`|rs\.?|inr|rupees)?\s*(crores?|lakhs?|lacs?|millions?|thousands?)\b|\(\s*(?:₹|`|rs\.?|inr)?\s*in\s+(crores?|lakhs?|lacs?|millions?)\s*\)/gi;
   const found = new Set<string>();
   for (const m of t.matchAll(re)) {
     const u = String(m[1] || m[2] || m[3] || '').toLowerCase();
@@ -374,6 +376,10 @@ export function overlayResultsPdf(out: any, rec: RpRecord | null | undefined, fi
   if ((rec.ck ?? 0) < RP_MIN_RECORD_CK) return { ...out, _results_pdf_skipped: 'read by an older checker — being re-read' };
   // zzz1225 — a quarter's sales above 50× the whole company's market value is a unit slip (lakh read as crore), never used
   const mc = typeof out?.market_cap_cr === 'number' && out.market_cap_cr > 0 ? out.market_cap_cr : null;
+  // zzz1226 — ANTHEM: ₹59,403 Cr for a quarter after ₹418 Cr the quarter before — lakhs filed as crore. A new quarter more than
+  // 5× (or under a fifth of) the previous quarter's sales is a unit slip, never laid over.
+  const prevQ = typeof out?.sales_curr_cr === 'number' && out.sales_curr_cr > 0 ? out.sales_curr_cr : null;
+  if (prevQ != null && (rec.sales_curr_cr > 5 * prevQ || rec.sales_curr_cr < prevQ / 5)) return { ...out, _results_pdf_skipped: `quarterly sales ₹${rec.sales_curr_cr} Cr against ₹${prevQ} Cr the quarter before — unit not trusted` };
   if (mc != null && rec.sales_curr_cr * 4 > 50 * mc) return { ...out, _results_pdf_skipped: `quarterly sales ₹${rec.sales_curr_cr} Cr look too large for a ₹${Math.round(mc)} Cr company — unit not trusted` };
   const have = isoDay(out?.latest_quarter_end_iso);
   // zzz898: Screener (or another source) has the same quarter — its figures stay; a PDF that disagrees is RECORDED, never silently applied
