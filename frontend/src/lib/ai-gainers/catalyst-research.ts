@@ -50,7 +50,7 @@ import { catalystTypeOf, factValueCr, flatFacts, evidenceBreadthOf, type DocRead
 import { isGenericSubject, docSeqOf } from './announcement-reader';
 import { buildIndiaCard, classifyIndiaEvents, IN_BACKDROP_DAYS, type InCard } from './in-event-taxonomy';
 
-export const RULES_VERSION = '2026-11-03.zzz1220d';   // zzz1220: label / conflict / results-release fixes — free rescore on next page load
+export const RULES_VERSION = '2026-11-03.zzz1220e';   // zzz1220: label / conflict / results-release fixes — free rescore on next page load
 // zzz803 (IN): every India finding carries an India card (in-event-taxonomy):
 // events named from filing subject / summary / read-document sentences and
 // press headlines (promoter stake sale, open offer, restatement, SAST / PIT

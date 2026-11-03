@@ -878,7 +878,8 @@ async function rescoreOnly(req: NextRequest, body: any) {
         if (y) inputs = { ...inputs, returns: y.returns, sources: [...(inputs.sources || []), y.source] };
       }
       // zzz1220 (IN): documents read under an older extraction are read again (free — no model; PDF text is cached by URL)
-      if (market === 'IN' && inputs.docs?.length && inputs.docsV !== INDIA_EXTRACT_VERSION && Date.now() - t0 < budget - 15_000) {
+      if (market === 'IN' && inputs.docs?.length && inputs.docsV !== INDIA_EXTRACT_VERSION) {
+        if (Date.now() - t0 > budget - 15_000) break;   // no time to re-read: stays stale, the next call does it
         const docs2 = await indiaDocuments(u.ticker, inputs.announcements, { now: new Date(inputs.fetchedAt), sessionCloseIso, marketCap: inputs.marketCap ?? u.marketCap ?? null, returns: inputs.returns ?? null, bseCode: null, companyName: u.company ?? null, msLeft: Math.min(30_000, budget - (Date.now() - t0) - 5_000) });
         if (docs2.length) inputs = { ...inputs, docs: docs2, docsV: INDIA_EXTRACT_VERSION };
       }

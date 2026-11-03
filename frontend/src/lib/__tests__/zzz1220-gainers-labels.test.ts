@@ -77,3 +77,9 @@ test('the company name decides the theme before customer words (MOLDTKPAC)', () 
   const t = themeOf(['Mold-Tek Packaging', 'bagged new orders from Pharmaforce and Life wise Pharmaceuticals from Pharma Industry'], null, 'Mold-Tek Packaging');
   assert.equal(t.theme, 'Paper & packaging');
 });
+
+test('the order letter form: "completed within 09 years 04 months from the date of receipt" (GRSE, live text)', () => {
+  const t = 'Receipt of order. Name of the entity awarding the order: Indian Navy. Broad consideration or size of the order(s) 32,000 Crore 3. is to be executed Project to be completed within 09 years 04 months from the date of receipt of first stage payment. '.repeat(2);
+  const x = extractIndiaFacts({ text: t, issuer: 'GRSE', date: '2026-11-02', url: null, title: 'Order' } as any);
+  assert.match(String(x.facts[0]?.time.executionPeriod), /^09 years 04 months/);
+});

@@ -29,7 +29,7 @@ import type { CatalystType } from './events';
 
 /** Bump when extraction changes what a document yields (cached reads re-extract). */
 // zzz803: x2 — a document read also keeps its event sentences (eventLines) for the India card.
-export const INDIA_EXTRACT_VERSION = 'x3';   // zzz1220: results releases, execution years
+export const INDIA_EXTRACT_VERSION = 'x4';   // zzz1220: results releases, execution years
 
 export type Polarity = 'positive' | 'negative' | 'neutral';
 
@@ -376,7 +376,7 @@ function executionOf(text: string): string | null {
     // zzz1220: "to be completed within 09 years 04 months" — years and months together
     /(?:execut\w*|complet\w*|deliver\w*)\s+(?:with)?in\s+(\d{1,2}\s*years?(?:\s*(?:and\s*)?\d{1,2}\s*months?)?)/i,
     /execution schedule (?:stipulated at|of) (\d+\s*months?[^.;,]{0,60}?)(?=[.;]|$)/i,
-    /(\d+\s*months? from the date of [^.;,]{3,60})/i,
+    /(?<!years?\s{0,3}(?:and\s{0,3})?)\b(\d+\s*months? from the date of [^.;,]{3,60})/i,   // zzz1220: not the months part of "09 years 04 months"
     /to be executed\s*:?\s*(?:by|within)?\s*([A-Z][a-z]+,?\s+\d{4}|\d+\s*(?:months?|days|weeks))/i,
     /executed (?:by|within)\s+([A-Z][a-z]+,?\s+\d{4}|\d+\s*(?:working )?(?:months?|days|weeks))/i,
     /within (\d+\s*(?:working )?(?:days|months|weeks))/i,
