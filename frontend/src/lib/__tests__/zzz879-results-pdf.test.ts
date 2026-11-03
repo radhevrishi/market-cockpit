@@ -1,7 +1,7 @@
 // zzz879 — India results PDF backup: checks, overlay, queue, runner.
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkResultsAnswer, overlayResultsPdf, mergeQueue, dueItems, looksLikeResultsText, resultsExcerpt, RP_RESULT_KEY, RP_LATEST_KEY, RP_QUEUE_KEY, RP_FAIL_KEY } from '../india-results-pdf';
+import { consolidatedTableAt, statedUnit, checkResultsAnswer, overlayResultsPdf, mergeQueue, dueItems, looksLikeResultsText, resultsExcerpt, RP_RESULT_KEY, RP_LATEST_KEY, RP_QUEUE_KEY, RP_FAIL_KEY } from '../india-results-pdf';
 import { runResultsPdf, enqueueResultsPdf, type RpDeps } from '../india-results-pdf-run';
 
 const DOC = 'Statement of Standalone Unaudited Financial Results for the quarter ended 30.09.2026 (Rs. in Lakhs) '
@@ -39,7 +39,21 @@ describe('zzz879 — checking the answer', () => {
     assert.equal(looksLikeResultsText(DOC), true);
     assert.equal(looksLikeResultsText('Intimation of board meeting ' + 'y'.repeat(2000)), false);
     assert.ok(resultsExcerpt('a'.repeat(30000) + ' Statement of Consolidated Unaudited Financial Results ' + 'b'.repeat(30000), 1000).startsWith(' Statement of Consolidated') === false);
-    assert.match(resultsExcerpt('a'.repeat(30000) + 'Consolidated Unaudited Financial Results here' + 'b'.repeat(30000), 100), /^Consolidated Unaudited/);
+    assert.match(resultsExcerpt('a'.repeat(30000) + 'Consolidated Unaudited Financial Results here Revenue from operations 1 2' + 'b'.repeat(30000), 400), /Consolidated Unaudited/);
+    // zzz1225 — Anthem: "Statement of Unaudited Consolidated Financial Results" (adjective first) is found too, even in a short document
+    const anthem = 'Statement of Unaudited Standalone Financial Results Revenue from operations 572.11 552.70 ' + 'x'.repeat(2000) + ' Statement of Unaudited Consolidated Financial Results for the quarter ended 30 September 2026 Revenue from operations 594.03 550.50';
+    assert.ok(consolidatedTableAt(anthem) > 0);
+    assert.match(resultsExcerpt(anthem), /^.{0,300}Statement of Unaudited Consolidated/s);
+    assert.doesNotMatch(resultsExcerpt(anthem), /572\.11/);
+    // a cover letter naming both tables is not the table
+    assert.equal(consolidatedTableAt('the Board approved the standalone and consolidated financial results. Kindly take on record.'), -1);
+    // zzz1225 — ONEPOINT: the stated unit wins
+    assert.equal(statedUnit('(₹ in Lakhs) Particulars Quarter ended'), 'lakh');
+    assert.equal(statedUnit('Rs. in crore except EPS'), 'crore');
+    assert.equal(statedUnit('(₹ in Lakhs) … (₹ in crore)'), null);
+    const big = (checkResultsAnswer({ ...ans(), unit: 'crore' }, P) as any).record;
+    if (big) assert.match(String(overlayResultsPdf({ sales_curr_cr: 1, latest_quarter_end_iso: '2026-06-30', market_cap_cr: 1 }, big, '2026-10-03')._results_pdf_skipped), /unit not trusted/);
+    assert.match(String(overlayResultsPdf({ latest_quarter_end_iso: '2026-06-30' }, { ...big, ck: 4 }, '2026-10-03')._results_pdf_skipped), /older checker/);
   });
 });
 
@@ -66,7 +80,7 @@ describe('zzz879 — queue', () => {
   test('due: seen 20+ minutes ago (zzz1221; was 2 h, then 2 days), not done, back-off respected, given up after 4', () => {
     const now = Date.parse('2026-10-06T10:00:00Z');
     const q = [it('OLD', '2026-10-01'), it('NEW', '2026-10-05'), it('DONE', '2026-10-01'), it('WAIT', '2026-10-01'), it('GONE', '2026-10-01'), it('RETRY', '2026-10-01')];
-    const fails = new Map([['WAIT|2026-09-30', { at: '2026-10-06T08:00:00Z', tries: 1, reason: '', cv: 4 }], ['GONE|2026-09-30', { at: '2026-09-01T00:00:00Z', tries: 4, reason: '', cv: 4 }], ['RETRY|2026-09-30', { at: '2026-10-05T00:00:00Z', tries: 1, reason: '', cv: 4 }]]);
+    const fails = new Map([['WAIT|2026-09-30', { at: '2026-10-06T08:00:00Z', tries: 1, reason: '', cv: 5 }], ['GONE|2026-09-30', { at: '2026-09-01T00:00:00Z', tries: 4, reason: '', cv: 5 }], ['RETRY|2026-09-30', { at: '2026-10-05T00:00:00Z', tries: 1, reason: '', cv: 5 }]]);
     assert.deepEqual(dueItems(q, new Set(['DONE|2026-09-30']), fails, now).map((x) => x.ticker), ['OLD', 'NEW', 'RETRY']);
     const fresh = { ticker: 'TODAY', filed: '2026-10-06', want: '2026-09-30', added_at: '2026-10-06T09:50:00Z' };
     assert.deepEqual(dueItems([fresh], new Set(), new Map(), now), [], 'seen 10 min ago: Screener gets 20 min first (zzz1221)');
@@ -172,7 +186,7 @@ test('zzz1221 — a failure judged by the older checker is retried at once', () 
   const now = Date.parse('2026-10-06T10:00:00Z');
   const q = [{ ticker: 'R', filed: '2026-10-01', want: '2026-09-30', added_at: 'x' }];
   assert.equal(dueItems(q, new Set(), new Map([['R|2026-09-30', { at: '2026-10-06T09:00:00Z', tries: 1, reason: 'EPS' }]]), now).length, 1);
-  assert.equal(dueItems(q, new Set(), new Map([['R|2026-09-30', { at: '2026-10-06T09:00:00Z', tries: 1, reason: 'EPS', cv: 4 }]]), now).length, 0);
+  assert.equal(dueItems(q, new Set(), new Map([['R|2026-09-30', { at: '2026-10-06T09:00:00Z', tries: 1, reason: 'EPS', cv: 5 }]]), now).length, 0);
 });
 
 test('zzz1221 — printed slips "8,208,14" and "14,302 .31" count as 8208.14 and 14302.31 (PRINCEPIPE)', async () => {

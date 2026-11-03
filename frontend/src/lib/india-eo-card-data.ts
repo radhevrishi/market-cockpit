@@ -764,7 +764,7 @@ export function cashTileView(r: any, fb?: CashFallback | null): CashTileView {
   if (fb && fb.fy && cashYearTooOld(fb.fy, r?.filing_date)) fb = null;
   const basis = typeof r?.cash_basis === 'string' && r.cash_basis.trim() ? r.cash_basis.trim()
     : (typeof r?.cash_fy === 'string' && r.cash_fy.trim() ? `${r.cash_fy.trim()} full year` : null);
-  const fbYear = fb && fin(fb.cfo) && fin(fb.pat) && fb.fy ? { ocf: fb.cfo, pat: fb.pat, fy: fb.fy } : null;
+  const fbYear = fb && fin(fb.cfo) && fb.cfo !== 0 && fin(fb.pat) && fb.fy ? { ocf: fb.cfo, pat: fb.pat, fy: fb.fy } : null;
   const fk = financialKindOfRow(r);
   if (fk) {
     // zzz1089 — not every financial company is a lender: an asset manager / fintech / exchange gets the normal cash test; a bank,
@@ -784,7 +784,8 @@ export function cashTileView(r: any, fb?: CashFallback | null): CashTileView {
     return { text: `n/a (${word})`, note: 'not meaningful for lenders', color: 'none', basis: null };
   }
   const v0 = [r?.ocf_to_pat_ratio, r?.cfo_to_pat_ratio].find(fin);
-  const v = v0 == null && fbYear && fbYear.pat > 0 && Math.abs(fbYear.ocf / fbYear.pat) <= 50 ? Math.round((fbYear.ocf / fbYear.pat) * 100) / 100 : v0;
+  // zzz1225 — SHALBY: a fallback year with cash flow 0 is a missing figure, not "0.00x below the divergence line"
+  const v = v0 == null && fbYear && fbYear.pat > 0 && fbYear.ocf !== 0 && Math.abs(fbYear.ocf / fbYear.pat) <= 50 ? Math.round((fbYear.ocf / fbYear.pat) * 100) / 100 : v0;
   if (v0 == null && v != null && fbYear) return { text: `${v.toFixed(2)}x`, note: ratioNote(v), color: v < 0.6 ? 'bad' : v < 1 ? 'warn' : 'good', basis: `${fbYear.fy} full year` };
   if (v == null || v === 0) {
     // zzz1068 — the figures ARE in the source; the ratio is refused because the year's profit was a

@@ -3,7 +3,7 @@
 // step is injected so the run can be tested without any of them.
 import {
   RP_QUEUE_KEY, RP_STATUS_KEY, RP_LOCK_KEY, RP_HAVE_KEY, RP_RESULT_KEY, RP_LATEST_KEY, RP_FAIL_KEY, RP_RESULT_TTL_S, RP_QUEUE_TTL_S, RP_MAX_TRIES, RP_MODEL, RP_FEATURE, RP_CHECK_VERSION,
-  RESULTS_TOOL, RESULTS_SYSTEM, resultsUserPrompt, resultsExcerpt, looksLikeResultsText, checkResultsAnswer, dueItems, mergeQueue,
+  RESULTS_TOOL, RESULTS_SYSTEM, resultsUserPrompt, resultsExcerpt, looksLikeResultsText, checkResultsAnswer, dueItems, mergeQueue, consolidatedTableAt, RP_MIN_RECORD_CK,
   type RpQueueItem, type RpRecord, type RpFail,
 } from './india-results-pdf';
 
@@ -48,7 +48,7 @@ export async function runResultsPdf(d: RpDeps, o: RpRunOptions = {}): Promise<Rp
         part.forEach((q, j) => {
           const k = `${q.ticker}|${q.want}`;
           const have = vals[2 * j] as RpRecord | null, f = vals[2 * j + 1] as RpFail | null;
-          if (have && (have as any).quotes) done.add(k);
+          if (have && (have as any).quotes && ((have as any).ck ?? 0) >= RP_MIN_RECORD_CK) done.add(k);
           if (f) fails.set(k, f);
         });
       }
@@ -56,7 +56,7 @@ export async function runResultsPdf(d: RpDeps, o: RpRunOptions = {}): Promise<Rp
       const k = `${q.ticker}|${q.want}`;
       // zzz898: a record read before row quotes were stored is re-read once (it is not used for the overlay)
       const have = await d.kv.get<RpRecord>(RP_RESULT_KEY(q.ticker, q.want));
-      if (have && (have as any).quotes) done.add(k);
+      if (have && (have as any).quotes && ((have as any).ck ?? 0) >= RP_MIN_RECORD_CK) done.add(k);
       const f = await d.kv.get<RpFail>(RP_FAIL_KEY(q.ticker, q.want));
       if (f) fails.set(k, f);
     }
@@ -100,7 +100,7 @@ export async function runResultsPdf(d: RpDeps, o: RpRunOptions = {}): Promise<Rp
         await fail(q, 'model_error', m.message); return;
       }
       spent += m.costUsd;
-      const chk = checkResultsAnswer(m.raw, { ticker: q.ticker, want: q.want, filed: q.filed, docText: excerpt, url, model: m.model, now });
+      const chk = checkResultsAnswer(m.raw, { ticker: q.ticker, want: q.want, filed: q.filed, docText: excerpt, url, model: m.model, now, consolidatedTable: consolidatedTableAt(text) >= 0 });
       if (!chk.ok) { await fail(q, 'rejected', chk.reason, m.costUsd); return; }
       const rec: RpRecord = chk.record;
       await d.kv.set(RP_RESULT_KEY(q.ticker, q.want), rec, RP_RESULT_TTL_S);

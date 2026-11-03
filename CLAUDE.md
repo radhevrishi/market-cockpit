@@ -3884,3 +3884,20 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   itself a change in the business"). Dated gate needs the SENTENCE to date the event (EVENT_DATE_RE), filing date alone = UNKNOWN.
   `insight.watch`; insight.proof / materiality now come from the same evidence sentence as the thesis (one evidence record).
   Business-today column states industry + annual sales and says the segment split is not in the data. Coverage note counts documents.
+- zzz1225 (3 Nov): EO figures from results PDFs. ANTHEM showed STANDALONE figures (₹572 Cr / PAT ₹221 Cr; consolidated is ₹594 /
+  ₹211): the excerpt only found "Consolidated Unaudited …" headings, so "Statement of Unaudited Consolidated Financial Results" was
+  missed and the model read the standalone table. `consolidatedTableAt` (any word order, followed by a revenue row, not a cover
+  letter) now starts the excerpt; a standalone answer when a consolidated table exists is rejected. ONEPOINT showed lakhs as crore
+  (₹17,496 Cr quarterly sales): `statedUnit` (the statement's own "₹ in Lakhs") wins over the model's unit, and the overlay drops a
+  record whose quarterly sales × 4 > 50 × market cap. RP_CHECK_VERSION 5; records carry `ck`; records read by an older checker
+  (ck < RP_MIN_RECORD_CK) are not laid over and are re-read when the graded route re-queues the name. Standing guidance on EO cards
+  skips company-wide money figures that cannot be the whole company (revenue < 0.5× or > 6× annualised sales; EBITDA / PAT > 1.5×
+  annualised sales): Amrutanjan "FY27 revenue ₹15 Cr", Deep Industries "FY28 revenue ₹150 Cr". Cash tile: a fallback year with CFO 0
+  is missing, not "0.00x" (SHALBY).
+- zzz1224d (3 Nov): radar strictness once change lines were read (157 docs had lines → 48 false "confirmed"). shareShift needs a share
+  of the company's own revenue / sales / volumes / business AND a movement verb ("from a% to b%" or "a% → b%"; "by x% to y%" = an
+  x-point move); never a margin, an industry statistic or a range. FIRST_RE needs "our / its / a / the first … order / customer /
+  contract" with a completed verb; "first quarter of commercial revenue from the X business" = NEW_BUSINESS. NEW_BIZ needs a named
+  segment / business / vertical / category (not a year, not "this segment", not a negation, not a past year). Order inflow / totals
+  are ordinary order flow; one order counts for the watch only at ≥ 25% of annual sales. Approvals of claims / loans / listings
+  excluded. A capacity step in a ₹20,000 Cr+ company is small. SWR key v11.

@@ -61,3 +61,21 @@ test('zzz977 the reader takes this season’s top-tier India companies first', (
     { handoff: null, graded: null, verified: null, looked: new Set(), watched: null, readIndia: [], eoTop: new Set(['TOPCO']) });
   assert.equal(plan.rows[0].ticker, 'TOPCO');
 });
+
+test('zzz1225 a segment-sized revenue figure is never shown as the company’s standing guidance', () => {
+  const amrut = { docKind: 'presentation', filedAt: '2026-08-10', rows: [{ metric: 'REVENUE', period: 'FY27', status: 'NEW', low: 15, high: 15, unit: 'crore', currency: 'INR', quote: 'women hygiene revenue of ₹15 crore in FY27' }] };
+  assert.equal(standingGuidance(row({ sales_curr_cr: 135, sales_yoy_pct: 15 }), [amrut]), null);
+  const deep = { docKind: 'transcript', filedAt: '2026-08-12', rows: [
+    { metric: 'PAT', period: 'FY27', status: 'NEW', low: 350, high: 350, unit: 'crore', currency: 'INR', quote: 'PAT of ₹350 crore' },
+    { metric: 'REVENUE', period: 'FY28', status: 'NEW', low: 150, high: 150, unit: 'crore', currency: 'INR', quote: 'new vertical revenue of ₹150 crore by FY28' }] };
+  const s = standingGuidance(row({ sales_curr_cr: 295, sales_yoy_pct: 33 }), [deep]);
+  assert.match(String(s?.text), /FY27 PAT ₹350 Cr/);
+  assert.doesNotMatch(String(s?.text), /₹150 Cr/);
+});
+
+test('zzz1225 SHALBY: a cash-flow figure of 0 in the fallback year is missing, never "0.00x below the divergence line"', async () => {
+  const { cashTileView } = await import('../india-eo-card-data');
+  const v = cashTileView({ ticker: 'SHALBY', filing_date: '2026-11-03' }, { cfo: 0, pat: 30, fy: 'Mar 2026' } as any);
+  assert.notEqual(v.text, '0.00x');
+  assert.equal(v.text, '—');
+});

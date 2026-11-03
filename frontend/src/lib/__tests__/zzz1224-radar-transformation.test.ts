@@ -19,7 +19,7 @@ const CASES: Array<{ name: string; quote: string; facts?: Record<string, unknown
   { name: 'BALAMINES — ACN capacity 1,440 TPM; capacity is not profit', quote: 'During the period, commercial production commenced at the expanded Acetonitrile (ACN) facility, increasing installed capacity to 1,440 TPM.', want: 'ROUTINE', tier: 'EXCLUDED' },
   { name: 'TINNARUBR — one plant turned around; consolidated size unknown', quote: 'Internationally, our Oman plant ran at 90% utilization in H1 and its EBITDA margins improved to 11.5% from only 6.4% in FY26.', want: 'EMERGING', tier: 'WATCH' },
   { name: 'PARACABLES — HTLS order ≈ 9% of sales, capacity only planned', quote: 'We have already secured an HTLS order book of INR 200 crores plus as on date and the capacity augmentation for specialized conductors is planned at our new plant at Narmadapuram.', facts: { salesCr: 2126 }, want: 'ROUTINE', tier: 'EXCLUDED' },
-  { name: 'ADVAIT — ₹116 Cr order credited to "NRE" (entity unclear)', quote: 'NRE order win: NREwon a 116 crore solar EPC order for a 200 MW project from KPI Green Energy, strengtheningitsrenewableexecutionpipeline.', facts: { salesCr: 830 }, extra: { symbol: 'ADVAIT', company_name: 'Advait Energy Transitions Ltd' }, want: 'EMERGING', tier: 'WATCH' },
+  { name: 'ADVAIT — ₹116 Cr order credited to "NRE" (entity unclear)', quote: 'NRE order win: NREwon a 116 crore solar EPC order for a 200 MW project from KPI Green Energy, strengtheningitsrenewableexecutionpipeline.', facts: { salesCr: 830 }, extra: { symbol: 'ADVAIT', company_name: 'Advait Energy Transitions Ltd' }, want: 'ROUTINE', tier: 'EXCLUDED' },
   { name: 'CONCORDBIO — capability ("enabling scale-up"), not commercialisation', quote: 'Advanced fermenters and pilot plant facilities for seamless scale-up from lab to commercial production.', want: 'INSUFFICIENT', tier: 'EXCLUDED' },
   { name: 'BLS — segment margins up, consolidated margin moderated', quote: 'While EBITDA Margins expanded across both business segments, a shift in the segment mix resulted in a slight moderation in the consolidated EBITDA margin to 25%.', want: 'ROUTINE', tier: 'EXCLUDED' },
   { name: 'NETWEB — total order book, not a new order', quote: 'The relatively higher inventory levels are intentional and reflect our preparation for executing the order book of approximately INR2,629 crores as of September 26.', facts: { salesCr: 1100 }, want: 'ROUTINE', tier: 'EXCLUDED' },
@@ -90,8 +90,12 @@ test('04 unknown materiality earns nothing; a small step fails the gate', () => 
 test('05 ADVAIT: an order credited to another entity is not the listed company’s yet', () => {
   assert.equal(entityOf('NRE won a 116 crore solar EPC order', 'ADVAIT', 'Advait Energy Transitions Ltd').ok, false);
   assert.equal(entityOf('We won a 116 crore order', 'ADVAIT', 'Advait Energy Transitions Ltd').ok, true);
+  // zzz1224d — and a single order of 14% of sales is normal order flow anyway
   const t = T(CASES[6].quote, { salesCr: 830 }, CASES[6].extra);
-  assert.match(t.stateReason, /not the listed company/);
+  assert.equal(t.tier, 'EXCLUDED');
+  const big = T('NRE won a 400 crore solar EPC order from KPI Green Energy this quarter.', { salesCr: 830 }, CASES[6].extra);
+  assert.equal(big.tier, 'WATCH');
+  assert.match(big.stateReason, /not the listed company/);
 });
 
 test('06 BLS: a weaker consolidated figure is surfaced, never hidden', () => {
@@ -172,16 +176,18 @@ test('12 zzz1224b — first live shortlist review: routine growth, passive appro
   assert.equal(T('We received USFDA approval for our new oncology injectable facility this quarter.', { salesCr: 33000 }).tier, 'EXCLUDED');
   // ZENTEC: the order book in the same sentence is not the new order
   const z = T('Order inflow during the quarter was 481.81 crore, taking the consolidated order book to 1,375.70 crore as at 30 September 2026.', { salesCr: 672 });
-  assert.equal(z.mechanism, 'ORDER_STEP');
-  assert.match(z.stateReason, /≈ 72% of annual sales/);
+  assert.equal(z.mechanism, 'ROUTINE');
+  assert.match(z.stateReason, /≈ 72% of annual sales over the period — normal order flow/);
 });
 
 test('13 zzz1224c — second review: one evidence record, orders are visibility, unknown gates go to research watch', () => {
   // ZENTEC: inflow, not the backlog, and a large order is not a change in the business by itself
   const z = T('Order inflow during the quarter was 481.81 crore, taking the consolidated order book to 1,375.70 crore as at 30 September 2026.', { salesCr: 672 });
-  assert.equal(z.state, 'EMERGING');
-  assert.equal(z.tier, 'WATCH');
-  assert.match(z.stateReason, /not by itself a change in the business/);
+  assert.equal(z.state, 'ROUTINE');
+  assert.equal(z.tier, 'EXCLUDED');
+  const one = T('We received an order worth ₹600 crore from NTPC for supply of transformers in Q2.', { salesCr: 1000 });
+  assert.equal(one.tier, 'WATCH');
+  assert.match(one.stateReason, /not by itself a change in the business/);
   // a filing date alone does not date the event
   const undated = T('Commercial production of our new forged crankshaft line has commenced.');
   assert.equal(undated.gates.find((g) => g.key === 'dated')?.result, 'UNKNOWN');
@@ -194,4 +200,30 @@ test('13 zzz1224c — second review: one evidence record, orders are visibility,
   assert.equal(i.transformation.evidence.quote, 'The share of exports in our revenue increased from 20% to 45% in H1 FY27.');
   // business today states sales and says the segment split is missing
   assert.match(T('x', { industry: 'Rubber', salesCr: 610 }).thesis.oldBusiness, /₹610 Cr of annual sales \(segment split not in the data\)/);
+});
+
+test('14 zzz1224d — change lines from real transcripts: shares, firsts, "entered" and order totals read strictly', () => {
+  const st = (q: string, f: Record<string, unknown> = {}) => T(q, f).tier;
+  // a range, an industry statistic, a margin, a planned share are not mix shifts
+  assert.equal(shareShift('And you understand that 30% to 40% of the business of automobile is in the South part of the country.'), null);
+  assert.equal(shareShift('5G usage alone growing 79% year-on-year, representing 44% of total data consumption, up from 32% in the prior year.'), null);
+  assert.equal(shareShift('There have been improvement in gross margins by 1.2% to 71.1% from 69.9% previous year.'), null);
+  assert.equal(st('So that is how the journey of we are trying to cross till FY29 to 19% to 40% in terms of share of the brand business.'), 'EXCLUDED');
+  // "increased by 6% to 74%" is a 6-point move
+  assert.deepEqual(shareShift('Trade volumes increased by 8.6% Y-on-Y, while trade share rose by 6% to 74% of sales.'), { from: 68, to: 74 });
+  // "first" noise
+  for (const q of ['First is engage the customer, talk to the customer and understand why they want to go out.', 'The first step is to start our own commercial building.',
+    'After a soft first quarter, export revenue grew 69% Y-o-Y in Q2.', 'Difficult to comment on realization until we have started the first supply.',
+    'We also completed our first customer migration using our AI-powered migration technology.']) assert.equal(st(q), 'EXCLUDED', q);
+  assert.equal(st('The Company marked an important milestone by securing its first order from the United States.'), 'WATCH');
+  assert.equal(T('I am happy to say that this was our first quarter of commercial revenue from the Battery Chemicals business.').mechanism, 'NEW_BUSINESS');
+  // "entered" noise
+  for (const q of ['So when we entered the FY27, it was on a positive note.', 'This has been there from 2014 when we first entered the Indian market.',
+    'We have not entered ventured into the tissue line.', 'And that is why we have entered this segment.', 'Entered global markets in 1998, diversified into specialty-grade papers in 2003.']) assert.equal(st(q), 'EXCLUDED', q);
+  assert.equal(st('We have also recently entered the industrial-shaft and defence segments.'), 'WATCH');
+  // order totals: inflow is ordinary; a total book with "newly secured" projects is not a sized new order
+  assert.equal(st('We won new orders totalling INR3,011 crores for cells and modules, taking our total order book to INR15,000 crores.', { salesCr: 8300 }), 'EXCLUDED');
+  assert.equal(st('Company s unexecuted order book, including newly secured two NHAI HAM projects, stands at ₹20,000 crore.', { salesCr: 6500 }), 'EXCLUDED');
+  // an insurance-claim approval is not a market approval
+  assert.equal(st('The Company also received approval for a full and final insurance claim of Rs. 36.40 crores.'), 'EXCLUDED');
 });

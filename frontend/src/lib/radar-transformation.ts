@@ -112,7 +112,7 @@ export const MECHANISM_WORD: Record<Mechanism, string> = {
 };
 
 const DONE = /\b(received|won|secured|bagged|awarded|commenc\w*|commission\w*|started|began|begun|achieved|completed|qualified|approved|cleared|onboarded|launched|operational|delivered|signed|executed|transitioned|increased|rose|grew|improved|expanded|reached|entered)\b/i;
-const FUTURE = /\b(will|shall|would|could|may|might|expect\w*|anticipat\w*|plan(?:s|ned|ning)?|intend\w*|aim\w*|target\w*|going forward|potential(?:ly)?|pipeline|opportunit\w+|roadmap|long[- ]term value drivers?|framework|guidance|envisag\w*|proposed|upcoming|over the next)\b/i;
+const FUTURE = /\b(will|shall|would|could|may|might|expect\w*|anticipat\w*|plan(?:s|ned|ning)?|intend\w*|aim\w*|target\w*|going forward|potential(?:ly)?|pipeline|opportunit\w+|roadmap|long[- ]term value drivers?|framework|guidance|envisag\w*|proposed|upcoming|over the next|trying to|aspir\w*|journey|till FY\s?\d{2}|by FY\s?\d{2})\b/i;
 const MONEY = /(?:₹|rs\.?|inr)\s?([\d,]+(?:\.\d+)?)\s*(crores?|cr\b|lakhs?|mn\b|million|bn\b|billion)|([\d,]+(?:\.\d+)?)\s*(crores?|cr\b)/i;
 
 // "NREwon" (a PDF run-together) → "NRE won"
@@ -134,9 +134,18 @@ export function amountCr(s: string): number | null {
 
 /** Share moved from a% to b% (a share / mix / contribution sentence). Returns the two shares or null. */
 export function shareShift(s: string): { from: number; to: number } | null {
-  if (!/\b(share|contribut\w*|mix|portion|proportion|of (?:revenue|sales|turnover|volumes?|the business|total))\b/i.test(s)) return null;
-  const m = s.match(/(?:from|of)\s+(?:about\s+|around\s+|nearly\s+|~)?(\d{1,2}(?:\.\d+)?)\s?%\s*(?:to|→|->)\s*(?:about\s+|around\s+|nearly\s+|~)?(\d{1,3}(?:\.\d+)?)\s?%/i)
-    || s.match(/(\d{1,2}(?:\.\d+)?)\s?%\s*(?:to|→|->)\s*(\d{1,3}(?:\.\d+)?)\s?%/);
+  // zzz1224d — a share of the COMPANY'S OWN revenue / sales / volumes / business, and a stated movement. Not a margin (SPECIALITY
+  // "gross margins by 1.2% to 71.1%"), not an industry statistic (INDUSTOWER "5G … 44% of total data consumption"), not a range
+  // (LEAPIND "30% to 40% of the business of automobile is in the South")
+  if (!/\b(share|contribut\w*|mix|portion|proportion)\b/i.test(s)) return null;
+  if (!/\b(revenue|sales|turnover|top ?line|business|volumes?|portfolio|income|trade sales)\b/i.test(s)) return null;
+  if (/\bmargins?\b/i.test(s) && !/\bshare\b/i.test(s)) return null;
+  // "increased by 6% to 74%": the first figure is the change, not the starting share
+  const by = s.match(/\b(?:increased|improved|rose|grew|up|expanded|moved up|gone up|went up)\s+by\s+(\d{1,2}(?:\.\d+)?)\s?(?:%|percentage points?|pp|points?)\s*(?:to|→)\s*(\d{1,3}(?:\.\d+)?)\s?%/i);
+  if (by) { const to = Number(by[2]), from = Math.round((to - Number(by[1])) * 10) / 10; return from >= 0 && to <= 100 ? { from, to } : null; }
+  const VERB = /\b(increased|improved|rose|risen|grew|grown|moved|gone up|went up|expanded|jumped|climbed|up)\b/i;
+  const m = (VERB.test(s) ? s.match(/\bfrom\s+(?:about\s+|around\s+|nearly\s+|~)?(\d{1,2}(?:\.\d+)?)\s?%\s*(?:to|→|->)\s*(?:about\s+|around\s+|nearly\s+|~)?(\d{1,3}(?:\.\d+)?)\s?%/i) : null)
+    || s.match(/(\d{1,2}(?:\.\d+)?)\s?%\s*(?:→|->)\s*(\d{1,3}(?:\.\d+)?)\s?%/);
   const up = !m && s.match(/(\d{1,3}(?:\.\d+)?)\s?%[^.%]{0,70}?\b(?:up|increased|rising|rose|grew|higher) from (?:about |around |~)?(\d{1,2}(?:\.\d+)?)\s?%/i);
   if (up) { const to = Number(up[1]), from = Number(up[2]); return from >= 0 && to <= 100 && from !== to ? { from, to } : null; }
   if (!m) return null;
@@ -215,10 +224,15 @@ const CAPABILITY_RE = /\b(capabilit\w*|enabl\w*|pilot(?: plant| scale| facilit\w
 const OPS_MARGIN = /\b(margins?|ebitda|profitab\w*|operating leverage|realisations?|realizations?)\b/i;
 const OPS_DRIVERS = /\b(mix|efficienc\w*|operating leverage|cost (?:reduction|control|optimi\w*)|volume growth|pricing|price increases?|freight|discount\w*|raw material|input cost|lower costs?)\b/i;
 // zzz1224b — "new customers added" / "new clients onboarded" is routine growth, never a first-of-a-kind event
-const FIRST_RE = /\b(first|maiden|debut)\b[^.]{0,40}\b(order|purchase order|customer|contract|supply|export|shipment|commercial)\b/i;
+// zzz1224d — "our / its / a / the first … order / customer / contract / export order" next to a completed verb. "First point", "the
+// first step", "a soft first quarter", "until we start the first supply", "first customer migration" are not first-of-a-kind events.
+const FIRST_RE = /\b(?:our|its|their|a|the)\s+(?:very\s+)?(?:first|maiden|debut)(?:[- ]ever)?\s+(?:purchase\s+|commercial\s+|export\s+|international\s+|overseas\s+|bess\s+|large\s+)?(?:order|customer|contract|export order|supply order)s?\b(?!\s+(?:migration|meet|base|service|experience|journey|engagement))/i;
+const FIRST_DONE = /\b(received|secured|won|bagged|got|getting|marks|delivered|executed|completed|signed|awarded|securing|bagging|winning|shipped)\b/i;
 const FIN_RE = /\b(bank|nbfc|non banking|financ|lending|credit|insurance|housing fin|microfin|asset manag|broking|stockbroking|depositor|clearing|capital market|wealth|intermediar)/i;
 const MOU_RE = /\b(mou|memorandum of understanding|letter of intent|\bloi\b|tie[d-]? up|tied up|framework agreement)\b/i;
-const NEW_BIZ = /\b(entered|forayed|foray into|ventured into|new (?:segment|business|vertical|market|geograph\w*))\b/i;
+// zzz1224d — a NAMED new segment / business / vertical / product category entered; not a year ("when we entered FY27"), not a
+// negation, not "this segment", not a micro-market or a city (ordinary expansion), not an agreement / MoU
+const NEW_BIZ = /\b(?:entered|forayed|foray into|ventured into|diversified into)\s+(?:into\s+)?(?:the\s+|a\s+|new\s+)*(?!this\b|that\b|fy\b|fy\d|the fy|financial year|20\d\d|into an?\b)[A-Za-z][\w&,/-]*(?:\s+[\w&,/-]+){0,4}?\s+(?:segments?|business(?:es)?|verticals?|categor(?:y|ies)|industr(?:y|ies)|space|sectors?)\b|\bnew (?:segment|business|vertical) (?:of|in|for)\b/i;
 const EXPAND_RE = /\b(expan\w*|expanded|additional|added|adding|increas\w* (?:the )?(?:installed )?capacity|debottleneck\w*|brownfield|enhanc\w* capacity|augment\w*)\b/i;
 const NEW_LINE = /\bcommercial production of (?:our |the |a )?(?:new )?([a-z][\w -]{3,60}?)\s+(?:has\s+)?(?:commenced|started|begun)|\b(?:commenced|started|began) commercial production of (?:our |the |a )?(?:new )?([a-z][\w -]{3,60})/i;
 const WON = /\b(received|won|secured|bagged|awarded|order inflows?|letter of (?:award|intent)|LoA|purchase order)\b/i;
@@ -280,7 +294,7 @@ function readSentence(raw: string, salesCr: number | null, lender = false): Read
   if ((WON.test(q) || /\border inflows?\b/i.test(q)) && /\border|contract|LoA|letter of award/i.test(q) && !plan) {
     // the order book named in the same sentence is a stock, not the new order: size only the new order / inflow
     const newOnly = amountCr(q.replace(/\b(?:taking |takes |took |with )?(?:the |our |total |consolidated |closing |outstanding )*order ?book\b[^;]{0,80}?(?:crores?|cr\b|lakhs?|mn\b|million|bn\b|billion)/gi, ' '));
-    const amt = newOnly ?? amountCr(q);   // "secured an order book of ₹200 Cr" — the book IS the new order
+    const amt = newOnly ?? (/\b(?:secured|won|bagged)\s+(?:an?\s+)?[\w-]*\s*order ?book\s+of\b/i.test(q) ? amountCr(q) : null);   // "secured an HTLS order book of ₹200 Cr" — that book IS the new order
     const pct = amt != null && salesCr && salesCr > 0 ? Math.round((100 * amt) / salesCr) : null;
     const lvl = levelFromPct(pct);
     const first = FIRST_RE.test(q);
@@ -291,7 +305,10 @@ function readSentence(raw: string, salesCr: number | null, lender = false): Read
       ? `Order of about ₹${Math.round(amt).toLocaleString('en-IN')} Cr; annual sales not available to size it.`
       : `Order of about ₹${Math.round(amt).toLocaleString('en-IN')} Cr ≈ ${pct}% of annual sales. Orders are not revenue until delivered; margin unknown.`;
     if (first) return { ...base, mech: 'NEW_CUSTOMER', why: 'First order from a new customer type.', stage: 'Order', pct, level: lvl === 'SMALL' ? 'SMALL' : lvl, matText, scenario: lvl === 'UNKNOWN' || lvl === 'SMALL', actual };
-    if (pct != null && pct >= 10) return { ...base, mech: 'ORDER_STEP', why: /\border inflows?\b/i.test(q) ? `Order inflow in the period ≈ ${pct}% of annual sales (several orders together) — earnings visibility; not by itself a change in the business.` : `Order won ≈ ${pct}% of annual sales — earnings visibility; not by itself a change in the business.`, stage: 'Order', pct, level: lvl, matText, actual };
+    // zzz1224d — order inflow over a period is many orders: normal business for an order-driven company. One order counts for the
+    // research watch only when it is at least a quarter of a year's sales (and even then it is visibility, not a new business)
+    if (pct != null && /\border inflows?\b|\borders? (?:totall?ing|aggregating|worth a total)\b|\bnew orders\b/i.test(q)) return { ...base, mech: 'ROUTINE', why: `Order inflow of ≈ ${pct}% of annual sales over the period — normal order flow for an order-driven business, not a change in the business.`, stage: 'Order', pct, level: 'SMALL', matText, actual };
+    if (pct != null && pct >= 25) return { ...base, mech: 'ORDER_STEP', why: `One order ≈ ${pct}% of annual sales — earnings visibility; not by itself a change in the business.`, stage: 'Order', pct, level: lvl, matText, actual };
     if (pct != null) return { ...base, mech: 'ROUTINE', why: `A single order of ≈ ${pct}% of annual sales — normal order flow.`, stage: 'Order', pct, level: 'SMALL', matText, actual };
     return { ...base, mech: 'UNCLEAR', why: 'Order won, but its size against sales is not known.', stage: 'Order', pct: null, level: 'UNKNOWN', matText, actual };
   }
@@ -343,9 +360,12 @@ function readSentence(raw: string, salesCr: number | null, lender = false): Read
     && (/\b(qualified|approved|validated|cleared)\b[^.]{0,50}\b(customers?|clients?|oems?|innovators?|automakers?|utilit(?:y|ies))\b|\b(customers?|clients?|oems?|innovators?)\b[^.]{0,50}\b(qualified|approved|validated|cleared)\b/i.test(q))) {
     return { ...base, mech: 'NEW_CUSTOMER', why: 'Qualified / approved by new customers.', stage: 'Qualification', pct: null, level: 'UNKNOWN', matText: 'Size unknown: qualification comes before orders; volumes not stated.', scenario: true, actual };
   }
-  if (FIRST_RE.test(q) && !plan) return { ...base, mech: 'NEW_CUSTOMER', why: 'First order / customer of a new kind.', stage: /qualif|approv/i.test(q) ? 'Qualification' : 'Order', pct: null, level: 'UNKNOWN', matText: 'Size unknown: one first customer or order.', scenario: true, actual };
-  if (NEW_BIZ.test(q) && DONE.test(q) && !plan) return { ...base, mech: 'NEW_BUSINESS', why: 'Entered a new segment / market.', stage: 'Revenue', pct: null, level: 'UNKNOWN', matText: 'Size unknown: revenue from the new business not stated.', scenario: true, actual };
-  if (!plan && !/\b(board|shareholders?|director|PLI|incentive|subsid\w*|strateg\w*|funds?|scheme)\b/i.test(q)
+  // zzz1224d — "first quarter of commercial revenue from the Battery Chemicals business": revenue from a new business has begun
+  const firstRev = q.match(/\bfirst (?:full )?(?:quarter|year|half) of (?:commercial )?revenues? from (?:the |our |its )?([A-Za-z][\w &-]{2,40}?) (?:business|segment|vertical|division)\b/i);
+  if (firstRev && !plan) return { ...base, mech: 'NEW_BUSINESS', why: `Revenue from a new business (${firstRev[1].trim()}) has begun.`, stage: 'Revenue', pct: null, level: 'UNKNOWN', matText: `Size unknown: the ${firstRev[1].trim()} business's share of sales is not stated.`, scenario: true, actual };
+  if (FIRST_RE.test(q) && FIRST_DONE.test(q) && !plan && !/\b(until|unless|before|once|when we)\b/i.test(q)) return { ...base, mech: 'NEW_CUSTOMER', why: 'First order / customer of a new kind.', stage: /qualif|approv/i.test(q) ? 'Qualification' : 'Order', pct: null, level: 'UNKNOWN', matText: 'Size unknown: one first customer or order.', scenario: true, actual };
+  if (NEW_BIZ.test(q) && !plan && !/\b(not|never|yet to|before we|when we|since|from (?:19|20)\d\d|in (?:19|20)\d\d)\b/i.test(q)) return { ...base, mech: 'NEW_BUSINESS', why: 'Entered a new segment / market.', stage: 'Revenue', pct: null, level: 'UNKNOWN', matText: 'Size unknown: revenue from the new business not stated.', scenario: true, actual };
+  if (!plan && !/\b(board|shareholders?|director|PLI|incentive|subsid\w*|strateg\w*|funds?|scheme|claim|insurance|loan|sanction\w*|limit|resolution|merger|amalgamation|dividend|listing)\b/i.test(q)
     && /\b(?:received|got|obtained|secured|granted)\b[^.]{0,40}\b(approval|clearance|EIR|nod)\b|\b(approval|clearance|EIR)\b[^.]{0,20}\b(?:received|granted)\b|\b(?:has|have) been (?:approved|qualified|cleared)\b/i.test(q)) {
     return { ...base, mech: 'NEW_CUSTOMER', why: 'Regulatory or customer approval received.', stage: 'Approval', pct: null, level: 'UNKNOWN', matText: 'Size unknown: an approval opens a market; sales from it are not stated.', scenario: true, actual };
   }
@@ -428,7 +448,7 @@ export function changeLinesOf(text: string, max = 8): string[] {
 
 /** zzz1224c — the sentence itself dates the event (a quarter, half, fiscal year, month, "this quarter" …); a filing date alone does not. */
 export const EVENT_DATE_RE = /\b(Q[1-4]|H[12]|[1-4]Q|FY\s?['’]?\d{2}|20[2-3]\d|this (?:quarter|year|month|half)|(?:during|in) (?:the|this) (?:quarter|period|year|half|month)|(?:over|in) the (?:last|past) (?:quarter|year|twelve months|12 months)|over the year|year[- ]on[- ]year|yoy|as on date|recently|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.? ?(?:'?\d{2,4})?)\b/i;
-const OLD_RE = /\b(over the (?:last|past) \d+ years|since (?:19|20)\d\d|track record|historically|in the past|before (?:the )?ipo|since inception)\b/i;
+const OLD_RE = /\b(?:in|since|from|back in)\s+(?:19\d\d|200\d|201\d|202[0-3])\b|\b(over the (?:last|past) \d+ years|since (?:19|20)\d\d|track record|historically|in the past|before (?:the )?ipo|since inception)\b/i;
 
 export function classifyTransformation(e: TransformationInput, f: TransformationFacts = {}, now: Date = new Date()): Transformation {
   const salesCr = typeof f.salesCr === 'number' && Number.isFinite(f.salesCr) && f.salesCr > 0 ? f.salesCr : null;
@@ -438,7 +458,7 @@ export function classifyTransformation(e: TransformationInput, f: Transformation
   const reads = lines.map((l) => {
     const r = readSentence(l, salesCr, lender);
     // a first order, an approval or one turned-around unit rarely moves a ₹20,000 Cr+ business — small unless sized
-    if (salesCr != null && salesCr >= 20_000 && r.level === 'UNKNOWN' && ['NEW_CUSTOMER', 'NEW_BUSINESS', 'FACILITY_TURNAROUND', 'NEW_PRODUCT_LINE'].includes(r.mech)) {
+    if (salesCr != null && salesCr >= 20_000 && ['NEW_CUSTOMER', 'NEW_BUSINESS', 'FACILITY_TURNAROUND', 'NEW_PRODUCT_LINE', 'CAPACITY_STEP'].includes(r.mech) && (r.level === 'UNKNOWN' || r.mech === 'CAPACITY_STEP')) {
       return { ...r, level: 'SMALL' as MaterialityLevel, matText: `Size not stated; against annual sales of ₹${Math.round(salesCr).toLocaleString('en-IN')} Cr one such event is unlikely to change the business.` };
     }
     return r;

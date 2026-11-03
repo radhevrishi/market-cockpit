@@ -261,7 +261,7 @@ async function handle(req: NextRequest, days: number, limit: number, minPatterns
   const scanDays = baseScanDays(days);
   try {
     const r = await swrGet<Built>({
-      key: `transform-screener:swr:v10:${scanDays}:${minPatterns}`, freshMs: SCREEN_FRESH_MS, maxStaleMs: SCREEN_MAX_STALE_MS, force: fresh || more || coverage,
+      key: `transform-screener:swr:v11:${scanDays}:${minPatterns}`, freshMs: SCREEN_FRESH_MS, maxStaleMs: SCREEN_MAX_STALE_MS, force: fresh || more || coverage,
       build: () => buildScreen(req, scanDays, minPatterns, mode),
       isUsable: (b) => !!b && b.cacheable,
       waitMs: SCREEN_WAIT_MS + (coverage ? COVERAGE_EXTRA_WAIT_MS : 0),   // the scheduled job may wait for its own scan

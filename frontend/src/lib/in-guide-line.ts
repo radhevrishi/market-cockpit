@@ -244,7 +244,18 @@ export function standingGuidance(row: any, standing: readonly InExtractDocLike[]
     .slice().sort((a, b) => String(b.filedAt || '').localeCompare(String(a.filedAt || '')));
   if (!docs.length) return null;
   const fy = fyOf(row?.quarter);
-  const figs = latestFigures(docs).filter((f) => f.row.status !== 'WITHDRAWN' && f.row.metric !== 'OTHER');
+  // zzz1225 — a company-wide money figure must fit the company: Amrutanjan "FY27 revenue ₹15 Cr" (a ₹540 Cr business) and Deep
+  // Industries "FY28 revenue ₹150 Cr" (₹1,180 Cr) are one product / segment, never the standing guidance for the whole company
+  const annual = typeof row?.sales_curr_cr === 'number' && row.sales_curr_cr > 0 ? row.sales_curr_cr * 4 : null;
+  const fits = (r: InExtractRowLike): boolean => {
+    if (annual == null || String(r.unit || '').toLowerCase() !== 'crore') return true;
+    const v = isNum(r.high) ? r.high : isNum(r.low) ? r.low : null;
+    if (v == null) return true;
+    if (r.metric === 'REVENUE') return v >= 0.5 * annual && v <= 6 * annual;
+    if (r.metric === 'EBITDA' || r.metric === 'PAT') return v <= 1.5 * annual;
+    return true;
+  };
+  const figs = latestFigures(docs).filter((f) => f.row.status !== 'WITHDRAWN' && f.row.metric !== 'OTHER' && fits(f.row));
   if (!figs.length) return null;
   // the year being reported first (FY27 while reporting a FY27 quarter), main lines first
   const rank = (f: Fig) => (sameFy(f.row.period, fy) ? 0 : 1) * 10 + (MAIN.has(f.row.metric) ? 0 : 1) * 5 + (f.row.metric === 'REVENUE_GROWTH' || f.row.metric === 'REVENUE' ? 0 : 1);

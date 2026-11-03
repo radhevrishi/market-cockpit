@@ -66,6 +66,8 @@ export const RP_MODEL = 'claude-haiku-4-5-20251001';
 export interface RpQueueItem { ticker: string; filed: string; want: string; label?: string | null; url?: string | null; added_at: string }
 export interface RpRecord {
   v: 1; ticker: string; latest_quarter_end_iso: string; filed: string;
+  /** zzz1225 — checker version the record passed; older records are re-read before they are laid over */
+  ck?: number;
   basis: 'consolidated' | 'standalone'; unit: string;
   sales_curr_cr: number; sales_prev_cr: number | null; sales_yoy_pct: number | null;
   pat_curr_cr: number | null; pat_prev_cr: number | null; pat_yoy_pct: number | null;
@@ -82,7 +84,8 @@ export interface RpQuotes {
 /** zzz898 — a field where the PDF and the other source (Screener / enrich) disagree for the same quarter. */
 export interface RpDisagreement { field: string; other: number; pdf: number; quote: string | null }
 /** zzz1221 — the checker version a failure was judged under: a failure under an older checker is retried at once. */
-export const RP_CHECK_VERSION = 4;   // 3: printed slips "8,208,14", space separators; 4: columns run together
+export const RP_CHECK_VERSION = 5;   // 5 (zzz1225): consolidated table found in any heading order; stated unit wins; standalone rejected when consolidated exists
+export const RP_MIN_RECORD_CK = 5;   // 3: printed slips "8,208,14", space separators; 4: columns run together
 export interface RpFail { at: string; tries: number; reason: string; cv?: number }
 
 const DAY = 86_400_000;
@@ -132,14 +135,43 @@ export function looksLikeResultsText(t: string): boolean {
   return marks.filter((r) => r.test(s)).length >= 3;
 }
 
+/** zzz1225 — where the CONSOLIDATED results table starts: a "consolidated … financial results" heading in any word order
+ *  ("Statement of Unaudited Consolidated Financial Results", "Consolidated Unaudited …", "Consolidated Financial Results for the
+ *  quarter") that is followed by a revenue-from-operations row. A cover letter mentioning both tables is not a heading. -1 if none. Pure. */
+export function consolidatedTableAt(text: string): number {
+  const t = String(text || '');
+  const re = /(?:statement\s+of\s+)?(?:(?:un)?audited\s+)?consolidated\s+(?:(?:un)?audited\s+)?(?:financial\s+)?results/gi;
+  for (const m of t.matchAll(re)) {
+    const at = m.index ?? 0;
+    const after = t.slice(at, at + 5000);
+    if (/revenue\s+from\s+operations/i.test(after) && !/\bstandalone\s+(?:(?:un)?audited\s+)?(?:financial\s+)?results/i.test(after.slice(0, 600))) return at;
+  }
+  return -1;
+}
+
 /** The part of the document the model reads: around the first results table, consolidated first. Pure. */
 export function resultsExcerpt(text: string, max = 22_000): string {
   const t = String(text || '');
+  const con = consolidatedTableAt(t);
+  // zzz1225 — Anthem: the old heading test missed "Unaudited Consolidated …", so the model was shown the standalone table
+  if (con >= 0) return t.slice(Math.max(0, con - 300), Math.max(0, con - 300) + max);
   if (t.length <= max) return t;
-  const con = t.search(/consolidated (un)?audited financial results|statement of consolidated (un)?audited/i);
   const any = t.search(/revenue from operations/i);
-  const at = con >= 0 ? con : any >= 0 ? Math.max(0, any - 1500) : 0;
+  const at = any >= 0 ? Math.max(0, any - 1500) : 0;
   return t.slice(at, at + max);
+}
+
+/** zzz1225 — the amount unit the statement itself states ("₹ in Lakhs", "(Rs. in crore)", "Amount in INR million").
+ *  null when none, or when the document states different units (then the model's answer is checked, not overridden). Pure. */
+export function statedUnit(text: string): 'crore' | 'lakh' | 'million' | 'thousand' | null {
+  const t = String(text || '').slice(0, 9000);
+  const re = /(?:₹|rs\.?|inr|rupees)\s*\.?\s*(?:in\s+)?(crores?|cr\.?|lakhs?|lacs?|millions?|mn|thousands?|'000)\b|(?:amounts?|figures?|all amounts)\s+(?:are\s+)?in\s+(?:₹|rs\.?|inr|rupees)?\s*(crores?|lakhs?|lacs?|millions?|thousands?)\b|\(\s*in\s+(crores?|lakhs?|lacs?|millions?)\s*\)/gi;
+  const found = new Set<string>();
+  for (const m of t.matchAll(re)) {
+    const u = String(m[1] || m[2] || m[3] || '').toLowerCase();
+    found.add(/^cr/.test(u) ? 'crore' : /^la/.test(u) ? 'lakh' : /^(mi|mn)/.test(u) ? 'million' : 'thousand');
+  }
+  return found.size === 1 ? ([...found][0] as any) : null;
 }
 
 export const RESULTS_TOOL = {
@@ -196,17 +228,23 @@ function inDoc(v: number | null, docNums: number[]): boolean {
 export type RpCheck = { ok: true; record: RpRecord } | { ok: false; reason: string };
 
 /** Check the model's answer against the document and turn it into a record. Pure. */
-export function checkResultsAnswer(raw: any, p: { ticker: string; want: string; filed: string; docText: string; url: string; model: string; now?: Date }): RpCheck {
+export function checkResultsAnswer(raw: any, p: { ticker: string; want: string; filed: string; docText: string; url: string; model: string; now?: Date; consolidatedTable?: boolean }): RpCheck {
   if (!raw || typeof raw !== 'object') return { ok: false, reason: 'the model gave no answer' };
   if (raw.is_results_statement !== true) return { ok: false, reason: 'the document is not a results statement with figures' };
   const pe = isoDay(raw.period_end);
   if (!ISO.test(pe)) return { ok: false, reason: 'the quarter end was not stated' };
   if (pe !== p.want) return { ok: false, reason: `the statement is for the quarter ending ${pe}, not ${p.want}` };
-  const unit = String(raw.unit || '');
+  // zzz1225 — ONEPOINT: figures printed "₹ in Lakhs" were filed as crore (₹17,496 Cr quarterly sales for a ₹1,900 Cr company).
+  // The unit the statement itself states wins over the model's answer.
+  if (UNIT_TO_CRORE[String(raw.unit || '')] == null) return { ok: false, reason: `unknown unit "${String(raw.unit || '')}"` };
+  const said = statedUnit(p.docText);
+  const unit = said ?? String(raw.unit || '');
   const k = UNIT_TO_CRORE[unit];
   if (k == null) return { ok: false, reason: `unknown unit "${unit}"` };
   const basis = raw.basis === 'standalone' ? 'standalone' : raw.basis === 'consolidated' ? 'consolidated' : null;
   if (!basis) return { ok: false, reason: 'basis (consolidated / standalone) not stated' };
+  // zzz1225 — Anthem: standalone figures were filed although the statement has a consolidated table
+  if (basis === 'standalone' && p.consolidatedTable) return { ok: false, reason: 'the document has a consolidated table but standalone figures were filed' };
   const rc = num(raw.revenue_current), rp = num(raw.revenue_year_ago), nc = num(raw.net_profit_current), np = num(raw.net_profit_year_ago);
   let ec = num(raw.eps_current), ep = num(raw.eps_year_ago);
   if (rc == null || rc <= 0) return { ok: false, reason: 'no revenue figure for the quarter' };
@@ -275,7 +313,7 @@ export function checkResultsAnswer(raw: any, p: { ticker: string; want: string; 
   return {
     ok: true,
     record: {
-      v: 1, ticker: p.ticker.toUpperCase(), latest_quarter_end_iso: pe, filed: p.filed, basis, unit,
+      v: 1, ck: RP_CHECK_VERSION, ticker: p.ticker.toUpperCase(), latest_quarter_end_iso: pe, filed: p.filed, basis, unit,
       sales_curr_cr, sales_prev_cr, sales_yoy_pct: yoy(sales_curr_cr, sales_prev_cr),
       pat_curr_cr, pat_prev_cr, pat_yoy_pct: yoy(pat_curr_cr, pat_prev_cr),
       eps_curr: ec, eps_prev: ep, eps_yoy_pct: yoy(ec, ep),
@@ -332,6 +370,11 @@ export function resultsPdfDisagreements(out: any, rec: RpRecord): RpDisagreement
 /** The enrich overlay: use the PDF record only when it is NEWER than what the other sources have and not after the filing. Pure. */
 export function overlayResultsPdf(out: any, rec: RpRecord | null | undefined, filedHint: string | null | undefined): any {
   if (!rec || rec.v !== 1 || !ISO.test(rec.latest_quarter_end_iso)) return out;
+  // zzz1225 — a record read by an older checker may be standalone or in the wrong unit: not laid over until re-read
+  if ((rec.ck ?? 0) < RP_MIN_RECORD_CK) return { ...out, _results_pdf_skipped: 'read by an older checker — being re-read' };
+  // zzz1225 — a quarter's sales above 50× the whole company's market value is a unit slip (lakh read as crore), never used
+  const mc = typeof out?.market_cap_cr === 'number' && out.market_cap_cr > 0 ? out.market_cap_cr : null;
+  if (mc != null && rec.sales_curr_cr * 4 > 50 * mc) return { ...out, _results_pdf_skipped: `quarterly sales ₹${rec.sales_curr_cr} Cr look too large for a ₹${Math.round(mc)} Cr company — unit not trusted` };
   const have = isoDay(out?.latest_quarter_end_iso);
   // zzz898: Screener (or another source) has the same quarter — its figures stay; a PDF that disagrees is RECORDED, never silently applied
   if (have && have === rec.latest_quarter_end_iso) {
