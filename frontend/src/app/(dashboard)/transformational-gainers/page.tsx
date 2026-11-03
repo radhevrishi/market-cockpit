@@ -119,6 +119,8 @@ export default function TransformationalGainersPage() {
     const aiCos = groups.filter((g) => g.items.some((x) => x.ai)).length;
     return { cos, trans, high, fresh, themes: themes.length, newThemes, aiCos };
   }, [groups, newSet, themes]);
+  // zzz1229: companies on the board (current filters) with a Turnaround → Compounder read
+  const taCount = useMemo(() => groups.filter((g) => g.items.some((x) => taById.has(x.id))).length, [groups, taById]);
   const [openKey, setOpenKey] = useState<string | null>(null);
   const [showCheck, setShowCheck] = useState(false);
   const shortHistory = data ? new Date(Date.parse(`${data.to}T00:00:00Z`) - 14 * 86_400_000).toISOString().slice(0, 10) : '';
@@ -131,14 +133,14 @@ export default function TransformationalGainersPage() {
       <style>{`
         .tg-grid{display:grid;grid-template-columns:270px minmax(0,1fr);gap:16px;align-items:start}
         .tg-side{position:sticky;top:8px;display:flex;flex-direction:column;gap:12px}
-        .tg-kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin:10px 0 14px}
+        .tg-kpis{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px;margin:10px 0 14px}
         .tg-table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}
         .tg-table th{position:sticky;top:0;background:var(--mc-bg-1);text-align:left;font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--mc-text-3);padding:8px 10px;border-bottom:2px solid var(--mc-bg-4);white-space:nowrap}
         .tg-table td{padding:9px 10px;border-bottom:1px solid var(--mc-bg-4);vertical-align:top}
         .tg-row{cursor:pointer}
         .tg-row:hover td{background:color-mix(in srgb, var(--mc-cyan) 6%, transparent)}
         .tg-clamp{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-        @media (max-width:1100px){.tg-grid{grid-template-columns:1fr}.tg-side{position:static}.tg-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}}
+        @media (max-width:1100px){.tg-grid{grid-template-columns:1fr}.tg-side{position:static}.tg-kpis{grid-template-columns:repeat(4,minmax(0,1fr))}}
         @media (max-width:640px){.tg-hide-sm{display:none}.tg-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
       `}</style>
 
@@ -188,6 +190,7 @@ export default function TransformationalGainersPage() {
           { k: 'Transformational', v: kpi.trans, c: R.green, sub: 'lasting change to earnings', on: strength === 'TRANSFORMATIONAL', click: () => setStrength((v) => (v === 'TRANSFORMATIONAL' ? null : 'TRANSFORMATIONAL')) },
           { k: `High ${MB_NAME.toLowerCase()}`, v: kpi.high, c: R.green, sub: `rules + AI · AI reviewed ${kpi.aiCos} of ${kpi.cos}`, on: mbMin === 'HIGH', click: () => setMbMin((v) => (v === 'HIGH' ? null : 'HIGH')) },
           { k: 'New this week', v: kpi.fresh, c: R.violet, sub: data?.historyFrom && data.historyFrom > shortHistory ? `history only since ${data.historyFrom} — 'new' settles after 2 weeks` : 'first seen in 7 days', on: onlyNew, click: () => setOnlyNew((v) => !v) },
+          { k: '🔄 Turnarounds', v: taCount, c: R.violet, sub: 'new owner · licence · roll-out · debt repair · revival', on: turnOnly, click: () => setTurnOnly((v) => !v) },
           { k: 'Themes', v: kpi.themes, c: R.cyan, sub: theme ? `showing: ${theme === OTHER_THEME ? 'Other' : theme} · click: all` : `${kpi.newThemes} new this week · pick one on the left`, on: !!theme, click: () => setTheme(null) },
           { k: 'Window', v: `${days}d`, c: R.text, sub: `${data ? `${data.from} → ${data.to}` : ''} · click: change`, on: days !== 60, click: () => setDays((d) => ({ 60: 30, 30: 14, 14: 7, 7: 60 } as Record<number, number>)[d] || 60) },
         ].map((t) => (
@@ -217,7 +220,7 @@ export default function TransformationalGainersPage() {
               <div><div style={sectionTitle}>Show</div><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 <button type="button" style={chip(smallMid, R.green)} onClick={() => setSmallMid((v) => !v)} title="India under ₹25,000 Cr, USA under $10B">Small & mid only</button>
                 <button type="button" style={chip(onlyNew, R.violet)} onClick={() => setOnlyNew((v) => !v)}>🆕 New this week</button>
-                <button type="button" style={chip(turnOnly, R.amber)} onClick={() => setTurnOnly((v) => !v)}
+                <button type="button" style={chip(turnOnly, R.violet)} onClick={() => setTurnOnly((v) => !v)}
                   title="Turnaround → Compounder: a new owner, a new brand licence, a format roll-out, a funding repair or loss → profit — with the six-stage clock, survival / dilution / governance gates and the next proof">🔄 Turnarounds · {taById.size}</button>
               </div></div>
               <div><div style={sectionTitle}>Strength</div><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>

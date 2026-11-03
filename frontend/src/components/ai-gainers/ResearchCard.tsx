@@ -319,7 +319,7 @@ export function ResearchCard({ it, rank, onOpen, older, section }: { it: Researc
       opacity: unverified ? 0.82 : 1, display: 'flex', flexDirection: 'column', gap: 7,
     }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, flexWrap: 'wrap', minWidth: 0 }}>
-        <span title="Research priority rank" style={{ fontSize: 13, fontWeight: 900, color: C.faint, minWidth: 22 }}>#{rank}</span>
+        <span title="Research priority rank" style={{ fontSize: 13, fontWeight: 900, color: C.faint, minWidth: 22 }}>{rank > 0 ? `#${rank}` : '—'}</span>
         <Name it={it} />
         <Move it={it} big />
         <span style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap', marginLeft: 'auto' }}>
@@ -358,7 +358,7 @@ export function ResearchCard({ it, rank, onOpen, older, section }: { it: Researc
       {/* zzz789: why this rank, in words — no score number. */}
       {it.whyRank && (
         <div data-testid="why-rank" style={{ fontSize: 12, lineHeight: 1.45, color: C.dim }}>
-          <span style={{ ...label, marginRight: 6 }}>WHY #{rank}:</span>{it.whyRank}
+          <span style={{ ...label, marginRight: 6 }}>{rank > 0 ? `WHY #${rank}:` : 'WHY:'}</span>{it.whyRank}
         </div>
       )}
       {/* zzz835: the rank in one line, from the same components as the rank. Price is never in it. */}

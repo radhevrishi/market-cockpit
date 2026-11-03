@@ -3930,3 +3930,6 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   board (`reviewItem`, on read): US stored revenue growth that fights the headline's stated company figure (`headlineRevenueGrowth`)
   is replaced. Turnaround: a drug / technology collaboration-and-licence is not BRAND_LICENSE. Board: an order whose value was
   read from the filing text states it in place of "(value not stated)"; profit down ≥ 100% shows "profit swung to a loss", not −271.9%.
+- zzz1229 (3 Nov): Turnaround filter on AI Daily Gainers — a clickable "🔄 TURNAROUNDS N" tile in the market summary and a
+  "🔄 Turnarounds" option in Show (?show=turnaround); it gathers turnaround names from EVERY section into the queue view (cards
+  outside the queue show "—" for rank). Transformational Gainers: "🔄 Turnarounds" KPI tile (companies on the board with a read).

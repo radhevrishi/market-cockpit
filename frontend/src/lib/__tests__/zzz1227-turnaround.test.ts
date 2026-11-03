@@ -85,3 +85,12 @@ test('10 live 3 Nov: a drug collaboration-and-licence deal (Vir + Gilead) is not
   assert.equal(turnaroundOf({ texts: ['Licensing deal: Vir Biotechnology and Gilead Sciences entered into a Collaboration and License Agreement for an antibody program.'], ids: ['licensing'] }), null);
   assert.equal(turnaroundOf({ texts: ['Letter of intent for manufacturing and distribution rights for Guess watches in India.'] })?.archetype, 'BRAND_LICENSE');
 });
+
+test('11 zzz1229: Turnarounds tile + filter on both pages', () => {
+  const tri = readFileSync(new URL('../../components/ai-gainers/ResearchTriage.tsx', import.meta.url), 'utf8');
+  assert.match(tri, /'this_move', 'turnaround'\] as const/);
+  assert.match(tri, /data-testid="turnaround-tile"/);
+  assert.match(tri, /filter === 'turnaround' \? turnAll/);
+  const page = readFileSync(new URL('../../app/(dashboard)/transformational-gainers/page.tsx', import.meta.url), 'utf8');
+  assert.match(page, /k: '🔄 Turnarounds', v: taCount/);
+});

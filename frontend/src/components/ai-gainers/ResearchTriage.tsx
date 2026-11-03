@@ -22,6 +22,7 @@ import { BandChip, Btn, CatalystForBadge, DirectionChip, Move, Name, Pill, ScanN
 import { EventDrawer } from './EventDrawer';
 import { AlsoIn, ResearchCard } from './ResearchCard';
 import { WatchDetail, OlderDetail, NoCatalystDetail, NegativeDetail, TechnicalDetail } from './RowDetail';
+import { turnaroundFromGainer } from '@/lib/turnaround/core';
 import { C, CLASS_META, CURRENCY, PRICE_COMMENTARY_LABEL, isPriceCommentary, MATERIAL_COLOR, exchangeClock, moveColor, pct, sessionDate, tint, txt } from './tokens';
 
 export interface ResearchTriageProps {
@@ -43,12 +44,23 @@ export interface ResearchTriageProps {
   loadedAt?: string | null;
 }
 
-const FILTERS = ['all', 'verified', 'unverified', 'negative', 'book', 'this_move'] as const;
+const FILTERS = ['all', 'verified', 'unverified', 'negative', 'book', 'this_move', 'turnaround'] as const;
 const SORTS = ['rank', 'move', 'name'] as const;
 type FilterKey = (typeof FILTERS)[number];
 type SortKey = (typeof SORTS)[number];
-const FILTER_LABEL: Record<FilterKey, string> = { all: 'All', verified: 'Verified events', unverified: 'Unverified / impact unknown', negative: 'Negative', book: 'In my book', this_move: 'Filed for this move' };
+const FILTER_LABEL: Record<FilterKey, string> = { all: 'All', verified: 'Verified events', unverified: 'Unverified / impact unknown', negative: 'Negative', book: 'In my book', this_move: 'Filed for this move', turnaround: '🔄 Turnarounds' };
 const SORT_LABEL: Record<SortKey, string> = { rank: 'Research rank', move: 'Biggest move first', name: 'Name A-Z' };
+
+/** zzz1229: the Turnaround → Compounder read (lib/turnaround/core) — same rule as the card chip. */
+function isTurnaround(it: ResearchItem): boolean {
+  try { return !!turnaroundFromGainer(it); } catch { return false; }
+}
+/** Every name on the board once (queue first), across all sections. */
+function allItems(view: ResearchView): ResearchItem[] {
+  const seen = new Map<string, ResearchItem>();
+  for (const it of [...(view.queue || []), ...(view.watch || []), ...(view.portfolio || []), ...(view.needsReading || []), ...(view.negative || []), ...(view.immaterialNegative || []), ...(view.noCatalyst || []), ...(view.dataQuality || []), ...(view.context || [])]) if (it && !seen.has(it.ticker)) seen.set(it.ticker, it);
+  return [...seen.values()];
+}
 
 function passes(it: ResearchItem, f: FilterKey): boolean {
   switch (f) {
@@ -57,6 +69,7 @@ function passes(it: ResearchItem, f: FilterKey): boolean {
     case 'negative': return it.eventClass === 'NEGATIVE';
     case 'book': return it.portfolio?.relevance === 'HOLDING' || it.portfolio?.relevance === 'WATCHLIST';
     case 'this_move': return it.catalystFor === 'THIS_MOVE';
+    case 'turnaround': return isTurnaround(it);   // zzz1229
     default: return true;
   }
 }
@@ -170,7 +183,7 @@ function BannerCounts({ view }: { view: ResearchView }) {
   );
 }
 
-function Summary({ view }: { view: ResearchView }) {
+function Summary({ view, turn }: { view: ResearchView; turn?: { n: number; on: boolean; toggle: () => void } }) {
   const s = view.summary;
   // Hover breakdown: which names sit behind each tile (same lists as the sections below).
   const all = new Map<string, ResearchItem>();
@@ -209,6 +222,14 @@ function Summary({ view }: { view: ResearchView }) {
             <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.4, color: C.faint, marginTop: 2 }}>{c.l.toUpperCase()}</div>
           </div>
         ))}
+        {turn && (
+          <button type="button" data-testid="turnaround-tile" onClick={turn.toggle} aria-pressed={turn.on}
+            title={'Turnaround → Compounder read: new owner, new brand licence, format roll-out, debt repair, or loss to profit with growing sales. An overlay - it cuts across the counts. Click to show only these names (from every section) in the research queue; click again for all.'}
+            style={{ ...box, padding: '8px 10px', textAlign: 'left', font: 'inherit', cursor: 'pointer', border: `1px solid ${turn.on ? C.violet : C.border}`, boxShadow: turn.on ? `0 0 0 1px ${C.violet}` : 'none', background: turn.on ? tint(C.violet, 8) : box.background }}>
+            <div style={{ fontSize: 20, fontWeight: 900, color: turn.n > 0 ? C.violet : C.faint, lineHeight: 1.1 }}>{turn.n}</div>
+            <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.4, color: C.faint, marginTop: 2 }}>🔄 TURNAROUNDS{turn.on ? ' ✓' : ''}</div>
+          </button>
+        )}
       </div>
       {view.partition && (
         <div data-testid="overlays" style={{ fontSize: 12, color: C.dim, marginTop: 6 }}>
@@ -383,7 +404,7 @@ function Controls({ filter, setFilter, sort, setSort, shown, total }: { filter: 
       </label>
       {(filter !== 'all' || sort !== 'rank') && (
         <>
-          <span style={{ color: C.faint }}>{shown} of {total} names in the queue and watch list{sort === 'move' ? ' (sorted by move - the research rank number stays on each card)' : ''}</span>
+          <span style={{ color: C.faint }}>{filter === 'turnaround' ? `${shown} turnaround name${shown === 1 ? '' : 's'} on the board` : `${shown} of ${total} names in the queue and watch list`}{sort === 'move' ? ' (sorted by move - the research rank number stays on each card)' : ''}</span>
           <button type="button" onClick={() => { setFilter('all'); setSort('rank'); }} style={{ all: 'unset', cursor: 'pointer', color: C.cyan, fontWeight: 800 }}>reset</button>
         </>
       )}
@@ -452,8 +473,10 @@ export function ResearchTriage(props: ResearchTriageProps) {
   const [filter, setFilter] = useUrlParam<FilterKey>('show', 'all', FILTERS);
   const [sort, setSort] = useUrlParam<SortKey>('sort', 'rank', SORTS);
   const rankOf = useMemo(() => new Map((view.queue || []).map((i, n) => [i.ticker, n + 1] as const)), [view.queue]);
-  const queueShown = useMemo(() => sortItems((view.queue || []).filter((i) => passes(i, filter)), sort), [view.queue, filter, sort]);
-  const watchShown = useMemo(() => sortItems((view.watch || []).filter((i) => passes(i, filter)), sort), [view.watch, filter, sort]);
+  // zzz1229: turnaround names sit in any section (queue, watch, context, no catalyst …) — the filter gathers them all into the queue view
+  const turnAll = useMemo(() => allItems(view).filter(isTurnaround), [view]);
+  const queueShown = useMemo(() => sortItems(filter === 'turnaround' ? turnAll : (view.queue || []).filter((i) => passes(i, filter)), sort), [view.queue, filter, sort, turnAll]);
+  const watchShown = useMemo(() => (filter === 'turnaround' ? [] : sortItems((view.watch || []).filter((i) => passes(i, filter)), sort)), [view.watch, filter, sort]);
   const provisional = view.session?.isFinal === false;
 
   const isBand = (it: ResearchItem) => it.eventClass === 'MARKET_MOVE_ONLY';
@@ -491,14 +514,24 @@ export function ResearchTriage(props: ResearchTriageProps) {
       ) : (
         <>
           <BannerCounts view={view} />
-          <Summary view={view} />
+          <Summary view={view} turn={{ n: turnAll.length, on: filter === 'turnaround', toggle: () => {
+            setFilter(filter === 'turnaround' ? 'all' : 'turnaround');
+            if (filter !== 'turnaround' && typeof document !== 'undefined') setTimeout(() => document.querySelector('[aria-label="Research queue"]')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+          } }} />
           <Top3 items={view.top3 || []} onOpen={onOpen} provisional={provisional} />
 
           <section aria-label="Research queue">
             <SectionHead title="RESEARCH QUEUE" count={(view.queue || []).length} sub="Ranked by research value. Price is context, never the ranking."
               right={provisional ? <span data-testid="queue-provisional" title={view.session?.runReason || 'The session has not closed.'} style={{ fontSize: 11, fontWeight: 900, letterSpacing: 0.5, color: C.amber, border: `1px solid ${C.amber}`, borderRadius: 4, padding: '1px 6px' }}>PROVISIONAL RANKING</span> : undefined} />
             <div style={{ marginBottom: 8 }}><Controls filter={filter} setFilter={setFilter} sort={sort} setSort={setSort} shown={queueShown.length + watchShown.length} total={(view.queue || []).length + (view.watch || []).length} /></div>
-            {(view.queue || []).length > 0 && queueShown.length === 0 ? (
+            {filter === 'turnaround' && (
+              <div data-testid="turnaround-note" style={{ fontSize: 12, color: C.dim, marginBottom: 8 }}>
+                🔄 {turnAll.length} turnaround name{turnAll.length === 1 ? '' : 's'} from every section of this board (not only the queue). Click the chip on a card for the stage, the gates and the next proof.
+              </div>
+            )}
+            {filter === 'turnaround' && turnAll.length === 0 ? (
+              <div style={{ ...box, fontSize: 13, color: C.dim }}>No turnaround on this board today - no new owner, brand licence, format roll-out, debt repair or loss-to-profit swing on growing sales was found. Choose “All” to see the whole queue.</div>
+            ) : (view.queue || []).length > 0 && queueShown.length === 0 ? (
               <div style={{ ...box, fontSize: 13, color: C.dim }}>No queue name matches this filter. Choose “All” to see the whole queue.</div>
             ) : (view.queue || []).length === 0 ? (
               <div style={{ ...box, fontSize: 13, color: C.dim }}>
@@ -506,7 +539,7 @@ export function ResearchTriage(props: ResearchTriageProps) {
               </div>
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 560px), 1fr))', gap: 10 }}>
-                {queueShown.map((it) => <ResearchCard key={it.ticker} it={it} rank={rankOf.get(it.ticker) || 0} onOpen={onOpen} section="Research queue" />)}
+                {queueShown.map((it) => <ResearchCard key={it.ticker} it={it} rank={rankOf.get(it.ticker) || 0} onOpen={onOpen} section={rankOf.has(it.ticker) ? "Research queue" : "Turnarounds"} />)}
               </div>
             )}
           </section>
