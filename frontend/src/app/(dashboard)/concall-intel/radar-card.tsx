@@ -11,7 +11,7 @@ import { radarDecision } from '@/lib/concall-radar-decision';
 export const STATE_META: Record<string, { label: string; color: string; tip: string }> = {
   EARNINGS_POWER: { label: 'Earnings-power change confirmed', color: '#10B981', tip: 'A measured shift (e.g. share of higher-value products) large enough to show in consolidated results, and results growing. That the change caused the growth is not proven.' },
   COMMERCIAL: { label: 'Commercial change confirmed', color: '#0EA5E9', tip: 'Customers, orders or production of the new thing are real; earnings effect not yet visible.' },
-  EMERGING: { label: 'Emerging change (pre-earnings)', color: '#8B5CF6', tip: 'An early milestone (first order, approval, a turned-around unit, a large capacity step). Size or attribution still unknown.' },
+  EMERGING: { label: 'Potential transformation', color: '#8B5CF6', tip: 'An early milestone (first order, approval, a turned-around unit, a large capacity step). Size or attribution still unknown.' },
   ROUTINE: { label: 'Ordinary business', color: '#94A3B8', tip: 'A real event, but ordinary business: product variants, normal capacity, a small order, margin commentary.' },
   INSUFFICIENT: { label: 'Insufficient evidence', color: '#94A3B8', tip: 'Plans, a capability, a slide fragment, or an old milestone — nothing to judge yet.' },
 };
@@ -61,7 +61,8 @@ export function RadarCard({ e, rank, bench, inBook, capCr, showFullSignals }: {
           <span style={{ fontSize: 16, fontWeight: 900, color: TF.text }}>{e.symbol}</span>
           <span style={{ fontSize: 11.5, color: TF.muted, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.company_name}</span>
           <span title={lane.tip} style={{ fontSize: 10, fontWeight: 900, padding: '2px 8px', borderRadius: 999, color: '#fff', background: lane.color }}>{lane.label}</span>
-          {ins?.best && <span title={`On the transformation shortlist: no eligibility gate failed. ${ins.bestWhy.join(', ')}`} style={{ fontSize: 10, fontWeight: 900, padding: '2px 8px', borderRadius: 999, color: '#7C2D12', background: '#FDE68A' }}>★ Shortlist</span>}
+          {ins?.best && <span title={`Confirmed transformation: every gate passes on the same evidence sentence. ${ins.bestWhy.join(', ')}`} style={{ fontSize: 10, fontWeight: 900, padding: '2px 8px', borderRadius: 999, color: '#7C2D12', background: '#FDE68A' }}>★ Confirmed</span>}
+          {ins?.watch && <span title="Potential transformation: a plausible structural change with something still unknown (see the ? gates). Research it; it is not proven." style={{ fontSize: 10, fontWeight: 900, padding: '2px 8px', borderRadius: 999, color: '#5B21B6', border: '1px solid #8B5CF6' }}>◔ Research watch</span>}
           {ins?.promising && <span title="Passes every best rule except one: the document has a contradiction (a positive and a negative statement) that must be read and reconciled first" style={{ fontSize: 10, fontWeight: 900, padding: '2px 8px', borderRadius: 999, color: '#92400E', border: '1px solid #F59E0B' }}>◐ Promising — reconcile first</span>}
           {e.tone && <span title={`Management tone read from the document: ${e.tone_pos ?? 0} positive and ${e.tone_neg ?? 0} negative phrases`} style={{ fontSize: 10, fontWeight: 800, color: TONE_COLOR[e.tone] || TF.dim }}>● {e.tone.toLowerCase()} tone</span>}
           {inBook && <span style={{ fontSize: 9.5, fontWeight: 900, padding: '1px 6px', borderRadius: 3, border: '1px solid #34D399', color: '#047857' }}>📗 in my book</span>}

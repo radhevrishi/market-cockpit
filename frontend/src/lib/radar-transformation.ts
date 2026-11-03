@@ -56,7 +56,11 @@ export interface Transformation {
   gates: Gate[];
   contradiction: string | null;
   confidence: 'HIGH' | 'MEDIUM' | 'LOW';
-  /** on the transformation shortlist (state EMERGING or higher, no failed gate) */
+  /** zzz1224c — CONFIRMED: every gate passes on one evidence sentence and the mechanism changes the business;
+   *  WATCH: a plausible structural change with something still unknown (size, attribution, event date) — research, not proof;
+   *  EXCLUDED: ordinary business or not enough evidence */
+  tier: 'CONFIRMED' | 'WATCH' | 'EXCLUDED';
+  /** on the confirmed shortlist (tier CONFIRMED) */
   shortlist: boolean;
   /** ordinal sort key, higher first — never shown as a score */
   rankKey: number;
@@ -88,7 +92,7 @@ const MAT_ORDER: Record<MaterialityLevel, number> = { LARGE: 3, MEDIUM: 2, UNKNO
 export const STATE_WORD: Record<ResearchState, string> = {
   ROUTINE: 'Ordinary business',
   INSUFFICIENT: 'Insufficient evidence',
-  EMERGING: 'Emerging change (pre-earnings)',
+  EMERGING: 'Potential transformation (research watch)',
   COMMERCIAL: 'Commercial change confirmed',
   EARNINGS_POWER: 'Earnings-power change confirmed',
 };
@@ -287,7 +291,7 @@ function readSentence(raw: string, salesCr: number | null, lender = false): Read
       ? `Order of about ₹${Math.round(amt).toLocaleString('en-IN')} Cr; annual sales not available to size it.`
       : `Order of about ₹${Math.round(amt).toLocaleString('en-IN')} Cr ≈ ${pct}% of annual sales. Orders are not revenue until delivered; margin unknown.`;
     if (first) return { ...base, mech: 'NEW_CUSTOMER', why: 'First order from a new customer type.', stage: 'Order', pct, level: lvl === 'SMALL' ? 'SMALL' : lvl, matText, scenario: lvl === 'UNKNOWN' || lvl === 'SMALL', actual };
-    if (pct != null && pct >= 10) return { ...base, mech: 'ORDER_STEP', why: /\border inflows?\b/i.test(q) ? `Order inflow in the period ≈ ${pct}% of annual sales (several orders together).` : `Order won ≈ ${pct}% of annual sales.`, stage: 'Order', pct, level: lvl, matText, actual };
+    if (pct != null && pct >= 10) return { ...base, mech: 'ORDER_STEP', why: /\border inflows?\b/i.test(q) ? `Order inflow in the period ≈ ${pct}% of annual sales (several orders together) — earnings visibility; not by itself a change in the business.` : `Order won ≈ ${pct}% of annual sales — earnings visibility; not by itself a change in the business.`, stage: 'Order', pct, level: lvl, matText, actual };
     if (pct != null) return { ...base, mech: 'ROUTINE', why: `A single order of ≈ ${pct}% of annual sales — normal order flow.`, stage: 'Order', pct, level: 'SMALL', matText, actual };
     return { ...base, mech: 'UNCLEAR', why: 'Order won, but its size against sales is not known.', stage: 'Order', pct: null, level: 'UNKNOWN', matText, actual };
   }
@@ -356,7 +360,8 @@ function readSentence(raw: string, salesCr: number | null, lender = false): Read
 }
 
 const MECH_STATE: Record<Mechanism, ResearchState> = {
-  MIX_SHIFT: 'COMMERCIAL', NEW_PRODUCT_LINE: 'COMMERCIAL', ORDER_STEP: 'COMMERCIAL',
+  // zzz1224c — a large order is earnings visibility, not by itself a change in the business: research watch at most
+  MIX_SHIFT: 'COMMERCIAL', NEW_PRODUCT_LINE: 'COMMERCIAL', ORDER_STEP: 'EMERGING',
   NEW_CUSTOMER: 'EMERGING', NEW_BUSINESS: 'EMERGING', CAPACITY_STEP: 'EMERGING', FACILITY_TURNAROUND: 'EMERGING',
   ROUTINE: 'ROUTINE', PLAN: 'INSUFFICIENT', CAPABILITY: 'INSUFFICIENT', UNCLEAR: 'INSUFFICIENT',
 };
@@ -421,6 +426,8 @@ export function changeLinesOf(text: string, max = 8): string[] {
   return out.sort((a, b) => b.w - a.w).map((x) => x.s).filter((s) => { const k = s.slice(0, 60).toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, max);
 }
 
+/** zzz1224c — the sentence itself dates the event (a quarter, half, fiscal year, month, "this quarter" …); a filing date alone does not. */
+export const EVENT_DATE_RE = /\b(Q[1-4]|H[12]|[1-4]Q|FY\s?['’]?\d{2}|20[2-3]\d|this (?:quarter|year|month|half)|(?:during|in) (?:the|this) (?:quarter|period|year|half|month)|(?:over|in) the (?:last|past) (?:quarter|year|twelve months|12 months)|over the year|year[- ]on[- ]year|yoy|as on date|recently|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.? ?(?:'?\d{2,4})?)\b/i;
 const OLD_RE = /\b(over the (?:last|past) \d+ years|since (?:19|20)\d\d|track record|historically|in the past|before (?:the )?ipo|since inception)\b/i;
 
 export function classifyTransformation(e: TransformationInput, f: TransformationFacts = {}, now: Date = new Date()): Transformation {
@@ -456,12 +463,16 @@ export function classifyTransformation(e: TransformationInput, f: Transformation
   const primary: GateResult = role === 'ANALYST' && fromQuote ? 'FAIL' : fragment ? 'UNKNOWN' : (role === 'MANAGEMENT' || role === 'COMPANY' || !fromQuote) ? 'PASS' : 'UNKNOWN';
   gates.push({ key: 'primary_source', label: 'Primary-source evidence', result: primary, note: primary === 'FAIL' ? 'The sentence is an analyst question.' : fragment ? 'Slide or table fragment — open the filing to confirm.' : fromQuote ? `From the ${role === 'COMPANY' ? 'company’s own document' : 'management answers'} in the filing.` : 'From management’s own text in the filing.' });
   const old = OLD_RE.test(pick.quote);
-  const dated: GateResult = old ? 'FAIL' : Number.isFinite(ageD) && entity.ok !== false ? 'PASS' : 'UNKNOWN';
-  gates.push({ key: 'dated', label: 'Dated and attributable to the company', result: dated, note: old ? 'The sentence describes an old or cumulative milestone.' : entity.ok === false || entity.ok === null ? entity.note : `Filed ${e.filing_datetime ? String(e.filing_datetime).slice(0, 10) : 'date unknown'}.` });
+  const eventDated = EVENT_DATE_RE.test(pick.quote);
+  const dated: GateResult = old ? 'FAIL' : eventDated && entity.ok === true ? 'PASS' : 'UNKNOWN';
+  gates.push({ key: 'dated', label: 'Dated and attributable to the company', result: dated, note: old ? 'The sentence describes an old or cumulative milestone.'
+    : entity.ok !== true ? entity.note
+      : eventDated ? `The sentence dates the event; filed ${e.filing_datetime ? String(e.filing_datetime).slice(0, 10) : 'date unknown'}.`
+        : `The sentence does not say when it happened — only the filing date (${e.filing_datetime ? String(e.filing_datetime).slice(0, 10) : 'unknown'}) is known; it may repeat an older development.` });
   gates.push({ key: 'not_routine', label: 'Not normal business operations', result: pick.mech === 'ROUTINE' ? 'FAIL' : mechState === 'INSUFFICIENT' ? 'UNKNOWN' : 'PASS', note: pick.mech === 'ROUTINE' ? pick.why : mechState === 'INSUFFICIENT' ? 'Not enough to tell.' : 'Goes beyond the existing business.' });
   const matGate: GateResult = pick.level === 'SMALL' ? 'FAIL' : pick.level === 'UNKNOWN' ? 'UNKNOWN' : 'PASS';
   gates.push({ key: 'materiality', label: 'Credible path to materiality', result: matGate, note: pick.matText || 'Size not stated.' });
-  gates.push({ key: 'contradictions', label: 'Contradictions shown, not hidden', result: contradiction || e.review_queue === 'RECONCILE' ? 'UNKNOWN' : 'PASS', note: contradiction || (e.review_queue === 'RECONCILE' ? 'The document has a positive and a negative statement to reconcile.' : 'No contradiction found in the lines read.') });
+  gates.push({ key: 'contradictions', label: 'Contradictions shown, not hidden', result: contradiction ? 'UNKNOWN' : 'PASS', note: contradiction || (e.review_queue === 'RECONCILE' ? 'No contradiction in the evidence lines; the document elsewhere has a positive and a negative statement to reconcile (shown as "reconcile first").' : 'No contradiction found in the lines read.') });
 
   // ── research state ──
   let state: ResearchState = mechState;
@@ -480,13 +491,22 @@ export function classifyTransformation(e: TransformationInput, f: Transformation
   const confidence: Transformation['confidence'] = state === 'ROUTINE' || state === 'INSUFFICIENT' ? 'LOW'
     : gates.every((g) => g.result === 'PASS') ? 'HIGH'
       : gates.filter((g) => g.result !== 'PASS').length === 1 ? 'MEDIUM' : 'LOW';
-  const shortlist = STATE_ORDER[state] >= 1 && failed.length === 0;
+  // zzz1224c — an unknown gate never confirms: it puts the name on the research watch instead
+  const confirmable = pick.mech === 'MIX_SHIFT' || pick.mech === 'NEW_PRODUCT_LINE' || pick.mech === 'NEW_BUSINESS';
+  const tier: Transformation['tier'] = STATE_ORDER[state] >= 2 && confirmable && gates.every((g) => g.result === 'PASS') ? 'CONFIRMED'
+    : STATE_ORDER[state] >= 1 && failed.length === 0 ? 'WATCH' : 'EXCLUDED';
+  const shortlist = tier === 'CONFIRMED';
+  if (tier === 'WATCH') {
+    const open = gates.filter((g) => g.result === 'UNKNOWN').map((g) => `${g.label.toLowerCase()} — ${g.note.replace(/\.$/, '')}`);
+    if (open.length) stateReason = `${stateReason} Still open: ${open.join('; ')}.`;
+  }
   const recency = Number.isFinite(ageD) ? Math.max(0, 90 - Math.min(90, Math.round(ageD))) : 0;
-  const rankKey = STATE_ORDER[state] * 1e6 + MAT_ORDER[pick.level] * 1e5 + ({ HIGH: 3, MEDIUM: 2, LOW: 1 }[confidence]) * 1e4 + recency;
+  const rankKey = ({ CONFIRMED: 2, WATCH: 1, EXCLUDED: 0 }[tier]) * 1e7 + STATE_ORDER[state] * 1e6 + MAT_ORDER[pick.level] * 1e5 + ({ HIGH: 3, MEDIUM: 2, LOW: 1 }[confidence]) * 1e4 + recency;
 
   const industry = clean(f.industry || f.sector);
   const thesis = {
-    oldBusiness: industry ? `${industry} business` : 'Existing business (industry not on file)',
+    // zzz1224c — what the company earns from today, as far as the data goes; the segment split is not in the data and is said so
+    oldBusiness: `${industry || 'Industry not on file'}${salesCr != null ? `; about ₹${Math.round(salesCr).toLocaleString('en-IN')} Cr of annual sales` : ''} (segment split not in the data)`,
     whatChanges: state === 'ROUTINE' ? `Nothing structural: ${pick.why}` : state === 'INSUFFICIENT' ? `Not shown yet: ${pick.why}` : pick.why,
     earningsImpact: pick.level === 'UNKNOWN' ? `Unknown — ${pick.matText || 'size not stated'}` : pick.matText,
     keyRisk: contradiction ? `${RISK[pick.mech]} Consolidated figure already weakened.` : RISK[pick.mech],
@@ -497,6 +517,6 @@ export function classifyTransformation(e: TransformationInput, f: Transformation
     state, stateWord: STATE_WORD[state], stateReason, mechanism: pick.mech, mechanismWord: MECHANISM_WORD[pick.mech],
     evidence: { quote: pick.quote, actual: pick.actual, scope, entity },
     materiality: { level: pick.level, text: pick.matText || 'Size not stated.', scenario: pick.scenario || pick.level === 'UNKNOWN' },
-    proofStage: pick.stage, thesis, gates, contradiction, confidence, shortlist, rankKey,
+    proofStage: pick.stage, thesis, gates, contradiction, confidence, tier, shortlist, rankKey,
   };
 }

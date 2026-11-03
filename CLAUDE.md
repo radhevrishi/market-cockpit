@@ -3878,3 +3878,9 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   branches, products are routine; MoU / tie-up / LoI = plan; approvals need an active receipt ("received … approval", "has been
   approved"), never a passive "facilities approved by", PLI / incentive approvals excluded; an approval / first order in a ₹20,000 Cr+
   company is SMALL unless sized; the order book in the same sentence is stripped before sizing the new order or inflow.
+  zzz1224c (second outside review): three tiers in `Transformation.tier` — CONFIRMED (every gate PASS on ONE sentence and the mechanism
+  changes the business: MIX_SHIFT / NEW_PRODUCT_LINE / NEW_BUSINESS), WATCH (plausible structural change, some gate UNKNOWN — "research
+  watch", always visible), EXCLUDED. An unknown gate never confirms. ORDER_STEP is research watch at most ("earnings visibility, not by
+  itself a change in the business"). Dated gate needs the SENTENCE to date the event (EVENT_DATE_RE), filing date alone = UNKNOWN.
+  `insight.watch`; insight.proof / materiality now come from the same evidence sentence as the thesis (one evidence record).
+  Business-today column states industry + annual sales and says the segment split is not in the data. Coverage note counts documents.

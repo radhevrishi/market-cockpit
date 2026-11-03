@@ -308,7 +308,7 @@ function windowPayload(p: ScreenPayload, days: number, scanDays: number): Screen
   const from = Date.now() - days * 86_400_000;
   const inWin = (d: string) => { const t = new Date(d).getTime(); return Number.isFinite(t) && t >= from; };
   const entries = p.entries.filter((e) => inWin(e.filing_datetime));
-  const note = `Last ${days} days of the ${scanDays}-day scan: ${entries.length} companies with a signal in this window. Reading counts above cover the full ${scanDays} days.`;
+  const note = `Last ${days} days of the ${scanDays}-day scan: ${entries.length} documents with a signal in this window (one card per company below). Reading counts above cover the full ${scanDays} days.`;
   return {
     ...p,
     window_days: days,
@@ -563,7 +563,7 @@ async function buildScreen(req: NextRequest, days: number, minPatterns: number, 
     e.insight = radarInsight({ ...e, quote_quality: e.evidence_record?.quote_quality ?? null, review_queue: radarDecision(e).queue }, fx);
   }
   // zzz1224 — order: shortlist, then to-reconcile, then research state → size → confidence → recency (an ordinal rank, no false precision)
-  ranked.sort((a, b) => Number(!!b.insight?.best) - Number(!!a.insight?.best) || Number(!!b.insight?.promising) - Number(!!a.insight?.promising)
+  ranked.sort((a, b) => Number(!!b.insight?.best) - Number(!!a.insight?.best) || Number(!!b.insight?.promising) - Number(!!a.insight?.promising) || Number(!!b.insight?.watch) - Number(!!a.insight?.watch)
     || (b.insight?.transformation?.rankKey ?? 0) - (a.insight?.transformation?.rankKey ?? 0) || b.transformation_score - a.transformation_score);
   funnel.with_signal = ranked.length;
   // zzz1219c — a keyword pattern is not a business change: also count documents whose proof sentence holds up

@@ -63,6 +63,8 @@ export interface RadarInsight {
   best: boolean;
   /** everything for "best" passes except an open contradiction in the document (needs reading first) */
   promising: boolean;
+  /** zzz1224c — potential transformation: plausible structural change with something still unknown (research watch) */
+  watch: boolean;
   bestScore: number;      // 0–100
   bestWhy: string[];      // what is good
   blockers: string[];     // what keeps it out of "best"
@@ -324,15 +326,20 @@ export function radarInsight(e: InsightEntry, f: RadarFacts | null | undefined, 
   const passesAll = lane !== 'NONE' && tr.shortlist && !negativeTone && !cut;
   const best = passesAll && !openConflict;
   const promising = passesAll && openConflict;
+  const watch = !passesAll && lane !== 'NONE' && tr.tier === 'WATCH' && !negativeTone && !cut;
+  // zzz1224c — ONE evidence record: the proof verdict and the size shown on the card are the transformation's own,
+  // read from the same sentence as the thesis and the gates (the older keyword-proof check stays only as a detail)
+  const unifiedProof: RadarInsight['proof'] = { kind: tr.tier !== 'EXCLUDED' ? 'MILESTONE' : tr.state === 'ROUTINE' ? 'RESULTS_COMMENTARY' : 'NOT_PROVEN', reason: tr.stateReason };
+  const unifiedMat: RadarInsight['materiality'] = { pctOfSales: tr.evidence.quote === String(e.evidence_quote || '').replace(/\s+/g, ' ').trim() ? materiality.pctOfSales : null, text: tr.materiality.text };
 
   const laneWord = lane === 'NONE' ? (tr.state === 'ROUTINE' ? 'Ordinary business' : tr.state === 'INSUFFICIENT' ? 'Insufficient evidence' : 'No clear transformation') : tr.stateWord;
   const saysResults = /results|numbers/.test(laneReason) && numbersUp;
   const rWord = results.verdict === 'STRONGER_LATEST' ? 'Latest quarter stronger than the year.' : results.verdict === 'GROWING' ? 'Results growing.' : results.verdict === 'SLOWING' ? 'Results slowing.' : 'Results falling.';
   const headline = `${laneWord}: ${laneReason}${results.verdict !== 'UNKNOWN' && !saysResults ? ` ${rWord}` : ''}`;
   return {
-    lane, laneReason, results, guidance, valuation, materiality, proof,
-    checks: { transformation: lane !== 'NONE', growth: numbersUp, causalLink: false },
-    best, promising, bestScore: score, bestWhy,
+    lane, laneReason, results, guidance, valuation, materiality: unifiedMat, proof: unifiedProof,
+    checks: { transformation: tr.tier === 'CONFIRMED', growth: numbersUp, causalLink: false },
+    best, promising, watch, bestScore: score, bestWhy,
     blockers: lane === 'NONE' ? blockers : blockers.filter((b) => b !== laneReason), headline,
     transformation: tr,
   };

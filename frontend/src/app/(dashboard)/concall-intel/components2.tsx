@@ -490,13 +490,15 @@ export function TransformationScreenerTab() {
   };
   const bestCount = scopedEntries.filter((e) => e.insight?.best).length;
   const promisingCount = scopedEntries.filter((e) => e.insight?.promising).length;   // zzz1216
-  const bestOnly = bestPick ?? bestCount + promisingCount > 0;
+  const watchCount = scopedEntries.filter((e) => e.insight?.watch).length;           // zzz1224c
+  const bestOnly = bestPick ?? bestCount + promisingCount + watchCount > 0;
   const decisionFilter: RadarQueue | 'ALL' = decisionPick ?? 'ALL';
   const entries = scopedEntries
-    .filter((e) => !bestOnly || e.insight?.best || e.insight?.promising)
+    .filter((e) => !bestOnly || e.insight?.best || e.insight?.promising || e.insight?.watch)
     .filter((e) => laneFilter === 'ALL' || (e.insight?.lane ?? 'NONE') === laneFilter)
     .filter((e) => decisionFilter === 'ALL' || radarDecision(e).queue === decisionFilter);
   const shortlist = scopedEntries.filter((e) => e.insight?.best || e.insight?.promising);
+  const watchRows = scopedEntries.filter((e) => e.insight?.watch);
   const ordinaryRows = scopedEntries.filter((e) => e.insight?.transformation?.state === 'ROUTINE');
   const insufficientRows = scopedEntries.filter((e) => e.insight?.transformation?.state === 'INSUFFICIENT');
   const fn = data?.funnel;
@@ -546,8 +548,8 @@ export function TransformationScreenerTab() {
               ['Letter / link only', fn.cover_only.toLocaleString('en-IN'), TF.dim, 'The PDF was only a covering letter (e.g. "transcript is on our website"), so there was nothing to score'],
               ['Unreadable', fn.unreadable.toLocaleString('en-IN'), fn.unreadable ? TF.amber : TF.dim, 'Too large, scanned image, garbled text or download failed'],
               ['Not read yet', fn.not_yet_read.toLocaleString('en-IN'), fn.not_yet_read ? TF.amber : TF.green, 'Read automatically every 20 minutes, newest first'],
-              ['With a signal', fn.with_signal.toLocaleString('en-IN'), TF.dim, 'Read in full and at least one transformation keyword found — a keyword is not proof'],
-              ...(fn.with_proof != null ? [['With a proven change', fn.with_proof.toLocaleString('en-IN'), TF.purple, 'The quoted sentence itself proves a completed, current business event (order, start of production, customer approval, or a results change with a named cause)'] as [string, string, string, string]] : []),
+              ['Documents with a signal', fn.with_signal.toLocaleString('en-IN'), TF.dim, 'Documents (not companies) read in full with at least one transformation keyword — a keyword is not proof. Several documents can belong to one company.'],
+              ...(fn.with_proof != null ? [['With a proven change', fn.with_proof.toLocaleString('en-IN'), TF.purple, 'Documents whose evidence sentence shows a structural change — confirmed or potential (research watch). Ordinary business and plans are not counted.'] as [string, string, string, string]] : []),
             ] as const).map(([k, v, c, tip]) => (
               <div key={k} title={tip} style={{ background: TF.card2, border: `1px solid ${TF.border}`, borderRadius: 7, padding: '6px 9px' }}>
                 <div style={{ fontSize: 14, fontWeight: 900, color: c, ...TFM }}>{v}</div>
@@ -627,10 +629,10 @@ export function TransformationScreenerTab() {
         <div style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '12px 14px' }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, alignItems: 'center' }}>
             <button type="button" onClick={() => setBestPick(!bestOnly)} aria-pressed={bestOnly}
-              title="Transformation shortlist = a structural mechanism (not ordinary business), primary-source evidence, dated and attributable, not routine, a credible size, and no failed gate. Guidance cut or a negative document keeps a name out. Valuation is a separate check."
+              title="Confirmed = every gate passes on ONE evidence sentence: a structural mechanism (mix shift, new product line or new business — not ordinary orders, customers or places), primary source, the event dated in the sentence and the company's own, a known size, no contradiction. Research watch = a plausible structural change with something still unknown. Valuation is a separate check."
               style={{ background: bestOnly ? '#FDE68A' : TF.card2, color: bestOnly ? '#7C2D12' : TF.text2, border: `1px solid ${bestOnly ? '#F59E0B' : TF.border}`,
                 borderRadius: 999, fontSize: 11.5, fontWeight: 900, cursor: 'pointer', padding: '7px 12px' }}>
-              {bestOnly ? '★ Transformation shortlist · ' : '☆ Show shortlist only · '}{bestCount}{promisingCount ? ` + ◐ ${promisingCount} to reconcile` : ''}
+              {bestOnly ? '★ ' : '☆ '}Confirmed · {bestCount}{promisingCount ? ` + ◐ ${promisingCount} to reconcile` : ''} · ◔ Research watch · {watchCount}
             </button>
             <span style={{ width: 1, height: 18, background: TF.border }} />
             {([
@@ -669,7 +671,7 @@ export function TransformationScreenerTab() {
           <div style={{ fontSize: 10.5, color: TF.dim, marginTop: 7, lineHeight: 1.5 }}>
             {/* zzz1219 — each number counts one stage, in order: companies in the window → after SHOW / size → after lane / best / review */}
             {allEntries.length} compan{allEntries.length === 1 ? 'y' : 'ies'} with a signal in this window{data?.signal_documents ? ` (from ${data.signal_documents} documents)` : ''}{hiddenByFilters > 0 ? ` · ${scopedEntries.length} after the SHOW / size filter (${hiddenByFilters} set aside)` : ''} · <b>{entries.length} shown</b> after the lane / best / review filters. Research priority, never a buy signal.
-            {bestOnly && bestCount + promisingCount === 0 && ' No company passes the transformation gates in this window — an empty shortlist is a valid answer. Switch it off to see all.'}
+            {bestOnly && bestCount + promisingCount === 0 && ' No company is a confirmed transformation in this window — an empty shortlist is a valid answer; the research watch holds the potential ones.'}
           </div>
         </div>
       )}
@@ -761,7 +763,9 @@ export function TransformationScreenerTab() {
       )}
 
       {/* zzz1224 — the shortlist at a glance: one row per company, plain words */}
-      {data && shortlist.length > 0 && <ShortlistTable rows={shortlist} />}
+      {data && !building && (data.entries?.length ?? 0) > 0 && <ShortlistTable title="CONFIRMED TRANSFORMATIONS" rows={shortlist}
+        empty="None in this window. A confirmed transformation needs every gate to pass on one sentence; an empty list is a valid answer." />}
+      {data && watchRows.length > 0 && <ShortlistTable title="RESEARCH WATCH — POTENTIAL TRANSFORMATIONS (something still unknown: size, owner or date)" rows={watchRows} />}
 
       {/* leaderboard — zzz1214 compact cards (radar-card.tsx) */}
       {entries.map((e, i) => (
@@ -785,12 +789,12 @@ export function TransformationScreenerTab() {
 }
 
 // ── zzz1224 — shortlist table and the folded "not a transformation" lists ──
-function ShortlistTable({ rows }: { rows: TransformScreenEntry[] }) {
+function ShortlistTable({ title, rows, empty }: { title: string; rows: TransformScreenEntry[]; empty?: string }) {
   const cell: CSSProperties = { padding: '6px 8px', borderTop: `1px solid ${TF.border}`, verticalAlign: 'top', fontSize: 11, lineHeight: 1.45, color: TF.text2 };
   return (
     <div style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '10px 12px', overflowX: 'auto' }}>
-      <div style={{ fontSize: 11, fontWeight: 900, color: TF.text, letterSpacing: '0.3px', marginBottom: 6 }}>TRANSFORMATION SHORTLIST · {rows.length}</div>
-      <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 880 }}>
+      <div style={{ fontSize: 11, fontWeight: 900, color: TF.text, letterSpacing: '0.3px', marginBottom: 6 }}>{title} · {rows.length}</div>
+      {rows.length === 0 ? <div style={{ fontSize: 11.5, color: TF.muted }}>{empty}</div> : <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 880 }}>
         <thead>
           <tr>{['Company', 'Old business', 'What changes', 'Potential earnings impact', 'Proof stage', 'Key risk', 'Next milestone'].map((h) => (
             <th key={h} style={{ textAlign: 'left', fontSize: 9.5, color: TF.dim, fontWeight: 800, padding: '4px 8px', letterSpacing: '0.3px' }}>{h.toUpperCase()}</th>
@@ -816,7 +820,7 @@ function ShortlistTable({ rows }: { rows: TransformScreenEntry[] }) {
             );
           })}
         </tbody>
-      </table>
+      </table>}
     </div>
   );
 }

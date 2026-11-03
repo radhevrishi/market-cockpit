@@ -12,46 +12,46 @@ const T = (quote: string, f: Record<string, unknown> = {}, extra: Record<string,
   classifyTransformation({ evidence_quote: quote, quote_role: 'MANAGEMENT', filing_datetime: '2026-10-25T00:00:00Z', ...extra }, f, NOW);
 
 // ── the owner's named cases ──
-const CASES: Array<{ name: string; quote: string; facts?: Record<string, unknown>; extra?: Record<string, unknown>; want: ResearchState; shortlist: boolean }> = [
-  { name: 'BEPL — 20 new products / colour grades = product development', quote: 'Commercialization: Successfully transitioned 20 new/improved products (including 18 color grades) from R&D to commercial production.', want: 'ROUTINE', shortlist: false },
-  { name: 'KANOHAR — high-voltage share 53% → 78% = mix shift', quote: 'The share of high-voltage products in our revenue increased from 53% to 78% over the year.', facts: { salesCr: 400, resultsVerdict: 'STRONGER_LATEST' }, want: 'EARNINGS_POWER', shortlist: true },
-  { name: 'KROSS — extruded axle beam production commenced; scale unknown', quote: 'Commercial vehicles -- commercial production of our extruded axle beam has commenced and the capacity utilization of this is approximately 80% of our current output.', want: 'COMMERCIAL', shortlist: true },
-  { name: 'BALAMINES — ACN capacity 1,440 TPM; capacity is not profit', quote: 'During the period, commercial production commenced at the expanded Acetonitrile (ACN) facility, increasing installed capacity to 1,440 TPM.', want: 'ROUTINE', shortlist: false },
-  { name: 'TINNARUBR — one plant turned around; consolidated size unknown', quote: 'Internationally, our Oman plant ran at 90% utilization in H1 and its EBITDA margins improved to 11.5% from only 6.4% in FY26.', want: 'EMERGING', shortlist: true },
-  { name: 'PARACABLES — HTLS order ≈ 9% of sales, capacity only planned', quote: 'We have already secured an HTLS order book of INR 200 crores plus as on date and the capacity augmentation for specialized conductors is planned at our new plant at Narmadapuram.', facts: { salesCr: 2126 }, want: 'ROUTINE', shortlist: false },
-  { name: 'ADVAIT — ₹116 Cr order credited to "NRE" (entity unclear)', quote: 'NRE order win: NREwon a 116 crore solar EPC order for a 200 MW project from KPI Green Energy, strengtheningitsrenewableexecutionpipeline.', facts: { salesCr: 830 }, extra: { symbol: 'ADVAIT', company_name: 'Advait Energy Transitions Ltd' }, want: 'EMERGING', shortlist: true },
-  { name: 'CONCORDBIO — capability ("enabling scale-up"), not commercialisation', quote: 'Advanced fermenters and pilot plant facilities for seamless scale-up from lab to commercial production.', want: 'INSUFFICIENT', shortlist: false },
-  { name: 'BLS — segment margins up, consolidated margin moderated', quote: 'While EBITDA Margins expanded across both business segments, a shift in the segment mix resulted in a slight moderation in the consolidated EBITDA margin to 25%.', want: 'ROUTINE', shortlist: false },
-  { name: 'NETWEB — total order book, not a new order', quote: 'The relatively higher inventory levels are intentional and reflect our preparation for executing the order book of approximately INR2,629 crores as of September 26.', facts: { salesCr: 1100 }, want: 'ROUTINE', shortlist: false },
-  { name: 'POLYCAB — margin up on mix and efficiency = operational', quote: 'EBITDA increased by 39% year-on-year, while EBITDA margins expanded by more than 50 basis points sequentially to 14.4%, supported by a favourable business mix and continued focus on operational efficiencies.', want: 'ROUTINE', shortlist: false },
-  { name: 'BETA — first purchase order from a hospital chain', quote: 'As discussed, we have got successfully our first purchase order from the Tata Hospitals.', want: 'EMERGING', shortlist: true },
-  { name: 'PACEDIGITK — orders "before IPO" are old', quote: '3,250 Cr of BESS orders secured before IPO.', facts: { salesCr: 2818 }, extra: { quote_role: 'COMPANY' }, want: 'ROUTINE', shortlist: false },
+const CASES: Array<{ name: string; quote: string; facts?: Record<string, unknown>; extra?: Record<string, unknown>; want: ResearchState; tier: 'CONFIRMED' | 'WATCH' | 'EXCLUDED' }> = [
+  { name: 'BEPL — 20 new products / colour grades = product development', quote: 'Commercialization: Successfully transitioned 20 new/improved products (including 18 color grades) from R&D to commercial production.', want: 'ROUTINE', tier: 'EXCLUDED' },
+  { name: 'KANOHAR — high-voltage share 53% → 78% = mix shift', quote: 'The share of high-voltage products in our revenue increased from 53% to 78% over the year.', facts: { salesCr: 400, resultsVerdict: 'STRONGER_LATEST' }, want: 'EARNINGS_POWER', tier: 'CONFIRMED' },
+  { name: 'KROSS — extruded axle beam production commenced; scale unknown', quote: 'Commercial vehicles -- commercial production of our extruded axle beam has commenced and the capacity utilization of this is approximately 80% of our current output.', want: 'COMMERCIAL', tier: 'WATCH' },
+  { name: 'BALAMINES — ACN capacity 1,440 TPM; capacity is not profit', quote: 'During the period, commercial production commenced at the expanded Acetonitrile (ACN) facility, increasing installed capacity to 1,440 TPM.', want: 'ROUTINE', tier: 'EXCLUDED' },
+  { name: 'TINNARUBR — one plant turned around; consolidated size unknown', quote: 'Internationally, our Oman plant ran at 90% utilization in H1 and its EBITDA margins improved to 11.5% from only 6.4% in FY26.', want: 'EMERGING', tier: 'WATCH' },
+  { name: 'PARACABLES — HTLS order ≈ 9% of sales, capacity only planned', quote: 'We have already secured an HTLS order book of INR 200 crores plus as on date and the capacity augmentation for specialized conductors is planned at our new plant at Narmadapuram.', facts: { salesCr: 2126 }, want: 'ROUTINE', tier: 'EXCLUDED' },
+  { name: 'ADVAIT — ₹116 Cr order credited to "NRE" (entity unclear)', quote: 'NRE order win: NREwon a 116 crore solar EPC order for a 200 MW project from KPI Green Energy, strengtheningitsrenewableexecutionpipeline.', facts: { salesCr: 830 }, extra: { symbol: 'ADVAIT', company_name: 'Advait Energy Transitions Ltd' }, want: 'EMERGING', tier: 'WATCH' },
+  { name: 'CONCORDBIO — capability ("enabling scale-up"), not commercialisation', quote: 'Advanced fermenters and pilot plant facilities for seamless scale-up from lab to commercial production.', want: 'INSUFFICIENT', tier: 'EXCLUDED' },
+  { name: 'BLS — segment margins up, consolidated margin moderated', quote: 'While EBITDA Margins expanded across both business segments, a shift in the segment mix resulted in a slight moderation in the consolidated EBITDA margin to 25%.', want: 'ROUTINE', tier: 'EXCLUDED' },
+  { name: 'NETWEB — total order book, not a new order', quote: 'The relatively higher inventory levels are intentional and reflect our preparation for executing the order book of approximately INR2,629 crores as of September 26.', facts: { salesCr: 1100 }, want: 'ROUTINE', tier: 'EXCLUDED' },
+  { name: 'POLYCAB — margin up on mix and efficiency = operational', quote: 'EBITDA increased by 39% year-on-year, while EBITDA margins expanded by more than 50 basis points sequentially to 14.4%, supported by a favourable business mix and continued focus on operational efficiencies.', want: 'ROUTINE', tier: 'EXCLUDED' },
+  { name: 'BETA — first purchase order from a hospital chain', quote: 'As discussed, we have got successfully our first purchase order from the Tata Hospitals.', want: 'EMERGING', tier: 'WATCH' },
+  { name: 'PACEDIGITK — orders "before IPO" are old', quote: '3,250 Cr of BESS orders secured before IPO.', facts: { salesCr: 2818 }, extra: { quote_role: 'COMPANY' }, want: 'ROUTINE', tier: 'EXCLUDED' },
 ];
 // ── negative controls (the owner's list) and early, pre-earnings positives ──
 const CONTROLS: typeof CASES = [
-  { name: 'old milestones in a new deck', quote: 'Over the last 10 years we commissioned 5 plants and won orders worth ₹2,000 crore.', facts: { salesCr: 500 }, want: 'INSUFFICIENT', shortlist: false },
-  { name: 'guidance without execution', quote: 'We expect revenue to double by FY28 as the new plant ramps up.', want: 'INSUFFICIENT', shortlist: false },
-  { name: 'commodity spread margin', quote: 'EBITDA margin improved to 18% on the back of lower raw material prices and better realisations.', want: 'ROUTINE', shortlist: false },
-  { name: 'low base', quote: 'Revenue grew 180% on a low base as the previous year was hit by the plant shutdown.', want: 'ROUTINE', shortlist: false },
-  { name: 'generic optimism', quote: 'We are very optimistic about the strong opportunities ahead in all our businesses.', want: 'INSUFFICIENT', shortlist: false },
-  { name: 'capacity without utilisation', quote: 'We added 20,000 TPA of capacity during the quarter.', want: 'ROUTINE', shortlist: false },
-  { name: 'acquisition-driven growth', quote: 'Revenue grew 60% driven by the acquisition of XYZ Ltd which was consolidated from this quarter.', want: 'ROUTINE', shortlist: false },
-  { name: 'accounting gain', quote: 'Profit includes an exceptional gain of ₹45 crore on sale of land.', want: 'ROUTINE', shortlist: false },
-  { name: 'label change', quote: 'We have renamed our specialty segment as the Advanced Materials division.', want: 'ROUTINE', shortlist: false },
-  { name: 'chart fragment', quote: 'Revenue 120 150 180 210 240 270 300 330 EBITDA 20 25 30', want: 'INSUFFICIENT', shortlist: false },
-  { name: 'single small order', quote: 'We received an order worth ₹40 crore from a state utility for transformers.', facts: { salesCr: 1000 }, want: 'ROUTINE', shortlist: false },
-  { name: 'order not yet revenue (large) = commercial, never earnings-power', quote: 'We received an order worth ₹600 crore from NTPC for supply of transformers.', facts: { salesCr: 1000, resultsVerdict: 'GROWING' }, want: 'COMMERCIAL', shortlist: true },
-  { name: 'early: regulated-market approval', quote: 'We received USFDA approval for our Visakhapatnam API facility, our first regulated-market approval.', want: 'EMERGING', shortlist: true },
-  { name: 'early: capacity step of 2.5×', quote: 'Installed capacity increased from 40,000 TPA to 100,000 TPA with commissioning of the new plant.', want: 'EMERGING', shortlist: true },
-  { name: 'early: qualified by new customers', quote: 'Our new line was qualified by two global innovator customers this quarter.', want: 'EMERGING', shortlist: true },
-  { name: 'analyst said it', quote: 'Your high-voltage share has gone from 53% to 78%, is that sustainable?', extra: { quote_role: 'ANALYST' }, want: 'INSUFFICIENT', shortlist: false },
+  { name: 'old milestones in a new deck', quote: 'Over the last 10 years we commissioned 5 plants and won orders worth ₹2,000 crore.', facts: { salesCr: 500 }, want: 'INSUFFICIENT', tier: 'EXCLUDED' },
+  { name: 'guidance without execution', quote: 'We expect revenue to double by FY28 as the new plant ramps up.', want: 'INSUFFICIENT', tier: 'EXCLUDED' },
+  { name: 'commodity spread margin', quote: 'EBITDA margin improved to 18% on the back of lower raw material prices and better realisations.', want: 'ROUTINE', tier: 'EXCLUDED' },
+  { name: 'low base', quote: 'Revenue grew 180% on a low base as the previous year was hit by the plant shutdown.', want: 'ROUTINE', tier: 'EXCLUDED' },
+  { name: 'generic optimism', quote: 'We are very optimistic about the strong opportunities ahead in all our businesses.', want: 'INSUFFICIENT', tier: 'EXCLUDED' },
+  { name: 'capacity without utilisation', quote: 'We added 20,000 TPA of capacity during the quarter.', want: 'ROUTINE', tier: 'EXCLUDED' },
+  { name: 'acquisition-driven growth', quote: 'Revenue grew 60% driven by the acquisition of XYZ Ltd which was consolidated from this quarter.', want: 'ROUTINE', tier: 'EXCLUDED' },
+  { name: 'accounting gain', quote: 'Profit includes an exceptional gain of ₹45 crore on sale of land.', want: 'ROUTINE', tier: 'EXCLUDED' },
+  { name: 'label change', quote: 'We have renamed our specialty segment as the Advanced Materials division.', want: 'ROUTINE', tier: 'EXCLUDED' },
+  { name: 'chart fragment', quote: 'Revenue 120 150 180 210 240 270 300 330 EBITDA 20 25 30', want: 'INSUFFICIENT', tier: 'EXCLUDED' },
+  { name: 'single small order', quote: 'We received an order worth ₹40 crore from a state utility for transformers.', facts: { salesCr: 1000 }, want: 'ROUTINE', tier: 'EXCLUDED' },
+  { name: 'order not yet revenue (large) = commercial, never earnings-power', quote: 'We received an order worth ₹600 crore from NTPC for supply of transformers.', facts: { salesCr: 1000, resultsVerdict: 'GROWING' }, want: 'EMERGING', tier: 'WATCH' },
+  { name: 'early: regulated-market approval', quote: 'We received USFDA approval for our Visakhapatnam API facility, our first regulated-market approval.', want: 'EMERGING', tier: 'WATCH' },
+  { name: 'early: capacity step of 2.5×', quote: 'Installed capacity increased from 40,000 TPA to 100,000 TPA with commissioning of the new plant.', want: 'EMERGING', tier: 'WATCH' },
+  { name: 'early: qualified by new customers', quote: 'Our new line was qualified by two global innovator customers this quarter.', want: 'EMERGING', tier: 'WATCH' },
+  { name: 'analyst said it', quote: 'Your high-voltage share has gone from 53% to 78%, is that sustainable?', extra: { quote_role: 'ANALYST' }, want: 'INSUFFICIENT', tier: 'EXCLUDED' },
 ];
 
 test('01 owner-named cases from the live radar', () => {
   for (const c of CASES) {
     const t = T(c.quote, c.facts, c.extra);
     assert.equal(t.state, c.want, `${c.name}: ${t.state} — ${t.stateReason}`);
-    assert.equal(t.shortlist, c.shortlist, c.name);
+    assert.equal(t.tier, c.tier, `${c.name}: ${t.tier}`);
   }
 });
 
@@ -59,20 +59,23 @@ test('02 negative controls and early positives', () => {
   for (const c of CONTROLS) {
     const t = T(c.quote, c.facts, c.extra);
     assert.equal(t.state, c.want, `${c.name}: ${t.state} — ${t.stateReason}`);
-    assert.equal(t.shortlist, c.shortlist, c.name);
+    assert.equal(t.tier, c.tier, `${c.name}: ${t.tier}`);
   }
 });
 
-test('03 benchmark: no false positive on the shortlist, no named positive missed', () => {
+test('03 curated fixtures (rule consistency, NOT a real-world error rate): nothing excluded is promoted, nothing kept is dropped', () => {
   const all = [...CASES, ...CONTROLS];
-  let fp = 0, fn = 0, tp = 0;
+  let fp = 0, fn = 0, kept = 0;
   for (const c of all) {
-    const got = T(c.quote, c.facts, c.extra).shortlist;
-    if (got && !c.shortlist) fp++; else if (!got && c.shortlist) fn++; else if (got) tp++;
+    const got = T(c.quote, c.facts, c.extra).tier !== 'EXCLUDED';
+    const want = c.tier !== 'EXCLUDED';
+    if (got && !want) fp++; else if (!got && want) fn++; else if (got) kept++;
   }
   assert.equal(fp, 0);
   assert.equal(fn, 0);
-  assert.ok(tp >= 8);
+  assert.ok(kept >= 8);
+  // an unknown gate never confirms: only the measured mix shift is CONFIRMED in the whole set
+  assert.deepEqual(all.filter((c) => T(c.quote, c.facts, c.extra).tier === 'CONFIRMED').map((c) => c.name.split(' ')[0]), ['KANOHAR']);
 });
 
 test('04 unknown materiality earns nothing; a small step fails the gate', () => {
@@ -95,6 +98,7 @@ test('06 BLS: a weaker consolidated figure is surfaced, never hidden', () => {
   assert.match(String(contradictionOf([CASES[8].quote])), /consolidated figure weakened/);
   const mix = T('The share of value-added products rose from 30% to 55% of revenue.', { resultsVerdict: 'GROWING' }, { change_lines: ['Consolidated EBITDA margin moderated to 12% due to the segment mix.'] });
   assert.equal(mix.state, 'COMMERCIAL');   // never earnings-power while the consolidated figure weakened
+  assert.equal(mix.tier, 'WATCH');
   assert.ok(mix.contradiction);
 });
 
@@ -152,22 +156,42 @@ test('11 the route stores change lines and the coverage job backfills older read
 test('12 zzz1224b — first live shortlist review: routine growth, passive approvals, MoUs and order-book stock are not transformations', () => {
   const s = (q: string, f: Record<string, unknown> = {}) => T(q, f).state;
   // ACEVECTOR / CAMS: new customers added is ordinary growth
-  assert.equal(T('65% of the new customers added in H1 FY27 were GenZ. Annual transacting customers increased 12% to 130.8 lakhs.').shortlist, false);
-  assert.equal(T('This is typically usage growth, both by the base and by new clients which have been onboarded.').shortlist, false);
+  assert.equal(T('65% of the new customers added in H1 FY27 were GenZ. Annual transacting customers increased 12% to 130.8 lakhs.').tier, 'EXCLUDED');
+  assert.equal(T('This is typically usage growth, both by the base and by new clients which have been onboarded.').tier, 'EXCLUDED');
   // CGCL / UCOBANK: a lender's new state or MoU
   assert.equal(s('This footprint expanded further in Q2 with our maiden foray into Tamil Nadu metro market.', { industry: 'Non Banking Financial Company (NBFC)' }), 'ROUTINE');
   assert.equal(s('We have entered into an MOU with the Government of Bihar for their employees salary accounts.', { industry: 'Public Sector Bank' }), 'INSUFFICIENT');
   // HINDZINC / SAMBHV: MoU or a PLI incentive approval
   assert.equal(s('We have tied up for a high-density plantation and also entered an MoU to deploy further 30 electric vehicles.'), 'INSUFFICIENT');
-  assert.equal(T('We have also received our PLI approval and we have also signed MoU under PLI 1.2 for seamless pipe sales.').shortlist, false);
+  assert.equal(T('We have also received our PLI approval and we have also signed MoU under PLI 1.2 for seamless pipe sales.').tier, 'EXCLUDED');
   // AUROPHARMA / DRREDDY / SHAREINDIA: a passive "approved by" status is not a new approval
-  assert.equal(T('The company has 30+ manufacturing facilities that are approved by leading regulatory agencies including USFDA.').shortlist, false);
-  assert.equal(T('Strategy Validation A library of 20 approved strategies, backed by historical backtesting.').shortlist, false);
+  assert.equal(T('The company has 30+ manufacturing facilities that are approved by leading regulatory agencies including USFDA.').tier, 'EXCLUDED');
+  assert.equal(T('Strategy Validation A library of 20 approved strategies, backed by historical backtesting.').tier, 'EXCLUDED');
   // a real new approval still counts; in a ₹30,000 Cr company it is small unless sized
   assert.equal(s('We received USFDA approval for our new oncology injectable facility this quarter.'), 'EMERGING');
-  assert.equal(T('We received USFDA approval for our new oncology injectable facility this quarter.', { salesCr: 33000 }).shortlist, false);
+  assert.equal(T('We received USFDA approval for our new oncology injectable facility this quarter.', { salesCr: 33000 }).tier, 'EXCLUDED');
   // ZENTEC: the order book in the same sentence is not the new order
   const z = T('Order inflow during the quarter was 481.81 crore, taking the consolidated order book to 1,375.70 crore as at 30 September 2026.', { salesCr: 672 });
   assert.equal(z.mechanism, 'ORDER_STEP');
   assert.match(z.stateReason, /≈ 72% of annual sales/);
+});
+
+test('13 zzz1224c — second review: one evidence record, orders are visibility, unknown gates go to research watch', () => {
+  // ZENTEC: inflow, not the backlog, and a large order is not a change in the business by itself
+  const z = T('Order inflow during the quarter was 481.81 crore, taking the consolidated order book to 1,375.70 crore as at 30 September 2026.', { salesCr: 672 });
+  assert.equal(z.state, 'EMERGING');
+  assert.equal(z.tier, 'WATCH');
+  assert.match(z.stateReason, /not by itself a change in the business/);
+  // a filing date alone does not date the event
+  const undated = T('Commercial production of our new forged crankshaft line has commenced.');
+  assert.equal(undated.gates.find((g) => g.key === 'dated')?.result, 'UNKNOWN');
+  assert.equal(undated.tier, 'WATCH');
+  // the card's proof verdict and size come from the same sentence as the thesis
+  const base = { patterns: [{ key: 'capacity' }], evidence_score: 6, tone: 'POSITIVE', quote_role: 'MANAGEMENT', quote_quality: 'USABLE', filing_datetime: '2026-10-21T00:00:00Z' };
+  const i = radarInsight({ ...base, evidence_label: 'Order received', evidence_quote: 'Exports remained a key growth driver.', change_lines: ['The share of exports in our revenue increased from 20% to 45% in H1 FY27.'] }, { revQ: 30, revTTM: 15, epsQ: 40 }, NOW);
+  assert.match(i.proof.reason, /20% to 45%|Share moved/);
+  assert.equal(i.proof.kind, 'MILESTONE');
+  assert.equal(i.transformation.evidence.quote, 'The share of exports in our revenue increased from 20% to 45% in H1 FY27.');
+  // business today states sales and says the segment split is missing
+  assert.match(T('x', { industry: 'Rubber', salesCr: 610 }).thesis.oldBusiness, /₹610 Cr of annual sales \(segment split not in the data\)/);
 });
