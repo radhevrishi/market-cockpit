@@ -21,7 +21,7 @@ import { gzipSync, gunzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
 import { MemoryKvStore } from './kv-memory';
 import { VERSIONED_SET_LUA, parseVersionedResult, type VersionedValue } from './kv-versioned';
-import { KvReadCache, KvUsage, readThrough, isCacheableKey, RestFallbackLearner } from './kv-read-cache';
+import { KvReadCache, KvUsage, readThrough, isCacheableKey, RestFallbackLearner, keyFamily as mgetFamily } from './kv-read-cache';
 
 let redis: Redis | null = null;
 let redisAvailable: boolean | null = null;
@@ -245,12 +245,31 @@ export async function kvMGet<T = any>(keys: string[]): Promise<Array<T | null>> 
   return out;
 }
 
+/** zzz1222 — key families whose one-shot MGET answer went over Upstash's 10 MB limit, and the most keys asked at once since.
+ *  Each over-limit MGET is recovered by splitting, but Upstash still counts (and e-mails) it; remembering the safe batch
+ *  size means the same page does not hit the limit again on every load. */
+const MGET_SAFE_KEYS = new Map<string, number>();
+export function mgetSafeKeys(family: string): number | null { return MGET_SAFE_KEYS.get(family) ?? null; }
+export function noteMgetTooLarge(family: string, keysAsked: number): void {
+  const now = Math.max(1, Math.floor(keysAsked / 2));
+  const prev = MGET_SAFE_KEYS.get(family);
+  MGET_SAFE_KEYS.set(family, prev == null ? now : Math.min(prev, now));
+}
+
 async function kvMGetFromStore<T = any>(keys: string[]): Promise<{ values: Array<T | null>; batched: boolean }> {
+  const fam = mgetFamily(keys[0]);
+  const safe = mgetSafeKeys(fam);
+  if (safe != null && keys.length > safe) {
+    const parts: Array<{ values: Array<T | null>; batched: boolean }> = [];
+    for (let i = 0; i < keys.length; i += safe) parts.push(await kvMGetFromStore<T>(keys.slice(i, i + safe)));
+    return { values: parts.flatMap((p) => p.values), batched: parts.every((p) => p.batched) };
+  }
   // Upstash rejects batches whose aggregate payload exceeds its 10 MiB
   // ceiling. Split ONLY on this specific error: normal days remain one MGET,
   // while oversized days recover without treating missing data as a real zero.
   const tooLarge = (s: string) => /max request size exceeded|request (?:body |payload )?too large|response too large|10485760/i.test(s);
   const splitLarge = async (): Promise<{ values: Array<T | null>; batched: boolean }> => {
+    noteMgetTooLarge(fam, keys.length);
     if (keys.length < 2) return { values: await Promise.all(keys.map((k) => kvGet<T>(k))), batched: false };
     const pivot = Math.ceil(keys.length / 2);
     const [left, right] = await Promise.all([

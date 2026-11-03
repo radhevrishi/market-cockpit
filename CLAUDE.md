@@ -3840,3 +3840,11 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   `priceCommentaryOnly` only when the card has no event of its own (GRSE's read ₹32,000 Cr order had scored 0 evidence →
   IGNORE). Transformational theme: company name decides before customer words (`themeOf(texts, industry, name)`).
   Radar: a total order book without a won verb is RESULTS_COMMENTARY (visibility context), never MILESTONE proof.
+- zzz1221 (3 Nov): India results PDFs ("filed — figures being read") — read 20 min after the filing is seen (was 2 h), 4 names at
+  a time (`concurrency` in runResultsPdf; one at a time got ~7 an hour on a 50-name results day), up to 40 a run, every 20 min
+  04:00–17:40 UTC Mon–Sat plus hourly. Screener is still checked first (no AI when it has the quarter); a PDF read is ~$0.003,
+  per-run cap $0.30 unchanged. Gainers: RULES_VERSION 2026-11-03.zzz1220e + INDIA_EXTRACT_VERSION x4; a re-score re-reads
+  India documents read under an older extraction (free) — `docsV` on stored inputs.
+- zzz1222 (3 Nov): Upstash "Max Request Size" e-mail = an MGET whose answer passed 10 MB (the app splits and recovers, but
+  Upstash counts it). kvMGet now remembers the safe batch size per key family (`noteMgetTooLarge`), so it happens at most
+  once per family per server start instead of on every page load.
