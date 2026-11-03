@@ -3917,3 +3917,9 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   zzz1226b: results-PDF runs 270 s with 6 lanes (was 150 s × 4 → ~15 names a run on a 90-name queue); job call timeout 400 s.
   zzz1226c: a queued name whose stored figures were read by an older checker (shown wrong until re-read) goes first in the results-PDF run, from its known PDF URL.
   zzz1226d: ANTHEM was re-read as ₹59,403 Cr (lakhs as crore): the rupee sign prints as "`" in many PDFs ("(` in Lakhs)") — statedUnit reads it; the overlay drops a quarter > 5× or < ⅕ of the previous quarter's sales. RP_CHECK_VERSION / RP_MIN_RECORD_CK 6 (records from v5 re-read first).
+- zzz1227 (3 Nov): Turnaround → Compounder read (owner's monograph), ADDITIVE on AI Daily Gainers cards and the Transformational Gainers board.
+  `lib/turnaround/core.ts` (pure, no price input): archetype OWNERSHIP_RESCUE / BRAND_LICENSE / FORMAT_SCALING / FUNDING_REPAIR /
+  OPERATING_REVIVAL; stage 0–3 only (never claims 4 repeatability / 5 compounding); survive / dilution / governance gates; hard stops
+  (auditor resigned, fraud, default, insolvency …) → HARD_STOP; earnings rule (revenue > 20%, margin +2 pts from < 8%, cash ≥ 0.8×);
+  next proof, kill event, five-line memo. A SAST stake disclosure, the company buying a stake elsewhere, a plain order or a bare rights
+  issue is not a turnaround. `components/turnaround/TurnaroundBadge.tsx` (chip, expands). TG page: "🔄 Turnarounds" filter chip.

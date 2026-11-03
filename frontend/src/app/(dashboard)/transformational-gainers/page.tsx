@@ -9,6 +9,8 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import NavLink from '@/components/NavLink';
 import { R, tint } from '@/components/special-situations/radar-tokens';
 import { MbChip, MB_COLOR } from '@/components/transformational/MbChip';
+import { TurnaroundBadge } from '@/components/turnaround/TurnaroundBadge';   // zzz1227
+import { turnaroundFromTg, type Turnaround } from '@/lib/turnaround/core';
 import { MB_NAME, MB_WORD, ONE_PAGE_CASE, OTHER_THEME, chanceOf, tgKindWord, type MbLabel, type TgBoard, type TgItem, type TgStrength } from '@/lib/transformational/core';
 
 type Mkt = 'ALL' | 'IN' | 'US';
@@ -34,6 +36,7 @@ export default function TransformationalGainersPage() {
   const [smallMid, setSmallMid] = useState(true);
   const [onlyNew, setOnlyNew] = useState(false);
   const [chainMin, setChainMin] = useState<number | null>(null);   // zzz1190 — evidence chain: stages met at least
+  const [turnOnly, setTurnOnly] = useState(false);   // zzz1227 — Turnaround → Compounder only
   const [q, setQ] = useState('');
   const [sort, setSort] = useState<'newest' | 'chance'>('chance');
   const [aiBusy, setAiBusy] = useState<string | null>(null);
@@ -60,13 +63,16 @@ export default function TransformationalGainersPage() {
   const filling: string | null = null;
 
   const newSet = useMemo(() => new Set(data?.newCompanies || []), [data]);
+  // zzz1227 — the Turnaround → Compounder read for every event (additive; nothing else on the board changes)
+  const taById = useMemo(() => { const m = new Map<string, Turnaround>(); for (const x of data?.items || []) { try { const t = turnaroundFromTg(x as any); if (t) m.set(x.id, t); } catch { /* skip */ } } return m; }, [data]);
   const rank: Record<MbLabel, number> = { HIGH: 3, MEDIUM: 2, LOW: 1, UNLIKELY: 0 };
   const filtered = useMemo(() => (data?.items || []).filter((x) =>
     (mkt === 'ALL' || x.market === mkt) && (!theme || x.theme === theme) && (!strength || x.strength === strength)
     && (!mbMin || rank[chanceOf(x).label] >= rank[mbMin])
     && (!smallMid || isSmallMid(x) || x.marketCap == null) && (!onlyNew || newSet.has(`${x.market}:${x.ticker}`))
     && (chainMin == null || ((x.chain?.met ?? 0) >= chainMin && (chainMin < 5 || (x.chain?.missing ?? 1) === 0) && (x.chain?.missing ?? 0) <= (chainMin >= 4 ? 0 : 1)))
-    && (!q || `${x.ticker} ${x.company} ${x.headline} ${x.theme}`.toLowerCase().includes(q.toLowerCase()))), [data, mkt, theme, strength, mbMin, smallMid, onlyNew, chainMin, q, newSet]);
+    && (!turnOnly || taById.has(x.id))
+    && (!q || `${x.ticker} ${x.company} ${x.headline} ${x.theme}`.toLowerCase().includes(q.toLowerCase()))), [data, mkt, theme, strength, mbMin, smallMid, onlyNew, chainMin, q, newSet, turnOnly, taById]);
 
   const groups = useMemo(() => {
     const m = new Map<string, Group>();
@@ -211,6 +217,8 @@ export default function TransformationalGainersPage() {
               <div><div style={sectionTitle}>Show</div><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 <button type="button" style={chip(smallMid, R.green)} onClick={() => setSmallMid((v) => !v)} title="India under ₹25,000 Cr, USA under $10B">Small & mid only</button>
                 <button type="button" style={chip(onlyNew, R.violet)} onClick={() => setOnlyNew((v) => !v)}>🆕 New this week</button>
+                <button type="button" style={chip(turnOnly, R.amber)} onClick={() => setTurnOnly((v) => !v)}
+                  title="Turnaround → Compounder: a new owner, a new brand licence, a format roll-out, a funding repair or loss → profit — with the six-stage clock, survival / dilution / governance gates and the next proof">🔄 Turnarounds · {taById.size}</button>
               </div></div>
               <div><div style={sectionTitle}>Strength</div><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 {(['TRANSFORMATIONAL', 'INFLECTION', 'NOTABLE'] as TgStrength[]).map((x) => <button key={x} type="button" style={chip(strength === x, STRENGTH_COLOR[x])} onClick={() => setStrength((v) => (v === x ? null : x))}>{STRENGTH_WORD[x]}</button>)}
@@ -284,6 +292,7 @@ export default function TransformationalGainersPage() {
                                 <div className="tg-clamp" style={{ fontSize: 12, color: R.dim, marginTop: 2 }}>{x.signals.slice(0, 3).join(' · ')}</div>
                                 {x.orderToRevenuePct != null && <div style={{ fontSize: 12, fontWeight: 700, color: x.orderToRevenuePct >= 25 ? R.green : R.dim, marginTop: 2 }}>Order ≈ {x.orderToRevenuePct}% of a year’s revenue</div>}
                                 {x.chain && <ChainChips chain={x.chain} />}
+                                {taById.has(x.id) && <div style={{ marginTop: 4 }} onClick={(e) => e.stopPropagation()}><TurnaroundBadge ta={taById.get(x.id)!} compact /></div>}
                               </td>
                               <td className="tg-hide-sm" style={{ whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>
                                 <div>Sales <b style={{ color: (f.revenueYoY ?? 0) >= 25 ? R.green : R.text }}>{pct(f.revenueYoY)}</b></div>
