@@ -94,3 +94,15 @@ test('11 zzz1229: Turnarounds tile + filter on both pages', () => {
   const page = readFileSync(new URL('../../app/(dashboard)/transformational-gainers/page.tsx', import.meta.url), 'utf8');
   assert.match(page, /k: '🔄 Turnarounds', v: taCount/);
 });
+
+test('12 zzz1229 live 3 Nov false positives: KMP change, minority strategic stake, buying elsewhere, growth raise, healthy upgrade', () => {
+  assert.equal(turnaroundOf({ texts: ['Announcement under Regulation 30 (LODR)-Change in Management — COO resigned effective October 29, 2026.'], ids: ['kmp_resignation'] }), null);
+  assert.equal(turnaroundOf({ texts: ['IFSC branch received certificate of registration'], ids: ['acquisition', 'strategic_investor'] }), null);
+  assert.equal(turnaroundOf({ texts: ['Board approves acquisition of Adani Group\'s 60% stake in Monte South; share purchase agreement signed.'], ids: ['acquisition', 'strategic_investor'] }), null);
+  assert.equal(turnaroundOf({ texts: ['Raised 832.2 Cr through a preferential issue; credit rating reaffirmed.'], ids: ['equity_raise', 'rating_action'] }), null);
+  assert.equal(turnaroundOf({ texts: ['Credit rating upgrade: CRISIL AA- to AA'], ids: ['rating_upgrade'] }), null);
+  // real ones stay
+  assert.equal(turnaroundOf({ texts: ['Company exited NCLT framework in September 2026; QIP proceeds used as stated.'], ids: ['equity_raise'] })?.archetype, 'FUNDING_REPAIR');
+  assert.equal(turnaroundOf({ texts: ['ICRA upgraded the rating from BB+ to BBB-'], ids: ['rating_upgrade'] })?.archetype, 'FUNDING_REPAIR');
+  assert.equal(turnaroundOf({ texts: ['Open offer by the acquirer for 26% after a share purchase agreement for control.'], ids: ['open_offer'] })?.archetype, 'OWNERSHIP_RESCUE');
+});

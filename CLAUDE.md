@@ -3933,3 +3933,6 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
 - zzz1229 (3 Nov): Turnaround filter on AI Daily Gainers — a clickable "🔄 TURNAROUNDS N" tile in the market summary and a
   "🔄 Turnarounds" option in Show (?show=turnaround); it gathers turnaround names from EVERY section into the queue view (cards
   outside the queue show "—" for rank). Transformational Gainers: "🔄 Turnarounds" KPI tile (companies on the board with a read).
+  Live review: "Change in Management" (KMP change), a minority strategic / marquee stake and the company buying a stake ELSEWHERE are
+  not ownership rescues; funding repair needs a repair word (settlement, restructuring, resolution plan, NCLT exit, refinancing,
+  lenders) or a rating upgrade FROM sub-investment grade — a growth raise or AA- → AA is not a turnaround.

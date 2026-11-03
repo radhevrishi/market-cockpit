@@ -87,7 +87,16 @@ const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFi
 
 // ── what each archetype looks like in a filing ──
 // a SAST stake disclosure or the company buying a stake in someone else is NOT an ownership change of this company
-const OWNERSHIP_RE = /\b(change (?:in|of) (?:control|management)|controlling (?:stake|interest) (?:in|of) the company|share purchase agreement|open offer|new promoters?|reclassif\w* .{0,30}promoter|takeover of the company|strategic investor|board (?:and management )?reconstitut\w*)\b/i;
+// zzz1229: "Change in Management" is the NSE category for a KMP change, and a strategic / marquee investor taking a minority stake is
+// not control — neither is an ownership rescue (AMANTA COO exit, 360 ONE, Marathon Nextgen on 3 Nov)
+const OWNERSHIP_RE = /\b((?:took|takes|taken|acquired|acquires|gain(?:s|ed)?) (?:management )?control|change (?:in|of) control|controlling (?:stake|interest) (?:in|of) the company|share purchase agreement|open offer|new promoters?|reclassif\w* .{0,30}promoter|takeover of the company|board (?:and management )?reconstitut\w*)\b/i;
+/** the company buying a stake in ANOTHER company ("acquisition of Adani Group's 60% stake in Monte South") */
+const BUYS_ELSEWHERE_RE = /\b(?:acquir\w*|acquisition of|purchase of|to buy)\b[^.;]{0,80}\bstake in\b/i;
+const CONTROL_OF_US_RE = /\b((?:took|takes|taken|acquired|acquires|gain(?:s|ed)?) (?:management )?control of the company|change (?:in|of) control|open offer|new promoters?|takeover of the company|controlling (?:stake|interest) (?:in|of) the company)\b/i;
+/** a real repair: the debt / distress itself is being fixed, not a growth company raising money or a healthy name upgraded */
+const REPAIR_RE = /\b(one[- ]time settlement|\bOTS\b|debt (?:restructuring|resolution|settlement)|restructur\w* (?:of )?(?:its )?(?:debt|loans?|borrowings)|resolution plan|exit\w* (?:from )?(?:the )?(?:NCLT|CIRP|insolvency)|NCLT|CIRP|insolvency|refinanc\w*|lenders? (?:approved|sanctioned|agreed)|(?:equity|capital) infusion|debt[- ]free|repaid (?:all|entire|the entire) (?:debt|borrowings))/i;
+/** an upgrade FROM a sub-investment grade (BB / B / C / D) or into investment grade — not a healthy name moving AA- to AA */
+const LOW_GRADE_UPGRADE_RE = /\bfrom\s+(?:\[?(?:ICRA|CRISIL|CARE|IND|Acuit[ée]|Brickwork|Infomerics|BWR)\]?\s*)?(?:BB[+-]?|B[+-]?|C{1,3}|D)(?![A-Za-z])|\b(?:non[- ]investment|to investment) grade\b/;
 const BRAND_RE = /\b(licen[cs]e (?:agreement|rights|deal)|licensing (?:agreement|deal)|brand (?:licen[cs]e|rights)|(?:exclusive )?(?:distribution|manufacturing and distribution|marketing) rights|rights (?:for|in) india|trademark rights|in-licen[cs]\w*)\b/i;
 const FORMAT_RE = /\b(\d{2,5}(?:st|nd|rd|th)? (?:stores?|outlets?|showrooms?|restaurants?|clinics?|centres?|centers?)|store (?:roll-?out|expansion|additions?)|same[- ]store sales|like[- ]for[- ]like)\b/i;
 const FUNDING_RE = /\b(one[- ]time settlement|\bOTS\b|debt (?:restructuring|resolution|settlement)|refinanc\w*|lenders? (?:approved|sanctioned|agreed)|resolution plan|rating (?:upgrade|upgraded)|upgraded .{0,30}rating|fresh (?:equity|capital|funding)|(?:equity|capital) infusion|rights issue|preferential (?:issue|allotment)|warrants?|qualified institutions? placement|\bQIP\b)\b/i;
@@ -142,12 +151,12 @@ export function turnaroundOf(x: TaInput): Turnaround | null {
   const revival = (swing && !(rev != null && rev < 10)) || earningsRule;
 
   let archetype: TaArchetype | null = null;
-  if (ids.has('open_offer') || ids.has('strategic_investor') || ids.has('activist_stake') || has(all, OWNERSHIP_RE)) archetype = 'OWNERSHIP_RESCUE';
+  if ((ids.has('open_offer') || has(all, OWNERSHIP_RE)) && !(has(all, BUYS_ELSEWHERE_RE) && !has(all, CONTROL_OF_US_RE))) archetype = 'OWNERSHIP_RESCUE';
   // zzz1228: the archetype is a dormant BRAND reborn under a new licence (Timex / Guess). A drug or technology licence
   // (Vir + Gilead collaboration and license) is a pipeline deal, not a brand turnaround
   else if ((ids.has('licensing') || has(all, BRAND_RE)) && !/\b(?:collaboration|clinical|drug|therap\w*|molecule|antibod\w*|vaccine|patent|platform technology|royalt\w*|milestone payments?)\b/i.test(all)) archetype = 'BRAND_LICENSE';
   else if ((ids.has('store_launch') || ids.has('dealership_expansion')) && has(all, FORMAT_RE) || (has(all, FORMAT_RE) && /\bsame[- ]store|like[- ]for[- ]like|\d{3,5}(?:st|nd|rd|th)? stores?\b/i.test(all))) archetype = 'FORMAT_SCALING';
-  else if (ids.has('rating_upgrade') || has(all, FUNDING_RE) && /\b(settlement|restructur|refinanc|lender|rating|infusion|fresh (?:equity|capital))/i.test(all)) archetype = 'FUNDING_REPAIR';
+  else if (has(all, REPAIR_RE) || ((ids.has('rating_upgrade') || /\b(?:rating (?:upgrade|upgraded)|upgraded .{0,30}rating)\b/i.test(all)) && LOW_GRADE_UPGRADE_RE.test(all))) archetype = 'FUNDING_REPAIR';
   else if (revival) archetype = 'OPERATING_REVIVAL';
   if (!archetype) return null;
 
