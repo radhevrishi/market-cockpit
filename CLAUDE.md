@@ -3826,3 +3826,7 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   not points; recency +10/+5. Route: `companyDossiers` — one card per company, other documents under `more_docs`;
   payload `companies` / `signal_documents`; page asks limit=3000 and states each filter stage's count. SWR key v9.
   Slide chart / table text (≥ 7 numbers or a run of 5) is never a proof sentence.
+- zzz1219c (3 Nov): more proof rules from the live Best list — presentation bullet text run together (`isSlideRunOn`, two
+  "word Word" joins in a company document), a delay in the sentence, a supply agreement (not production), and priorities /
+  focus / strategy lines are never proof; HYPO_RE now ends with \b ("plan" matched "plant"). Order book without a won verb is
+  shown as "total book, not a new order". Funnel `with_proof` = documents whose proof holds up (tile "With a proven change").

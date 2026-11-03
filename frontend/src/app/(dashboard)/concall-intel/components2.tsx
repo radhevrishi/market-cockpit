@@ -543,7 +543,8 @@ export function TransformationScreenerTab() {
               ['Letter / link only', fn.cover_only.toLocaleString('en-IN'), TF.dim, 'The PDF was only a covering letter (e.g. "transcript is on our website"), so there was nothing to score'],
               ['Unreadable', fn.unreadable.toLocaleString('en-IN'), fn.unreadable ? TF.amber : TF.dim, 'Too large, scanned image, garbled text or download failed'],
               ['Not read yet', fn.not_yet_read.toLocaleString('en-IN'), fn.not_yet_read ? TF.amber : TF.green, 'Read automatically every 20 minutes, newest first'],
-              ['With a signal', fn.with_signal.toLocaleString('en-IN'), TF.purple, 'Read in full and at least one transformation pattern found'],
+              ['With a signal', fn.with_signal.toLocaleString('en-IN'), TF.dim, 'Read in full and at least one transformation keyword found — a keyword is not proof'],
+              ...(fn.with_proof != null ? [['With a proven change', fn.with_proof.toLocaleString('en-IN'), TF.purple, 'The quoted sentence itself proves a completed, current business event (order, start of production, customer approval, or a results change with a named cause)'] as [string, string, string, string]] : []),
             ] as const).map(([k, v, c, tip]) => (
               <div key={k} title={tip} style={{ background: TF.card2, border: `1px solid ${TF.border}`, borderRadius: 7, padding: '6px 9px' }}>
                 <div style={{ fontSize: 14, fontWeight: 900, color: c, ...TFM }}>{v}</div>

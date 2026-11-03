@@ -181,7 +181,7 @@ export function materialityOf(e: InsightEntry, f: RadarFacts): { pctOfSales: num
 
 const FIN_RE = /\b(bank|nbfc|financ|lending|credit|insurance|housing fin|microfin|asset manag|broking|capital market|wealth)/i;
 const DONE_RE = /\b(received|won|secured|bagged|bagging|awarded|commenc\w*|commission\w*|started|began|begun|achieved|completed|qualified|approved|cleared|validated|launched|inaugurat\w*|operational|delivered|signed|executed|transitioned)\b/i;
-const HYPO_RE = /\b(potential(?:ly)?|could|would|may|might|expect\w*|anticipat\w*|plan(?:s|ned|ning)?|will|shall|intend\w*|aim\w*|target\w*|hope|watch(?:ing)? for|likely|upcoming|going forward|pipeline|opportunit\w+|enquir\w+|explor\w+|evaluat\w+|in discussion|if\b)/i;
+const HYPO_RE = /\b(priorit\w+|focus(?:ed|ing)? on|goals?|strateg\w+|roadmap|potential(?:ly)?|could|would|may|might|expect\w*|anticipat\w*|plan(?:s|ned|ning)?|will|shall|intend\w*|aim\w*|target\w*|hope|watch(?:ing)? for|likely|upcoming|going forward|pipeline|opportunit\w+|enquir\w+|explor\w+|evaluat\w+|in discussion|if)\b/i;
 const DRIVER_RE = /\b(mix|utili[sz]ation|new (?:plant|facility|capacity|product|line|segment|business|market|geograph\w*)|value[- ]added|premiumi[sz]\w*|backward integration|export\w*|commission\w*|capacity|ramp[- ]?up|new customers?|price increases?|realisation|realization|debottleneck\w*)\b|\b(?:made up|share|contribut\w+)\b[^.]{0,40}\bof (?:revenue|sales)\b/i;
 
 /** zzz1219 — the quote shows a past timeline, a cumulative multi-year total or an old fiscal year, not a new event. */
@@ -200,12 +200,21 @@ export function isHistorical(quote: string, now: Date = new Date()): boolean {
 /** zzz1219 — does the displayed quote itself prove the named business event? A keyword elsewhere in the document is not proof:
  *  each event needs its own completed, current, on-topic sentence. Results commentary (margins, revenue, cash flow) is a
  *  business change only when the sentence names a structural driver (mix, utilisation, a new plant or product …). */
-export function eventProof(label: string | null | undefined, quote: string | null | undefined, f: RadarFacts = {}, now: Date = new Date()): { kind: ProofKind; reason: string } {
+/** zzz1219c — presentation bullet text run together ("…up 19% YoY Freight Forwarding Overall revenue…"): words that start a new
+ *  line on the slide follow a lower-case word with no punctuation. Two such joins in a company document = slide text, not a sentence. */
+export function isSlideRunOn(quote: string): boolean {
+  const joins = String(quote || '').match(/[a-z0-9%)]\s[A-Z][a-z]{2,}/g) || [];
+  return joins.length >= 2;
+}
+
+export function eventProof(label: string | null | undefined, quote: string | null | undefined, f: RadarFacts = {}, now: Date = new Date(), role?: string | null): { kind: ProofKind; reason: string } {
   const l = String(label || ''), q = String(quote || '').replace(/\s+/g, ' ');
   if (!q) return { kind: 'NOT_PROVEN', reason: 'No proof sentence.' };
   // zzz1219: chart axis / table text from a slide ("- 10 20 30 40 50 …") states no event in a sentence
   const nums = q.match(/(?:^|\s)[-+]?\d[\d.,]*%?(?=\s|$)/g) || [];
   if (nums.length >= 7 || /(?:\d[\d.,]*%?\s+){4,}\d/.test(q)) return { kind: 'NOT_PROVEN', reason: 'Slide chart or table text — the event and its cause are not stated in one sentence.' };
+  if (role === 'COMPANY' && isSlideRunOn(q)) return { kind: 'NOT_PROVEN', reason: 'Slide bullet text joined from several lines — the event and its cause are not one sentence.' };
+  if (/\b(delay\w*|deferr\w*|postpon\w*|pushed out|slipp\w*)\b/i.test(q)) return { kind: 'NOT_PROVEN', reason: 'The sentence reports a delay — not a completed milestone.' };
   const lender = FIN_RE.test(`${f.industry || ''} ${f.sector || ''}`);
   const hypothetical = HYPO_RE.test(q) && !DONE_RE.test(q);
   if (/^Order received/.test(l)) {
@@ -214,13 +223,14 @@ export function eventProof(label: string | null | undefined, quote: string | nul
     if (hypothetical || /\bpotential|watch(?:ing)? for|could|expect\w*/i.test(q) && !won) return { kind: 'NOT_PROVEN', reason: 'The sentence talks about possible orders, not a confirmed order.' };
     if (!won && (amt == null || amt < 5)) return { kind: 'NOT_PROVEN', reason: 'The sentence mentions an order book in general terms — no confirmed order or order value.' };
     if (isHistorical(q, now)) return { kind: 'NOT_PROVEN', reason: 'The order mentioned is historical, not new.' };
-    return { kind: 'MILESTONE', reason: 'Confirmed order in the sentence.' };
+    return { kind: 'MILESTONE', reason: won ? 'Confirmed order in the sentence.' : `Order book of about ₹${Math.round(amt || 0).toLocaleString('en-IN')} Cr stated in the sentence (total book, not a new order).` };
   }
   if (/^Commercial production/.test(l)) {
     if (/\b(advert\w*|tvc|television|campaign|brand (?:refresh|film|campaign)|commercials?\b(?! (?:production|supply|dispatch|operation)))/i.test(q) && !/\bcommercial (?:production|supply|dispatch|operations?)\b/i.test(q)) return { kind: 'NOT_PROVEN', reason: '"Commercial" here means an advertisement or brand campaign, not production.' };
     if (!/\b(commercial (?:production|supply|dispatch|operations?)|commenc\w* (?:commercial )?(?:production|operations|supply|manufacturing)|production (?:has )?(?:commenc|start)\w*|commission\w*|started (?:commercial )?production|ramp\w*[- ]up|to commercial production)\b/i.test(q)) return { kind: 'NOT_PROVEN', reason: 'The sentence does not say production or commissioning has started.' };
     if (isHistorical(q, now)) return { kind: 'NOT_PROVEN', reason: 'The sentence describes past milestones or a multi-year total, not a recent start.' };
     if (hypothetical) return { kind: 'NOT_PROVEN', reason: 'Production is planned, not started.' };
+    if (/\b(agreement|mou|memorandum|letter of intent|loi)\b/i.test(q) && !/\b(commenc\w*|started|began|begun|commission\w*|operational)\b/i.test(q)) return { kind: 'NOT_PROVEN', reason: 'An agreement for future supply — production has not started.' };
     return { kind: 'MILESTONE', reason: 'Production / commissioning started (in the sentence).' };
   }
   if (/^Customer qualification/.test(l)) {
@@ -240,6 +250,7 @@ export function eventProof(label: string | null | undefined, quote: string | nul
   }
   if (/^(Margin improvement|Revenue visible|FCF)/.test(l)) {
     if (lender) return { kind: 'RESULTS_COMMENTARY', reason: 'For a lender, margin / income lines are routine results, not a business change.' };
+    if (hypothetical) return { kind: 'NOT_PROVEN', reason: 'Priorities or plans, not a result already achieved.' };
     if (DRIVER_RE.test(q) && !isHistorical(q, now)) return { kind: 'MILESTONE', reason: 'Results change tied to a named structural driver (mix, utilisation, new capacity or product).' };
     return { kind: 'RESULTS_COMMENTARY', reason: 'Quarterly results commentary (margin / revenue / cash flow) with no distinct business change named.' };
   }
@@ -262,7 +273,7 @@ export function radarInsight(e: InsightEntry, f: RadarFacts | null | undefined, 
   const numbersUp = results.verdict === 'STRONGER_LATEST' || results.verdict === 'GROWING';
   // the proof must be a clean sentence from management or the company's own document — never an analyst or an unknown speaker
   const quoteOk = e.quote_quality === 'USABLE' && (e.quote_role === 'MANAGEMENT' || e.quote_role === 'COMPANY');
-  const proof = eventProof(e.evidence_label, e.evidence_quote, facts, now);
+  const proof = eventProof(e.evidence_label, e.evidence_quote, facts, now, e.quote_role);
   // zzz1219: a business change needs drivers in the document AND a sentence that itself proves a completed, current event
   const transformation = structural >= 2 && ev >= 3 && proof.kind === 'MILESTONE';
 

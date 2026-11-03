@@ -301,3 +301,22 @@ test('45 BETA: slide chart text is not a proof sentence', () => {
   assert.equal(eventProof('Margin improvement realised', '- 10 20 30 40 50 60 70 H1 FY25H1 FY26H1 FY27 EBITDA% EBITDA Margins.coupled with expanding EBITDA margins with new customers', {}, NOW).kind, 'NOT_PROVEN');
   assert.equal(eventProof('Commercial production started', 'Commercial production of our extruded axle beam has commenced and capacity utilization is about 80%.', {}, NOW).kind, 'MILESTONE');
 });
+test('46 live Best list review: slide run-ons, delays, supply agreements and priorities are not proof', () => {
+  const P = (l: string, q: string, r = 'COMPANY') => eventProof(l, q, {}, NOW, r).kind;
+  assert.equal(P('Revenue visible / contributing', 'finishing capacity of 10 millions mtrs/annum Achieved highest-ever annual revenue of Rs 3,305.65 Crs, up 14% YoY Sustained shift towards eco- friendly fibres'), 'NOT_PROVEN');
+  assert.equal(P('Margin improvement realised', 'Gross margin at 5.3 Cr, up 19% YoY Freight Forwarding Overall revenue at 51 Cr Focused on rebuilding sales momentum'), 'NOT_PROVEN');
+  assert.equal(P('Revenue visible / contributing', 'regulatory approvals delayed commercialization and subsequent revenue contribution; successfully commissioned three plants'), 'NOT_PROVEN');
+  assert.equal(P('Margin improvement realised', 'Our immediate priorities are improved capital utilization, optimize product mix, improved EBITDA margin.', 'MANAGEMENT'), 'NOT_PROVEN');
+  assert.equal(P('Commercial production started', 'We have got some mutual agreement for the development and commercial supply of this product with a renowned customer.', 'MANAGEMENT'), 'NOT_PROVEN');
+  // "plan" must not match "plant"
+  assert.equal(P('Margin improvement realised', 'Internationally, our Oman plant ran at 90% utilization in H1 and its EBITDA margins improved to 11.5% from 6.4% in FY26.', 'MANAGEMENT'), 'MILESTONE');
+  const ob = eventProof('Order received', 'We are preparing to execute the order book of approximately INR2,629 crores as of September.', {}, NOW, 'MANAGEMENT');
+  assert.equal(ob.kind, 'MILESTONE');
+  assert.match(ob.reason, /total book, not a new order/);
+});
+test('47 the radar counts documents whose proof holds up, apart from keyword hits', () => {
+  const route = readFileSync(new URL('../../app/api/v1/concall-intel/transformation-screener/route.ts', import.meta.url), 'utf8');
+  assert.match(route, /funnel\.with_proof = ranked\.filter/);
+  const ui = readFileSync(new URL('../../app/(dashboard)/concall-intel/components2.tsx', import.meta.url), 'utf8');
+  assert.match(ui, /With a proven change/);
+});

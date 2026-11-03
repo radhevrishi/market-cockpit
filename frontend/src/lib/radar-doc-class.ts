@@ -225,6 +225,8 @@ export interface RadarFunnel {
   not_yet_read: number;
   /** read in full and with at least one transformation pattern */
   with_signal: number;
+  /** zzz1219c — documents whose proof sentence holds up (a lane other than "no clear transformation") */
+  with_proof?: number;
   /** read this scan from the exchange (not from the stored result) */
   fresh_reads: number;
 }

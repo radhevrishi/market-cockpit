@@ -316,7 +316,7 @@ export interface RadarFunnelLite {
   announcements_total: number | null; feed_rows: number;
   routine: { meeting_schedule: number; call_invite: number; recording_link: number; admin_notice: number; no_attachment: number };
   out_of_scope: number; eligible: number; examined: number; read_full: number; cover_only: number; unreadable: number;
-  not_yet_read: number; with_signal: number; fresh_reads: number;
+  not_yet_read: number; with_signal: number; with_proof?: number; fresh_reads: number;
 }
 
 export interface TransformScreenPayload {

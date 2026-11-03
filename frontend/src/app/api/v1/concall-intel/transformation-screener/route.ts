@@ -551,6 +551,8 @@ async function buildScreen(req: NextRequest, days: number, minPatterns: number, 
   }
   ranked.sort((a, b) => Number(!!b.insight?.best) - Number(!!a.insight?.best) || Number(!!b.insight?.promising) - Number(!!a.insight?.promising) || (b.insight?.bestScore ?? 0) - (a.insight?.bestScore ?? 0) || b.transformation_score - a.transformation_score);
   funnel.with_signal = ranked.length;
+  // zzz1219c — a keyword pattern is not a business change: also count documents whose proof sentence holds up
+  funnel.with_proof = ranked.filter((e) => e.insight?.lane && e.insight.lane !== 'NONE').length;
   // read in full, no transformation pattern: only substantive documents now (never a notice or covering letter)
   const scannedNoSignal: ScannedNoSignal[] = entries
     .filter((e) => e.pattern_count < minPatterns)
