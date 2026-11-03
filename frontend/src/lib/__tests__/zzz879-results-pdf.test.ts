@@ -66,7 +66,7 @@ describe('zzz879 — queue', () => {
   test('due: seen 20+ minutes ago (zzz1221; was 2 h, then 2 days), not done, back-off respected, given up after 4', () => {
     const now = Date.parse('2026-10-06T10:00:00Z');
     const q = [it('OLD', '2026-10-01'), it('NEW', '2026-10-05'), it('DONE', '2026-10-01'), it('WAIT', '2026-10-01'), it('GONE', '2026-10-01'), it('RETRY', '2026-10-01')];
-    const fails = new Map([['WAIT|2026-09-30', { at: '2026-10-06T08:00:00Z', tries: 1, reason: '', cv: 2 }], ['GONE|2026-09-30', { at: '2026-09-01T00:00:00Z', tries: 4, reason: '', cv: 2 }], ['RETRY|2026-09-30', { at: '2026-10-05T00:00:00Z', tries: 1, reason: '', cv: 2 }]]);
+    const fails = new Map([['WAIT|2026-09-30', { at: '2026-10-06T08:00:00Z', tries: 1, reason: '', cv: 3 }], ['GONE|2026-09-30', { at: '2026-09-01T00:00:00Z', tries: 4, reason: '', cv: 3 }], ['RETRY|2026-09-30', { at: '2026-10-05T00:00:00Z', tries: 1, reason: '', cv: 3 }]]);
     assert.deepEqual(dueItems(q, new Set(['DONE|2026-09-30']), fails, now).map((x) => x.ticker), ['OLD', 'NEW', 'RETRY']);
     const fresh = { ticker: 'TODAY', filed: '2026-10-06', want: '2026-09-30', added_at: '2026-10-06T09:50:00Z' };
     assert.deepEqual(dueItems([fresh], new Set(), new Map(), now), [], 'seen 10 min ago: Screener gets 20 min first (zzz1221)');
@@ -172,5 +172,19 @@ test('zzz1221 — a failure judged by the older checker is retried at once', () 
   const now = Date.parse('2026-10-06T10:00:00Z');
   const q = [{ ticker: 'R', filed: '2026-10-01', want: '2026-09-30', added_at: 'x' }];
   assert.equal(dueItems(q, new Set(), new Map([['R|2026-09-30', { at: '2026-10-06T09:00:00Z', tries: 1, reason: 'EPS' }]]), now).length, 1);
-  assert.equal(dueItems(q, new Set(), new Map([['R|2026-09-30', { at: '2026-10-06T09:00:00Z', tries: 1, reason: 'EPS', cv: 2 }]]), now).length, 0);
+  assert.equal(dueItems(q, new Set(), new Map([['R|2026-09-30', { at: '2026-10-06T09:00:00Z', tries: 1, reason: 'EPS', cv: 3 }]]), now).length, 0);
+});
+
+test('zzz1221 — printed slips "8,208,14" and "14,302 .31" count as 8208.14 and 14302.31 (PRINCEPIPE)', async () => {
+  const { numbersIn } = await import('../india-results-pdf');
+  const ns = numbersIn('a Revenue from Operations 8,208,14 6,094.18 5,945.74 14,302 .31');
+  assert.ok(ns.includes(8208.14)); assert.ok(ns.includes(6094.18)); assert.ok(ns.includes(14302.31));
+  assert.ok(!numbersIn('1,234,567').includes(12345.67), 'a normal 3-digit group is never re-read');
+});
+
+test('zzz1221 — a space as the thousands separator: "19 768.70" (ARCHIDPLY)', async () => {
+  const { numbersIn, checkResultsAnswer: chk } = await import('../india-results-pdf');
+  assert.ok(numbersIn('a. Revenue from operations 19 768.70 18 900.78 17 571.72').includes(19768.7));
+  const doc = DOC.replace('Revenue from operations 12,345.67 11,000.00 9,876.54', 'Revenue from operations 12 345.67 11 000.00 9 876.54');
+  assert.equal(chk(ans({ revenue_line: 'Revenue from operations 12 345.67 11 000.00 9 876.54' }), { ...P, docText: doc }).ok, true);
 });

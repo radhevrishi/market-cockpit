@@ -23,7 +23,21 @@
 // that cannot be read leaves the name pending with its reason.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { numbersIn, valuesClose } from './ai-verify';
+import { numbersIn as numbersInRaw, valuesClose } from './ai-verify';
+
+/** zzz1221 — results PDFs carry typing slips the model reads through: "8,208,14" for 8,208.14 and "14,302 .31" for 14,302.31
+ *  (PRINCEPIPE, 3 Nov), and "19 768.70" with a space for the comma (ARCHIDPLY). Both the printed reading and the slip-corrected reading count as printed. Pure. */
+export function numbersIn(text: string): number[] {
+  const t = String(text || '').replace(/(\d)[ \t]+\.(\d)/g, '$1.$2');
+  const out = numbersInRaw(t);
+  const re = /\b\d{1,3}(?:,\d{2,3})*,(\d{2})\b(?![.\d])/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(t))) { const v = Number(`${m[0].slice(0, -3).replace(/,/g, '')}.${m[1]}`); if (Number.isFinite(v)) out.push(v); }
+  // "19 768.70" — a space as the thousands separator (ARCHIDPLY)
+  const sp = /(?<![\d.,])\d{1,3}(?: \d{3})+(?:\.\d+)?(?![\d,])/g;
+  while ((m = sp.exec(t))) { const v = Number(m[0].replace(/ /g, '')); if (Number.isFinite(v)) out.push(v); }
+  return out;
+}
 
 export const RESULTS_PDF_VERSION = 1;
 export const RP_RESULT_KEY = (sym: string, qEnd: string) => `results-pdf:v1:${sym}:${qEnd}`;
@@ -68,7 +82,7 @@ export interface RpQuotes {
 /** zzz898 — a field where the PDF and the other source (Screener / enrich) disagree for the same quarter. */
 export interface RpDisagreement { field: string; other: number; pdf: number; quote: string | null }
 /** zzz1221 — the checker version a failure was judged under: a failure under an older checker is retried at once. */
-export const RP_CHECK_VERSION = 2;
+export const RP_CHECK_VERSION = 3;   // 3: printed slips "8,208,14", space separators
 export interface RpFail { at: string; tries: number; reason: string; cv?: number }
 
 const DAY = 86_400_000;
@@ -206,14 +220,14 @@ export function checkResultsAnswer(raw: any, p: { ticker: string; want: string; 
   if (!inDoc(ec, docNums) || !inDoc(ep, docNums)) { ec = null; ep = null; epsDropped = true; }
   // zzz883: each figure must sit on its own printed row, and that row must really be in the document — "the number appears
   // somewhere in the PDF" is not enough (a page has hundreds of numbers)
-  const docNorm = p.docText.toLowerCase().replace(/[^a-z0-9.()-]+/g, '');
+  const docNorm = p.docText.toLowerCase().replace(/[^a-z0-9]+/g, '');
   const rowCheck = (label: string, line: unknown, words: RegExp, vals: Array<number | null>): string | null => {
     if (vals.every((v) => v == null)) return null;
     const ln = typeof line === 'string' ? line.trim() : '';
     if (ln.length < 6) return `${label}: the printed row was not copied`;
     if (!words.test(ln)) return `${label}: the copied row does not name ${label}`;
     // zzz1221 — compared with spaces removed: PDF text often runs the label into the first figure ("operations718.47")
-    const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9.()-]+/g, '');
+    const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, '');
     if (!docNorm.includes(norm(ln).slice(0, 60))) return `${label}: the copied row is not in the document`;
     const lineNums = numbersIn(ln);
     // on its own row the figure must be printed exactly (to the paisa / the last printed decimal), not merely close
