@@ -82,7 +82,7 @@ export interface RpQuotes {
 /** zzz898 — a field where the PDF and the other source (Screener / enrich) disagree for the same quarter. */
 export interface RpDisagreement { field: string; other: number; pdf: number; quote: string | null }
 /** zzz1221 — the checker version a failure was judged under: a failure under an older checker is retried at once. */
-export const RP_CHECK_VERSION = 3;   // 3: printed slips "8,208,14", space separators
+export const RP_CHECK_VERSION = 4;   // 3: printed slips "8,208,14", space separators; 4: columns run together
 export interface RpFail { at: string; tries: number; reason: string; cv?: number }
 
 const DAY = 86_400_000;
@@ -211,24 +211,54 @@ export function checkResultsAnswer(raw: any, p: { ticker: string; want: string; 
   let ec = num(raw.eps_current), ep = num(raw.eps_year_ago);
   if (rc == null || rc <= 0) return { ok: false, reason: 'no revenue figure for the quarter' };
   const docNums = numbersIn(p.docText);
-  const named: Array<[string, number | null]> = [['revenue', rc], ['revenue a year ago', rp], ['net profit', nc], ['net profit a year ago', np]];
-  for (const [label, v] of named) if (!inDoc(v, docNums)) return { ok: false, reason: `${label} ${v} is not printed in the document` };
+  const docNorm = p.docText.toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, '');
+  // zzz1221 — the PDF text reader often runs table columns together ("8,208,146,094.18"), so a figure the model read
+  // correctly is not a separate number in the text. Second test, local to the row: just after the row's label in the
+  // document, the figure's printed digits (separators dropped) appear in that order.
+  const digitsOf = (v: number, src: unknown): string[] => {
+    const raw0 = String(src ?? v).replace(/[^\d.]/g, '');
+    const fixed2 = Math.abs(v).toFixed(2).replace('.', '');
+    return Array.from(new Set([raw0.replace('.', ''), fixed2, fixed2.replace(/0+$/, '')])).filter((d) => d.length >= 3);
+  };
+  const onRowLoose = (v: number | null, line: unknown, src: unknown): boolean => {
+    if (v == null) return true;
+    const ln = typeof line === 'string' ? line : '';
+    const label = norm(ln.replace(/\d[\s\S]*$/, '')).replace(/^[a-z]?(?:i{1,3}|iv|v)?(?=[a-z]{6})/, '');
+    if (label.length < 6) return false;
+    for (let at = docNorm.indexOf(label); at >= 0; at = docNorm.indexOf(label, at + 1)) {
+      const region = docNorm.slice(at + label.length, at + label.length + 160);
+      if (digitsOf(v, src).some((d) => region.includes(d))) return true;
+    }
+    return false;
+  };
+  /** the copied row's label is in the document and its figures follow it in the same order (columns run together) */
+  const rowRunTogether = (ln: string): boolean => {
+    const label = norm(ln.replace(/\d[\s\S]*$/, ''));
+    const digits = ln.replace(/^[^\d]*/, '').replace(/[^\d]+/g, '').slice(0, 18);
+    if (label.length < 6 || digits.length < 6) return false;
+    for (let at = docNorm.indexOf(label); at >= 0; at = docNorm.indexOf(label, at + 1)) {
+      if (docNorm.slice(at + label.length, at + label.length + 60).replace(/[^\d]/g, '').startsWith(digits)) return true;
+    }
+    return false;
+  };
+  const named: Array<[string, number | null, unknown, unknown]> = [['revenue', rc, raw.revenue_line, raw.revenue_current], ['revenue a year ago', rp, raw.revenue_line, raw.revenue_year_ago], ['net profit', nc, raw.net_profit_line, raw.net_profit_current], ['net profit a year ago', np, raw.net_profit_line, raw.net_profit_year_ago]];
+  for (const [label, v, line, src] of named) if (!inDoc(v, docNums) && !onRowLoose(v, line, src)) return { ok: false, reason: `${label} ${v} is not printed in the document` };
   // zzz1221 — EPS is the least important figure and the hardest row to copy (it sits under a "Basic / Diluted" heading):
   // an EPS that does not check out is LEFT OUT, it no longer throws away the revenue and profit that did (26 of 31 answers
   // on 3 Nov were rejected, most for EPS alone)
   let epsDropped = false;
-  if (!inDoc(ec, docNums) || !inDoc(ep, docNums)) { ec = null; ep = null; epsDropped = true; }
+  if (!(inDoc(ec, docNums) || onRowLoose(ec, raw.eps_line, raw.eps_current)) || !(inDoc(ep, docNums) || onRowLoose(ep, raw.eps_line, raw.eps_year_ago))) { ec = null; ep = null; epsDropped = true; }
   // zzz883: each figure must sit on its own printed row, and that row must really be in the document — "the number appears
   // somewhere in the PDF" is not enough (a page has hundreds of numbers)
-  const docNorm = p.docText.toLowerCase().replace(/[^a-z0-9]+/g, '');
   const rowCheck = (label: string, line: unknown, words: RegExp, vals: Array<number | null>): string | null => {
     if (vals.every((v) => v == null)) return null;
     const ln = typeof line === 'string' ? line.trim() : '';
     if (ln.length < 6) return `${label}: the printed row was not copied`;
     if (!words.test(ln)) return `${label}: the copied row does not name ${label}`;
-    // zzz1221 — compared with spaces removed: PDF text often runs the label into the first figure ("operations718.47")
-    const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, '');
-    if (!docNorm.includes(norm(ln).slice(0, 60))) return `${label}: the copied row is not in the document`;
+    // zzz1221 — compared with spaces removed: PDF text often runs the label into the first figure ("operations718.47");
+    // a row whose columns the reader ran together still counts when its label is there and its figures follow it
+    if (!docNorm.includes(norm(ln).slice(0, 60)) && !rowRunTogether(ln)) return `${label}: the copied row is not in the document`;
     const lineNums = numbersIn(ln);
     // on its own row the figure must be printed exactly (to the paisa / the last printed decimal), not merely close
     for (const v of vals) if (v != null && !lineNums.some((d) => Math.abs(Math.abs(v) - Math.abs(d)) <= 0.005)) return `${label} ${v} is not on the copied ${label} row`;
