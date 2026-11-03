@@ -227,3 +227,12 @@ test('14 zzz1224d — change lines from real transcripts: shares, firsts, "enter
   // an insurance-claim approval is not a market approval
   assert.equal(st('The Company also received approval for a full and final insurance claim of Rs. 36.40 crores.'), 'EXCLUDED');
 });
+
+test('15 zzz1224e — live watch review: counts in crore, industry capacity, quarterly order totals, future qualification', () => {
+  const st = (q: string, f: Record<string, unknown> = {}) => T(q, f).tier;
+  assert.equal(st('The last tender that came against an order of 1,050 crore liters, the offers received were 1,800 crore litres.', { salesCr: 1500 }), 'EXCLUDED');
+  assert.equal(st('On supply, large Indian growers are adding reactors and are doubling their capacity in 3 years.'), 'EXCLUDED');
+  assert.equal(st('On the order front, we received a total order of INR90 crores only in the first quarter of FY27.', { salesCr: 200 }), 'EXCLUDED');
+  assert.equal(st('Our process wafers have been qualified and we are working with partners ahead of our first customer samples, which will happen next year.'), 'EXCLUDED');
+  assert.equal(st('So the paracetamol capacity, we started with 3,600 MTPA which we tripled last year.'), 'WATCH');
+});

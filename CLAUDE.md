@@ -3901,3 +3901,6 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   segment / business / vertical / category (not a year, not "this segment", not a negation, not a past year). Order inflow / totals
   are ordinary order flow; one order counts for the watch only at ≥ 25% of annual sales. Approvals of claims / loans / listings
   excluded. A capacity step in a ₹20,000 Cr+ company is small. SWR key v11.
+  zzz1224e: "crore litres / units / tonnes" is a count, not rupees (ZUARIIND); a capacity step must be the company's own (not
+  "growers / industry / peers"); "total order of ₹X Cr in the quarter" is order flow (DHRUV); a qualification / approval sentence
+  with a future marker or "ahead of" is not achieved (CYIENT).

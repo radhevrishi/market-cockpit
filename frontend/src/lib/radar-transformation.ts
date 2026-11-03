@@ -126,6 +126,8 @@ export function amountCr(s: string): number | null {
   for (const m of s.matchAll(re)) {
     const v = Number(String(m[1] ?? m[3]).replace(/,/g, ''));
     if (!Number.isFinite(v) || v <= 0) continue;
+    // zzz1224e — ZUARIIND "1,050 crore liters": a crore of litres / units / tonnes is a count, not rupees
+    if (/^\s*(?:lit|ltr|kl\b|kg|tonnes?|tons?|mt\b|units?|sq|shares?|customers?|users?|doses?|pieces?|km)/i.test(s.slice((m.index ?? 0) + m[0].length, (m.index ?? 0) + m[0].length + 12))) continue;
     const cr = toCr(v, String(m[2] ?? m[4]));
     if (best == null || cr > best) best = cr;
   }
@@ -238,6 +240,9 @@ const NEW_LINE = /\bcommercial production of (?:our |the |a )?(?:new )?([a-z][\w
 const WON = /\b(received|won|secured|bagged|awarded|order inflows?|letter of (?:award|intent)|LoA|purchase order)\b/i;
 
 const amt0 = (q: string) => amountCr(q);
+// zzz1224e — the company's own capacity ("we / our / the company"), not the industry's (IGIL "large growers are doubling capacity")
+const OWN = /\b(we|our|us|the company|company's)\b/i;
+const ownCapacity = (q: string) => OWN.test(q) || !/\b(growers|players|competitors|peers|industry|manufacturers|producers|companies|sector|china|globally|country)\b/i.test(q);
 const isSlideFragment = (q: string) => (q.match(/(?:^|\s)[-+]?\d[\d.,]*%?(?=\s|$)/g) || []).length >= 7 || (String(q).match(/[a-z0-9%)]\s[A-Z][a-z]{2,}/g) || []).length >= 3;
 
 function readSentence(raw: string, salesCr: number | null, lender = false): Read {
@@ -307,7 +312,7 @@ function readSentence(raw: string, salesCr: number | null, lender = false): Read
     if (first) return { ...base, mech: 'NEW_CUSTOMER', why: 'First order from a new customer type.', stage: 'Order', pct, level: lvl === 'SMALL' ? 'SMALL' : lvl, matText, scenario: lvl === 'UNKNOWN' || lvl === 'SMALL', actual };
     // zzz1224d — order inflow over a period is many orders: normal business for an order-driven company. One order counts for the
     // research watch only when it is at least a quarter of a year's sales (and even then it is visibility, not a new business)
-    if (pct != null && /\border inflows?\b|\borders? (?:totall?ing|aggregating|worth a total)\b|\bnew orders\b/i.test(q)) return { ...base, mech: 'ROUTINE', why: `Order inflow of ≈ ${pct}% of annual sales over the period — normal order flow for an order-driven business, not a change in the business.`, stage: 'Order', pct, level: 'SMALL', matText, actual };
+    if (pct != null && /\border inflows?\b|\borders? (?:totall?ing|aggregating|worth a total)\b|\bnew orders\b|\btotal orders?\b|\borders? (?:received|won) (?:during|in) the (?:quarter|period|half|year)\b/i.test(q)) return { ...base, mech: 'ROUTINE', why: `Order inflow of ≈ ${pct}% of annual sales over the period — normal order flow for an order-driven business, not a change in the business.`, stage: 'Order', pct, level: 'SMALL', matText, actual };
     if (pct != null && pct >= 25) return { ...base, mech: 'ORDER_STEP', why: `One order ≈ ${pct}% of annual sales — earnings visibility; not by itself a change in the business.`, stage: 'Order', pct, level: lvl, matText, actual };
     if (pct != null) return { ...base, mech: 'ROUTINE', why: `A single order of ≈ ${pct}% of annual sales — normal order flow.`, stage: 'Order', pct, level: 'SMALL', matText, actual };
     return { ...base, mech: 'UNCLEAR', why: 'Order won, but its size against sales is not known.', stage: 'Order', pct: null, level: 'UNKNOWN', matText, actual };
@@ -323,7 +328,7 @@ function readSentence(raw: string, salesCr: number | null, lender = false): Read
     const trial = /\btrial production|trial runs?\b/i.test(q);
     const nl = q.match(NEW_LINE);
     const expanded = EXPAND_RE.test(q);
-    if (step != null && step >= 1.5) {
+    if (step != null && step >= 1.5 && ownCapacity(q)) {
       const p = Math.round((step - 1) * 100);
       return { ...base, mech: 'CAPACITY_STEP', why: `Capacity up about ${p}% (${step.toFixed(1)}×).`, stage: trial ? 'Production' : 'Production', pct: p, level: step >= 2 ? 'LARGE' : 'MEDIUM', matText: `Capacity +${p}%. Capacity is not profit: utilisation and pricing decide the earnings.`, scenario: true, actual };
     }
@@ -338,7 +343,7 @@ function readSentence(raw: string, salesCr: number | null, lender = false): Read
   }
 
   if (!plan && /\b(added|adding|expanded|increased|augment\w*)\b[^.]{0,40}\b(capacit\w*|TPA|TPM|MTPA|KLPA|MW|units)\b|\b(capacit\w*)\b[^.]{0,30}\b(added|expanded|increased)\b/i.test(q)) {
-    if (step != null && step >= 1.5) {
+    if (step != null && step >= 1.5 && ownCapacity(q)) {
       const p = Math.round((step - 1) * 100);
       return { ...base, mech: 'CAPACITY_STEP', why: `Capacity up about ${p}% (${step.toFixed(1)}×).`, stage: 'Production', pct: p, level: step >= 2 ? 'LARGE' : 'MEDIUM', matText: `Capacity +${p}%. Capacity is not profit: utilisation and pricing decide the earnings.`, scenario: true, actual };
     }
@@ -356,7 +361,7 @@ function readSentence(raw: string, salesCr: number | null, lender = false): Read
   if (/\b(cdmo|contract (?:development|manufactur\w*))\b/i.test(q) && /\b(customers?|clients?)\b/i.test(q) && /\b(onboard\w*|signed|won|added)\b/i.test(q) && !plan) {
     return { ...base, mech: 'NEW_BUSINESS', why: 'Customers onboarded in a contract manufacturing business.', stage: 'Qualification', pct: null, level: 'UNKNOWN', matText: 'Size unknown: customers onboarded, revenue not stated.', scenario: true, actual };
   }
-  if (!plan && !/\b(board|director|independent|regulat\w*|statutory|personnel|staff|team|engineers|people)\b/i.test(q)
+  if (!plan && !FUTURE.test(q) && !/\b(ahead of|towards|board|director|independent|regulat\w*|statutory|personnel|staff|team|engineers|people)\b/i.test(q)
     && (/\b(qualified|approved|validated|cleared)\b[^.]{0,50}\b(customers?|clients?|oems?|innovators?|automakers?|utilit(?:y|ies))\b|\b(customers?|clients?|oems?|innovators?)\b[^.]{0,50}\b(qualified|approved|validated|cleared)\b/i.test(q))) {
     return { ...base, mech: 'NEW_CUSTOMER', why: 'Qualified / approved by new customers.', stage: 'Qualification', pct: null, level: 'UNKNOWN', matText: 'Size unknown: qualification comes before orders; volumes not stated.', scenario: true, actual };
   }
@@ -365,7 +370,7 @@ function readSentence(raw: string, salesCr: number | null, lender = false): Read
   if (firstRev && !plan) return { ...base, mech: 'NEW_BUSINESS', why: `Revenue from a new business (${firstRev[1].trim()}) has begun.`, stage: 'Revenue', pct: null, level: 'UNKNOWN', matText: `Size unknown: the ${firstRev[1].trim()} business's share of sales is not stated.`, scenario: true, actual };
   if (FIRST_RE.test(q) && FIRST_DONE.test(q) && !plan && !/\b(until|unless|before|once|when we)\b/i.test(q)) return { ...base, mech: 'NEW_CUSTOMER', why: 'First order / customer of a new kind.', stage: /qualif|approv/i.test(q) ? 'Qualification' : 'Order', pct: null, level: 'UNKNOWN', matText: 'Size unknown: one first customer or order.', scenario: true, actual };
   if (NEW_BIZ.test(q) && !plan && !/\b(not|never|yet to|before we|when we|since|from (?:19|20)\d\d|in (?:19|20)\d\d)\b/i.test(q)) return { ...base, mech: 'NEW_BUSINESS', why: 'Entered a new segment / market.', stage: 'Revenue', pct: null, level: 'UNKNOWN', matText: 'Size unknown: revenue from the new business not stated.', scenario: true, actual };
-  if (!plan && !/\b(board|shareholders?|director|PLI|incentive|subsid\w*|strateg\w*|funds?|scheme|claim|insurance|loan|sanction\w*|limit|resolution|merger|amalgamation|dividend|listing)\b/i.test(q)
+  if (!plan && !FUTURE.test(q) && !/\bahead of\b/i.test(q) && !/\b(board|shareholders?|director|PLI|incentive|subsid\w*|strateg\w*|funds?|scheme|claim|insurance|loan|sanction\w*|limit|resolution|merger|amalgamation|dividend|listing)\b/i.test(q)
     && /\b(?:received|got|obtained|secured|granted)\b[^.]{0,40}\b(approval|clearance|EIR|nod)\b|\b(approval|clearance|EIR)\b[^.]{0,20}\b(?:received|granted)\b|\b(?:has|have) been (?:approved|qualified|cleared)\b/i.test(q)) {
     return { ...base, mech: 'NEW_CUSTOMER', why: 'Regulatory or customer approval received.', stage: 'Approval', pct: null, level: 'UNKNOWN', matText: 'Size unknown: an approval opens a market; sales from it are not stated.', scenario: true, actual };
   }
