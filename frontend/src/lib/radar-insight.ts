@@ -223,7 +223,9 @@ export function eventProof(label: string | null | undefined, quote: string | nul
     if (hypothetical || /\bpotential|watch(?:ing)? for|could|expect\w*/i.test(q) && !won) return { kind: 'NOT_PROVEN', reason: 'The sentence talks about possible orders, not a confirmed order.' };
     if (!won && (amt == null || amt < 5)) return { kind: 'NOT_PROVEN', reason: 'The sentence mentions an order book in general terms — no confirmed order or order value.' };
     if (isHistorical(q, now)) return { kind: 'NOT_PROVEN', reason: 'The order mentioned is historical, not new.' };
-    return { kind: 'MILESTONE', reason: won ? 'Confirmed order in the sentence.' : `Order book of about ₹${Math.round(amt || 0).toLocaleString('en-IN')} Cr stated in the sentence (total book, not a new order).` };
+    // zzz1220: a total order book is a stock of past orders — context for revenue visibility, not proof of a new change
+    if (!won) return { kind: 'RESULTS_COMMENTARY', reason: `Order book of about ₹${Math.round(amt || 0).toLocaleString('en-IN')} Cr stated (total book, not a new order) — visibility context, not proof of a change.` };
+    return { kind: 'MILESTONE', reason: 'Confirmed order in the sentence.' };
   }
   if (/^Commercial production/.test(l)) {
     if (/\b(advert\w*|tvc|television|campaign|brand (?:refresh|film|campaign)|commercials?\b(?! (?:production|supply|dispatch|operation)))/i.test(q) && !/\bcommercial (?:production|supply|dispatch|operations?)\b/i.test(q)) return { kind: 'NOT_PROVEN', reason: '"Commercial" here means an advertisement or brand campaign, not production.' };

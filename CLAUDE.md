@@ -3839,3 +3839,4 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   revenue +112% to ₹208.6 Cr; PAT +180% …"). Execution period "09 years 04 months" = 112 months (`periodMonthsOf`).
   `priceCommentaryOnly` only when the card has no event of its own (GRSE's read ₹32,000 Cr order had scored 0 evidence →
   IGNORE). Transformational theme: company name decides before customer words (`themeOf(texts, industry, name)`).
+  Radar: a total order book without a won verb is RESULTS_COMMENTARY (visibility context), never MILESTONE proof.

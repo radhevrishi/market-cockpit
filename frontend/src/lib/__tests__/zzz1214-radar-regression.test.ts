@@ -311,7 +311,7 @@ test('46 live Best list review: slide run-ons, delays, supply agreements and pri
   // "plan" must not match "plant"
   assert.equal(P('Margin improvement realised', 'Internationally, our Oman plant ran at 90% utilization in H1 and its EBITDA margins improved to 11.5% from 6.4% in FY26.', 'MANAGEMENT'), 'MILESTONE');
   const ob = eventProof('Order received', 'We are preparing to execute the order book of approximately INR2,629 crores as of September.', {}, NOW, 'MANAGEMENT');
-  assert.equal(ob.kind, 'MILESTONE');
+  assert.equal(ob.kind, 'RESULTS_COMMENTARY');
   assert.match(ob.reason, /total book, not a new order/);
 });
 test('47 the radar counts documents whose proof holds up, apart from keyword hits', () => {
