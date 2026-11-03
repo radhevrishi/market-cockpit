@@ -32,7 +32,7 @@ const find = (ticker: string, anns: AnnouncementLite[], docs: DocRead[] | null, 
 
 // zzz789 (intentional change): favourable legal outcomes (appeal allowed / demand reduced) re-classify stored findings.
 // zzz803 (intentional change): the India catalyst card supersedes zzz789.
-test('rules version bumped (zzz1220 supersedes zzz803 / zzz785 / zzz787 / zzz789)', () => { assert.equal(RULES_VERSION, '2026-11-03.zzz1220'); });
+test('rules version bumped (zzz1220 supersedes zzz803 / zzz785 / zzz787 / zzz789)', () => { assert.equal(RULES_VERSION, '2026-11-03.zzz1220d'); });
 
 describe('money and tax words in a PDF text layer (the ₹ sign is usually lost)', () => {
   test('crore / full-rupee / lakh forms; counts are not money', () => {

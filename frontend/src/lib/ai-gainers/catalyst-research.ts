@@ -50,7 +50,7 @@ import { catalystTypeOf, factValueCr, flatFacts, evidenceBreadthOf, type DocRead
 import { isGenericSubject, docSeqOf } from './announcement-reader';
 import { buildIndiaCard, classifyIndiaEvents, IN_BACKDROP_DAYS, type InCard } from './in-event-taxonomy';
 
-export const RULES_VERSION = '2026-11-03.zzz1220';   // zzz1220: label / conflict / results-release fixes — free rescore on next page load
+export const RULES_VERSION = '2026-11-03.zzz1220d';   // zzz1220: label / conflict / results-release fixes — free rescore on next page load
 // zzz803 (IN): every India finding carries an India card (in-event-taxonomy):
 // events named from filing subject / summary / read-document sentences and
 // press headlines (promoter stake sale, open offer, restatement, SAST / PIT
@@ -1211,6 +1211,8 @@ export interface StoredSweepInputs {
   docTried?: boolean;
   /** zzz785 (IN): the documents read — kept compact (see compactDocs). */
   docs?: DocRead[] | null;
+  /** zzz1220 (IN): the extraction version the docs were read under — older ones are re-read (free) on a re-score. */
+  docsV?: string | null;
   secondaryUnavailable?: string | null;
   /** zzz785 (US): facts / refs read from SEC documents and press, already compact. */
   extraFacts?: StructuredFacts[] | null;

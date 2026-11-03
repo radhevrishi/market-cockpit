@@ -29,7 +29,7 @@ import type { CatalystType } from './events';
 
 /** Bump when extraction changes what a document yields (cached reads re-extract). */
 // zzz803: x2 — a document read also keeps its event sentences (eventLines) for the India card.
-export const INDIA_EXTRACT_VERSION = 'x2';
+export const INDIA_EXTRACT_VERSION = 'x3';   // zzz1220: results releases, execution years
 
 export type Polarity = 'positive' | 'negative' | 'neutral';
 

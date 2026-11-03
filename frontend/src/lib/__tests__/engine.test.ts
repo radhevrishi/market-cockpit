@@ -5367,7 +5367,7 @@ describe('zzz771 AG-1 — reason texts, scan notes, scrip codes, rules version',
     // zzz789 (intentional change): rules version bumped for favourable legal outcomes.
     // zzz803 (intentional change): bumped again for the India catalyst card.
     // zzz1220 (intentional change): bumped for the India label / conflict / results-release fixes.
-    assert.match(RULES771, /zzz1220$/);
+    assert.match(RULES771, /zzz1220d$/);
     assert.match(String(fx771().findings.BIGORD.rulesVersion), /zzz77\d$/);
   });
 

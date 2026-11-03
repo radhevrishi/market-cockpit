@@ -29,7 +29,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
 import { archiveView } from '@/lib/transformational/archive';   // zzz1166
 import { fetchCompanyResearch, yahooReturns, fetchNseAnnouncementsLite } from '@/lib/ai-gainers/screener-company';
-import { chooseDocuments, readIndiaDocuments, relatedFilings, INDIA_HISTORY_BUDGET, type DocRead, type IndiaFacts } from '@/lib/ai-gainers/india-extract';
+import { chooseDocuments, readIndiaDocuments, relatedFilings, INDIA_HISTORY_BUDGET, INDIA_EXTRACT_VERSION, type DocRead, type IndiaFacts } from '@/lib/ai-gainers/india-extract';
 import { fetchEdgarResearch, fetchEdgarText, readUsFilingDocument, usFindingEvidence, type EdgarResearch, type UsDocReadResult } from '@/lib/ai-gainers/edgar-research';
 import { mergeAnnouncements, buildFinding, classifyAnnouncement, coverage, ageDaysOf, isBackdropFiling, filedAfterClose, indiaSessionCloseIso, refreshFindingMove, pickReadCandidate, compactInputs, rescoreFromInputs, staleRuleTickers, RULES_VERSION, type Finding, type AnnouncementLite, type StoredSweepInputs, type Returns } from '@/lib/ai-gainers/catalyst-research';
 import { presentFindings, presentErrorLines } from '@/lib/ai-gainers/research-present';
@@ -723,7 +723,7 @@ async function research(req: NextRequest, body: any) {
       if (usNote) st.findings[u.ticker] = { ...st.findings[u.ticker], notes: [...st.findings[u.ticker].notes, usNote] };
       if (market === 'US') st.findings[u.ticker] = { ...st.findings[u.ticker], usCard, usCardV: US_CARD_VERSION };
       st.findings[u.ticker] = await withPersistence(st.findings[u.ticker], persistSink, announcements.filter((a) => { const d = a.ageDays ?? ageDaysOf(a.dateIso, now); return d == null || d <= WINDOW_DAYS; }));
-      st.inputs![u.ticker] = compactInputs({ announcements, returns, marketCap, turnover, sources, sourceFailed, fetchedAt: now.toISOString(), read, news, ...(usNote ? { usNote } : {}), ...(docTried ? { docTried } : {}), ...(docs.length ? { docs } : {}), ...(secondaryUnavailable ? { secondaryUnavailable } : {}), ...(usEv && (usEv.extraFacts.length || usEv.extraRefs.length) ? { extraFacts: usEv.extraFacts, extraRefs: usEv.extraRefs } : {}), ...(market === 'US' ? { usCard, usCardV: US_CARD_VERSION } : {}) }, WINDOW_DAYS, now);
+      st.inputs![u.ticker] = compactInputs({ announcements, returns, marketCap, turnover, sources, sourceFailed, fetchedAt: now.toISOString(), read, news, ...(usNote ? { usNote } : {}), ...(docTried ? { docTried } : {}), ...(docs.length ? { docs, docsV: INDIA_EXTRACT_VERSION } : {}), ...(secondaryUnavailable ? { secondaryUnavailable } : {}), ...(usEv && (usEv.extraFacts.length || usEv.extraRefs.length) ? { extraFacts: usEv.extraFacts, extraRefs: usEv.extraRefs } : {}), ...(market === 'US' ? { usCard, usCardV: US_CARD_VERSION } : {}) }, WINDOW_DAYS, now);
       if (st.attempts) delete st.attempts[u.ticker];
       if (!closed) done++;
     } catch (e: any) {
@@ -876,6 +876,11 @@ async function rescoreOnly(req: NextRequest, body: any) {
       if (market === 'IN' && !inputs.returns && Date.now() - t0 < budget - 10_000) {
         const y = await yahooReturns(u.ticker).catch(() => null);
         if (y) inputs = { ...inputs, returns: y.returns, sources: [...(inputs.sources || []), y.source] };
+      }
+      // zzz1220 (IN): documents read under an older extraction are read again (free — no model; PDF text is cached by URL)
+      if (market === 'IN' && inputs.docs?.length && inputs.docsV !== INDIA_EXTRACT_VERSION && Date.now() - t0 < budget - 15_000) {
+        const docs2 = await indiaDocuments(u.ticker, inputs.announcements, { now: new Date(inputs.fetchedAt), sessionCloseIso, marketCap: inputs.marketCap ?? u.marketCap ?? null, returns: inputs.returns ?? null, bseCode: null, companyName: u.company ?? null, msLeft: Math.min(30_000, budget - (Date.now() - t0) - 5_000) });
+        if (docs2.length) inputs = { ...inputs, docs: docs2, docsV: INDIA_EXTRACT_VERSION };
       }
       st.inputs[u.ticker] = inputs;
       const f0 = rescoreFromInputs(inputs, { ticker: u.ticker, company: u.company, market, movePct: u.movePct, holding: holdings.has(u.ticker), filedResult: !!u.filedResult, windowDays: WINDOW_DAYS, sessionCloseIso });
