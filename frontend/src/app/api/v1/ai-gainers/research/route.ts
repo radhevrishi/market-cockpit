@@ -256,6 +256,9 @@ const US_HARD_DEADLINE_MS = 52_000;
  *  two names at a time — every SEC request is still spaced ≤10/s process-wide. */
 const US_PER_NAME_MS = 30_000;
 const US_WORKERS = 2;
+/** zzz1218: India names get the same per-name clock. One India name (screener.in + BSE 20 s + NSE 13 s + PDF reads + a
+ *  model read) could run past 60 s, so the whole call outlived the page's 75 s wait and the sweep stopped at "0/47". */
+const IN_PER_NAME_MS = 30_000;
 
 function withDeadline<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
   if (ms <= 0) return Promise.resolve(fallback);
@@ -379,7 +382,8 @@ function statePayload(st: ResearchState, excluded: string[]) {
     updated_at: st.updated_at, model_reads: st.model_reads, model_reads_ceiling: MAX_MODEL_READS_PER_DAY[st.market],
     errors: errs.map((e) => e.short), error_details: errs.map((e) => e.full),
     rules_version: st.rules_version ?? null, rules_version_current: RULES_VERSION, stale_rules: staleTickers(st).length,
-    ...(st.market === 'US' ? { progress: usProgress(st), board_hash: st.board_hash ?? null, scan_at: st.scan_at ?? null, dropped: st.dropped || [] } : {}),
+    progress: usProgress(st),   // zzz1218: India too — names that timed out and are retried next call
+    ...(st.market === 'US' ? { board_hash: st.board_hash ?? null, scan_at: st.scan_at ?? null, dropped: st.dropped || [] } : {}),
   };
 }
 
@@ -580,7 +584,11 @@ async function research(req: NextRequest, body: any) {
   let done = 0, modelReads = 0, readsSkippedForCeiling = 0;
   const usLeft = () => US_HARD_DEADLINE_MS - (Date.now() - t0);
   let unsaved = 0, lastSave = Date.now();
+  // zzz1218: a name that overran its clock keeps running in the background; once this call has answered, its late
+  // writes must never save this (older) state over the next call's.
+  let closed = false;
   const save = async () => {
+    if (closed) return;
     st.updated_at = new Date().toISOString();
     st.errors = st.errors.slice(-40);
     stampRules(st);
@@ -716,8 +724,8 @@ async function research(req: NextRequest, body: any) {
       if (market === 'US') st.findings[u.ticker] = { ...st.findings[u.ticker], usCard, usCardV: US_CARD_VERSION };
       st.findings[u.ticker] = await withPersistence(st.findings[u.ticker], persistSink, announcements.filter((a) => { const d = a.ageDays ?? ageDaysOf(a.dateIso, now); return d == null || d <= WINDOW_DAYS; }));
       st.inputs![u.ticker] = compactInputs({ announcements, returns, marketCap, turnover, sources, sourceFailed, fetchedAt: now.toISOString(), read, news, ...(usNote ? { usNote } : {}), ...(docTried ? { docTried } : {}), ...(docs.length ? { docs } : {}), ...(secondaryUnavailable ? { secondaryUnavailable } : {}), ...(usEv && (usEv.extraFacts.length || usEv.extraRefs.length) ? { extraFacts: usEv.extraFacts, extraRefs: usEv.extraRefs } : {}), ...(market === 'US' ? { usCard, usCardV: US_CARD_VERSION } : {}) }, WINDOW_DAYS, now);
-      if (market === 'US' && st.attempts) delete st.attempts[u.ticker];
-      done++;
+      if (st.attempts) delete st.attempts[u.ticker];
+      if (!closed) done++;
     } catch (e: any) {
       st.errors.push(`${u.ticker}: ${String(e?.message || e)}`);
       st.findings[u.ticker] = { ...buildFinding({ ticker: u.ticker, company: u.company, market, movePct: u.movePct, marketCap: u.marketCap, turnover: null, announcements: [], returns: null, holding: holdings.has(u.ticker), sources: [], sourceFailed: true, windowDays: WINDOW_DAYS, now }), rulesVersion: RULES_VERSION };
@@ -732,13 +740,13 @@ async function research(req: NextRequest, body: any) {
   // with the reason — the sweep always finishes ("43/58 running…" stuck).
   st.attempts = st.attempts || {};
   const oneUs = async (u: typeof todo[number]): Promise<void> => {
-    const perName = Math.max(6_000, Math.min(US_PER_NAME_MS, usLeft() - 4_000));
+    const perName = Math.max(6_000, Math.min(market === 'US' ? US_PER_NAME_MS : IN_PER_NAME_MS, usLeft() - 4_000));
     const ok = await withDeadline(one(u).then(() => true), perName, false);
     if (ok || st.findings[u.ticker]) return;
     const n = (st.attempts![u.ticker] || 0) + 1;
     st.attempts![u.ticker] = n;
     if (n >= 2) {
-      st.errors.push(`${u.ticker}: timed out twice (SEC / price / press sources slow) — press ↻ Retry research`);
+      st.errors.push(`${u.ticker}: timed out twice (${market === 'US' ? 'SEC / price / press' : 'exchange / company-page / document'} sources slow) — press ↻ Retry research`);
       st.findings[u.ticker] = { ...buildFinding({ ticker: u.ticker, company: u.company, market, movePct: u.movePct, marketCap: u.marketCap, turnover: null, announcements: [], returns: null, holding: holdings.has(u.ticker), sources: [], sourceFailed: true, windowDays: WINDOW_DAYS, now }), rulesVersion: RULES_VERSION, usCardV: US_CARD_VERSION };
       delete st.attempts![u.ticker];
     } else st.errors.push(`${u.ticker}: timed out after ${Math.round(perName / 1000)}s — will retry once`);
@@ -747,14 +755,15 @@ async function research(req: NextRequest, body: any) {
   const workers = Array.from({ length: market === 'IN' ? 3 : US_WORKERS }, async () => {
     while (queue.length) {
       if (Date.now() - t0 > budget) break;
-      if (market === 'US' && usLeft() < 8_000) break;
+      if (usLeft() < 8_000) break;
       const next = queue.shift()!;
-      if (market === 'US') await oneUs(next); else await one(next);
+      await oneUs(next);   // zzz1218: both markets — every name has its own clock
     }
   });
   await Promise.all(workers);
   // Always persist at the end — also when only the universe or moves changed.
   await save();
+  closed = true;
   if (persistSink.length) await upsertDetections(persistSink, 'gainers').catch(() => null);
   await rememberGainerCatalysts(st.findings, date).catch(() => null);
 

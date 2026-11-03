@@ -3810,3 +3810,8 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
 - zzz1217b (2 Nov): radar stored reads were thrown away on EVERY deploy — the per-document key hashed the analyzer
   functions' compiled text, which the bundle renames each build (coverage 457 → 63 after a one-line deploy). Key now uses
   `RADAR_RULES_VERSION` (hand-bumped, 'r1217') + pattern data. Bump it when a document's scoring rules change.
+- zzz1218 (3 Nov): AI Daily Gainers India "▶ Research catalysts" stopped at 0/47. One India call took > 75 s (no per-name
+  clock: screener.in + BSE 20 s + NSE 13 s + PDF reads + model read), so the page's fetch timed out and the sweep ended.
+  Now both markets run every name through `oneUs` (India clock `IN_PER_NAME_MS` 30 s, hard deadline 52 s, retried once,
+  then "timed out twice"); `progress` is returned for India too and the page keeps sweeping while names are retrying;
+  a `closed` flag stops a late-finishing name from saving its older state over the next call's.

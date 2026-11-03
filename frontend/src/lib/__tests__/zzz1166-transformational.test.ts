@@ -108,3 +108,13 @@ test('a small strategic step (an associate stake 32% → 36%, materiality unknow
   const out = transformationalFrom([it], 'IN', '2026-10-26');
   assert.ok(out.length === 0 || out[0].strength !== 'TRANSFORMATIONAL');
 });
+
+test('zzz1218 India gainers research: every name has its own clock and late writes never save over a newer call', () => {
+  const src = readFileSync(new URL('../../app/api/v1/ai-gainers/research/route.ts', import.meta.url), 'utf8');
+  assert.match(src, /const IN_PER_NAME_MS = 30_000;/);
+  assert.match(src, /await oneUs\(next\);   \/\/ zzz1218/);
+  assert.match(src, /if \(closed\) return;/);
+  assert.match(src, /progress: usProgress\(st\),/);
+  const page = readFileSync(new URL('../../app/(dashboard)/ai-gainers/page.tsx', import.meta.url), 'utf8');
+  assert.match(page, /const retrying = \(res\.json\.progress\?\.retrying\?\.length \?\? 0\) > 0/);
+});

@@ -318,7 +318,8 @@ export default function AiGainersPage() {
           const failedLeft = Object.values(res.json.findings || {}).some((f) => f.status === 'source_failed');
           // zzz798 (US): a call whose names timed out researched nothing but
           // retries them on the next call — keep going; stop after 15 minutes.
-          const retrying = m === 'US' && (res.json.progress?.retrying?.length ?? 0) > 0 && Date.now() - started < 15 * 60_000;
+          // zzz1218: India too — a name that overran its clock is retried on the next call, so keep going.
+          const retrying = (res.json.progress?.retrying?.length ?? 0) > 0 && Date.now() - started < 15 * 60_000;
           if (m === 'US') {
             const doneNow = res.json.coverage?.researched ?? 0;
             stalled = doneNow > prevDone || (res.json.researched_now ?? 0) > 0 ? 0 : stalled + 1;
