@@ -3874,3 +3874,7 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   business / What changes / Potential earnings impact / Proof stage / Key risk / Next milestone), cards open with "Transformation thesis" +
   "Evidence" + gate chips, folded "Operational improvements / ordinary growth" and "Insufficient evidence" lists. Benchmark tests
   zzz1224-radar-transformation (13 named live cases + 16 controls, 0 FP / 0 FN on that set — no historical 30/30 set exists yet).
+  zzz1224b: first live shortlist review — "new customers added / onboarded" is routine; for lenders / brokers / AMCs new states,
+  branches, products are routine; MoU / tie-up / LoI = plan; approvals need an active receipt ("received … approval", "has been
+  approved"), never a passive "facilities approved by", PLI / incentive approvals excluded; an approval / first order in a ₹20,000 Cr+
+  company is SMALL unless sized; the order book in the same sentence is stripped before sizing the new order or inflow.

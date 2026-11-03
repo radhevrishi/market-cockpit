@@ -210,7 +210,10 @@ const ROUTINE_VARIANTS = /\b(colou?r grades?|shades?|variants?|SKUs?|flavou?rs?|
 const CAPABILITY_RE = /\b(capabilit\w*|enabl\w*|pilot(?: plant| scale| facilit\w*)?|lab[- ]scale|from lab|facilities for|equipped to|ability to|can (?:support|handle|serve)|ready to serve)\b/i;
 const OPS_MARGIN = /\b(margins?|ebitda|profitab\w*|operating leverage|realisations?|realizations?)\b/i;
 const OPS_DRIVERS = /\b(mix|efficienc\w*|operating leverage|cost (?:reduction|control|optimi\w*)|volume growth|pricing|price increases?|freight|discount\w*|raw material|input cost|lower costs?)\b/i;
-const FIRST_RE = /\b(first|maiden|debut)\b[^.]{0,40}\b(order|purchase order|customer|contract|supply|export|shipment|commercial)\b|\b(onboarded|new (?:customer|client)s? (?:added|onboarded|won))\b/i;
+// zzz1224b — "new customers added" / "new clients onboarded" is routine growth, never a first-of-a-kind event
+const FIRST_RE = /\b(first|maiden|debut)\b[^.]{0,40}\b(order|purchase order|customer|contract|supply|export|shipment|commercial)\b/i;
+const FIN_RE = /\b(bank|nbfc|non banking|financ|lending|credit|insurance|housing fin|microfin|asset manag|broking|stockbroking|depositor|clearing|capital market|wealth|intermediar)/i;
+const MOU_RE = /\b(mou|memorandum of understanding|letter of intent|\bloi\b|tie[d-]? up|tied up|framework agreement)\b/i;
 const NEW_BIZ = /\b(entered|forayed|foray into|ventured into|new (?:segment|business|vertical|market|geograph\w*))\b/i;
 const EXPAND_RE = /\b(expan\w*|expanded|additional|added|adding|increas\w* (?:the )?(?:installed )?capacity|debottleneck\w*|brownfield|enhanc\w* capacity|augment\w*)\b/i;
 const NEW_LINE = /\bcommercial production of (?:our |the |a )?(?:new )?([a-z][\w -]{3,60}?)\s+(?:has\s+)?(?:commenced|started|begun)|\b(?:commenced|started|began) commercial production of (?:our |the |a )?(?:new )?([a-z][\w -]{3,60})/i;
@@ -219,7 +222,7 @@ const WON = /\b(received|won|secured|bagged|awarded|order inflows?|letter of (?:
 const amt0 = (q: string) => amountCr(q);
 const isSlideFragment = (q: string) => (q.match(/(?:^|\s)[-+]?\d[\d.,]*%?(?=\s|$)/g) || []).length >= 7 || (String(q).match(/[a-z0-9%)]\s[A-Z][a-z]{2,}/g) || []).length >= 3;
 
-function readSentence(raw: string, salesCr: number | null): Read {
+function readSentence(raw: string, salesCr: number | null, lender = false): Read {
   const q = clean(raw);
   const base = { quote: q, scenario: false } as const;
   const plan = FUTURE.test(q) && !/\b(has|have|had)\s+(?:been\s+)?(commenc|start|won|secur|receiv|complet|achiev)\w*/i.test(q) && !/\b(commenced|secured|won|bagged|received|onboarded|qualified|approved)\b/i.test(q);
@@ -247,6 +250,13 @@ function readSentence(raw: string, salesCr: number | null): Read {
     return { ...base, mech: 'CAPABILITY', why: 'Describes a capability or pilot facility — not commercial use by customers.', stage: 'Research', pct: null, level: 'UNKNOWN', matText: 'Capability only: no revenue, order or customer stated.', actual };
   }
 
+  if (MOU_RE.test(q) && !/\b(commenc\w*|started|began|begun|commission\w*|received (?:an? )?(?:order|purchase order)|won|bagged)\b/i.test(q)) {
+    return { ...base, mech: 'PLAN', why: 'An MoU / tie-up / letter of intent — an intention, not a completed order or start.', stage: null, pct: null, level: 'UNKNOWN', matText: 'MoU only: no committed volume or value.', actual: 'PLAN' };
+  }
+  if (lender && /\b(new (?:branch\w*|geograph\w*|state|market|segment|product|customers?|clients?)|maiden|foray|entered|expan\w*|footprint|onboard\w*|disburs\w*|aum|book)\b/i.test(q) && !shareShift(q)) {
+    return { ...base, mech: 'ROUTINE', why: 'For a lender, broker or asset manager, new branches, states, products and customers are routine growth, not a change in the business.', stage: 'Revenue', pct: null, level: 'UNKNOWN', matText: 'Routine financial-services growth.', actual };
+  }
+
   // ── share / mix shift with numbers ──
   const sh = shareShift(q);
   if (sh && !plan) {
@@ -263,7 +273,10 @@ function readSentence(raw: string, salesCr: number | null): Read {
   if (/\border ?book\s+(?:stands|stood|is|was|of|at|remains|aggregat\w*|comprising|as on)\b|\border ?book (?:stands|is|was) at\b/i.test(q) && !/\b(?:won|bagged|awarded|secured)\b[^.]{0,40}\border/i.test(q)) {
     return { ...base, mech: 'ROUTINE', why: 'A total order book is the stock of past orders — revenue visibility, not a change in the business.', stage: 'Order', pct: null, level: 'UNKNOWN', matText: amt0(q) != null ? `Order book ₹${Math.round(amt0(q)!).toLocaleString('en-IN')} Cr (total, not new).` : 'Order book (total, not new).', actual };
   }
-  if (WON.test(q) && /\border|contract|LoA|letter of award/i.test(q) && !plan) {
+  if ((WON.test(q) || /\border inflows?\b/i.test(q)) && /\border|contract|LoA|letter of award/i.test(q) && !plan) {
+    // the order book named in the same sentence is a stock, not the new order: size only the new order / inflow
+    const newOnly = amountCr(q.replace(/\b(?:taking |takes |took |with )?(?:the |our |total |consolidated |closing |outstanding )*order ?book\b[^;]{0,80}?(?:crores?|cr\b|lakhs?|mn\b|million|bn\b|billion)/gi, ' '));
+    const amt = newOnly ?? amountCr(q);   // "secured an order book of ₹200 Cr" — the book IS the new order
     const pct = amt != null && salesCr && salesCr > 0 ? Math.round((100 * amt) / salesCr) : null;
     const lvl = levelFromPct(pct);
     const first = FIRST_RE.test(q);
@@ -274,7 +287,7 @@ function readSentence(raw: string, salesCr: number | null): Read {
       ? `Order of about ₹${Math.round(amt).toLocaleString('en-IN')} Cr; annual sales not available to size it.`
       : `Order of about ₹${Math.round(amt).toLocaleString('en-IN')} Cr ≈ ${pct}% of annual sales. Orders are not revenue until delivered; margin unknown.`;
     if (first) return { ...base, mech: 'NEW_CUSTOMER', why: 'First order from a new customer type.', stage: 'Order', pct, level: lvl === 'SMALL' ? 'SMALL' : lvl, matText, scenario: lvl === 'UNKNOWN' || lvl === 'SMALL', actual };
-    if (pct != null && pct >= 10) return { ...base, mech: 'ORDER_STEP', why: `Order won ≈ ${pct}% of annual sales.`, stage: 'Order', pct, level: lvl, matText, actual };
+    if (pct != null && pct >= 10) return { ...base, mech: 'ORDER_STEP', why: /\border inflows?\b/i.test(q) ? `Order inflow in the period ≈ ${pct}% of annual sales (several orders together).` : `Order won ≈ ${pct}% of annual sales.`, stage: 'Order', pct, level: lvl, matText, actual };
     if (pct != null) return { ...base, mech: 'ROUTINE', why: `A single order of ≈ ${pct}% of annual sales — normal order flow.`, stage: 'Order', pct, level: 'SMALL', matText, actual };
     return { ...base, mech: 'UNCLEAR', why: 'Order won, but its size against sales is not known.', stage: 'Order', pct: null, level: 'UNKNOWN', matText, actual };
   }
@@ -328,7 +341,8 @@ function readSentence(raw: string, salesCr: number | null): Read {
   }
   if (FIRST_RE.test(q) && !plan) return { ...base, mech: 'NEW_CUSTOMER', why: 'First order / customer of a new kind.', stage: /qualif|approv/i.test(q) ? 'Qualification' : 'Order', pct: null, level: 'UNKNOWN', matText: 'Size unknown: one first customer or order.', scenario: true, actual };
   if (NEW_BIZ.test(q) && DONE.test(q) && !plan) return { ...base, mech: 'NEW_BUSINESS', why: 'Entered a new segment / market.', stage: 'Revenue', pct: null, level: 'UNKNOWN', matText: 'Size unknown: revenue from the new business not stated.', scenario: true, actual };
-  if (/\b(USFDA|EU-?GMP|approval|approved)\b/i.test(q) && /\b(received|got|obtained|approved)\b/i.test(q) && !plan && !/\b(board|shareholders?|director)\b/i.test(q)) {
+  if (!plan && !/\b(board|shareholders?|director|PLI|incentive|subsid\w*|strateg\w*|funds?|scheme)\b/i.test(q)
+    && /\b(?:received|got|obtained|secured|granted)\b[^.]{0,40}\b(approval|clearance|EIR|nod)\b|\b(approval|clearance|EIR)\b[^.]{0,20}\b(?:received|granted)\b|\b(?:has|have) been (?:approved|qualified|cleared)\b/i.test(q)) {
     return { ...base, mech: 'NEW_CUSTOMER', why: 'Regulatory or customer approval received.', stage: 'Approval', pct: null, level: 'UNKNOWN', matText: 'Size unknown: an approval opens a market; sales from it are not stated.', scenario: true, actual };
   }
 
@@ -413,10 +427,18 @@ export function classifyTransformation(e: TransformationInput, f: Transformation
   const salesCr = typeof f.salesCr === 'number' && Number.isFinite(f.salesCr) && f.salesCr > 0 ? f.salesCr : null;
   const quote = clean(e.evidence_quote);
   const lines = [quote, ...(e.change_lines || []).map(clean)].filter(Boolean);
-  const reads = lines.map((l) => readSentence(l, salesCr));
+  const lender = FIN_RE.test(`${f.industry || ''} ${f.sector || ''}`);
+  const reads = lines.map((l) => {
+    const r = readSentence(l, salesCr, lender);
+    // a first order, an approval or one turned-around unit rarely moves a ₹20,000 Cr+ business — small unless sized
+    if (salesCr != null && salesCr >= 20_000 && r.level === 'UNKNOWN' && ['NEW_CUSTOMER', 'NEW_BUSINESS', 'FACILITY_TURNAROUND', 'NEW_PRODUCT_LINE'].includes(r.mech)) {
+      return { ...r, level: 'SMALL' as MaterialityLevel, matText: `Size not stated; against annual sales of ₹${Math.round(salesCr).toLocaleString('en-IN')} Cr one such event is unlikely to change the business.` };
+    }
+    return r;
+  });
   // the strongest sentence decides: state, then size, then the proof quote first
   const scoreOf = (r: Read) => STATE_ORDER[MECH_STATE[r.mech]] * 10 + MAT_ORDER[r.level] * 2 + (r.mech === 'ROUTINE' ? 1 : 0);
-  let pick = reads[0] ?? readSentence('', salesCr);
+  let pick = reads[0] ?? readSentence('', salesCr, lender);
   for (const r of reads.slice(1)) if (scoreOf(r) > scoreOf(pick)) pick = r;
 
   const role = String(e.quote_role || '').toUpperCase();

@@ -148,3 +148,26 @@ test('11 the route stores change lines and the coverage job backfills older read
   assert.match(route, /mode === MODE_COVERAGE \? eligible\.filter\(\(e\) => needsLines/);
   assert.match(route, /transformation\?\.rankKey/);
 });
+
+test('12 zzz1224b — first live shortlist review: routine growth, passive approvals, MoUs and order-book stock are not transformations', () => {
+  const s = (q: string, f: Record<string, unknown> = {}) => T(q, f).state;
+  // ACEVECTOR / CAMS: new customers added is ordinary growth
+  assert.equal(T('65% of the new customers added in H1 FY27 were GenZ. Annual transacting customers increased 12% to 130.8 lakhs.').shortlist, false);
+  assert.equal(T('This is typically usage growth, both by the base and by new clients which have been onboarded.').shortlist, false);
+  // CGCL / UCOBANK: a lender's new state or MoU
+  assert.equal(s('This footprint expanded further in Q2 with our maiden foray into Tamil Nadu metro market.', { industry: 'Non Banking Financial Company (NBFC)' }), 'ROUTINE');
+  assert.equal(s('We have entered into an MOU with the Government of Bihar for their employees salary accounts.', { industry: 'Public Sector Bank' }), 'INSUFFICIENT');
+  // HINDZINC / SAMBHV: MoU or a PLI incentive approval
+  assert.equal(s('We have tied up for a high-density plantation and also entered an MoU to deploy further 30 electric vehicles.'), 'INSUFFICIENT');
+  assert.equal(T('We have also received our PLI approval and we have also signed MoU under PLI 1.2 for seamless pipe sales.').shortlist, false);
+  // AUROPHARMA / DRREDDY / SHAREINDIA: a passive "approved by" status is not a new approval
+  assert.equal(T('The company has 30+ manufacturing facilities that are approved by leading regulatory agencies including USFDA.').shortlist, false);
+  assert.equal(T('Strategy Validation A library of 20 approved strategies, backed by historical backtesting.').shortlist, false);
+  // a real new approval still counts; in a ₹30,000 Cr company it is small unless sized
+  assert.equal(s('We received USFDA approval for our new oncology injectable facility this quarter.'), 'EMERGING');
+  assert.equal(T('We received USFDA approval for our new oncology injectable facility this quarter.', { salesCr: 33000 }).shortlist, false);
+  // ZENTEC: the order book in the same sentence is not the new order
+  const z = T('Order inflow during the quarter was 481.81 crore, taking the consolidated order book to 1,375.70 crore as at 30 September 2026.', { salesCr: 672 });
+  assert.equal(z.mechanism, 'ORDER_STEP');
+  assert.match(z.stateReason, /≈ 72% of annual sales/);
+});
