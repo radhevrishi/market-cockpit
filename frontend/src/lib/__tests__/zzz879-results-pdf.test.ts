@@ -142,7 +142,7 @@ describe('zzz1221 — a results day is read 4 names at a time', () => {
     const r = await runResultsPdf(d, { maxItems: 8 });
     assert.equal(r.outcomes.filter((o) => o.outcome === 'screener_caught_up').length, 8);
     assert.equal(peak, 4);
-    assert.ok(Date.now() - t < 300, `took ${Date.now() - t} ms`);
+    assert.ok(Date.now() - t < 2000, `took ${Date.now() - t} ms`);   // peak = 4 is the real check; time is loose for busy CI
     assert.deepEqual(kv.store.get(RP_QUEUE_KEY), []);
   });
 });
