@@ -36,6 +36,9 @@ export interface FvFacts {
 /** The guided growth of the row (company-stated preferred). */
 export interface FvGrowth {
   growthPct: number | null; growthTrust: string | null; growthType?: string | null; growthMetric?: string | null; growthCohort?: string | null;
+  /** zzz1223 — the company's own guided full-year revenue (verified raise), in its unit, e.g. { value: 4680, unit: 'M', currency: '$' }:
+   *  used as next year's sales instead of a quarter × 4 base when no growth rate is guided */
+  guidedRevenue?: { value: number; unit: string; currency: string; period: string | null } | null;
 }
 export interface FvCase { fair: number; upsidePct: number }
 export interface FvMethodRow { method: FvMethod; label: string; weight: number; conf: FvConf; baseFair: number; band: Band }
@@ -256,7 +259,17 @@ export function fairValue(f: FvFacts | null | undefined, g: FvGrowth | null | un
   let basis: 'guided' | 'history';
   let gs: { bear: number; base: number; bull: number };
   let useCls: GrowthClass;
-  if (stated && cls !== 'other') {
+  // zzz1223 — the company's guided full-year revenue, against the sales base (USA: latest quarter × 4, which misreads a seasonal business —
+  // Sterling showed +187%, Crocs +167%). Used only when no growth rate is guided and the two are within 0.7–2.5× of each other.
+  const gr = g?.guidedRevenue;
+  const grAmount = gr ? guidedRevenueInFactsUnit(gr, f.market) : null;
+  const grGrowth = grAmount != null && grAmount / sales >= 0.7 && grAmount / sales <= 2.5 ? r1((grAmount / sales - 1) * 100) : null;
+  if (!(stated && cls !== 'other') && grGrowth != null) {
+    basis = 'guided'; useCls = 'revenue';
+    const b = Math.max(-30, Math.min(GROWTH_CAP_PCT, grGrowth));
+    gs = { bear: r1(b - Math.max(5, Math.abs(b) * 0.5)), base: r1(b), bull: r1(Math.min(b + Math.max(5, Math.abs(b) * 0.15), GROWTH_CAP_PCT)) };
+    inputs.push(`the company's guided ${gr!.period || 'full-year'} revenue ${money(grAmount!)} used as the year's sales (${b >= 0 ? '+' : ''}${b}% against the ${money(sales)} base); bear and bull ±`);
+  } else if (stated && cls !== 'other') {
     basis = 'guided'; useCls = cls;
     const raw = sg0!.raw;
     const base = sg0!.base;
@@ -385,12 +398,24 @@ export function fvStatus(upsidePct: number): { key: FvStatus; label: string } {
 /** zzz934: the growth the fair value uses for a row. The row's own guided growth first; a raise of a growth RATE (revenue growth 1–3% → 3–4%)
  *  is the company's own new rate, so it is used when the row has no other growth (Kohl's / BJ's showed "no growth rate guided" while one was). */
 export interface FvRowIn extends FvGrowth {
-  raiseDetail?: { metric: string; afterMid: number | null; isGrowthRate: boolean; periodKind: string | null } | null;
+  raiseDetail?: { metric: string; afterMid: number | null; isGrowthRate: boolean; periodKind: string | null; unit?: string | null; currency?: string | null; period?: string | null } | null;
+}
+/** zzz1223 — a guided revenue amount in the facts unit (India ₹ Cr, USA $ M); null when the unit cannot be placed. Pure. */
+export function guidedRevenueInFactsUnit(gr: { value: number; unit: string; currency: string }, market: 'IN' | 'US'): number | null {
+  if (!fin(gr.value) || gr.value <= 0) return null;
+  const u = String(gr.unit || '').trim(), c = String(gr.currency || '').trim();
+  if (market === 'IN') return /^(?:₹|Rs\.?|INR)?$/i.test(c) && /^(?:Cr|crores?)$/i.test(u) ? gr.value : null;
+  if (!/^(?:\$|USD)?$/i.test(c)) return null;
+  if (/^(?:B|bn|billion)$/i.test(u)) return gr.value * 1000;
+  if (/^(?:M|mn|million)$/i.test(u)) return gr.value;
+  return null;
 }
 export function fvGrowthOf(r: FvRowIn | null | undefined): FvGrowth | null {
   if (!r) return null;
   if (statedGrowth(r) && growthClass(r.growthMetric) !== 'other') return r;
   const d = r.raiseDetail;
+  if (d && !d.isGrowthRate && d.metric === 'REVENUE' && fin(d.afterMid) && d.afterMid > 0 && (d.periodKind == null || /FY|CY|ANNUAL/i.test(d.periodKind)))
+    return { ...r, guidedRevenue: { value: d.afterMid, unit: String((d as any).unit || ''), currency: String((d as any).currency || ''), period: (d as any).period ?? null } };
   if (d && d.isGrowthRate && fin(d.afterMid) && d.afterMid > 0 && !/MARGIN/i.test(d.metric)) {
     const metric = d.metric === 'REVENUE_GROWTH' || d.metric === 'ORGANIC_GROWTH' ? 'REVENUE' : d.metric.replace(/_GROWTH$/, '');
     if (growthClass(metric) !== 'other') return { growthPct: d.afterMid, growthTrust: 'verified', growthType: 'STATED', growthMetric: metric, growthCohort: d.periodKind };

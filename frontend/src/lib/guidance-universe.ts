@@ -10,7 +10,7 @@
 //   - its comparison value is >= threshold, where the comparison value is: the stated figure for a point, the MIDPOINT for a closed range
 //     (the range itself is still displayed), and the LOWER BOUND for an open-ended "80%+" figure (no invented midpoint).
 import { growthQuoteIssue } from './guidance-growth-quote';   // zzz895
-import { growthScopeIssue } from './guidance-prior-match';
+import { growthScopeIssue, growthStatementHold } from './guidance-prior-match';
 import type { GgCompany, GgGrowthOrigin, GgGuidancePoint, GgKind, GgLedgerRow, GgMetric, GgOrganic, GgPeriodKind, GgRevision, GgSourceRef, GgVerification } from './growth-guidance-types';
 import type { GuHighGrowthHorizon, GuHighGrowthMetric, GuHighGrowthRowX, GuMarketSummary, GuPeriodStatus, GuRegressionResponse, GuRegressionRow, GuRegressionStatus, GuSummaryAdditions, GuUniverseBucket, GuUniverseRecord, GuUniverseRecordOrigin, GuUniverseSummary } from './guidance-universe-types';
 import type {
@@ -1403,7 +1403,7 @@ export function selectHighGrowthGroups(records: GuUniverseRecordX[], thr = HIGH_
   for (const r of records) for (const p of r.points) {
     if (!base(p, r.record.company) || p.periodStatus !== 'CONFIRMED' || !p.inDefaultView || (p.listBucket && p.listBucket !== 'ACTIVE')) continue;
     // zzz1115 (G02) — a segment-sized figure next to a smaller company-wide one from the same document is not ranked as company growth
-    const sc = scopeConflictOf(p, byEntity.get(r.entityKey) || r.points);
+    const sc = scopeConflictOf(p, byEntity.get(r.entityKey) || r.points) || growthStatementHold(p.statement, p.metricFamily, p.growthType === 'DERIVED' || p.growthType === 'IMPLIED' ? p.compareValue : null);
     if (sc) { (p as GuPoint).scopeHeldReason = sc; scopeHeld.push({ entityKey: r.entityKey, company: r.record.company, ticker: r.tickers?.[0] || r.record.ticker || null, market: r.record.market, metric: p.metric, text: p.display, reason: sc }); continue; }
     const trust = trustOf(p.verificationState); if (!trust || trust === 'claimsAwaiting') continue;   // zzz854: an unverified claim is never in the ranked Active list
     // zzz862: a verification older than the freshness limit (60 days) is not "strictly verified" any more: it stays in Active (with its re-check tag) but leaves the strict list

@@ -3850,3 +3850,11 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
 - zzz1222 (3 Nov): Upstash "Max Request Size" e-mail = an MGET whose answer passed 10 MB (the app splits and recovers, but
   Upstash counts it). kvMGet now remembers the safe batch size per key family (`noteMgetTooLarge`), so it happens at most
   once per family per server start instead of on every page load.
+- zzz1223 (3 Nov): Guidance Upgrades focus list. `growthStatementHold` (guidance-prior-match): a capacity / "potential" figure, a
+  run-rate, a what-if ("assuming"), collections / pre-sales for revenue, growth "post merger", or a 150%+ worked-out growth whose
+  sentence names no year is never ranked — it goes to the "Not used as company growth" list with its reason (scopeHeld). gu-focus:
+  a money "raise" needs a currency or unit (Mammoth's count "23 → 30" was TOP FOCUS); a non-symbol ticker (Ford Motor Credit Co
+  LLC) is left out (`listedSymbol`); growth-only rows older than 75 days (`STALE_GROWTH_DAYS`) rank lower and say the company has
+  likely reported since. Fair value: a verified raise of a full-year revenue AMOUNT is used as the year's sales (`guidedRevenue`,
+  within 0.7–2.5× of the base) instead of growing a US quarter × 4 base. Section C names each figure's measure, short text,
+  growth rows first; company names lose trailing "-$" (`cleanCompany`).

@@ -48,7 +48,7 @@ function FocusTable({ title, sub, head, colIds, empty, children, tableId }: { ti
 function CompanyCell({ r, td }: { r: FocusRow; td: React.CSSProperties }) {
   return (
     <td style={td} className="gu-co">
-      <b>{r.company}</b>
+      <b>{cleanCompany(r.company)}</b>
       <div style={{ fontSize: 11.5, color: R.dim }}>{FLAG[r.market]} {r.ticker || ''}{r.capText ? ` · ${r.capText}` : ' · size not known'}</div>
       {r.aiAdded && <div title={r.aiQuote ? `“${r.aiQuote}”` : undefined} style={{ fontSize: 11, fontWeight: 800, color: R.violet }}>🤖 added by AI check</div>}
     </td>
@@ -71,6 +71,19 @@ const FLAG = { IN: '🇮🇳', US: '🇺🇸' } as const;
 type Mk = 'ALL' | 'IN' | 'US';
 const FOCUS_STEP = 20;
 type SortBy = 'rank' | 'score' | 'opp' | 'new' | 'old';   // zzz927: 'new' / 'old' = by the date the news was reported
+// zzz1223 — section C said "+15% · +20%" with no measure, and long worked-out texts; each figure now names its measure and is short
+const METRIC_WORD_C: Record<string, string> = { REVENUE: 'Revenue', EBITDA: 'EBITDA', NET_PROFIT: 'PAT', PAT: 'PAT', EPS: 'EPS', ADJ_EPS: 'Adj. EPS', EBIT: 'EBIT', FCF: 'FCF', OP_MARGIN: 'Op. margin', EBITDA_MARGIN: 'EBITDA margin' };
+const metricWord = (m: unknown) => METRIC_WORD_C[String(m || '')] || (m ? String(m).replace(/_/g, ' ').toLowerCase().replace(/^./, (c) => c.toUpperCase()) : '');
+const guideHasGrowth = (t: unknown) => /[+−-]\d/.test(String(t || '')) && !/growth not established/i.test(String(t || ''));
+export function shortGuide(t: unknown): string {
+  return String(t || '')
+    .replace(/\s*\(growth not established:[^)]*\)/i, ' · growth not worked out (no actual to compare)')
+    .replace(/\s*\(derived:[^)]*\)/i, ' (worked out)')
+    .replace(/\s*\(a year, worked out from company numbers:[\s\S]*$/i, ' a year (worked out)')
+    .replace(/\s+/g, ' ').trim();
+}
+/** "Pitti Engineering Ltd-$" → "Pitti Engineering Ltd" */
+export const cleanCompany = (c: unknown) => String(c || '').replace(/[\s-]*[$#*]+\s*$/, '').trim();
 const skyKey = (r: FocusRow) => (r.ticker ? `${r.market}:${r.ticker.toUpperCase()}` : null);
 /** zzz923: rows by score (a higher score first; no score last), the focus rank breaking ties */
 function bySky(rows: FocusRow[], scores: Map<string, SkyScore | null>): FocusRow[] {
@@ -379,7 +392,7 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
           const rows = (data?.records || []).map((r: any) => ({ r, d: String(r.sourceDate || r.record?.sources?.[0]?.date || '').slice(0, 10) }))
             .filter(({ r, d }) => d >= since && (mk === 'ALL' || r.record?.market === mk))
             .filter(({ r }) => { const m = r.record?.market === 'US' ? 'US' : 'IN'; const k = `${m}:${String(r.record?.ticker || r.record?.company || '').toUpperCase()}`; if (inAB.has(k) || seen.has(k)) return false; seen.add(k); return !smid || sizeOf(m, r.record?.ticker || null, { caps: capsAll, indiaLarge: INDIA_LARGE_CAPS }).size !== 'LARGE'; })
-            .sort((a, b) => b.d.localeCompare(a.d));
+            .sort((a, b) => Number(guideHasGrowth(b.r.display)) - Number(guideHasGrowth(a.r.display)) || b.d.localeCompare(a.d));
           if (!rows.length) return null;
           const shown = allC ? rows : rows.slice(0, FOCUS_STEP);
           return (
@@ -393,8 +406,8 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
                     {shown.map(({ r, d }, i) => (
                       <tr key={`${r.entityKey || r.record?.id}-${i}`}>
                         <td style={{ ...td, color: R.dim }}>{i + 1}</td>
-                        <td style={td}><b>{r.record?.company}</b><div style={{ fontSize: 11.5, color: R.dim }}>{FLAG[(r.record?.market === 'US' ? 'US' : 'IN') as 'IN' | 'US']} {r.record?.ticker || ''}</div></td>
-                        <td style={td}><b style={{ color: R.green }}>{r.display}</b>{(r.alsoDisplay || []).slice(0, 2).map((a: any, j: number) => <div key={j} style={{ fontSize: 11.5, color: R.dim }}>{a.display}</div>)}</td>
+                        <td style={td}><b>{cleanCompany(r.record?.company)}</b><div style={{ fontSize: 11.5, color: R.dim }}>{FLAG[(r.record?.market === 'US' ? 'US' : 'IN') as 'IN' | 'US']} {r.record?.ticker || ''}</div></td>
+                        <td style={td}><b style={{ color: guideHasGrowth(r.display) ? R.green : R.dim }}>{metricWord(r.metric)} {shortGuide(r.display)}</b>{(r.alsoDisplay || []).slice(0, 2).map((a: any, j: number) => <div key={j} style={{ fontSize: 11.5, color: R.dim }}>{metricWord(a.metric)} {shortGuide(a.display)}</div>)}</td>
                         <td style={{ ...td, whiteSpace: 'nowrap' }}>{r.period || ''}</td>
                         <td style={{ ...td, fontSize: 12 }}>{r.sourceUrl && /^https?:\/\//i.test(r.sourceUrl) ? <a href={r.sourceUrl} target="_blank" rel="noopener noreferrer">{r.sourceName || 'Company document'}</a> : (r.sourceName || 'Company document')}</td>
                         <td style={{ ...td, whiteSpace: 'nowrap' }}>{reportedLabel(d)}</td>
@@ -410,7 +423,7 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
         {heldShown.length > 0 && (
           <div data-gu-held style={{ fontSize: 12, color: R.dim, display: 'grid', gap: 2 }}>
             <b style={{ color: R.amber }}>Held back for review ({heldShown.length}) — a growth worked out from company numbers that does not match the revenue the company reports:</b>
-            {heldShown.map((h) => <span key={h.key}>{FLAG[h.market]} <b>{h.company}</b> ({h.growth}): {h.reason}.</span>)}
+            {heldShown.map((h) => <span key={h.key}>{FLAG[h.market]} <b>{cleanCompany(h.company)}</b> ({h.growth}): {h.reason}.</span>)}
           </div>
         )}
         {(() => {
@@ -418,8 +431,8 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
           const sh = (data?.summary?.highGrowthGroups?.scopeHeld || []).filter((h) => mk === 'ALL' || h.market === mk);
           return sh.length > 0 && (
             <div style={{ fontSize: 12.5, color: R.dim, display: 'grid', gap: 3 }}>
-              <b style={{ color: R.amber }}>Not used as company growth ({sh.length}) — most likely one business or segment:</b>
-              {sh.map((h, i) => <span key={`${h.entityKey}-${i}`}>{FLAG[h.market as 'IN' | 'US'] || ''} <b>{h.company}</b> ({h.text}): {h.reason}.</span>)}
+              <b style={{ color: R.amber }}>Not used as company growth ({sh.length}) — one business or segment, a capacity or run-rate figure, collections, a merger, or a year we had to assume:</b>
+              {sh.map((h, i) => <span key={`${h.entityKey}-${i}`}>{FLAG[h.market as 'IN' | 'US'] || ''} <b>{cleanCompany(h.company)}</b> ({h.text}): {h.reason}.</span>)}
             </div>
           );
         })()}

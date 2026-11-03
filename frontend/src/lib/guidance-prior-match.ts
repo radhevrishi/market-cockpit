@@ -88,6 +88,28 @@ const LEADING_NAME = /^\s*([A-Z][A-Za-z&/-]+(?:\s+[A-Z][A-Za-z&/-]+){0,3})\s*[:\
 const NOT_A_PART = /^(?:(?:FY|CY|Q[1-4]|H[12])\S*|Fiscal|Full|Year|Annual|Total|Overall|Consolidated|Company|Group|Revenues?|Net|Sales|Turnover|Top|Guidance|Outlook|Expected|Expect|We|Our|The|For|In|Approximately|About|Around|Over|Growth|Organic|Reported|Adjusted|EBITDA|EPS|PAT|Profit|Income|Operating|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*$/i;
 
 /** Why a guidance point must not be ranked as company-wide growth (null = fine). `company` (optional): its own name is never "a part". */
+/** zzz1223 — a guided figure that is not a target for the year (owner's focus list, 3 Nov): a capacity / "potential" figure
+ *  (Solex "revenue potential of ₹4,500 Cr", Trualt "full utilisation would give ₹4,000 Cr"), a run-rate (Novartis "annualised run
+ *  rate ~₹650 Cr"), a what-if ("assuming 1 GW fetches ₹2,000 Cr"), collections / pre-sales for revenue (Prestige "residential
+ *  collection ₹21,000 Cr"), growth that includes a merger ("₹325 Cr by FY27 post merger"), or — for growth WE worked out — a sentence
+ *  that names no year with a 150%+ result (Mahindra Lifespace "revenues 5,000–6,000 Cr and PAT ~1,500 Cr" read as FY27 = +403%). Shown, never ranked. Pure. */
+export function growthStatementHold(statement: string | null | undefined, family: string, workedGrowthPct: number | null): string | null {
+  const t = String(statement || '').replace(/\s+/g, ' ');
+  if (!t) return null;
+  if (/\b(?:revenue|turnover|sales|top ?line) potential\b|\bpotential (?:revenue|turnover|sales|top ?line)\b|\bfull(?: capacity)? utili[sz]ation\b|\bat full capacity\b|\bpeak (?:revenue|sales|turnover)\b|\bpotential (?:could|would) be\b|\bpotential revenue could\b/i.test(t))
+    return 'a capacity / potential figure, not a target for the year';
+  if (/\brun[- ]?rate\b|\bannuali[sz]ed\b|\bexit(?:ing)? (?:at|rate)\b/i.test(t)) return 'a run-rate, not a full-year target';
+  if (/\bassum(?:e|ing)\b|\bif (?:we|the|all|it)\b|\bin (?:a|the) best case\b/i.test(t)) return 'a what-if figure, not a target';
+  if (family === 'REVENUE' && /\b(?:collections?|pre-?sales|sales bookings|bookings|gross development value|\bGDV\b)\b/i.test(t) && !/\brevenue (?:from operations|recognition|of)\b/i.test(t))
+    return 'collections / pre-sales, not revenue';
+  if (/\bpost[- ](?:merger|acquisition|amalgamation)\b|\bincluding (?:the )?(?:acquisition|merger|acquired)\b|\bwith (?:the )?(?:acquisition|merger) of\b/i.test(t))
+    return 'includes a merger / acquisition — not the same business growing';
+  // a slide row ("Revenue from Operation ₹875 – 910 Cr") takes its year from the slide; only a very large worked-out jump needs the year in the sentence
+  if (workedGrowthPct != null && workedGrowthPct >= 150 && !/\bFY ?'?\d{2}\b|\b(?:19|20)\d{2}\b|\b(?:this|next|current|coming|following) (?:financial )?year\b|\bper (?:year|annum)\b|\bannual\b|\byear\b|\bquarter\b|\bQ[1-4]\b|\b'\d{2}\b|\bH[12]\b/i.test(t))
+    return 'the sentence names no year — the year was assumed, so the growth worked out from it is not used';
+  return null;
+}
+
 export function growthScopeIssue(statement: string | null | undefined, family: string, company?: string | null): string | null {
   const t = String(statement || '');
   if (!t) return null;

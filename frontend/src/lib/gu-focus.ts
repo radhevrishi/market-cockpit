@@ -28,7 +28,11 @@ export interface FocusRow {
   raiseDetail?: RaiseDetail | null;
   /** zzz1193: the row was added by the guidance AI check (lib/gu-ai-check.ts), with the sentence checked in the document */
   aiAdded?: boolean; aiQuote?: string | null;
+  /** zzz1223: growth-only row whose guidance document is older than STALE_GROWTH_DAYS (ranked lower, said in `why`) */
+  growthStale?: boolean;
 }
+/** zzz1223 — about one results season: a growth guide older than this is likely superseded by a newer call. */
+export const STALE_GROWTH_DAYS = 75;
 export interface RaiseDetail { metric: string; period: string; beforeMid: number | null; afterMid: number | null; isGrowthRate: boolean; unit: string | null; currency: string | null; periodKind: string | null; periodYears: number | null }
 export interface FocusSizeIn { caps?: { IN?: Record<string, number>; US?: Record<string, number> } | null; indiaLarge?: ReadonlySet<string> }
 /** India large cap from ₹30,000 Cr; US from $30B (Rishi's US default band). */
@@ -85,8 +89,13 @@ export function raiseLine(e: GuidanceEvent): { text: string; pct: number | null;
   // 94.5–96.5 occupancy" read as +119,275%), and an "other" measure (occupancy, interest income, investment volume) never leads:
   // it is listed as "+ N more"; a filing whose only raises are such measures is a small raise, not table A.
   const same = (a: any, b: any) => String(a ?? '') === String(b ?? '');
+  // zzz1223 — a money measure needs a currency or a unit on the new figure: Mammoth's "revenue 23 → 30" was a COUNT ("30 … revenue-producing
+  // as of September 30"), read as a +30% revenue raise and ranked TOP FOCUS
+  const MONEY = new Set(['REVENUE', 'EBITDA', 'EBIT', 'NET_PROFIT', 'FCF', 'EPS', 'ADJ_EPS']);
+  const hasMoneyUnit = (x: any) => !!String(x?.currency || '').trim() || !!String(x?.unit || '').trim() || /[$₹]|\b(?:USD|INR|Rs\.?|crores?|million|billion|lakh)\b/i.test(String(x?.raw || ''));
   const comparable = (c: any) => same(c.before?.unit, c.after?.unit) && (!c.before?.currency || !c.after?.currency || same(c.before.currency, c.after.currency))
-    && !!c.before?.isGrowthRate === !!c.after?.isGrowthRate && (num(c.percentageChange) == null || (num(c.percentageChange) as number) <= 400);
+    && !!c.before?.isGrowthRate === !!c.after?.isGrowthRate && (num(c.percentageChange) == null || (num(c.percentageChange) as number) <= 400)
+    && (!MONEY.has(String(c.metric)) || !!c.after?.isGrowthRate || hasMoneyUnit(c.after));
   const all = (e.changes || []).filter((c: any) => c?.direction === 'UP' && c?.before && c?.after && comparable(c));
   if (!all.length) return null;
   const core = all.filter((c: any) => c.metric !== 'OTHER');
@@ -118,6 +127,13 @@ export function raiseLine(e: GuidanceEvent): { text: string; pct: number | null;
   };
 }
 
+/** zzz1223 — a listed share symbol (US: up to 6 letters / digits / . -; India: an NSE symbol or a BSE code). A name such as
+ *  "FORD MOTOR CREDIT CO LLC" (a bond issuer filing 8-Ks) is not one. Pure. */
+export function listedSymbol(market: 'IN' | 'US', ticker: string | null | undefined): boolean {
+  const t = String(ticker || '').trim();
+  if (!t) return true;   // no ticker: the row keys on the company name, as before
+  return market === 'US' ? /^[A-Z0-9][A-Z0-9.\-]{0,5}$/i.test(t) : /^[A-Z0-9][A-Z0-9&\-]{0,19}$/i.test(t);
+}
 const isShownUpgrade = (e: GuidanceEvent) => e.verification === 'VERIFIED' && e.taxonomy === 'formal_upgrade' && (!e.pipeline || e.pipeline.status === 'CARD');
 
 export function buildFocusList(groups: GuHighGrowthGroups | null | undefined, events: readonly GuidanceEvent[] | null | undefined, now: Date, limit = 15, sizeIn?: FocusSizeIn): FocusRow[] {
@@ -130,6 +146,7 @@ export function buildFocusList(groups: GuHighGrowthGroups | null | undefined, ev
   };
   for (const e of events || []) {
     if (!isShownUpgrade(e)) continue;
+    if (!listedSymbol(e.market === 'US' ? 'US' : 'IN', e.ticker)) continue;   // zzz1223: a debt issuer (Ford Motor Credit Co LLC) has no shares to look at
     const l = raiseLine(e); if (!l) continue;
     const r = get(e.market === 'US' ? 'US' : 'IN', e.ticker || null, e.company || e.ticker);
     if (r.raiseDate && r.raiseDate >= e.announcement_date) continue;   // the newest raise wins
@@ -138,6 +155,7 @@ export function buildFocusList(groups: GuHighGrowthGroups | null | undefined, ev
   const rows: GuHgGroupRow[] = groups ? [...(groups.cohorts?.ANNUAL || []), ...(groups.cohorts?.MULTI_YEAR_CAGR || [])] : [];
   for (const g of rows) {
     if (g.trust !== 'verified' && g.trust !== 'derived') continue;
+    if (!listedSymbol(g.market === 'US' ? 'US' : 'IN', g.ticker)) continue;
     const v = num(g.headline?.compareValue); if (v == null) continue;
     const r = get(g.market === 'US' ? 'US' : 'IN', g.ticker, g.company);
     if (r.growthPct != null && r.growthPct >= v) continue;
@@ -160,6 +178,11 @@ export function buildFocusList(groups: GuHighGrowthGroups | null | undefined, ev
     // zzz880: a raise of under 5% (Kestra +2.9%) is real but small: it never makes a name TOP FOCUS on its own
     const meaningful = !!r.raised && !r.smallRaise;
     r.score = g + p + (meaningful && r.growth ? 60 : 0) + (days != null ? (days <= 14 ? 20 : days <= 45 ? 10 : 0) : 0) + (r.growthTrust === 'verified' || r.raised ? 10 : 0);
+    // zzz1223 — a growth guide older than one results season (75+ days) may already be updated by the company's newest call: it ranks
+    // below the fresh ones and says so (the owner saw July guides at the top of table B while the October results were out)
+    const gAge = r.growthDate ? Math.round((now.getTime() - Date.parse(`${r.growthDate}T00:00:00Z`)) / DAY) : null;
+    r.growthStale = !r.raised && gAge != null && gAge > STALE_GROWTH_DAYS;
+    if (r.growthStale) r.score -= 40;
     if (meaningful && r.growth) { r.verdict = 'TOP FOCUS'; r.why = `Raised its guidance and guides ${r.growthPct}%+ growth — both signals`; }
     // zzz895: a growth-rate raise is STRONG only when the guided growth moved 5+ points (Kfin 10% → 12–15%, +3.5 pp, is a raise, not a strong one)
     else if (r.raised && (r.raisePct ?? 0) >= 15 && (!r.raisePp || (r.raisePpDelta ?? 0) >= 5)) { r.verdict = 'STRONG RAISE'; r.why = r.raisePp ? `Guided growth rate raised a lot (up ${Math.round((r.raisePpDelta ?? 0) * 10) / 10} points) — checked in the company's own filing` : `Guidance raised by ${Math.round(r.raisePct!)}% — a large upgrade, checked in the company's own filing`; }
@@ -169,6 +192,7 @@ export function buildFocusList(groups: GuHighGrowthGroups | null | undefined, ev
     else { r.verdict = 'WATCH'; r.why = growthWhy(r); }
     // zzz1122 — a guidance that is LOWER than the company's earlier guidance says so (Piccadily: +60%, 5 points below its earlier guide)
     if (r.growthCutText && r.growth) r.why = `${r.why} — lower than its earlier guidance (${r.growthCutText})`;
+    if (r.growthStale) r.why = `${r.why} — from a document ${gAge} days old; the company has likely reported since, so check its newest call`;
   }
   return out.sort((a, b) => b.score - a.score || a.company.localeCompare(b.company)).slice(0, limit);
 }
