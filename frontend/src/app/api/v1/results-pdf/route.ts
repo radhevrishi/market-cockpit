@@ -50,7 +50,7 @@ function realDeps(origin: string): RpDeps {
   return {
     kv: realKv(),
     screenerQuarter: async (ticker, filed) => {
-      const r = await fetch(`${origin}/api/v1/earnings/enrich?symbols=${encodeURIComponent(ticker)}&filed=${filed}&nocache=1`, { signal: AbortSignal.timeout(60_000), headers: { 'x-mc-key': process.env.CRON_SECRET || '' } });
+      const r = await fetch(`${origin}/api/v1/earnings/enrich?symbols=${encodeURIComponent(ticker)}&filed=${filed}&nocache=1`, { signal: AbortSignal.timeout(25_000), headers: { 'x-mc-key': process.env.CRON_SECRET || '' } });
       if (!r.ok) return null;
       const j: any = await r.json();
       const e = j?.data?.[ticker] || j?.data?.[ticker.toUpperCase()];
@@ -122,7 +122,7 @@ export async function POST(req: NextRequest) {
   if (!(await authorised(req))) return NextResponse.json({ ok: false, error: 'login required' }, { status: 401, headers: NO_STORE });
   if (!checkRateLimit(`results-pdf:post:${ipOf(req)}`, 4, 60_000).allowed) return NextResponse.json({ ok: false, error: 'rate limited' }, { status: 429, headers: NO_STORE });
   const sp = new URL(req.url).searchParams;
-  const maxItems = Math.max(1, Math.min(25, Number(sp.get('max_items')) || 12));
+  const maxItems = Math.max(1, Math.min(60, Number(sp.get('max_items')) || 12));   // zzz1221: 60 (4 read at once)
   const maxUsd = Math.max(0.01, Math.min(1, Number(sp.get('max_usd')) || 0.3));
   try {
     const out = await runResultsPdf(realDeps(new URL(req.url).origin), { maxItems, maxUsd, budgetMs: 150_000 });

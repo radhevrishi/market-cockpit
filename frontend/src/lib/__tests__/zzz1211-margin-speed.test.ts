@@ -37,11 +37,12 @@ test('gross margin: −3 pts caps; −1.5 pts caps unless the operating margin r
   assert.ok(flat.caveat_tags.some((t: string) => /gross margin fell/.test(t)));
 });
 
-test('results PDF read 2 hours after the filing is seen (was 2 days)', () => {
+test('results PDF read 20 minutes after the filing is seen (zzz1221; was 2 h, before that 2 days)', () => {
   const now = Date.parse('2026-11-02T15:00:00Z');
   const q = (added: string) => ({ ticker: 'ITC', filed: '2026-11-02', want: '2026-09-30', added_at: added });
   assert.equal(dueItems([q('2026-11-02T12:30:00Z')], new Set(), new Map(), now).length, 1);
-  assert.equal(dueItems([q('2026-11-02T14:00:00Z')], new Set(), new Map(), now).length, 0);
+  assert.equal(dueItems([q('2026-11-02T14:50:00Z')], new Set(), new Map(), now).length, 0);
+  assert.equal(dueItems([q('2026-11-02T14:30:00Z')], new Set(), new Map(), now).length, 1);
 });
 
 test('bhavcopy: a missing day file is remembered (10 min recent, 6 h old)', () => {
@@ -58,7 +59,8 @@ test('engines bumped; health check; results-pdf slots; Company Lab bars first', 
   assert.match(us, /US_ENGINE_VERSION = '2026\.11\.02-a'/);
   assert.match(us, /PREVIOUS_VERSIONS: readonly string\[\] = \[\n  '2026\.10\.26-b'/);
   assert.match(read('app/api/healthz/route.ts'), /ok: true/);
-  assert.match(read('lib/app-scheduler.ts'), /name: 'results-pdf', crons: \['20 \* \* \* \*', '50 11-18 \* \* 1-6'\]/);
+  // zzz1221 (intentional change): every 20 min while companies file
+  assert.match(read('lib/app-scheduler.ts'), /name: 'results-pdf', crons: \['20 \* \* \* \*', '0,40 4-17 \* \* 1-6'\]/);
   const pg = read('app/(dashboard)/company-lab/page.tsx');
   assert.ok(pg.indexOf('<YearBars title="FCF growth vs sales growth"') < pg.indexOf('CHECKLIST ·'), 'plots above the checklist');
   assert.match(pg, /clipR=\{150\}/);

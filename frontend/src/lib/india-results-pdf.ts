@@ -43,7 +43,7 @@ export const RP_WAIT_DAYS = 2;   // kept for old readers; the rule is RP_WAIT_MS
 /** zzz1211 — a filed company waited 2 DAYS for its figures (81 names on 2 Nov showed "filed — figures being read" all evening:
  *  screener.in adds a quarter a day or more after the filing). Now the results PDF is read 2 hours after the filing was seen
  *  (Screener is still checked first, so no AI is spent when it has caught up). A read costs about $0.003. */
-export const RP_WAIT_MS = 2 * 3_600_000;
+export const RP_WAIT_MS = 20 * 60_000;   // zzz1221 — 20 minutes (was 2 h): filed names sat "figures being read" for hours on a results day
 /** Give up after this many failed reads of the same company+quarter. */
 export const RP_MAX_TRIES = 4;
 export const RP_FEATURE = 'india-results-pdf';

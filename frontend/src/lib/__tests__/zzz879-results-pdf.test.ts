@@ -63,13 +63,13 @@ describe('zzz879 — queue', () => {
     const q = mergeQueue([it('a', '2026-10-01')], [it('A', '2026-10-01'), it('B', '2026-10-03'), { ...it('C', 'bad') }]);
     assert.deepEqual(q.map((x) => x.ticker), ['B', 'A']);
   });
-  test('due: seen 2+ hours ago (zzz1211; was 2 days), not done, back-off respected, given up after 4', () => {
+  test('due: seen 20+ minutes ago (zzz1221; was 2 h, then 2 days), not done, back-off respected, given up after 4', () => {
     const now = Date.parse('2026-10-06T10:00:00Z');
     const q = [it('OLD', '2026-10-01'), it('NEW', '2026-10-05'), it('DONE', '2026-10-01'), it('WAIT', '2026-10-01'), it('GONE', '2026-10-01'), it('RETRY', '2026-10-01')];
     const fails = new Map([['WAIT|2026-09-30', { at: '2026-10-06T08:00:00Z', tries: 1, reason: '' }], ['GONE|2026-09-30', { at: '2026-09-01T00:00:00Z', tries: 4, reason: '' }], ['RETRY|2026-09-30', { at: '2026-10-05T00:00:00Z', tries: 1, reason: '' }]]);
     assert.deepEqual(dueItems(q, new Set(['DONE|2026-09-30']), fails, now).map((x) => x.ticker), ['OLD', 'NEW', 'RETRY']);
-    const fresh = { ticker: 'TODAY', filed: '2026-10-06', want: '2026-09-30', added_at: '2026-10-06T09:00:00Z' };
-    assert.deepEqual(dueItems([fresh], new Set(), new Map(), now), [], 'seen 1 h ago: Screener gets 2 h first');
+    const fresh = { ticker: 'TODAY', filed: '2026-10-06', want: '2026-09-30', added_at: '2026-10-06T09:50:00Z' };
+    assert.deepEqual(dueItems([fresh], new Set(), new Map(), now), [], 'seen 10 min ago: Screener gets 20 min first (zzz1221)');
     assert.equal(dueItems([fresh], new Set(), new Map(), now + 3_600_000).length, 1);
   });
 });
@@ -111,7 +111,7 @@ describe('zzz879 — runner', () => {
     assert.deepEqual(r1.outcomes.map((o) => o.outcome), ['screener_caught_up', 'screener_caught_up']); assert.equal(calls, 0);
     const kv2 = memKv({ [RP_QUEUE_KEY]: q });
     const r2 = await runResultsPdf(base(kv2, { callModel: async () => ({ ok: false, kind: 'spend_cap', message: 'cap' }) }));
-    assert.deepEqual(r2.outcomes.map((o) => o.outcome), ['spend_cap']); assert.equal(kv2.store.get(RP_QUEUE_KEY).length, 2, 'nothing lost');
+    assert.ok(r2.outcomes.length >= 1 && r2.outcomes.every((o) => o.outcome === 'spend_cap'), 'stops at the cap (zzz1221: names already in flight say so too)'); assert.equal(kv2.store.get(RP_QUEUE_KEY).length, 2, 'nothing lost');
     const kv3 = memKv({ [RP_QUEUE_KEY]: q.slice(0, 1) });
     const r3 = await runResultsPdf(base(kv3, { callModel: async () => ({ ok: true, raw: ans({ period_end: '2026-06-30' }), costUsd: 0.01, model: 'h' }) }));
     assert.equal(r3.outcomes[0].outcome, 'rejected'); assert.equal(kv3.store.get(RP_FAIL_KEY('A', '2026-09-30')).tries, 1);
@@ -124,5 +124,25 @@ describe('zzz879 — runner', () => {
   test('a held lock skips the run', async () => {
     const kv = memKv({ 'results-pdf:v1:lock': 'x' });
     assert.equal((await runResultsPdf(base(kv))).skipped, 'another run is in progress');
+  });
+});
+
+describe('zzz1221 — a results day is read 4 names at a time', () => {
+  test('8 queued names that each take 50 ms finish in about 2 rounds, not 8; all are resolved', async () => {
+    const q = Array.from({ length: 8 }, (_, i) => ({ ticker: `T${i}`, filed: '2026-10-03', want: '2026-09-30', added_at: 'x' }));
+    const kv = memKv({ [RP_QUEUE_KEY]: q });
+    let live = 0, peak = 0;
+    const d: RpDeps = {
+      kv: kv as any, now: () => new Date('2026-10-06T10:00:00Z'),
+      screenerQuarter: async () => { live++; peak = Math.max(peak, live); await new Promise((r) => setTimeout(r, 50)); live--; return '2026-09-30'; },
+      findDocs: async () => [], readPdf: async () => ({ text: '' }),
+      callModel: async () => ({ ok: false, kind: 'x', message: 'x' }), regrade: async () => {},
+    };
+    const t = Date.now();
+    const r = await runResultsPdf(d, { maxItems: 8 });
+    assert.equal(r.outcomes.filter((o) => o.outcome === 'screener_caught_up').length, 8);
+    assert.equal(peak, 4);
+    assert.ok(Date.now() - t < 300, `took ${Date.now() - t} ms`);
+    assert.deepEqual(kv.store.get(RP_QUEUE_KEY), []);
   });
 });

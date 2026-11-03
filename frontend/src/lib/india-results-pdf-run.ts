@@ -27,7 +27,7 @@ export interface RpDeps {
   regrade: (date: string, tickers: string[]) => Promise<void>;
   now?: () => Date;
 }
-export interface RpRunOptions { maxItems?: number; maxUsd?: number; budgetMs?: number }
+export interface RpRunOptions { maxItems?: number; maxUsd?: number; budgetMs?: number; /** zzz1221 — names read at once (default 4) */ concurrency?: number }
 export interface RpOutcome { ticker: string; want: string; outcome: 'read' | 'screener_caught_up' | 'no_document' | 'not_readable' | 'rejected' | 'model_error' | 'spend_cap'; detail: string; costUsd?: number }
 export interface RpRunSummary { ok: boolean; skipped?: string; queued: number; due: number; outcomes: RpOutcome[]; spentUsd: number; regraded: string[] }
 
@@ -71,39 +71,52 @@ export async function runResultsPdf(d: RpDeps, o: RpRunOptions = {}): Promise<Rp
       if (rec.tries >= RP_MAX_TRIES) resolved.add(k);   // gave up: leaves the queue, the fail record says why
       outcomes.push({ ticker: q.ticker, want: q.want, outcome, detail, costUsd });
     };
-    for (const q of due.slice(0, maxItems)) {
-      if (Date.now() - t0 > budget || spent >= maxUsd) break;
+    // zzz1221 — names are read 4 at a time: one at a time, a results day (50+ filed names) got through ~7 an hour
+    // (each name waits on Screener, the exchange feeds and the PDF), so filed companies said "figures being read" for hours.
+    let stop = false;
+    const one = async (q: RpQueueItem): Promise<void> => {
       const k = `${q.ticker}|${q.want}`;
       // 1. Screener caught up → no AI spent
       const sq = await d.screenerQuarter(q.ticker, q.filed).catch(() => null);
-      if (sq && sq >= q.want) { resolved.add(k); outcomes.push({ ticker: q.ticker, want: q.want, outcome: 'screener_caught_up', detail: `Screener now has the quarter ending ${sq}` }); mark(q.filed, q.ticker); continue; }
+      if (sq && sq >= q.want) { resolved.add(k); outcomes.push({ ticker: q.ticker, want: q.want, outcome: 'screener_caught_up', detail: `Screener now has the quarter ending ${sq}` }); mark(q.filed, q.ticker); return; }
       // 2. the results PDF
       const urls = await d.findDocs(q).catch(() => [] as string[]);
-      if (!urls.length) { await fail(q, 'no_document', 'no results PDF found for this filing on NSE / BSE'); continue; }
+      if (!urls.length) { await fail(q, 'no_document', 'no results PDF found for this filing on NSE / BSE'); return; }
       let text = ''; let url = ''; const why: string[] = [];
       for (const u of urls.slice(0, 4)) {
         const r = await d.readPdf(u).catch((e: any) => ({ text: '', failure: String(e?.message || e) }));
         if (looksLikeResultsText(r.text)) { text = r.text; url = u; break; }
         why.push(r.failure || (r.text ? 'not a results statement' : 'no text (scanned or empty PDF)'));
       }
-      if (!text) { await fail(q, 'not_readable', `results PDF could not be read: ${why.slice(0, 2).join('; ')}`); continue; }
+      if (!text) { await fail(q, 'not_readable', `results PDF could not be read: ${why.slice(0, 2).join('; ')}`); return; }
+      if (stop || spent >= maxUsd) return;
       // 3. the model copies the figures; every figure is checked against the PDF text
       const excerpt = resultsExcerpt(text);
       const nonce = Math.random().toString(36).slice(2, 10);
       const m = await d.callModel({ system: RESULTS_SYSTEM, user: resultsUserPrompt(q.ticker, q.want, excerpt, nonce) });
       if (!m.ok) {
-        if (m.kind === 'spend_cap' || m.kind === 'no_key') { outcomes.push({ ticker: q.ticker, want: q.want, outcome: 'spend_cap', detail: m.message }); break; }
-        await fail(q, 'model_error', m.message); continue;
+        if (m.kind === 'spend_cap' || m.kind === 'no_key') { outcomes.push({ ticker: q.ticker, want: q.want, outcome: 'spend_cap', detail: m.message }); stop = true; return; }
+        await fail(q, 'model_error', m.message); return;
       }
       spent += m.costUsd;
       const chk = checkResultsAnswer(m.raw, { ticker: q.ticker, want: q.want, filed: q.filed, docText: excerpt, url, model: m.model, now });
-      if (!chk.ok) { await fail(q, 'rejected', chk.reason, m.costUsd); continue; }
+      if (!chk.ok) { await fail(q, 'rejected', chk.reason, m.costUsd); return; }
       const rec: RpRecord = chk.record;
       await d.kv.set(RP_RESULT_KEY(q.ticker, q.want), rec, RP_RESULT_TTL_S);
       await d.kv.set(RP_LATEST_KEY(q.ticker), rec, RP_RESULT_TTL_S);
       resolved.add(k); mark(q.filed, q.ticker);
       outcomes.push({ ticker: q.ticker, want: q.want, outcome: 'read', detail: `revenue ₹${rec.sales_curr_cr} Cr (${rec.basis})`, costUsd: m.costUsd });
-    }
+    };
+    const work = due.slice(0, maxItems);
+    let next = 0;
+    const lane = async () => {
+      while (next < work.length) {
+        if (stop || Date.now() - t0 > budget || spent >= maxUsd) return;
+        const q = work[next++];
+        try { await one(q); } catch { /* one name never stops the run */ }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.max(1, Math.min(8, o.concurrency ?? 4)) }, lane));
     // zzz1211 — the list of tickers with a stored record (always written, so readers know the list exists)
     {
       const prevHave = await d.kv.get<string[]>(RP_HAVE_KEY).catch(() => null);
