@@ -138,11 +138,11 @@ const RULES: Rule[] = [
   { id: 'revenue_growth', label: 'Revenue growth', category: 'Results', direction: 'positive', rank: 11,
     any: [new RegExp(String.raw`\b${REV}\b[^.;]{0,80}?\b${UP}\b[^.;]{0,40}?${PCT}`, 'i'), new RegExp(String.raw`${PCT}\s+(?:y-?o-?y |yoy |year[- ]on[- ]year |year[- ]over[- ]year |q-?o-?q )?(?:growth|increase|rise|jump)\s+in\s+(?:its\s+|the\s+)?(?:consolidated\s+|standalone\s+)?${REV}`, 'i'),
       new RegExp(String.raw`\b${REV}\b[^.;]{0,40}\b(?:doubled|tripled|more than doubled)\b`, 'i')],
-    not: new RegExp(String.raw`\b${REV}\b[^.;]{0,60}\b${DOWN}\b`, 'i'), hides: ['results_filed'] },
+    not: new RegExp(String.raw`\b${REV}\b(?:(?!${PROFIT}|\b${UP}\b)[^.;]){0,60}\b${DOWN}\b`, 'i'), hides: ['results_filed'] },
   { id: 'profit_growth', label: 'Profit growth', category: 'Results', direction: 'positive', rank: 12,
     any: [new RegExp(String.raw`${PROFIT}[^.;]{0,80}?\b${UP}\b[^.;]{0,40}?(?:${PCT}|\bfold\b|times)`, 'i'), new RegExp(String.raw`${PCT}\s+(?:y-?o-?y |yoy |year[- ]on[- ]year )?(?:growth|increase|rise|jump)\s+in\s+(?:its\s+|the\s+)?(?:consolidated\s+|standalone\s+)?${PROFIT}`, 'i'),
       new RegExp(String.raw`${PROFIT}[^.;]{0,30}\b(?:doubled|tripled|more than doubled)\b`, 'i')],
-    not: new RegExp(String.raw`${PROFIT}[^.;]{0,50}\b${DOWN}\b|\bloss\b`, 'i'), hides: ['results_filed'] },
+    not: new RegExp(String.raw`${PROFIT}(?:(?!\b${REV}\b|\b${UP}\b)[^.;]){0,50}\b${DOWN}\b|\bloss\b`, 'i'), hides: ['results_filed'] },
   { id: 'record_results', label: 'Record revenue / profit', category: 'Results', direction: 'positive', rank: 11,
     any: [new RegExp(String.raw`\b(?:record|highest[- ]ever|all[- ]time high(?:est)?|best[- ]ever)\b[^.;]{0,30}\b(?:quarterly |annual )?(?:${REV}|${PROFIT}|order (?:book|inflow)|volumes?)`, 'i')], hides: ['results_filed'] },
   { id: 'revenue_vs_prior', label: 'Revenue vs year-ago (as stated)', category: 'Results', direction: 'neutral', rank: 12,
@@ -152,9 +152,9 @@ const RULES: Rule[] = [
     any: [new RegExp(String.raw`${PROFIT}[^.;]{0,50}?\bat\s+(?:₹|rs\.?|inr)\s?\d[\d,.]*\s?(?:crores?|cr\b|lakhs?|million|mn)?[^.;]{0,20}?\b(?:as against|against|compared (?:to|with)|vs\.?|versus)\s+(?:₹|rs\.?|inr)\s?\d`, 'i')],
     dir: (s) => vsPriorDir(s), hides: ['results_filed'] },
   { id: 'revenue_decline', label: 'Revenue decline', category: 'Results', direction: 'negative', rank: 13,
-    any: [new RegExp(String.raw`\b${REV}\b[^.;]{0,60}?\b${DOWN}\b[^.;]{0,30}?${PCT}`, 'i')], hides: ['results_filed'] },
+    any: [new RegExp(String.raw`\b${REV}\b(?:(?!${PROFIT}|\b${UP}\b)[^.;]){0,60}?\b${DOWN}\b[^.;]{0,30}?${PCT}`, 'i')], hides: ['results_filed'] },
   { id: 'profit_decline', label: 'Profit decline', category: 'Results', direction: 'negative', rank: 13,
-    any: [new RegExp(String.raw`${PROFIT}[^.;]{0,60}?\b${DOWN}\b[^.;]{0,30}?${PCT}`, 'i'), /\b(?:net )?loss (?:widened|widens|deepened)\b/i], hides: ['results_filed'] },
+    any: [new RegExp(String.raw`${PROFIT}(?:(?!\b${REV}\b|\b${UP}\b)[^.;]){0,60}?\b${DOWN}\b[^.;]{0,30}?${PCT}`, 'i'), /\b(?:net )?loss (?:widened|widens|deepened)\b/i], hides: ['results_filed'] },
   { id: 'net_loss', label: 'Net loss reported', category: 'Results', direction: 'negative', rank: 14,
     any: [/\b(?:reported|posted|posts|reports|incurred|clocked)\b[^.;]{0,20}\b(?:a\s+)?(?:consolidated\s+|standalone\s+)?net loss\b/i, /\bnet loss (?:of|at|stood)\b/i],
     not: /\bagainst (?:a )?(?:net )?loss\b|\bfrom (?:a )?(?:net )?loss\b|\bturn(?:ed|s)? (?:profitable|around)\b/i, hides: ['results_filed'] },
@@ -178,7 +178,7 @@ const RULES: Rule[] = [
     any: [/\b(?:un-?audited|audited)\s+(?:standalone\s+(?:and|&)\s+consolidated\s+|consolidated\s+(?:and|&)\s+standalone\s+|standalone\s+|consolidated\s+)?financial results\b/i, /\bfinancial results for the (?:quarter|period|half[- ]year|year|nine months)\b/i, /\bregulation 33\b|\breg\.?\s?33\b/i,
       /\boutcome of (?:the )?board meeting\b[^.;]{0,80}\b(?:results|financials?)\b/i, /\b(?:results|financials?)\b[^.;]{0,40}\boutcome of (?:the )?board meeting\b/i, /\bq[1-4]\s?(?:fy)?\s?'?\d{2}\s+results?\b/i, /\bquarterly results?\b/i, /\bresults? for (?:the )?(?:quarter|q[1-4])\b/i, /\bnet sales at (?:₹|rs\.?)/i,
       /\b(?:quarterly )?earnings release\b/i, /\bpress release\b[^.;]{0,100}\b(?:financial )?results\b/i],
-    not: /\b(?:intimation|to consider|will be (?:held|considered)|is scheduled|to be held|prior intimation|trading window|conference call|earnings call|investor call|con-?call|newspaper|publication|advertisement)\b/i },
+    not: /\b(?:intimation|to consider|will be (?:held|considered)|is scheduled|to be held|prior intimation|trading window|conference call|earnings call|investor call|con-?call|newspaper|publication|advertisement|reschedul\w*|re-schedul\w*|postpon\w*|prepon\w*|deferr?(?:ed|ment)|to approve|will approve|for (?:the )?approval of)\b/i },
 
   // ── OWNERSHIP & CONTROL ──
   { id: 'open_offer', label: 'Open offer (SAST)', category: 'Ownership & control', direction: 'positive', rank: 4,
@@ -620,6 +620,53 @@ const hitCrore = (h: Pick<InEventHit, 'figures' | 'sentence'>): number | null =>
   return null;
 };
 const fmtCrText = (v: number) => `Rs ${Math.round(v * 100) / 100} crore`;
+/** zzz1220: what a stated ₹ figure measures, from the words just before it (order / revenue / profit / capex / book). Null when unclear. */
+const METRIC_OF: Array<[string, RegExp]> = [
+  ['book', /\border ?book\b|\bunexecuted\b|\boutstanding orders?\b/gi],
+  ['order', /\b(?:orders?|contracts?|letter of award|work order|loa)\b/gi],
+  ['revenue', new RegExp(String.raw`\b${REV}\b`, 'gi')],
+  ['profit', new RegExp(PROFIT, 'gi')],
+  ['capex', /\b(?:capex|capital expenditure|investment|outlay)\b/gi],
+];
+export function figureMetric(sentence: string, figure: string | null): string | null {
+  const s = String(sentence || '');
+  const i = figure ? s.indexOf(figure) : -1;
+  if (i < 0) return null;
+  // "Rs 3.64 crore order" — a metric word right after the figure names it
+  const after = s.slice(i + figure!.length, i + figure!.length + 14);
+  for (const [m, rx] of METRIC_OF) { rx.lastIndex = 0; if (m !== 'book' && rx.test(after)) return /order ?book/i.test(s.slice(i + figure!.length, i + figure!.length + 22)) ? 'book' : m; }
+  const before = s.slice(Math.max(0, i - 80), i);
+  let best: { m: string; at: number } | null = null;
+  for (const [m, rx] of METRIC_OF) {
+    rx.lastIndex = 0;
+    let x: RegExpExecArray | null;
+    while ((x = rx.exec(before))) if (!best || x.index > best.at) best = { m, at: x.index };
+  }
+  // "order book to Rs X" — the nearest "order" belongs to the book
+  if (best?.m === 'order' && /order ?book\b[^.;]{0,30}$/i.test(before)) return 'book';
+  return best?.m ?? null;
+}
+const hitCroreFig = (h: Pick<InEventHit, 'figures' | 'sentence'>): string | null => {
+  for (const f of h.figures) if (figureCrore(f) != null) return f;
+  return null;
+};
+/** Two values are compared unless they plainly measure different things (an order is never a revenue figure). */
+const sameMetric = (a: Pick<InEventHit, 'figures' | 'sentence'>, b: Pick<InEventHit, 'figures' | 'sentence'>): boolean => {
+  const ma = figureMetric(a.sentence, hitCroreFig(a)), mb = figureMetric(b.sentence, hitCroreFig(b));
+  return !ma || !mb || ma === mb;
+};
+/** zzz1220: a PDF that drops the ₹ sign often prints it as "4" — "4647.05 Crore" for ₹647.05 crore. */
+export function rupeeGlyphRepair(misread: number, other: number): boolean {
+  if (!(misread > other) || !(other > 0)) return false;
+  const digits = String(Math.floor(other)).length;
+  return Math.abs(misread - (4 * 10 ** digits + other)) < 0.011;
+}
+function repairGlyph(c: InCatalyst, misread: number, right: number) {
+  const bad = String(misread), good = String(right);
+  c.figures = c.figures.map((f) => (figureCrore(f) === misread ? f.replace(bad.split('.')[0], `₹${good.split('.')[0]}`) : f));
+  c.sentence = c.sentence.replace(new RegExp(String.raw`(^|[^\d])4(${good.replace('.', '\\.')})`), '$1₹$2');
+  c.note = c.note ? `${c.note}; ₹ sign misread as "4" in the filing text — read as ₹${good} crore` : `₹ sign misread as "4" in the filing text — read as ₹${good} crore`;
+}
 const rankOf = (id: string) => RULE_BY_ID.get(id)?.rank ?? 99;
 /** Events that explain nothing on their own — they never lead the card. */
 const NEVER_LEAD = new Set(['price_clarification', 'exchange_query', 'results_filed', 'commodity_price']);
@@ -784,6 +831,8 @@ export function buildIndiaCard(input: { filings: InCardFiling[]; press: InCardPr
       const dv = hitCrore(d);
       const m = meta.find((x) => x.id === d.id && hitCrore(x) != null);
       if (dv == null || !m) continue;
+      if (rupeeGlyphRepair(dv, hitCrore(m)!)) { const tgt0 = shown.find((c) => c.id === d.id && c.source === 'FILING'); if (tgt0) repairGlyph(tgt0, dv, hitCrore(m)!); continue; }
+      if (!sameMetric(d, m)) continue;
       const r = reconcileValues([{ value: dv, unit: 'INR_CRORE', source: 'filed', text: fmtCrText(dv) }, { value: hitCrore(m)!, unit: 'INR_CRORE', source: 'headline', text: fmtCrText(hitCrore(m)!) }]);
       if (r.valueStatus !== 'conflicting') continue;
       const tgt = shown.find((c) => c.id === d.id && c.source === 'FILING');
@@ -796,6 +845,8 @@ export function buildIndiaCard(input: { filings: InCardFiling[]; press: InCardPr
     for (const fcat of shown.filter((c) => c.source === 'FILING' && c.id === p.id)) {
       const fv = hitCrore(fcat);
       if (pv == null || fv == null) continue;
+      if (rupeeGlyphRepair(fv, pv)) { repairGlyph(fcat, fv, pv); continue; }
+      if (!sameMetric(p, fcat)) continue;
       const r = reconcileValues([{ value: fv, unit: 'INR_CRORE', source: 'filed', text: fmtCrText(fv) }, { value: pv, unit: 'INR_CRORE', source: 'press', text: fmtCrText(pv) }]);
       if (r.valueStatus !== 'conflicting') continue;
       for (const t of [p, fcat]) { t.valueStatus = 'conflicting'; t.values = r.values; t.conflicts = [...(t.conflicts || []), ...r.conflicts]; t.impactUnknown = true; }

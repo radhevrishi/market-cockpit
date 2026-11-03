@@ -114,7 +114,7 @@ export const OTHER_THEME = 'Other / not classified yet';
 
 /** The theme: the company's industry decides when it names a table theme (it says what the company IS); otherwise the event
  *  text (the theme with the most words, ties to the earlier, more specific one); otherwise the industry itself as a new theme. */
-export function themeOf(texts: Array<string | null | undefined>, industry?: string | null): { theme: string; why: string | null } {
+export function themeOf(texts: Array<string | null | undefined>, industry?: string | null, name?: string | null): { theme: string; why: string | null } {
   const ind = String(industry || '').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
   const best = (hay: string) => {
     let b: { name: string; n: number; word: string } | null = null;
@@ -128,6 +128,9 @@ export function themeOf(texts: Array<string | null | undefined>, industry?: stri
   const byInd = ind ? best(ind) : null;
   if (byInd) return { theme: byInd.name, why: `the company's industry: ${ind}` };
   if (ind) return { theme: ind.slice(0, 60), why: 'the company\'s industry (screener)' };
+  // zzz1220 — then the company's own name: Mold-Tek PACKAGING is packaging even when its customers are pharma companies
+  const byName = name ? best(name) : null;
+  if (byName) return { theme: byName.name, why: `the company's name: ${String(name).trim()}` };
   const byText = best(texts.filter(Boolean).join(' \n ').slice(0, 6000));
   if (byText) return { theme: byText.name, why: `the filing says "${byText.word}"` };
   return { theme: OTHER_THEME, why: null };
@@ -258,7 +261,7 @@ export function transformationalFrom(items: AnyItem[], market: TgMarket, session
     const strength: TgStrength = (strongOff.length && (durationYears || significant || infl)) ? 'TRANSFORMATIONAL'
       : (infl || strongOff.length) ? 'INFLECTION' : 'NOTABLE';
     const company = String(it.companyName || it.company || it.ticker);
-    const th = themeOf([company, it.headline, it.whatChanged, ...hits.map((h) => h.sentence), it.quote], it.industry || it.sector || null);
+    const th = themeOf([company, it.headline, it.whatChanged, ...hits.map((h) => h.sentence), it.quote], it.industry || it.sector || null, company);
     const signals = Array.from(new Set([...(infl ? [`Earnings inflection: ${infl}`] : []), ...hits.map((h) => `${h.label}${h.official ? '' : ' (press)'}`)])).slice(0, 8);
     const eventDate = (lead?.date || it.headlineFiledDate || it.filedDate || null);
     const base = {
@@ -477,7 +480,7 @@ export function reviewItem(x0: TgItem, snap?: SnapFacts | null): TgItem | null {
   if (x.facts.patYoY != null && sane(x.facts.patYoY) == null) { tiny.push(`profit ${Math.round(x.facts.patYoY)}%`); x.facts.patYoY = null; }
   x.factsNote = tiny.length ? `n/m — tiny or negative base (${tiny.join(', ')})` : null;
   if (!x.factsSource && (x.facts.revenueYoY != null || x.facts.patYoY != null)) x.factsSource = 'filing';
-  const th = themeOf([x.headline, x.quote], x.industry || null);
+  const th = themeOf([x.headline, x.quote], x.industry || null, x.company);
   if (th.theme !== OTHER_THEME || x.theme === OTHER_THEME || x.industry) { x.theme = th.theme; x.themeWhy = th.why; }
   x.mb = multibaggerOf(x);
   if (x.strength === 'NOTABLE' && x.mb.score < 55) return null;

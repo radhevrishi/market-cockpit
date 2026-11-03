@@ -169,7 +169,7 @@ const RX = {
   taxWord: /\b(gst|cgst|sgst|igst|goods and services? tax|income[- ]tax|customs|excise|service tax)\b/i,
   taxFavourable: /(decid\w+|order\w*|ruled?)[^.]{0,80}in favou?r of the company|allowed the (company'?s )?appeal|in (the )?company'?s favou?r|(dropped|deleted|quashed|set aside) the (demand|addition|proceedings)|dropp(ed|ing) the proceedings/i,
   governanceFine: /fine (was |has been )?levied|levied (a )?(total )?fine|fines? (of|levied)[^.]{0,40}(exchange|bse|nse)|delayed compliance with regulation|non-?compliance with regulation \d/i,
-  order: /purchase order|work order|letter of award|notification of award|receipt of (a )?(firm )?(purchase )?order|secured (a |an )?(new )?(order|contract)|order aggregating|order (worth|valued)|contract (award|worth|valued)|emerged as successful in the tender|successful (bidder|in the tender)|\bl-?1 bidder|\bwins?\b[^.]{0,60}\borders?\b|awarded (a |an |the )?(contract|order)|rate contract/i,
+  order: /purchase order|work order|letter of award|notification of award|receipt of (a )?(firm )?(purchase )?order|secured (a |an )?(new |fresh )?(orders?|contracts?)|order aggregating|order (worth|valued)|contract (award|worth|valued)|emerged as successful in the tender|successful (bidder|in the tender)|\bl-?1 bidder|\bwins?\b[^.]{0,60}\borders?\b|awarded (a |an |the )?(contract|order)|rate contract/i,
   fundraising: /preferential (issue|basis|allotment)|qualified institutions? placement|\bqip\b|convertible warrants|rights issue|issue of (up to )?[\d,]+ (fully paid[- ]up )?equity shares/i,
   // A certification printed in a letterhead ("AS 9100D ISO 9001:2015") is not news: an approval needs a verb.
   inspection: /\b(?:usfda|us fda|fda|mhra|eu[- ]?gmp|who[- ]?gmp|anvisa|pmda|tga|dcgi|cdsco|health canada)\b[^;]{0,80}\binspect(?:ion|ed|ions)\b|\binspect(?:ion|ed|ions)\b[^;]{0,80}\b(?:usfda|us fda|mhra|form 483|observations?|EIR)\b/i,
@@ -220,6 +220,33 @@ function eventSentences(text: string): string {
   return sentencesOf(eventBody(text)).filter((s) => !/is engaged in|engaged in the business|is in the business of|line of business|brief background about/i.test(s)).join('. ');
 }
 
+const RESULT_METRIC = String.raw`(?:revenues?|revenue from operations|net sales|total income|income from operations|sales|turnover|top[- ]?line|pat|profit after tax|net profit|ebitda|operating profit)`;
+const RESULT_FIG_RX = new RegExp(String.raw`\b${RESULT_METRIC}\b[^.;]{0,50}?\b(?:grew|grows|up|rose|increased|jumped|surged|declined|fell|down|decreased)\b(?:\s+by)?\s*~?\s*\d+(?:\.\d+)?\s?%`, 'i');
+const ORDER_LETTER_RX = /broad consideration or size of the order|name of the entity awarding|receipt of (?:a )?(?:firm )?(?:purchase )?order|letter of award/i;
+/** A quarterly / annual results release with growth figures — not a Reg-30 order letter. */
+export function isResultsRelease(text: string): boolean {
+  return RX.results.test(text) && RESULT_FIG_RX.test(text) && !ORDER_LETTER_RX.test(text);
+}
+/** zzz1220: one plain line from a results release: "Results: revenue +112% to ₹208.6 Cr; PAT +180% to ₹53.9 Cr; orders won ₹867.3 Cr". */
+export function resultsLine(text: string): { line: string; polarity: Polarity } | null {
+  const UPW = /^(?:grew|grows|up|rose|increased|jumped|surged)$/i;
+  const one = (label: string, metric: string) => {
+    const m = new RegExp(String.raw`\b${metric}\b[^.;]{0,40}?\b(grew|grows|up|rose|increased|jumped|surged|declined|fell|down|decreased)\b(?:\s+by)?\s*~?\s*(\d+(?:\.\d+)?)\s?%(?:[^.;%]{0,20}?\bto\s+(?:rs\.?|₹|inr)?\s?([\d,]+(?:\.\d+)?)\s?(?:crores?|crs?\b|cr\b))?`, 'i').exec(text);
+    if (!m) return null;
+    const up = UPW.test(m[1]);
+    return { up, s: `${label} ${up ? '+' : '−'}${m[2]}%${m[3] ? ` to ₹${m[3]} Cr` : ''}` };
+  };
+  const rev = one('revenue', String.raw`(?:revenues?|revenue from operations|net sales|total income|income from operations|sales|turnover|top[- ]?line)`);
+  const ebitda = one('EBITDA', String.raw`(?:ebitda|operating profit)`);
+  const pat = one('PAT', String.raw`(?:pat|profit after tax|net profit)`);
+  const ord = /(?:secured|received|bagged|won)\s+(?:fresh |new )?orders?\s+(?:worth|of|aggregating)\s+(?:~|about|approximately|approx\.?)?\s*(?:rs\.?|₹|inr)\s?([\d,]+(?:\.\d+)?)\s?(?:crores?|crs?\b|cr\b)/i.exec(text);
+  const parts = [rev, ebitda, pat].filter(Boolean) as Array<{ up: boolean; s: string }>;
+  if (!parts.length) return null;
+  const ups = parts.filter((x) => x.up).length;
+  const polarity: Polarity = ups === parts.length ? 'positive' : ups === 0 ? 'negative' : 'neutral';
+  return { line: `Results: ${parts.map((x) => x.s).join('; ')}${ord ? `; orders won in the period ₹${ord[1]} Cr` : ''}`, polarity };
+}
+
 function kindOf(text0: string): { kind: EventKind | 'routine' | null; polarity: Polarity; sub?: 'subsidiary' | 'fine' | 'favourable' | 'merger' | 'promoter_sale' | 'inspection' } {
   const text = eventSentences(text0);
   if (RX.taxProceeding.test(text) && (RX.taxWord.test(text) || /\bitat\b|appellate tribunal/i.test(text))) {
@@ -228,6 +255,9 @@ function kindOf(text0: string): { kind: EventKind | 'routine' | null; polarity: 
   if (RX.governanceFine.test(text)) return { kind: 'governance', polarity: 'negative', sub: 'fine' };
   if (RX.promoterSale.test(text)) return { kind: 'other', polarity: 'negative', sub: 'promoter_sale' };
   if (RX.promoterBuy.test(text) && !/\b(sold|sale of|disposed|offload|pledg)/i.test(text)) return { kind: 'promoter_buying', polarity: 'positive' };
+  // zzz1220: a results release that also mentions orders won in the quarter or a plant on track is a RESULT —
+  // the order / capacity lines are its commentary, not a separate filed event (KANOHAR, MOLDTKPAC)
+  if (isResultsRelease(text)) { const r = resultsLine(text); return { kind: 'results', polarity: r?.polarity ?? 'neutral' }; }
   if (RX.order.test(text)) return { kind: 'order', polarity: 'positive' };
   if (RX.fundraising.test(text)) return { kind: 'fundraising', polarity: 'neutral' };
   if (RX.merger.test(text)) return { kind: 'other', polarity: 'neutral', sub: 'merger' };
@@ -343,6 +373,8 @@ function continuesOf(text: string): string | null {
 
 function executionOf(text: string): string | null {
   const pats: RegExp[] = [
+    // zzz1220: "to be completed within 09 years 04 months" — years and months together
+    /(?:execut\w*|complet\w*|deliver\w*)\s+(?:with)?in\s+(\d{1,2}\s*years?(?:\s*(?:and\s*)?\d{1,2}\s*months?)?)/i,
     /execution schedule (?:stipulated at|of) (\d+\s*months?[^.;,]{0,60}?)(?=[.;]|$)/i,
     /(\d+\s*months? from the date of [^.;,]{3,60})/i,
     /to be executed\s*:?\s*(?:by|within)?\s*([A-Z][a-z]+,?\s+\d{4}|\d+\s*(?:months?|days|weeks))/i,
@@ -651,7 +683,7 @@ export function extractIndiaFacts(doc: IndiaDoc, ctx: ExtractContext = {}): DocE
   // zzz787: a new subsidiary is a STRATEGIC EXPANSION and a scheme of
   // amalgamation a MERGER — their own kinds, never 'acquisition' / 'other'.
   // (The body was read as 'other' + sub above; the headline keeps its words.)
-  const headline = headlineOf(base, k.sub);
+  const headline = kind === 'results' ? (resultsLine(text)?.line || headlineOf(base, k.sub)) : headlineOf(base, k.sub);
   const finalKind: EventKind = kind === 'other' && k.sub === 'subsidiary' ? 'strategic_expansion' : kind === 'other' && k.sub === 'merger' ? 'merger' : kind;
   return { facts: [{ ...base, event: { ...base.event, kind: finalKind, ...(kind === 'other' && k.sub === 'inspection' ? { eventType: 'regulatory_inspection' } : {}) }, headline }], routineReason: null, classified: true, valuesSeen };
 }

@@ -3830,3 +3830,12 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   "word Word" joins in a company document), a delay in the sentence, a supply agreement (not production), and priorities /
   focus / strategy lines are never proof; HYPO_RE now ends with \b ("plan" matched "plant"). Order book without a won verb is
   shown as "total book, not a new order". Funnel `with_proof` = documents whose proof holds up (tile "With a proven change").
+- zzz1220 (3 Nov): AI Daily Gainers India labels. Revenue / profit rules stop at the other metric ("revenue rose 4.6% as
+  EBITDA fell 23.5%" = revenue growth + profit decline, never a revenue decline). A rescheduled / postponed board meeting is
+  not "Quarterly result filed". Value conflicts: a filed "4647.05" next to a stated "647.05" is the ₹ sign read as "4"
+  (`rupeeGlyphRepair`, also in reconcileValues) — repaired, no conflict; values that plainly measure different things
+  (`figureMetric`: order / book / revenue / profit / capex) are never a conflict. india-extract: a results release
+  (`isResultsRelease`) is kind 'results' even when it mentions orders or a plant, headline from `resultsLine` ("Results:
+  revenue +112% to ₹208.6 Cr; PAT +180% …"). Execution period "09 years 04 months" = 112 months (`periodMonthsOf`).
+  `priceCommentaryOnly` only when the card has no event of its own (GRSE's read ₹32,000 Cr order had scored 0 evidence →
+  IGNORE). Transformational theme: company name decides before customer words (`themeOf(texts, industry, name)`).

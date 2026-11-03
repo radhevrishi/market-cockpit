@@ -38,6 +38,13 @@ type UsAcquisitionEconomics = import('./us-card').UsAcquisitionEconomics;
 const LITIGATION_CASH_NOTE = 'Gross award is not expected cash proceeds.';
 type InCatalyst = import('./in-event-taxonomy').InCatalyst;
 
+/** zzz1220: an execution period in months — "9 years 4 months" = 112, "18 months" = 18. NaN when none is stated. */
+export function periodMonthsOf(s: string): number {
+  const y = /(\d{1,2})\s*(?:years?|yrs?)\b/i.exec(s), m = /(\d{1,3})\s*months?\b/i.exec(s);
+  if (!y && !m) return NaN;
+  return (y ? Number(y[1]) * 12 : 0) + (m ? Number(m[1]) : 0);
+}
+
 /** The six states every gainer ends in (spec §4), plus data states. */
 export type EventClass =
   | 'CONFIRMED_MATERIAL'          // A — verified, economically meaningful
@@ -1454,11 +1461,13 @@ export function potentialDurationOf(type: EventType, cls: EventClass, hay: strin
     if (orderLike && PROGRAMME_WORDS.test(ft)) return { value: 'YEARS', text: 'Multi-year programme — programme / annual business stated in the filing', basis: 'FACTS' };
     const capFact = facts.some((x) => !!x.economics?.capacityAfter) || ((type === 'Capacity expansion' || type === 'Production ramp' || type === 'Regulatory approval') && CAPACITY_WORDS.test(ft));
     if (capFact && (type === 'Capacity expansion' || type === 'Production ramp' || type === 'Regulatory approval')) return { value: 'YEARS', text: 'Multi-year — a plant / licensed capacity runs for years if demand fills it', basis: 'FACTS' };
-    const per = facts.map((x) => x.time?.executionPeriod).find(Boolean) || (/(?:execut\w*|complet\w*|deliver\w*|suppl\w*)\s+(?:with)?(?:in|over)\s+(?:a period of\s+)?(\d{1,3})\s*months?/i.exec(ft)?.[0] ?? null);
-    const months = per ? Number((/(\d{1,3})\s*months?/i.exec(per) || [])[1]) : NaN;
+    const per = facts.map((x) => x.time?.executionPeriod).find(Boolean) || (/(?:execut\w*|complet\w*|deliver\w*|suppl\w*)\s+(?:with)?(?:in|over)\s+(?:a period of\s+)?(?:\d{1,2}\s*years?(?:\s*(?:and\s*)?\d{1,3}\s*months?)?|\d{1,3}\s*months?)/i.exec(ft)?.[0] ?? null);
+    // zzz1220: "09 years 04 months" is 112 months, not 4
+    const months = per ? periodMonthsOf(per) : NaN;
+    const periodText = Number.isFinite(months) ? (months >= 24 ? `about ${Math.round(months / 12 * 10) / 10} years (${months} months) as stated` : `${months} months as stated`) : '';
     if (orderLike && Number.isFinite(months) && months > 0) return months >= 12
-      ? { value: 'YEARS', text: `One execution period — ${months} months as stated`, basis: 'FACTS' }
-      : { value: 'QUARTER', text: `One execution period — ${months} months as stated`, basis: 'FACTS' };
+      ? { value: 'YEARS', text: `One execution period — ${periodText}`, basis: 'FACTS' }
+      : { value: 'QUARTER', text: `One execution period — ${periodText}`, basis: 'FACTS' };
     // zzz789: a deal adds something lasting only when the TARGET's economics are stated.
     if (type === 'Acquisition' || type === 'Merger') {
       const tgt = facts.some((x) => x.source.kind !== 'PRESS' && x.source.access === 'DOCUMENT_READ' && (x.economics.targetRevenueNative != null || x.economics.targetProfitNative != null))
@@ -2555,7 +2564,8 @@ function attachCardFacts(item: ResearchItem, now: string | null): void {
   // a card with a headline event never says "no catalyst found"
   if (eventful && /no catalyst found/i.test(item.catalystStatusSentence || '')) item.catalystStatusSentence = `Headline event found: ${item.eventLabel || item.eventType}${item.filedDate ? ` (filed ${item.filedDate.slice(0, 10)})` : ''}.${item.searched ? ` Searched ${item.searched.sources.join(', ') || 'filings and news'}${item.searched.lookbackDays != null ? `, last ${item.searched.lookbackDays} days` : ''}.` : ''}`;
   // price / momentum narrative is commentary, never evidence
-  if (item.news?.narrative && PRICE_COMMENTARY_RX.test(item.news.narrative.label)) item.priceCommentaryOnly = true;
+  // zzz1220: only when there is no event of its own — a read, signed order with a price story beside it is still an order
+  if (item.news?.narrative && PRICE_COMMENTARY_RX.test(item.news.narrative.label) && !eventful) item.priceCommentaryOnly = true;
   // an older result block is context, not the key change
   const fda = item.earnings?.filedDaysAgo;
   if (typeof fda === 'number') item.olderResultLabel = contextTag(fda, 'result').label;

@@ -635,7 +635,10 @@ export interface ValueReconciliation {
 }
 /** Reconcile the values stated for ONE event (same unit). A headline / press value that differs from the filed value (by more than 1%) is a conflict: both are kept, the impact is unknown, and nothing is picked. */
 export function reconcileValues(values: EventValue[]): ValueReconciliation {
-  const vs = values.filter((v) => Number.isFinite(v.value));
+  // zzz1220: a filed "4647.05" next to a stated "647.05" is the ₹ sign misread as "4", not a second value
+  const glyph = (a: number, b: number) => a > b && b > 0 && Math.abs(a - (4 * 10 ** String(Math.floor(b)).length + b)) < 0.011;
+  const vs0 = values.filter((v) => Number.isFinite(v.value));
+  const vs = vs0.map((v) => { const o = v.source === 'filed' ? vs0.find((x) => x.source !== 'filed' && glyph(v.value, x.value)) : null; return o ? { ...v, value: o.value, text: `${o.text} (₹ sign misread as "4" in the filing text)` } : v; });
   if (!vs.length) return { valueStatus: 'not_disclosed', values: [], conflicts: [], impactUnknown: true, usable: null, display: 'value not disclosed in the cited filing' };
   const filed = vs.filter((v) => v.source === 'filed');
   const other = vs.filter((v) => v.source !== 'filed');
