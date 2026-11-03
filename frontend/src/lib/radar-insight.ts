@@ -203,6 +203,9 @@ export function isHistorical(quote: string, now: Date = new Date()): boolean {
 export function eventProof(label: string | null | undefined, quote: string | null | undefined, f: RadarFacts = {}, now: Date = new Date()): { kind: ProofKind; reason: string } {
   const l = String(label || ''), q = String(quote || '').replace(/\s+/g, ' ');
   if (!q) return { kind: 'NOT_PROVEN', reason: 'No proof sentence.' };
+  // zzz1219: chart axis / table text from a slide ("- 10 20 30 40 50 …") states no event in a sentence
+  const nums = q.match(/(?:^|\s)[-+]?\d[\d.,]*%?(?=\s|$)/g) || [];
+  if (nums.length >= 7 || /(?:\d[\d.,]*%?\s+){4,}\d/.test(q)) return { kind: 'NOT_PROVEN', reason: 'Slide chart or table text — the event and its cause are not stated in one sentence.' };
   const lender = FIN_RE.test(`${f.industry || ''} ${f.sector || ''}`);
   const hypothetical = HYPO_RE.test(q) && !DONE_RE.test(q);
   if (/^Order received/.test(l)) {

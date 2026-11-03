@@ -297,3 +297,7 @@ test('44 score: tone is a gate, not points; recency and proof drive the order', 
   assert.ok(recent.bestScore > old.bestScore);
   assert.equal(radarInsight({ ...goodEntry, tone: 'MIXED' }, goodFacts, NOW).best, false);
 });
+test('45 BETA: slide chart text is not a proof sentence', () => {
+  assert.equal(eventProof('Margin improvement realised', '- 10 20 30 40 50 60 70 H1 FY25H1 FY26H1 FY27 EBITDA% EBITDA Margins.coupled with expanding EBITDA margins with new customers', {}, NOW).kind, 'NOT_PROVEN');
+  assert.equal(eventProof('Commercial production started', 'Commercial production of our extruded axle beam has commenced and capacity utilization is about 80%.', {}, NOW).kind, 'MILESTONE');
+});

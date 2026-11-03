@@ -3825,3 +3825,4 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   guidance NOT_COMPARABLE (no growth figure). Materiality only from an amount in the proof sentence. Score: tone is a gate,
   not points; recency +10/+5. Route: `companyDossiers` — one card per company, other documents under `more_docs`;
   payload `companies` / `signal_documents`; page asks limit=3000 and states each filter stage's count. SWR key v9.
+  Slide chart / table text (≥ 7 numbers or a run of 5) is never a proof sentence.
