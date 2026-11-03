@@ -439,9 +439,28 @@ export const ONE_PAGE_CASE = [
 /** Growth from a tiny or negative base (+7,380%, −171%) says nothing about scale: not shown as a number, not scored. */
 const sane = (v: number | null | undefined): number | null => (v == null || !Number.isFinite(v) || Math.abs(v) > 300 ? null : v);
 
+/** zzz1228: the company's OWN stated revenue growth in the release headline ("Revenue Grew 7% as Reported …"); null when not
+ *  written. A product or brand line ("MIEBO® reported revenue grew 42%") is never the company's. */
+export function headlineRevenueGrowth(text: string): number | null {
+  const t = String(text || '');
+  const m = /(?:^|[•·.;]\s*)(?:total |net |consolidated )?revenues?\s+(?:grew|rose|increased|up|declined|decreased|fell|down)\s+(?:by\s+)?(\d+(?:\.\d+)?)\s*%/i.exec(t);
+  if (!m) return null;
+  const before = t.slice(Math.max(0, m.index - 30), m.index + 2);
+  if (/[®™]/.test(before)) return null;
+  const v = Number(m[1]);
+  return /\b(?:declined|decreased|fell|down)\b/i.test(m[0]) ? -v : v;
+}
+
 /** Cleans one item and re-reads it under the current rule; null = not one of the most important events. Pure. */
 export function reviewItem(x0: TgItem, snap?: SnapFacts | null): TgItem | null {
   const x: TgItem = { ...x0, facts: { ...x0.facts }, signals: [...x0.signals] };
+  // zzz1228: a stored revenue growth that fights the release's own stated company figure was read from a product line
+  // (Bausch + Lomb: MIEBO +42% stored, company +7% as reported) — the stated figure wins; the bogus outlook line goes
+  if (x.market === 'US') {
+    const stated = headlineRevenueGrowth(x.headline || '');
+    if (stated != null && x.facts.revenueYoY != null && Math.abs(x.facts.revenueYoY - stated) > Math.max(2, Math.abs(stated) * 0.15)) x.facts.revenueYoY = stated;
+    if (x.whatChanged) x.whatChanged = x.whatChanged.replace(/\s*·\s*outlook:\s*[^·]*?\d+(?:\.\d+)?%\s*[–-]\s*\$[^·]*/i, '') || null;
+  }
   const texts = `${x.headline} \n ${x.whatChanged || ''} \n ${x.quote || ''} \n ${x.signals.join(' ; ')}`;
   const inflect = x.signals.some((g) => /^Earnings inflection/.test(g));
   // being acquired: the upside is capped at the deal price — never a multibagger
@@ -452,6 +471,7 @@ export function reviewItem(x0: TgItem, snap?: SnapFacts | null): TgItem | null {
   // a yearly revenue estimate: market cap ÷ price-to-sales from the stock screener
   const revenue = snap?.ps && snap.ps > 0 && x.marketCap ? x.marketCap / snap.ps : null;
   x.orderToRevenuePct = null;
+  let orderV: number | null = null;
   if (x.kind === 'ORDERS') {
     if (!inflect && NOT_ORDER_RE.test(`${x.headline} ${x.quote || ''} ${x.whatChanged || ''}`)) return null;   // a court relief or tax refund is not an order
     const otext = `${x.quote || ''} ${x.headline} ${x.whatChanged || ''}`;
@@ -462,8 +482,15 @@ export function reviewItem(x0: TgItem, snap?: SnapFacts | null): TgItem | null {
     if (!inflect && v != null) {
       if (x.orderToRevenuePct != null ? x.orderToRevenuePct < 5 : (x.marketCap != null && x.marketCap > 0 && v / x.marketCap < 0.03)) return null;   // too small to change earnings
     }
+    orderV = v;
   }
   x.headline = bestHeadline(x);
+  // zzz1228: the card said "Order (value not stated)" next to "Order ≈ 20.9% of a year's revenue" (Vascon) — when the value was
+  // read from the filing text, the headline states it
+  if (orderV != null && /\(value not stated\)/.test(x.headline)) {
+    const val = x.market === 'IN' ? `worth ₹${Math.round(orderV).toLocaleString('en-IN')} Cr` : `worth $${Math.round(orderV).toLocaleString('en-US')}M`;
+    x.headline = x.headline.replace('(value not stated)', `${val} (read from the filing text)`);
+  }
   x.whatChanged = x.whatChanged && !isJunkText(x.whatChanged) ? x.whatChanged.replace(OLDER, '') : null;
   if (x.quote && isJunkText(x.quote)) x.quote = null;
   // facts: filed figures first; else the stock screener's latest quarter (from the company's results)
@@ -478,7 +505,10 @@ export function reviewItem(x0: TgItem, snap?: SnapFacts | null): TgItem | null {
   const tiny: string[] = [];
   if (x.facts.revenueYoY != null && sane(x.facts.revenueYoY) == null) { tiny.push(`sales ${Math.round(x.facts.revenueYoY)}%`); x.facts.revenueYoY = null; }
   if (x.facts.patYoY != null && sane(x.facts.patYoY) == null) { tiny.push(`profit ${Math.round(x.facts.patYoY)}%`); x.facts.patYoY = null; }
-  x.factsNote = tiny.length ? `n/m — tiny or negative base (${tiny.join(', ')})` : null;
+  // zzz1228: a fall of more than 100% means profit turned into a loss — "−271.9%" (OnMobile) says nothing; say what happened
+  let toLoss = false;
+  if (x.facts.patYoY != null && x.facts.patYoY <= -100) { toLoss = true; x.facts.patYoY = null; }
+  x.factsNote = [tiny.length ? `n/m — tiny or negative base (${tiny.join(', ')})` : null, toLoss ? 'profit swung to a loss' : null].filter(Boolean).join(' · ') || null;
   if (!x.factsSource && (x.facts.revenueYoY != null || x.facts.patYoY != null)) x.factsSource = 'filing';
   const th = themeOf([x.headline, x.quote], x.industry || null, x.company);
   if (th.theme !== OTHER_THEME || x.theme === OTHER_THEME || x.industry) { x.theme = th.theme; x.themeWhy = th.why; }

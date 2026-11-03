@@ -143,7 +143,9 @@ export function turnaroundOf(x: TaInput): Turnaround | null {
 
   let archetype: TaArchetype | null = null;
   if (ids.has('open_offer') || ids.has('strategic_investor') || ids.has('activist_stake') || has(all, OWNERSHIP_RE)) archetype = 'OWNERSHIP_RESCUE';
-  else if (ids.has('licensing') || has(all, BRAND_RE)) archetype = 'BRAND_LICENSE';
+  // zzz1228: the archetype is a dormant BRAND reborn under a new licence (Timex / Guess). A drug or technology licence
+  // (Vir + Gilead collaboration and license) is a pipeline deal, not a brand turnaround
+  else if ((ids.has('licensing') || has(all, BRAND_RE)) && !/\b(?:collaboration|clinical|drug|therap\w*|molecule|antibod\w*|vaccine|patent|platform technology|royalt\w*|milestone payments?)\b/i.test(all)) archetype = 'BRAND_LICENSE';
   else if ((ids.has('store_launch') || ids.has('dealership_expansion')) && has(all, FORMAT_RE) || (has(all, FORMAT_RE) && /\bsame[- ]store|like[- ]for[- ]like|\d{3,5}(?:st|nd|rd|th)? stores?\b/i.test(all))) archetype = 'FORMAT_SCALING';
   else if (ids.has('rating_upgrade') || has(all, FUNDING_RE) && /\b(settlement|restructur|refinanc|lender|rating|infusion|fresh (?:equity|capital))/i.test(all)) archetype = 'FUNDING_REPAIR';
   else if (revival) archetype = 'OPERATING_REVIVAL';

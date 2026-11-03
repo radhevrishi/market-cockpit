@@ -563,6 +563,10 @@ export function outlookOf(text: string): { lines: string[]; action: UsEarnings['
     const re = new RegExp(String.raw`${OUTLOOK_METRIC}[^$%.;·]{0,60}?(?:of|between|in the range of|to be|at|range)?\s*${RANGE}`, 'gi');
     let m: RegExpExecArray | null;
     while ((m = re.exec(sec)) && lines.length < 4) {
+      // zzz1228: "MIEBO revenue grew 42% to $119 million" is an actual, not a range — the two ends must be the same unit,
+      // and a reported growth verb before the figure means a result, not an outlook
+      if (/%/.test(m[2]) !== /%/.test(m[3])) continue;
+      if (/\b(?:grew|rose|increased|declined|fell|was|were|reported)\b/i.test(m[0])) continue;
       const metric = m[1].replace(/^total /i, '').replace(/^net /i, '');
       const fix = (x: string) => x.replace(/\s+/g, ' ').replace(/\$ /, '$').trim();
       let a = fix(m[2]), b = fix(m[3]);
@@ -626,10 +630,16 @@ export function releaseTitle(text: string): string | null {
 /** "Total net revenues rose 19.5% to $7.9 billion" / "revenue of $7.9 billion, up 19.5%" -> +19.5 (signed). Null when no growth % is written for revenue. */
 export function statedRevenueGrowth(text: string): number | null {
   for (const s of sentencesOf(text)) {
+    // zzz1228: "Revenue Grew 7% as Reported and 8% on a Constant Currency Basis" — the as-reported figure is the company's
+    const asRep = /\b(?:total |net )?revenues?\b[^.%]{0,40}?\b(?:grew|rose|increased|up|declined|decreased|fell|down)\s+(\d+(?:\.\d+)?)\s*%\s+(?:as reported|on a reported basis)/i.exec(s);
+    if (asRep) return /\b(?:declined|decreased|fell|down)\b/i.test(asRep[0]) ? -Number(asRep[1]) : Number(asRep[1]);
     if (/\b(?:outlook|guidance|expects?|expected|anticipat|forecast|adjusted|non-gaap|constant currency|organic|comparable|same[- ]store|segment)\b/i.test(s)) continue;
     const gap = String.raw`(?:[^.%]|\.(?=\d)){0,70}?`;
     const a = new RegExp(String.raw`\b(?:total |net |consolidated )*(?:revenues?|net sales|sales)\b${gap}\b(rose|increased|grew|climbed|jumped|up|increase of|growth of|decreased|declined|fell|dropped|down|decrease of|decline of)\s+(?:by\s+)?(?:approximately\s+)?(\d+(?:\.\d+)?)\s*%`, 'i').exec(s);
     if (!a) continue;
+    // zzz1228: a product's or brand's revenue ("MIEBO® reported revenue grew 42%") is not the company's
+    const before = s.slice(Math.max(0, a.index - 40), a.index);
+    if (/[®™]/.test(s.slice(0, a.index + 20)) || /\b(?!GAAP\b|USD\b|US\b)[A-Z]{3,}\b[^a-z]{0,4}$/.test(before.trim()) || /\b(?:product|brand|franchise|division|business|unit)\b/i.test(before)) continue;
     const v = Number(a[2]);
     if (!Number.isFinite(v)) continue;
     return /^(?:decreased|declined|fell|dropped|down|decrease of|decline of)$/i.test(a[1]) ? -v : v;

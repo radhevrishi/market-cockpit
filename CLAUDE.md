@@ -3923,3 +3923,10 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   (auditor resigned, fraud, default, insolvency …) → HARD_STOP; earnings rule (revenue > 20%, margin +2 pts from < 8%, cash ≥ 0.8×);
   next proof, kill event, five-line memo. A SAST stake disclosure, the company buying a stake elsewhere, a plain order or a bare rights
   issue is not a turnaround; a loss → profit swing on sales under +10% is not a revival. `components/turnaround/TurnaroundBadge.tsx` (chip, expands). TG page: "🔄 Turnarounds" filter chip.
+- zzz1228 (3 Nov): a product line's revenue is not the company's. us-card `statedRevenueGrowth`: "Revenue Grew 7% as Reported and 8% …
+  constant currency" → 7 (as-reported wins), a sentence where revenue follows ® / ™ / an ALL-CAPS brand / product / franchise is
+  skipped (Bausch + Lomb "MIEBO® reported revenue grew 42%" had become company revenue +42%). `outlookOf`: a "range" whose two ends
+  are different units (42% to $119 million) or that follows grew / rose / reported is an actual, not an outlook. Transformational
+  board (`reviewItem`, on read): US stored revenue growth that fights the headline's stated company figure (`headlineRevenueGrowth`)
+  is replaced. Turnaround: a drug / technology collaboration-and-licence is not BRAND_LICENSE. Board: an order whose value was
+  read from the filing text states it in place of "(value not stated)"; profit down ≥ 100% shows "profit swung to a loss", not −271.9%.

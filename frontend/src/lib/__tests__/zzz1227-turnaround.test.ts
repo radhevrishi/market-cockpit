@@ -80,3 +80,8 @@ test('09 live 3 Nov: a profit swing on flat or falling sales is not a revival (C
   assert.equal(o?.archetype, 'OWNERSHIP_RESCUE');
   assert.equal(o?.stage, 2);
 });
+
+test('10 live 3 Nov: a drug collaboration-and-licence deal (Vir + Gilead) is not a brand turnaround', () => {
+  assert.equal(turnaroundOf({ texts: ['Licensing deal: Vir Biotechnology and Gilead Sciences entered into a Collaboration and License Agreement for an antibody program.'], ids: ['licensing'] }), null);
+  assert.equal(turnaroundOf({ texts: ['Letter of intent for manufacturing and distribution rights for Guess watches in India.'] })?.archetype, 'BRAND_LICENSE');
+});
