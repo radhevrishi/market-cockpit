@@ -2,7 +2,7 @@
 // Called by POST /api/v1/results-pdf (hourly GitHub job). Every network / KV / model
 // step is injected so the run can be tested without any of them.
 import {
-  RP_QUEUE_KEY, RP_STATUS_KEY, RP_LOCK_KEY, RP_HAVE_KEY, RP_RESULT_KEY, RP_LATEST_KEY, RP_FAIL_KEY, RP_RESULT_TTL_S, RP_QUEUE_TTL_S, RP_MAX_TRIES, RP_MODEL, RP_FEATURE,
+  RP_QUEUE_KEY, RP_STATUS_KEY, RP_LOCK_KEY, RP_HAVE_KEY, RP_RESULT_KEY, RP_LATEST_KEY, RP_FAIL_KEY, RP_RESULT_TTL_S, RP_QUEUE_TTL_S, RP_MAX_TRIES, RP_MODEL, RP_FEATURE, RP_CHECK_VERSION,
   RESULTS_TOOL, RESULTS_SYSTEM, resultsUserPrompt, resultsExcerpt, looksLikeResultsText, checkResultsAnswer, dueItems, mergeQueue,
   type RpQueueItem, type RpRecord, type RpFail,
 } from './india-results-pdf';
@@ -66,7 +66,8 @@ export async function runResultsPdf(d: RpDeps, o: RpRunOptions = {}): Promise<Rp
     const resolved = new Set<string>(done);
     const fail = async (q: RpQueueItem, outcome: RpOutcome['outcome'], detail: string, costUsd = 0) => {
       const k = `${q.ticker}|${q.want}`; const prev = fails.get(k);
-      const rec: RpFail = { at: now.toISOString(), tries: (prev?.tries || 0) + 1, reason: detail };
+      const sameCheck = (prev?.cv ?? 1) === RP_CHECK_VERSION;
+      const rec: RpFail = { at: now.toISOString(), tries: (sameCheck ? prev?.tries || 0 : 0) + 1, reason: detail, cv: RP_CHECK_VERSION };
       await d.kv.set(RP_FAIL_KEY(q.ticker, q.want), rec, 60 * 86_400).catch(() => {});
       if (rec.tries >= RP_MAX_TRIES) resolved.add(k);   // gave up: leaves the queue, the fail record says why
       outcomes.push({ ticker: q.ticker, want: q.want, outcome, detail, costUsd });

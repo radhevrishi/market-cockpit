@@ -67,7 +67,9 @@ export interface RpQuotes {
 }
 /** zzz898 — a field where the PDF and the other source (Screener / enrich) disagree for the same quarter. */
 export interface RpDisagreement { field: string; other: number; pdf: number; quote: string | null }
-export interface RpFail { at: string; tries: number; reason: string }
+/** zzz1221 — the checker version a failure was judged under: a failure under an older checker is retried at once. */
+export const RP_CHECK_VERSION = 2;
+export interface RpFail { at: string; tries: number; reason: string; cv?: number }
 
 const DAY = 86_400_000;
 const isoDay = (s: unknown) => String(s || '').slice(0, 10);
@@ -101,7 +103,8 @@ export function dueItems(queue: RpQueueItem[], done: Set<string>, fails: Map<str
     const seenAt = Date.parse(String(q.added_at || ''));
     const from = Number.isFinite(seenAt) ? Math.max(filedAt, seenAt) : filedAt;
     if (now - from < RP_WAIT_MS) return false;
-    const f = fails.get(k);
+    const f0 = fails.get(k);
+    const f = f0 && (f0.cv ?? 1) === RP_CHECK_VERSION ? f0 : undefined;
     if (f) { const wait = failBackoffMs(f.tries); if (wait == null || now - Date.parse(f.at) < wait) return false; }
     return true;
   });
@@ -190,29 +193,37 @@ export function checkResultsAnswer(raw: any, p: { ticker: string; want: string; 
   if (k == null) return { ok: false, reason: `unknown unit "${unit}"` };
   const basis = raw.basis === 'standalone' ? 'standalone' : raw.basis === 'consolidated' ? 'consolidated' : null;
   if (!basis) return { ok: false, reason: 'basis (consolidated / standalone) not stated' };
-  const rc = num(raw.revenue_current), rp = num(raw.revenue_year_ago), nc = num(raw.net_profit_current), np = num(raw.net_profit_year_ago), ec = num(raw.eps_current), ep = num(raw.eps_year_ago);
+  const rc = num(raw.revenue_current), rp = num(raw.revenue_year_ago), nc = num(raw.net_profit_current), np = num(raw.net_profit_year_ago);
+  let ec = num(raw.eps_current), ep = num(raw.eps_year_ago);
   if (rc == null || rc <= 0) return { ok: false, reason: 'no revenue figure for the quarter' };
   const docNums = numbersIn(p.docText);
-  const named: Array<[string, number | null]> = [['revenue', rc], ['revenue a year ago', rp], ['net profit', nc], ['net profit a year ago', np], ['EPS', ec], ['EPS a year ago', ep]];
+  const named: Array<[string, number | null]> = [['revenue', rc], ['revenue a year ago', rp], ['net profit', nc], ['net profit a year ago', np]];
   for (const [label, v] of named) if (!inDoc(v, docNums)) return { ok: false, reason: `${label} ${v} is not printed in the document` };
+  // zzz1221 — EPS is the least important figure and the hardest row to copy (it sits under a "Basic / Diluted" heading):
+  // an EPS that does not check out is LEFT OUT, it no longer throws away the revenue and profit that did (26 of 31 answers
+  // on 3 Nov were rejected, most for EPS alone)
+  let epsDropped = false;
+  if (!inDoc(ec, docNums) || !inDoc(ep, docNums)) { ec = null; ep = null; epsDropped = true; }
   // zzz883: each figure must sit on its own printed row, and that row must really be in the document — "the number appears
   // somewhere in the PDF" is not enough (a page has hundreds of numbers)
+  const docNorm = p.docText.toLowerCase().replace(/[^a-z0-9.()-]+/g, '');
   const rowCheck = (label: string, line: unknown, words: RegExp, vals: Array<number | null>): string | null => {
     if (vals.every((v) => v == null)) return null;
     const ln = typeof line === 'string' ? line.trim() : '';
     if (ln.length < 6) return `${label}: the printed row was not copied`;
     if (!words.test(ln)) return `${label}: the copied row does not name ${label}`;
-    const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9.()-]+/g, ' ').replace(/\s+/g, ' ').trim();
-    if (!norm(p.docText).includes(norm(ln).slice(0, 80))) return `${label}: the copied row is not in the document`;
+    // zzz1221 — compared with spaces removed: PDF text often runs the label into the first figure ("operations718.47")
+    const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9.()-]+/g, '');
+    if (!docNorm.includes(norm(ln).slice(0, 60))) return `${label}: the copied row is not in the document`;
     const lineNums = numbersIn(ln);
     // on its own row the figure must be printed exactly (to the paisa / the last printed decimal), not merely close
     for (const v of vals) if (v != null && !lineNums.some((d) => Math.abs(Math.abs(v) - Math.abs(d)) <= 0.005)) return `${label} ${v} is not on the copied ${label} row`;
     return null;
   };
   const rowErr = rowCheck('revenue', raw.revenue_line, /revenue|income|sales|turnover/i, [rc, rp])
-    || rowCheck('net profit', raw.net_profit_line, /profit|loss|pat/i, [nc, np])
-    || rowCheck('EPS', raw.eps_line, /earnings|eps|per share/i, [ec, ep]);
+    || rowCheck('net profit', raw.net_profit_line, /profit|loss|pat/i, [nc, np]);
   if (rowErr) return { ok: false, reason: rowErr };
+  if (!epsDropped && rowCheck('EPS', raw.eps_line, /earnings|eps|per share|basic|diluted/i, [ec, ep])) { ec = null; ep = null; epsDropped = true; }
   // a year-ago revenue more than 20x apart from this quarter is a misread column, not growth
   if (rp != null && rp > 0 && (rc / rp > 20 || rp / rc > 20)) return { ok: false, reason: 'revenue columns do not look like the same company quarter a year apart' };
   const cr = (v: number | null) => (v == null ? null : Math.round(v * k * 100) / 100);
@@ -228,7 +239,7 @@ export function checkResultsAnswer(raw: any, p: { ticker: string; want: string; 
       quotes: {
         revenue_line: String(raw.revenue_line).trim(),
         net_profit_line: typeof raw.net_profit_line === 'string' && raw.net_profit_line.trim() ? raw.net_profit_line.trim() : null,
-        eps_line: typeof raw.eps_line === 'string' && raw.eps_line.trim() ? raw.eps_line.trim() : null,
+        eps_line: !epsDropped && typeof raw.eps_line === 'string' && raw.eps_line.trim() ? raw.eps_line.trim() : null,
         printed: { revenue_current: rc, revenue_year_ago: rp, net_profit_current: nc, net_profit_year_ago: np, eps_current: ec, eps_year_ago: ep },
       },
     },

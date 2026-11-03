@@ -66,7 +66,7 @@ describe('zzz879 — queue', () => {
   test('due: seen 20+ minutes ago (zzz1221; was 2 h, then 2 days), not done, back-off respected, given up after 4', () => {
     const now = Date.parse('2026-10-06T10:00:00Z');
     const q = [it('OLD', '2026-10-01'), it('NEW', '2026-10-05'), it('DONE', '2026-10-01'), it('WAIT', '2026-10-01'), it('GONE', '2026-10-01'), it('RETRY', '2026-10-01')];
-    const fails = new Map([['WAIT|2026-09-30', { at: '2026-10-06T08:00:00Z', tries: 1, reason: '' }], ['GONE|2026-09-30', { at: '2026-09-01T00:00:00Z', tries: 4, reason: '' }], ['RETRY|2026-09-30', { at: '2026-10-05T00:00:00Z', tries: 1, reason: '' }]]);
+    const fails = new Map([['WAIT|2026-09-30', { at: '2026-10-06T08:00:00Z', tries: 1, reason: '', cv: 2 }], ['GONE|2026-09-30', { at: '2026-09-01T00:00:00Z', tries: 4, reason: '', cv: 2 }], ['RETRY|2026-09-30', { at: '2026-10-05T00:00:00Z', tries: 1, reason: '', cv: 2 }]]);
     assert.deepEqual(dueItems(q, new Set(['DONE|2026-09-30']), fails, now).map((x) => x.ticker), ['OLD', 'NEW', 'RETRY']);
     const fresh = { ticker: 'TODAY', filed: '2026-10-06', want: '2026-09-30', added_at: '2026-10-06T09:50:00Z' };
     assert.deepEqual(dueItems([fresh], new Set(), new Map(), now), [], 'seen 10 min ago: Screener gets 20 min first (zzz1221)');
@@ -145,4 +145,32 @@ describe('zzz1221 — a results day is read 4 names at a time', () => {
     assert.ok(Date.now() - t < 2000, `took ${Date.now() - t} ms`);   // peak = 4 is the real check; time is loose for busy CI
     assert.deepEqual(kv.store.get(RP_QUEUE_KEY), []);
   });
+});
+
+describe('zzz1221 — a bad EPS no longer throws away good revenue and profit', () => {
+  test('EPS not printed → record kept, EPS left out', () => {
+    const r = checkResultsAnswer(ans({ eps_current: 0.68 }), P);
+    assert.equal(r.ok, true);
+    if (r.ok) { assert.equal(r.record.eps_curr, null); assert.equal(r.record.quotes?.eps_line, null); assert.equal(r.record.sales_curr_cr, 123.46); }
+  });
+  test('EPS row that does not name EPS → EPS left out; a "Basic" row is accepted', () => {
+    const r = checkResultsAnswer(ans({ eps_line: 'Profit for the period 1,120.50 980.00 (210.75)' }), P);
+    assert.ok(r.ok && r.record.eps_curr == null);
+    const b = checkResultsAnswer(ans({ eps_line: 'Basic 4.56 3.98 (0.86)' }), P);
+    assert.ok(b.ok && b.record.eps_curr === 4.56);
+  });
+  test('a row whose label runs into the figure in the PDF text still counts', () => {
+    const doc = DOC.replace('Revenue from operations 12,345.67', 'Revenue from operations12,345.67');
+    assert.equal(checkResultsAnswer(ans(), { ...P, docText: doc }).ok, true);
+  });
+  test('revenue is still strict', () => {
+    assert.equal(checkResultsAnswer(ans({ revenue_current: 12999 }), P).ok, false);
+  });
+});
+
+test('zzz1221 — a failure judged by the older checker is retried at once', () => {
+  const now = Date.parse('2026-10-06T10:00:00Z');
+  const q = [{ ticker: 'R', filed: '2026-10-01', want: '2026-09-30', added_at: 'x' }];
+  assert.equal(dueItems(q, new Set(), new Map([['R|2026-09-30', { at: '2026-10-06T09:00:00Z', tries: 1, reason: 'EPS' }]]), now).length, 1);
+  assert.equal(dueItems(q, new Set(), new Map([['R|2026-09-30', { at: '2026-10-06T09:00:00Z', tries: 1, reason: 'EPS', cv: 2 }]]), now).length, 0);
 });
