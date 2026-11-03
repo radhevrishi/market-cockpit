@@ -40,6 +40,8 @@ export async function runResultsPdf(d: RpDeps, o: RpRunOptions = {}): Promise<Rp
   try {
     const queue = mergeQueue(await d.kv.get<RpQueueItem[]>(RP_QUEUE_KEY), []);
     const done = new Set<string>(); const fails = new Map<string, RpFail>();
+    // zzz1226 — names whose figures were read by an older checker are SHOWN wrong until re-read: they go first, from their known PDF
+    const stale = new Map<string, string>();
     if (d.kv.mget) {
       for (let i = 0; i < queue.length; i += 100) {
         const part = queue.slice(i, i + 100);
@@ -49,6 +51,7 @@ export async function runResultsPdf(d: RpDeps, o: RpRunOptions = {}): Promise<Rp
           const k = `${q.ticker}|${q.want}`;
           const have = vals[2 * j] as RpRecord | null, f = vals[2 * j + 1] as RpFail | null;
           if (have && (have as any).quotes && ((have as any).ck ?? 0) >= RP_MIN_RECORD_CK) done.add(k);
+          else if (have && (have as any).source_url) stale.set(k, String((have as any).source_url));
           if (f) fails.set(k, f);
         });
       }
@@ -57,10 +60,13 @@ export async function runResultsPdf(d: RpDeps, o: RpRunOptions = {}): Promise<Rp
       // zzz898: a record read before row quotes were stored is re-read once (it is not used for the overlay)
       const have = await d.kv.get<RpRecord>(RP_RESULT_KEY(q.ticker, q.want));
       if (have && (have as any).quotes && ((have as any).ck ?? 0) >= RP_MIN_RECORD_CK) done.add(k);
+      else if (have && (have as any).source_url) stale.set(k, String((have as any).source_url));
       const f = await d.kv.get<RpFail>(RP_FAIL_KEY(q.ticker, q.want));
       if (f) fails.set(k, f);
     }
-    const due = dueItems(queue, done, fails, now.getTime());
+    const due = dueItems(queue, done, fails, now.getTime())
+      .map((q) => { const u = stale.get(`${q.ticker}|${q.want}`); return u && !q.url ? { ...q, url: u } : q; })
+      .sort((a, b) => Number(stale.has(`${b.ticker}|${b.want}`)) - Number(stale.has(`${a.ticker}|${a.want}`)));
     const outcomes: RpOutcome[] = []; const regrade = new Map<string, Set<string>>(); let spent = 0;
     const mark = (date: string, t: string) => { const s = regrade.get(date) || new Set<string>(); s.add(t); regrade.set(date, s); };
     const resolved = new Set<string>(done);

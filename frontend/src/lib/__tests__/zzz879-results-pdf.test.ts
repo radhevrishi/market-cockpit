@@ -135,6 +135,14 @@ describe('zzz879 — runner', () => {
     const r4 = await runResultsPdf(base(kv4, { findDocs: async () => [] }));
     assert.equal(r4.outcomes[0].outcome, 'no_document');
   });
+  test('zzz1226 — a name whose figures were read by an older checker goes first, from its known PDF', async () => {
+    const q = [{ ticker: 'NEWCO', filed: '2026-10-03', want: '2026-09-30', added_at: 'x' }, { ticker: 'ANTHEM', filed: '2026-10-01', want: '2026-09-30', added_at: 'x' }];
+    const kv = memKv({ [RP_QUEUE_KEY]: q, [RP_RESULT_KEY('ANTHEM', '2026-09-30')]: { v: 1, ck: 4, quotes: {}, source_url: 'https://x/anthem-results.pdf' } });
+    const seen: Array<string | null | undefined> = [];
+    const r = await runResultsPdf(base(kv, { findDocs: async (it) => { seen.push(it.url); return ['https://x/results.pdf']; } }), { concurrency: 1 } as any);
+    assert.equal(r.outcomes[0].ticker, 'ANTHEM');
+    assert.equal(seen[0], 'https://x/anthem-results.pdf');
+  });
   test('a held lock skips the run', async () => {
     const kv = memKv({ 'results-pdf:v1:lock': 'x' });
     assert.equal((await runResultsPdf(base(kv))).skipped, 'another run is in progress');

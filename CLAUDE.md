@@ -3915,3 +3915,4 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   transformation checks (they contradicted them); the card shows "Next check: <first open gate>" and "Reported results: growing /
   not growing · link: not proven". Tile "Confirmed or potential change".
   zzz1226b: results-PDF runs 270 s with 6 lanes (was 150 s × 4 → ~15 names a run on a 90-name queue); job call timeout 400 s.
+  zzz1226c: a queued name whose stored figures were read by an older checker (shown wrong until re-read) goes first in the results-PDF run, from its known PDF URL.
