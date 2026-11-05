@@ -464,7 +464,9 @@ export const APP_JOBS: readonly AppJob[] = [
   // single-purpose workflows
   { name: 'refresh-movers', crons: ['30 3 * * 1-5', '30 5 * * 1-5', '30 7 * * 1-5', '2 9 * * 1-5', '15 10 * * 1-5', '45 10 * * 1-5', '30 11 * * 1-5', '30 12 * * 1-5', '30 13 * * 1-5', '30 15 * * 1-5'], timeoutMs: 6 * MIN, workflow: 'refresh-movers.yml', does: 'GET /api/market/quotes?market=india|us&refresh=1', run: moversJob },
   { name: 'refresh-news-feed', crons: ['9 * * * *'], timeoutMs: 6 * MIN, workflow: 'refresh-news-feed.yml', does: 'POST /api/v1/news/refresh, GET /api/v1/news?market=all, GET /api/v1/news/in-play', run: newsFeedJob },
-  { name: 'refresh-special-situations', crons: ['*/15 3-12 * * 1-5', '11 13-23 * * *', '11 0-2 * * *'], timeoutMs: 4 * MIN, workflow: 'refresh-special-situations.yml', does: 'GET /api/v1/special-situations/feed?refresh=1', run: http('GET', '/api/v1/special-situations/feed?refresh=1', 90_000) },
+  // A blocked RSS/SEC refresh must not occupy the single heavy-job slot for ~3.5 minutes with a doomed retry.
+  // The next 15-minute slot retries naturally; SWR keeps the last-good feed for readers.
+  { name: 'refresh-special-situations', crons: ['*/15 3-12 * * 1-5', '11 13-23 * * *', '11 0-2 * * *'], timeoutMs: 90_000, workflow: 'refresh-special-situations.yml', does: 'GET /api/v1/special-situations/feed?refresh=1', run: http('GET', '/api/v1/special-situations/feed?refresh=1', 60_000, { retry: false }) },
   { name: 'refresh-guidance-upgrades', crons: ['10 * * * *'], timeoutMs: 12 * MIN, workflow: 'refresh-guidance-upgrades.yml', does: 'GET /api/v1/guidance-upgrades (30D, 120D), GET /api/v1/guidance-universe, POST /api/v1/intel-archive', run: guidanceUpgradesJob },
   { name: 'daily-summary', crons: ['30 16 * * 1-5'], timeoutMs: 4 * MIN, workflow: 'daily-summary.yml', does: 'POST /api/v1/cron/daily-summary', run: http('POST', '/api/v1/cron/daily-summary', 60_000) },
   { name: 'data-watch', crons: ['30 5 * * *', '30 10 * * 1-5', '30 14 * * 1-5'], timeoutMs: 15 * MIN, workflow: 'data-watch.yml', does: 'GET /api/v1/cron/data-watch (heals what it can)', run: dataWatchJob },
