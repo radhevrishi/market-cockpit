@@ -30,6 +30,12 @@ test('409 preserves local changes, does not advance sync metadata, and emits a v
     assert.deepEqual(JSON.parse(b.values.get('mc:vault:meta:v1')!), last);
     assert.equal(JSON.parse(b.values.get(`mc:vault:conflict:${key}`)!).value.__raw, JSON.stringify(['local edit']));
     assert.ok(b.events.some(e => e.type === 'mc:vault:conflict'));
+    assert.equal(b.values.get(`mc:vault:conflict-paused:${key}`), '1');
+    // Subsequent polls can read metadata, but must not repeat an impossible
+    // version-checked PUT or consume CPU/network indefinitely.
+    const again = await syncVaultOnce();
+    assert.equal(puts, 1);
+    assert.deepEqual(again.pushed, []);
   } finally { b.close(); }
 });
 
