@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { resolveVaultConflict } from '@/lib/user-vault-client';
+import { resolveVaultConflict, pendingVaultConflicts } from '@/lib/user-vault-client';
 import { pendingOverflows, dismissOverflow, deleteOverflow, OVERFLOW_PREFIX, type OverflowNotice } from '@/lib/vault-overflow';
 
 /** A conflict must be visible; neither device's saved copy is silently replaced. */
@@ -14,6 +14,9 @@ export default function VaultSyncNotice() {
   const reread = () => { try { setOverflows(pendingOverflows(localStorage)); } catch { setOverflows([]); } };
   useEffect(() => {
     reread();
+    // The earlier notice disappeared on reload despite a conflict being
+    // unresolved; restore it without another doomed PUT to the server.
+    setKey(pendingVaultConflicts()[0] || '');
     const onConflict = (event: Event) => setKey((event as CustomEvent<{ key: string }>).detail.key);
     const onOverflow = (event: Event) => {
       const d = (event as CustomEvent<{ key: string; message: string; kept?: boolean }>).detail;
@@ -52,7 +55,7 @@ export default function VaultSyncNotice() {
   if (!key) return null;
   const resolve = async (choice: 'local' | 'server') => {
     setBusy(true); setError('');
-    try { await resolveVaultConflict(key, choice); setKey(''); }
+    try { await resolveVaultConflict(key, choice); setKey(pendingVaultConflicts()[0] || ''); }
     catch (e) { setError(e instanceof Error ? e.message : 'Resolution failed'); }
     finally { setBusy(false); }
   };
