@@ -1080,8 +1080,8 @@ export default function HomeDashboard() {
             };
             const NEWS_TOTAL_BUDGET_MS = 8_000;
             const PER_TICKER_TIMEOUT_MS = 5_000;
-            // zzz855 — the per-ticker fan-out (2 requests × ~40 movers = ~80
-            // requests, re-fired on EVERY refresh tick) is now:
+            // The per-ticker fan-out is bounded to 8 movers (at most 16 calls)
+            // and cached on later refresh ticks:
             //   • ordered by |% move| so the biggest movers are looked up first,
             //   • limited to 3 tickers (= 6 requests) in flight at once,
             //   • bounded by the same 8 s budget — when it expires, tickers not
@@ -1089,8 +1089,11 @@ export default function HomeDashboard() {
             //     timed out before were left without a news reason,
             //   • cached 10 min per ticker, so refresh ticks reuse the results.
             const newsBudgetCtl = new AbortController();
+            // Bound home-page RSS fan-out to the biggest eight movers (up to 16 lookups).
+            // The old all-ticker path could launch ~80 live RSS requests per refresh,
+            // causing browser 5 s aborts and competing with earnings/news API reads.
             const newsOrder = moverTickers.slice().sort((a, b) =>
-              Math.abs(moverInputByTicker.get(b)?.changePercent ?? 0) - Math.abs(moverInputByTicker.get(a)?.changePercent ?? 0));
+              Math.abs(moverInputByTicker.get(b)?.changePercent ?? 0) - Math.abs(moverInputByTicker.get(a)?.changePercent ?? 0)).slice(0, 8);
             const enrichAllNews = (async () => {
               await mapWithLimit(newsOrder, Math.max(1, Math.floor(FANOUT_CONCURRENCY / 2)), async (t) => {
                 const meta = moverInputByTicker.get(t);
