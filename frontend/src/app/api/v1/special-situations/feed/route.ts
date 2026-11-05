@@ -439,8 +439,9 @@ function extractTickers(text: string, region: 'IN'|'US'|'GLOBAL'): string[] {
 
 async function fetchFeedSafe(src: FeedSource, timeoutMs = 4500): Promise<{ src: FeedSource; xml: string } | null> {
   try {
-    const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(), timeoutMs);
+    // Keep the abort deadline active until response.text() finishes. Previously
+    // the timer was cleared on headers, leaving stalled RSS bodies unbounded.
+    const signal = AbortSignal.timeout(timeoutMs);
     // PATCH 0100: SEC EDGAR requires identifying User-Agent (company name + contact email).
     // Using browser UA gets 403.  Other feeds accept either.
     const isSEC = /sec\.gov/.test(src.url);
@@ -453,10 +454,9 @@ async function fetchFeedSafe(src: FeedSource, timeoutMs = 4500): Promise<{ src: 
         'Accept': isSEC ? 'application/atom+xml, application/xml' : 'application/rss+xml, application/xml, */*',
         'Accept-Encoding': 'gzip, deflate',
       },
-      signal: ac.signal,
+      signal,
       cache: 'no-store',
     });
-    clearTimeout(t);
     if (!res.ok) return null;
     const xml = await res.text();
     return { src, xml };
