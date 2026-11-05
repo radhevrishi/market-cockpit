@@ -13,6 +13,14 @@ import { VAULT_MERGERS, VAULT_BASE_KEYS, vaultMergeLost } from './chart-sync';
 import { storeOverflow } from './vault-overflow';   // zzz1093
 const META_KEY = 'mc:vault:meta:v1';
 const DEVICE_KEY = 'mc:vault:device:v1';
+// A genuine 409 needs an explicit owner decision. Don't retry the same stale
+// version on every 60s poll (or on every open browser tab).
+const CONFLICT_PAUSED_PREFIX = 'mc:vault:conflict-paused:';
+export function pendingVaultConflicts(): string[] {
+  if (typeof localStorage === 'undefined') return [];
+  try { return USER_STATE_KEYS_CLIENT.filter((k) => localStorage.getItem(CONFLICT_PAUSED_PREFIX + k) === '1'); }
+  catch { return []; }
+}
 export interface VaultMetaEntry { hash: string; version: number }
 export type VaultAction = { kind: 'push' } | { kind: 'pull' } | { kind: 'none' };
 
@@ -93,6 +101,9 @@ export async function syncVaultOnce(): Promise<{ pushed: string[]; pulled: strin
     const server: Record<string, VaultMetaEntry> = {};
     for (const k of j.keys || []) server[k.key] = { hash: meta[k.key]?.version === k.version ? meta[k.key].hash : `srv:${k.hash}`, version: Number(k.version) };
     for (const key of USER_STATE_KEYS_CLIENT) {
+      // Never auto-overwrite either side while the owner has a pending conflict.
+      // Independent keys can still sync; the banner survives tab reloads.
+      if (localStorage.getItem(CONFLICT_PAUSED_PREFIX + key) === '1') continue;
       const local = readLocal(key); const lh = localHashOf(local);
       // zzz944: merged keys — when the server holds a copy this device has not merged yet, combine both instead of letting one
       // replace the other (first contact used to hand the server copy the win and wiped this device's chart drawings)
@@ -135,6 +146,7 @@ export async function syncVaultOnce(): Promise<{ pushed: string[]; pulled: strin
         if (p.status === 409) {
           // Keep both versions: local edit stays active; a recovery copy is explicit.
           localStorage.setItem(`mc:vault:conflict:${key}`, JSON.stringify({ at: new Date().toISOString(), value: local }));
+          localStorage.setItem(CONFLICT_PAUSED_PREFIX + key, '1');
           window.dispatchEvent(new CustomEvent('mc:vault:conflict', { detail: { key } }));
           return { pushed, pulled, error: `Sync conflict for ${key}; local edits preserved` };
         }
@@ -194,6 +206,8 @@ export async function resolveVaultConflict(key: string, choice: 'local' | 'serve
   meta[key] = { hash: choice === 'local' ? hash : localHashOf(readLocal(key)), version };
   localStorage.setItem(META_KEY, JSON.stringify(meta));
   rememberBase(key, choice === 'local' ? local : readLocal(key));
+  // Only a successful explicit resolution lifts the write block.
+  localStorage.setItem(CONFLICT_PAUSED_PREFIX + key, '0');
   window.dispatchEvent(new CustomEvent('mc:vault:restored', { detail: { keys: [key] } }));
 }
 
