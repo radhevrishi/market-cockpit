@@ -27,9 +27,19 @@ export function startMemSampler(): void {
     try { const { kvGet } = await import('./kv'); const old = await kvGet<MemSample[]>(KEY); if (Array.isArray(old)) state.samples = old.slice(-MAX_SAMPLES); } catch { /* fresh history */ }
     const tick = async () => {
       try {
-        state.samples.push(await takeSample());
+        const sample = await takeSample();
+        state.samples.push(sample);
         if (state.samples.length > MAX_SAMPLES) state.samples.splice(0, state.samples.length - MAX_SAMPLES);
-        const { kvSet } = await import('./kv'); await kvSet(KEY, state.samples, 7 * 86_400);
+        const { kvSet, kvUsageSnapshot } = await import('./kv');
+        // Operational telemetry every 10 min: family-level counts only; no keys, values, or credentials.
+        // GitHub / Cloudflare writes bypass this process and are NOT included.
+        if (process.env.NODE_ENV === 'production') {
+          const u = kvUsageSnapshot();
+          console.log('[cost-watch]', JSON.stringify({ at: sample.at, rssMb: sample.rss, heapMb: sample.heapUsed,
+            kvCommandsSinceBoot: u.commands, kvPerDayAtRate: u.perDayAtThisRate,
+            topKvSources48h: u.topSources48h.slice(0, 6), activeHeavyJobs: sample.jobs }));
+        }
+        await kvSet(KEY, state.samples, 7 * 86_400);
       } catch { /* best effort */ }
     };
     await tick();
