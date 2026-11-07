@@ -343,14 +343,11 @@ export async function readAnnouncementCached(
     const hit = await kvGet<{ read: ReadAnnouncement | null }>(k);
     if (hit && 'read' in hit) return { read: hit.read, cached: true };
   } catch { /* a cold cache is a normal cache */ }
-  // A v1 read (no facts) still answers a free re-score; a paid pass re-reads
-  // it once to collect the filing's own answers. (zzz775)
-  let v1: { read: ReadAnnouncement | null } | null = null;
-  try { v1 = await kvGet<{ read: ReadAnnouncement | null }>(`ai-gainers:annread:v1:${urlHash(url)}`); } catch { v1 = null; }
-  // A page open answers from what was already read; only a click pays. (zzz768)
-  if (opts.cacheOnly) return v1 && 'read' in v1 ? { read: v1.read, cached: true } : { read: null, cached: false, skipped: true };
-  // An administrative / unreadable v1 verdict does not become readable by paying again.
-  if (v1 && 'read' in v1 && v1.read === null) return { read: null, cached: true };
+  // v1 keys were written before the v2 migration and had a 30-day TTL.
+  // There are no remaining v1 writers: probing v1 on every v2 miss doubled
+  // Redis GETs for newly encountered filings without a useful fallback.
+  // Cache-only page views still never invoke a paid model.
+  if (opts.cacheOnly) return { read: null, cached: false, skipped: true };
   // No model key: nothing is read, nothing is paid, nothing is cached — the
   // filing is read the day a key is set, not 30 days later. (zzz782)
   if (!modelConfigured()) return { read: null, cached: true };
