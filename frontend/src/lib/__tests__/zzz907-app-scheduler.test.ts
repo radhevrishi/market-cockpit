@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import {
   parseCron, prevCronSlot, nextCronSlot, prevSlot, nextSlot, dueSlot, slotWindowMs, lockTtlSec, lockKeyFor, shouldRetry,
   lockSettlesSlot, maxGapHours, staleAfterHoursFor, aiVerifyNext, guidanceExtractNext, ledgerPassComplete, aiEvalPasses,
-  APP_JOBS, MAX_WINDOW_MIN, MAX_CONCURRENT, type AppJob, type JobCtx, type CallResult,
+  APP_JOBS, MAX_WINDOW_MIN, MAX_CONCURRENT, HEAVY_JOB_HEAP_GUARD_MB, shouldDeferHeavyJob, type AppJob, type JobCtx, type CallResult,
 } from '../app-scheduler';
 
 const at = (iso: string) => new Date(iso);
@@ -212,4 +212,13 @@ test('moved workflows have no schedule left (no double runs) but keep the manual
 // the web server with multiple concurrent research tasks.
 test('web scheduler allows one heavy job at a time', () => {
   assert.equal(MAX_CONCURRENT, 1);
+});
+
+// 2026-11-07: prevent another 3 GB heap OOM while preserving alert delivery.
+test('web scheduler defers heavy jobs when near heap ceiling', () => {
+  assert.equal(HEAVY_JOB_HEAP_GUARD_MB, 1800);
+  assert.equal(shouldDeferHeavyJob((HEAVY_JOB_HEAP_GUARD_MB - 1) * 1048576), false);
+  assert.equal(shouldDeferHeavyJob(HEAVY_JOB_HEAP_GUARD_MB * 1048576), true);
+  assert.equal(shouldDeferHeavyJob((HEAVY_JOB_HEAP_GUARD_MB + 1) * 1048576), true);
+  assert.equal(shouldDeferHeavyJob(NaN), false);
 });
