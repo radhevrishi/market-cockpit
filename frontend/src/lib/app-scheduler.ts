@@ -171,6 +171,12 @@ export const RETRY_DELAY_MS = 45_000;
 // overlapping PDF/AI jobs to compete with live quote, news and dashboard reads.
 // Schedule slots are still queued by the existing Redis-locked scheduler.
 export const MAX_CONCURRENT = 1;
+// Leave >1 GB of headroom below the web process's 3 GB V8 heap limit.
+// This is a protective circuit breaker, not a substitute for finding retained memory.
+export const HEAVY_JOB_HEAP_GUARD_MB = 1800;
+export function shouldDeferHeavyJob(heapUsedBytes: number, ceilingMb = HEAVY_JOB_HEAP_GUARD_MB): boolean {
+  return Number.isFinite(heapUsedBytes) && heapUsedBytes >= ceilingMb * 1024 * 1024;
+}
 export const LOCK_PREFIX = 'appsched:v1';
 
 const ym = (d: Date, addMonths = 0) => { const x = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + addMonths, 1)); return `${x.getUTCFullYear()}-${String(x.getUTCMonth() + 1).padStart(2, '0')}`; };
@@ -689,6 +695,7 @@ let started = false;
 const running = new Set<string>();
 /** slot (ISO minute) per job that this process knows is settled (done here, done elsewhere, or succeeded) */
 const settled = new Map<string, string>();
+let lastHeapGuardWarningAt = 0;
 
 async function postHeartbeat(base: string, name: string, out: JobOutcome): Promise<void> {
   await fetch(`${base}/api/v1/cron/heartbeat`, {
@@ -758,6 +765,17 @@ async function tick(base: string, secret: string): Promise<void> {
     return settled.get(j.name) !== s.toISOString().slice(0, 16);
   });
   if (!cands.length) return;
+  // Do not start another PDF / AI / full-feed task when the web process is close
+  // to its V8 heap ceiling. Leave the slot unclaimed so it can run on a later tick.
+  // Minute-level price alerts and delivery above still execute normally.
+  const heapUsedBytes = process.memoryUsage().heapUsed;
+  if (shouldDeferHeavyJob(heapUsedBytes)) {
+    if (Date.now() - lastHeapGuardWarningAt >= 10 * MIN) {
+      lastHeapGuardWarningAt = Date.now();
+      console.warn(`[app-scheduler] memory guard: deferring heavy jobs at ${Math.round(heapUsedBytes / 1048576)} MB heap (limit ${HEAVY_JOB_HEAP_GUARD_MB} MB); light alert jobs remain active`);
+    }
+    return;
+  }
   const rows = await kvMGet<{ last_ok_at?: string | null }>(cands.map((j) => `cron-heartbeat:row:${j.name}`));
   for (let i = 0; i < cands.length; i++) {
     const job = cands[i];
