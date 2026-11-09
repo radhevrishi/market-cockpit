@@ -42,6 +42,13 @@ export default function PortfolioPage() {
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [viewTab, setViewTab] = useState<'holdings' | 'analytics' | 'regime' | 'fundamentals' | 'earnings' | 'tradebook'>('holdings'); // PATCH 1100 + zzz285 + PATCH 1103
+  // zzz1237 — /portfolio?tab=tradebook (nav "Tradebook" + home favourite) opens that tab directly
+  useEffect(() => {
+    try {
+      const t = new URLSearchParams(window.location.search).get('tab');
+      if (t === 'tradebook' || t === 'analytics' || t === 'regime' || t === 'fundamentals' || t === 'earnings' || t === 'holdings') setViewTab(t);
+    } catch { /* no URL */ }
+  }, []);
   const [capFilter, setCapFilter] = useState<'all' | 'large' | 'mid' | 'small' | 'micro'>('all'); // PATCH 1100
   // zzz311 — tier filter driven from Analytics tier-mix chips. '' = no filter.
   const [tierFilter, setTierFilter] = useState<'' | 'BLOCKBUSTER' | 'STRONG' | 'MIXED' | 'AVOID' | 'NONE'>('');
