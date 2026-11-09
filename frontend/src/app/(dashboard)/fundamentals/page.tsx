@@ -7,6 +7,8 @@
 // fields, not the row count. No external chart deps (inline SVG + CSS bars).
 // ============================================================================
 
+import { useMaStreaks } from '@/lib/use-ma-streak';   // zzz1231
+import { daysBelowText, low3Text } from '@/lib/ma-streak';   // zzz1231
 import { useState, useMemo, useCallback, useEffect } from 'react';
 // PATCH 1101qqq — auto-sync loader feeds CSVs (committed by daily GitHub
 // Action) into the existing handleText() pipeline, so the user's Portfolio
@@ -1041,6 +1043,8 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
   // nameless rows showing only an "Industry" cell). Now: rows must have a
   // proper-looking Symbol (1-19 chars, not all digits) to be included.
 
+  // zzz1231 — sessions below the 50 / 200 EMA + the 3-candle low, for names under either average
+  const usStreaks = useMaStreaks(rows.filter((r) => (typeof r.pctVsEma50 === 'number' && r.pctVsEma50 < 0) || (typeof r.pctVsEma200 === 'number' && r.pctVsEma200 < 0)).map((r) => r.symbol), 'US');
   // zzz904 — basis of every USA figure, read from the column the export actually used (first candidate present).
   const B = useMemo(() => {
     const headers = new Set<string>();
@@ -1155,6 +1159,8 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
                     <th style={{ textAlign: 'right', padding: '6px 10px', fontSize: 12, whiteSpace: 'nowrap' }}>PRICE</th>
                     <th style={{ textAlign: 'right', padding: '6px 10px', fontSize: 12, whiteSpace: 'nowrap' }}>EMA</th>
                     <th style={{ textAlign: 'right', padding: '6px 10px', fontSize: 12, whiteSpace: 'nowrap' }}>% vs MA</th>
+                    {pctKey && items.some((r) => (r[pctKey] as number) < 0) && <th style={{ textAlign: 'right', padding: '6px 10px', fontSize: 12, whiteSpace: 'nowrap' }} title="Consecutive daily closes under this EMA, counted back from the latest bar.">BELOW FOR</th>}
+                    {pctKey && items.some((r) => (r[pctKey] as number) < 0) && <th style={{ textAlign: 'right', padding: '6px 10px', fontSize: 12, whiteSpace: 'nowrap' }} title="Lowest low of the 3 sessions before the latest. Broken = latest close under it; tested = latest low under it, close recovered.">3-CANDLE LOW</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -1165,6 +1171,14 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
                       <td style={{ padding: '7px 10px', textAlign: 'right', color: COL.txt, fontSize: 13 }}>{r.price?.toFixed(2) ?? '—'}</td>
                       <td style={{ padding: '7px 10px', textAlign: 'right', color: COL.muted, fontSize: 13 }}>{(r[maKey] as number)?.toFixed(2) ?? '—'}</td>
                       <td style={{ padding: '7px 10px', textAlign: 'right', color: titleColor, fontWeight: 800, fontSize: 13 }}>{(r[pctKey] as number)?.toFixed(1)}%</td>
+                      {items.some((x) => (x[pctKey] as number) < 0) && (() => {
+                        const st = usStreaks[String(r.symbol || '').toUpperCase()];
+                        const run = st ? (st as any)[maKey] : null;
+                        return (<>
+                          <td style={{ padding: '7px 10px', textAlign: 'right', color: run?.below ? '#EF4444' : COL.muted, fontSize: 12 }} title={st ? `Daily closes to ${st.at}${run?.since ? `; below since ${run.since}` : ''}` : 'Reading the daily chart…'}>{daysBelowText(run)}</td>
+                          <td style={{ padding: '7px 10px', textAlign: 'right', color: st?.low3State === 'breached' ? '#EF4444' : st?.low3State === 'tested' ? '#F59E0B' : COL.muted, fontWeight: st?.low3State === 'breached' ? 700 : 400, fontSize: 12 }} title={st?.low3 != null ? `3-candle low ${st.low3}; latest close ${st.low3Pct}% from it` : 'Not known yet'}>{low3Text(st)}</td>
+                        </>);
+                      })()}
                     </tr>
                   ))}
                 </tbody>
@@ -2315,6 +2329,10 @@ function MATable({ rows, dmaKey, name, nse, cmp, isLive, liveAt }: {
   // (defensive; legacy callers, if any).
   const getCmp = (d: Row): number => cmp ? cmp(d) : num(d['Current Price']);
   const live = (d: Row): boolean => (isLive ? isLive(d) : false);
+  // zzz1231 — how many sessions below this average + the 3-candle low (daily bars)
+  const streaks = useMaStreaks(rows.map((d) => nse(d)), 'IN');
+  const runKey = dmaKey === 'DMA 200' ? 'sma200' : 'sma50';
+  const emaKey = dmaKey === 'DMA 200' ? 'ema200' : 'ema50';
   return (
     <>
       {liveAt ? (
@@ -2324,7 +2342,10 @@ function MATable({ rows, dmaKey, name, nse, cmp, isLive, liveAt }: {
       ) : null}
       <table style={tbl}>
         <thead>
-          <tr><th style={thR}></th><th style={thL}>Company</th><th style={thR}>CMP</th><th style={thR}>{dmaKey}</th><th style={thR}>% vs MA</th><th style={thR}>Chart</th></tr>
+          <tr><th style={thR}></th><th style={thL}>Company</th><th style={thR}>CMP</th><th style={thR}>{dmaKey}</th><th style={thR}>% vs MA</th>
+            <th style={thR} title="Consecutive daily closes under this average, counted back from the latest bar (daily chart).">Below for</th>
+            <th style={thR} title="The lowest low of the 3 sessions before the latest one. Broken = the latest close is under it (a fresh lower low). Tested = the latest low went under it but the close recovered.">3-candle low</th>
+            <th style={thR}>Chart</th></tr>
         </thead>
         <tbody>
           {rows.map((d, i) => {
@@ -2342,6 +2363,16 @@ function MATable({ rows, dmaKey, name, nse, cmp, isLive, liveAt }: {
                 </td>
                 <td style={tdR}>{fmt(dma, 1)}</td>
                 <td style={{ ...tdR, color: pcCol(pct), fontWeight: 700 }}>{pct >= 0 ? '+' : ''}{fmt(pct, 1)}%</td>
+                {(() => {
+                  const st = streaks[String(sym || '').toUpperCase()];
+                  const run = st ? (st as any)[runKey] : null, er = st ? (st as any)[emaKey] : null;
+                  const tip = st ? `Daily closes to ${st.at}. ${dmaKey}: ${daysBelowText(run)}${run?.since ? ` since ${run.since}` : ''}. ${emaKey.toUpperCase().replace('EMA', 'EMA ')}: ${daysBelowText(er)}${er?.since ? ` since ${er.since}` : ''}.` : 'Reading the daily chart…';
+                  const lt = st?.low3 != null ? `3-candle low ${fmt(st.low3, 1)}; latest close ${st.low3Pct != null && st.low3Pct >= 0 ? '+' : ''}${fmt(st.low3Pct as number, 1)}% from it.` : 'Not known yet.';
+                  return (<>
+                    <td style={{ ...tdR, color: run?.below ? COL.red : COL.dim }} title={tip}>{daysBelowText(run)}</td>
+                    <td style={{ ...tdR, color: st?.low3State === 'breached' ? COL.red : st?.low3State === 'tested' ? COL.amber : COL.dim, fontWeight: st?.low3State === 'breached' ? 700 : 400 }} title={lt}>{low3Text(st)}</td>
+                  </>);
+                })()}
                 <td style={tdR}><ChartLink symbol={sym} /></td>
               </tr>
             );

@@ -64,6 +64,8 @@ export interface ScreenRow {
   earnD?: number | null;     // most recent results date, days since 1970-01-01
   // ── company figures ──────────────────────────────────────────────────────────────────────────────────────────────────
   roeTTM?: number | null; roeFY?: number | null; roceTTM?: number | null; roceFY?: number | null;
+  roceP?: number | null;     // zzz1231 — ROCE of the fiscal year before roceFY
+  prom?: number | null;      // zzz1231 — India: promoter holding %, latest quarter (free float = 100 − this)
   nmTTM?: number | null;     // net margin, last 4 quarters
   ptmTTM?: number | null;    // pre-tax margin, last 4 quarters
   opmFY?: number | null;     // operating margin, latest full year

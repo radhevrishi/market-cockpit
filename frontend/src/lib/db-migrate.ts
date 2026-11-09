@@ -372,6 +372,50 @@ export const MIGRATIONS: readonly Migration[] = [
       );
       CREATE INDEX IF NOT EXISTS news_archive_published_idx ON news_archive (published_at DESC);`,
   },
+  {
+    // zzz1231 — the owner's broker tradebook (Zerodha equity): every trade once (a trade in two files is kept once), and
+    //   the files that were uploaded (by content hash — the same file twice adds nothing).
+    id: 12, name: 'tradebook',
+    sql: `
+      CREATE TABLE IF NOT EXISTS tradebook_trade (
+        key          TEXT PRIMARY KEY,
+        isin         TEXT NOT NULL,
+        symbol       TEXT NOT NULL,
+        trade_date   DATE NOT NULL,
+        exchange     TEXT NOT NULL,
+        segment      TEXT NOT NULL,
+        side         TEXT NOT NULL CHECK (side IN ('buy', 'sell')),
+        qty          DOUBLE PRECISION NOT NULL,
+        price        DOUBLE PRECISION NOT NULL,
+        order_id     TEXT,
+        trade_id     TEXT,
+        exec_time    TEXT,
+        file_hash    TEXT,
+        added_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS tradebook_trade_date_idx ON tradebook_trade (trade_date);
+      CREATE TABLE IF NOT EXISTS tradebook_file (
+        hash         TEXT PRIMARY KEY,
+        name         TEXT,
+        from_date    DATE,
+        to_date      DATE,
+        rows         INTEGER NOT NULL DEFAULT 0,
+        added        INTEGER NOT NULL DEFAULT 0,
+        uploaded_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      -- NSE's daily index closes (ind_close_all_<DDMMYYYY>.csv), for benchmarks Yahoo does not carry (Nifty Smallcap 100)
+      CREATE TABLE IF NOT EXISTS index_close (
+        name   TEXT NOT NULL,
+        d      DATE NOT NULL,
+        close  DOUBLE PRECISION NOT NULL,
+        PRIMARY KEY (name, d)
+      );
+      CREATE TABLE IF NOT EXISTS index_close_day (
+        d       DATE PRIMARY KEY,
+        state   TEXT NOT NULL,             -- 'ok' | 'none' (holiday / not published)
+        checked TIMESTAMPTZ NOT NULL DEFAULT now()
+      );`,
+  },
 ] as const;
 
 const LOCK_ID = 88_301_883;   // advisory-lock id for migrations

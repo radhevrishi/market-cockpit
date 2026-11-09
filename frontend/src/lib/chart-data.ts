@@ -21,6 +21,9 @@ export interface DailySeries {
   divs?: Array<{ t: number; amount: number }>;
   /** zzz990 (CP-03) — Yahoo meta.firstTradeDate (the listing / first trade), ms; null when Yahoo does not send it */
   firstTradeT?: number | null;
+  /** zzz1231 — splits and bonus issues (Yahoo reports a bonus as a split): `ratio` = shares after ÷ shares before. Yahoo's
+   *  closes and dividends are already adjusted for them; a tradebook is not. */
+  splits?: Array<{ t: number; ratio: number }>;
 }
 
 const _cache = new Map<string, { at: number; data: DailySeries | null }>();
@@ -150,7 +153,15 @@ export function parseYahooChart(j: any): DailySeries | null {
     divs.push({ t: Date.UTC(dd.getUTCFullYear(), dd.getUTCMonth(), dd.getUTCDate()), amount });
   }
   divs.sort((a, b) => a.t - b.t);
-  return { divs, symbol: String(m.symbol || ''), name: m.longName || m.shortName || null, currency: m.currency || null, exchange: m.fullExchangeName || m.exchangeName || null, bars,
+  const splits: Array<{ t: number; ratio: number }> = [];
+  for (const sp of Object.values<any>(r.events?.splits || {})) {
+    const at = Number(sp?.date), num = Number(sp?.numerator), den = Number(sp?.denominator);
+    if (!Number.isFinite(at) || !(num > 0) || !(den > 0) || num === den) continue;
+    const dd = new Date((at + off) * 1000);
+    splits.push({ t: Date.UTC(dd.getUTCFullYear(), dd.getUTCMonth(), dd.getUTCDate()), ratio: num / den });
+  }
+  splits.sort((a, b) => a.t - b.t);
+  return { divs, ...(splits.length ? { splits } : {}), symbol: String(m.symbol || ''), name: m.longName || m.shortName || null, currency: m.currency || null, exchange: m.fullExchangeName || m.exchangeName || null, bars,
     granularity: typeof m.dataGranularity === 'string' ? m.dataGranularity : null,
     quoteAt: Number.isFinite(mt) && mt > 0 ? new Date(mt * 1000).toISOString() : null,
     lastBarSynthetic: synthetic, lastBarOpenInferred: openInferred,

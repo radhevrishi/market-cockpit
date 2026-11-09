@@ -179,7 +179,7 @@ export interface UsFigures {
   // zzz948
   revTTMYoY: number | null; epsTTMYoY: number | null; gpAYoY: number | null; ebitdaTTMYoY: number | null; ebitdaQYoY: number | null;
   nmTTM: number | null; ptmTTM: number | null; opmFY: number | null; niTTM: number | null; niFY: number | null;   // $ million
-  roeTTM: number | null; roeFY: number | null; roceTTM: number | null; roceFY: number | null;
+  roeTTM: number | null; roeFY: number | null; roceTTM: number | null; roceFY: number | null; roceP?: number | null;
   deFY: number | null; netDebt: number | null; liabQ: number | null; liabA: number | null;   // $ million
   debtAssetsQ: number | null; debtAssetsA: number | null; debtCapQ: number | null; debtCapA: number | null;
   debtEbitdaQ: number | null; debtEbitdaA: number | null;
@@ -399,6 +399,9 @@ export function usFigures(fd: FrameData, cik: number, periods: { quarters: strin
     const eqAvg = eq != null && eq0 != null ? (eq + eq0) / 2 : eq;
     if (niA != null && eqAvg != null && eqAvg > 0) out.roeFY = pct(niA, eqAvg);
     if (opA != null && assets != null && lc != null && assets - lc > 0) out.roceFY = pct(opA, assets - lc);
+    // zzz1231 — the year before, on that year's own balance sheet ("is ROCE expanding")
+    const opP = Aprev ? fd.OperatingIncomeLoss?.[Aprev]?.[cik]?.v : undefined;
+    if (fin(opP) && assets0 != null && lc0 != null && assets0 - lc0 > 0) out.roceP = pct(opP, assets0 - lc0);
     // Piotroski F-score on the last two fiscal years (needs at least 8 of the 9 checks)
     if (A && Aprev && niA != null && assets != null && assets > 0 && assets0 != null && assets0 > 0) {
       const ni0 = firstAt(fd, NI, cik, Aprev), cfo = valueAt(fd, CFO, cik, A);

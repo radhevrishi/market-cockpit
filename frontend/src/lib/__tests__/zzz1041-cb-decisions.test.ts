@@ -166,7 +166,7 @@ test('both pages: exports carry the marked list, cards and tables carry the cont
   assert.match(us, /const tickers = exportRows\.map/);
   assert.match(us, /const _fresh = exportRows\.filter/);
   assert.match(us, /<CbMarkFilterRow value=\{markFilter\}/);
-  assert.match(us, /footer=\{mark \? \(\s*<CbMarkControl ticker=\{e\.ticker\} market="US"/);
+  assert.match(us, /footer=\{[\s\S]{0,600}?\{mark && \([\s\S]{0,120}?<CbMarkControl ticker=\{e\.ticker\} market="US"/);   // zzz1231 — the extras strip sits above it
   assert.match(us, /variant="row"/);
   // the size-hidden list is computed before the mark layer (a rejected name is not "hidden by size")
   assert.match(us, /const shown = new Set\(filteredPre\.map/);

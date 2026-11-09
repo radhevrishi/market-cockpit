@@ -217,7 +217,7 @@ export const FIELDS: readonly FieldDef[] = [
   { key: 'bb', label: 'Shares buyback ratio, FY', unit: '%', markets: BOTH, group: 'Company' },
   { key: 'fs', label: 'F-score, FY', unit: 'num', markets: BOTH, group: 'Company', approxNote: { IN: 'India: "current ratio" check uses other assets ÷ other liabilities' } },
   { key: 'earnD', label: 'Latest results date', unit: 'date', markets: ['IN'], group: 'Company', approxNote: { IN: 'the results announcement on screener.in; when not listed there, the day the new quarter first appeared in our weekly read' }, sparse: { IN: 'known for results announced in the last few weeks (the page lists recent announcements) or found by our weekly read — enough for "this month"' } },
-  { key: 'flt', label: 'Free float %', unit: '%', markets: ['US'], group: 'Company' },
+  { key: 'flt', label: 'Free float %', unit: '%', markets: ['US'], group: 'Company' },   // India rows carry it too (zzz1231, 100 − promoter holding) — not a screen field there yet
 ];
 export const fieldOf = (k: string): FieldDef | undefined => FIELDS.find((f) => f.key === k);
 

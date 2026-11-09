@@ -1,5 +1,6 @@
 'use client';
 // Moved verbatim out of page.tsx (pure refactor, no behaviour change).
+import CbExtrasStrip from '@/components/conviction/CbExtrasStrip';   // zzz1231
 import { newInfoScore, newInfoWord } from '@/lib/cb-new-info';
 import { type ConvictionEntry } from '@/lib/conviction-beats';
 import { peadScore, peadColor } from '@/lib/pead-score';
@@ -584,6 +585,7 @@ export function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry, 
             <MetricChip c={returnCell('ROE', roe, 18)} />
             <span style={{ color: 'var(--mc-text-4)', opacity: 0.4 }}>·</span>
             <MetricChip testId="cb-de" c={deCellFor((entry as any).de_ratio, (entry as any).de_basis, entry, cbIsFinancial(entry))} />
+
             {/* zzz360 — promoter-pledge chip. 0% = clean (green); any pledge = red
                 governance flag. Guarded on typeof number so unknown pledge omits. */}
             {typeof (entry as any).pledged_pct === 'number' && Number.isFinite((entry as any).pledged_pct) && (() => {
@@ -605,6 +607,8 @@ export function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry, 
           </div>
         );
       })()}
+      {/* zzz1231 — gross profit growth · Rule of 40 · ROCE trend · liquidity · founder / moat (preset names) */}
+      {density !== 'ultra' && <CbExtrasStrip e={entry} market="IN" showAi={!!(entry as any).cbfmWant || !!(entry as any).cbfm} />}
       {/* zzz355 — SCORES row: composite Earnings Quality Score (0-100) + Overall Verdict pill.
           Quality Score components (max 100):
             - CFO/PAT: >=1 → 30, 0.8-1 → 25, 0.5-0.8 → 15, <0.5 → 0

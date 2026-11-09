@@ -20,6 +20,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { useDebtEquityEntries, DebtEquityContext, type DeIndex } from '@/lib/use-debt-equity';   // zzz1068 · zzz1077
+import { useCbFounderMoat } from '@/lib/use-cb-founder-moat';   // zzz1231
+import CbExtrasStrip from '@/components/conviction/CbExtrasStrip';   // zzz1231
 import { STAGE2_PICKS, writeStage2, stageOf } from '@/lib/cb-stage2';   // zzz1207
 import { deCell, TONE_COLOR, DE_MAX_OPTIONS } from '@/lib/cb-metric-view';
 import Link from 'next/link';
@@ -104,7 +106,10 @@ function driftState(e: UsConvictionEntry): 'DRIFTING' | 'FADING' | 'HOLDING' | '
 export default function UsConvictionBeatsPage() {
   const [entriesRaw, setEntries] = useState<UsConvictionEntry[]>([]);
   // zzz1068 — debt ÷ equity from the stock-screener snapshot on every entry (card chip, D/E filter, table, CSV)
-  const entries = useDebtEquityEntries(entriesRaw, 'US');
+  const entriesDe = useDebtEquityEntries(entriesRaw, 'US');
+  // zzz1231 — founder-led + moat (AI read) for the names the Quality Preset keeps
+  const presetKept = useMemo(() => entriesDe.filter((e) => passesUsConvictionFilter(e, usPresetFilters())), [entriesDe]);
+  const entries = useCbFounderMoat(entriesDe, presetKept, 'US');
   // zzz1077 — the same figures for the card's DEBT / EQUITY tile (the shared US card reads them from this context)
   const deIdx = useMemo<DeIndex>(() => {
     const o: DeIndex = {};
@@ -1217,7 +1222,7 @@ export default function UsConvictionBeatsPage() {
       {/* ── quality preset + quick toggles ── */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
         <button onClick={togglePreset}
-          title={`Sales YoY ≥${US_PRESET.sales}% · EPS YoY ≥${US_PRESET.eps}% · PEAD ≥${US_PRESET.pead} · OPM Δ ≥${US_PRESET.opmDelta}pp · CFO/NI ≥${US_PRESET.cfoPatMin} — operating cash and net income over the SAME period, the last twelve months where the filing gives four quarters, else this quarter; a missing ratio is shown as not checked, a loss fails (skipped for banks, insurers and REITs) · Market cap ≥ $${US_PRESET.mktCapMinMusd}M · price above BOTH its 50-day and 200-day averages · Quality read ${US_PRESET.verdicts.map((v) => usVerdictWord(v)).join(' / ')}. No promoter-pledge gate — that concept does not exist in US markets. The 200-day leg falls back to the Weinstein stage for entries benched before the figure was captured (stages 2 and 3 are above it); the 50-day leg has no fallback, so an entry carrying neither passes it and is counted as unverified rather than silently dropped.`}
+          title={`Sales YoY ≥${US_PRESET.sales}% · EPS YoY ≥${US_PRESET.eps}% · PEAD ≥${US_PRESET.pead} · OPM Δ ≥${US_PRESET.opmDelta}pp · CFO/NI ≥${US_PRESET.cfoPatMin} — operating cash and net income over the SAME period, the last twelve months where the filing gives four quarters, else this quarter; a missing ratio is shown as not checked, a loss fails (skipped for banks, insurers and REITs) · Market cap ≥ $${US_PRESET.mktCapMinMusd}M · not low float or low turnover (float at least 30% and worth at least $150M, at least $3M traded a day, at least 0.1% of the float trading a day; unknown passes) · price above BOTH its 50-day and 200-day averages · Quality read ${US_PRESET.verdicts.map((v) => usVerdictWord(v)).join(' / ')}. No promoter-pledge gate — that concept does not exist in US markets. The 200-day leg falls back to the Weinstein stage for entries benched before the figure was captured (stages 2 and 3 are above it); the 50-day leg has no fallback, so an entry carrying neither passes it and is counted as unverified rather than silently dropped.`}
           style={{ fontSize: 'var(--mc-text-xs)', fontWeight: 800, padding: '7px 12px', borderRadius: 999, cursor: 'pointer', border: '1px solid #F59E0B', color: '#F59E0B', backgroundColor: presetOn ? 'color-mix(in srgb, #F59E0B 14%, transparent)' : 'var(--mc-bg-2)' }}>
           ⚡ QUALITY PRESET · Sales≥{filters.sales ?? US_PRESET.sales} · EPS≥{filters.eps ?? US_PRESET.eps} · PEAD≥{filters.pead ?? US_PRESET.pead} · OPM Δ≥{filters.opmDelta ?? US_PRESET.opmDelta} · CFO/NI≥{filters.cfoPatMin ?? US_PRESET.cfoPatMin} · MktCap≥${filters.mktCapMin ?? US_PRESET.mktCapMinMusd}M · &gt;50DMA · &gt;200DMA{' '}
           {presetOn ? '✓ ON' : presetCustom ? '✓ ON · customised' : '· OFF — click to enable'}
@@ -1350,7 +1355,7 @@ export default function UsConvictionBeatsPage() {
           <ChipRow label="EPS YoY ≥" value={filters.eps} opts={[15, 25, 40, 75]} fmt={(v) => `${v}%`} onSet={(v) => setFilters((p) => ({ ...p, eps: v }))} count={(v) => countWith({ eps: v })} />
           <ChipRow label="OPM Δ ≥" value={filters.opmDelta} opts={[-2, 0, 1, 3, 5]} fmt={(v) => `${v >= 0 ? '+' : ''}${v}pp`} onSet={(v) => setFilters((p) => ({ ...p, opmDelta: v }))} count={(v) => countWith({ opmDelta: v })} />
           <ChipRow label="OPM ≥" value={filters.opmMin} opts={[0, 5, 10, 15, 20, 30]} fmt={(v) => `${v}%`} onSet={(v) => setFilters((p) => ({ ...p, opmMin: v }))} count={(v) => countWith({ opmMin: v })} />
-          <ChipRow label="CFO/NI ≥" value={filters.cfoPatMin} opts={[0.5, 0.8, 1, 1.2]} fmt={(v) => `${v}×`} onSet={(v) => setFilters((p) => ({ ...p, cfoPatMin: v }))} count={(v) => countWith({ cfoPatMin: v })} />
+          <ChipRow label="CFO/NI ≥" value={filters.cfoPatMin} opts={[0.5, 0.7, 0.8, 1, 1.2]} fmt={(v) => `${v}×`} onSet={(v) => setFilters((p) => ({ ...p, cfoPatMin: v }))} count={(v) => countWith({ cfoPatMin: v })} />
           <ChipRow label="Post-results drift at least" value={filters.pead} opts={[40, 60, 70, 80]} fmt={(v) => (v >= 80 ? 'very strong' : v >= 70 ? 'strong' : v >= 60 ? 'firm' : 'some')} onSet={(v) => setFilters((p) => ({ ...p, pead: v }))} count={(v) => countWith({ pead: v })} />
           <ChipRow label="Engine rank at least" value={filters.score} opts={[60, 70, 78, 85]} fmt={(v) => (v >= 85 ? 'top' : v >= 78 ? 'very strong' : v >= 70 ? 'strong' : 'fair')} onSet={(v) => setFilters((p) => ({ ...p, score: v }))} count={(v) => countWith({ score: v })} />
           <ChipRow label="Mkt cap ≥" value={filters.mktCapMin} opts={[300, 1000, 2000, 5000, 10000]} fmt={(v) => (v >= 1000 ? `$${v / 1000}B` : `$${v}M`)} onSet={(v) => setFilters((p) => ({ ...p, mktCapMin: v }))} count={(v) => countWith({ mktCapMin: v })} />
@@ -1952,10 +1957,18 @@ function BenchCard({ e, open, onToggle, onRemove, conf, mark }: {
           </button>
         </span>
       }
-      footer={mark ? (
-        <CbMarkControl ticker={e.ticker} market="US" mark={mark.mark} decision={mark.decision}
-          company={decodeHTMLEntities(e.company)} price={e.price ?? null} score={e.composite_score ?? null} grade={e.tier} />
-      ) : undefined}
+      footer={
+        <>
+          {/* zzz1231 — gross profit growth · Rule of 40 · ROCE trend · liquidity · founder / moat (preset names) */}
+          <CbExtrasStrip e={e} market="US" showAi={!!(e as any).cbfmWant || !!(e as any).cbfm} />
+          {mark && (
+            <div style={{ marginTop: 6 }}>
+              <CbMarkControl ticker={e.ticker} market="US" mark={mark.mark} decision={mark.decision}
+                company={decodeHTMLEntities(e.company)} price={e.price ?? null} score={e.composite_score ?? null} grade={e.tier} />
+            </div>
+          )}
+        </>
+      }
       extraChips={
         <>
           {/* AN EARLIER QUARTER IS NOT A DUPLICATE CARD.

@@ -1,5 +1,6 @@
 'use client';
 
+import TradebookTab from '@/components/tradebook/TradebookTab';   // zzz1231
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Plus, Trash2, TrendingUp, TrendingDown, RefreshCw, Download, Upload, ArrowUpDown, Edit3 } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -40,7 +41,7 @@ export default function PortfolioPage() {
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [viewTab, setViewTab] = useState<'holdings' | 'analytics' | 'regime' | 'fundamentals' | 'earnings'>('holdings'); // PATCH 1100 + zzz285 + PATCH 1103
+  const [viewTab, setViewTab] = useState<'holdings' | 'analytics' | 'regime' | 'fundamentals' | 'earnings' | 'tradebook'>('holdings'); // PATCH 1100 + zzz285 + PATCH 1103
   const [capFilter, setCapFilter] = useState<'all' | 'large' | 'mid' | 'small' | 'micro'>('all'); // PATCH 1100
   // zzz311 — tier filter driven from Analytics tier-mix chips. '' = no filter.
   const [tierFilter, setTierFilter] = useState<'' | 'BLOCKBUSTER' | 'STRONG' | 'MIXED' | 'AVOID' | 'NONE'>('');
@@ -765,14 +766,14 @@ export default function PortfolioPage() {
       <div style={{ marginTop: 16 }}><ReturnVsIndexCard /></div>{/* zzz514 */}
 
       {/* PATCH 1100 — view tabs + market-cap filter */}
-      {!loading && holdings.length > 0 && (
+      {!loading && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', margin: '8px 0 14px' }}>
           <div style={{ display: 'flex', gap: 4, background: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-2)', borderRadius: 10, padding: 4 }}>
-            {(['holdings', 'analytics', 'regime', 'fundamentals', 'earnings'] as const).map(t => (
+            {(['holdings', 'analytics', 'regime', 'fundamentals', 'earnings', 'tradebook'] as const).map(t => (
               <button key={t} onClick={() => setViewTab(t)} style={{
                 padding: '7px 16px', border: 'none', borderRadius: 7, cursor: 'pointer', fontSize: 12.5, fontWeight: 800, letterSpacing: '0.3px',
                 background: viewTab === t ? '#1D4ED8' : 'transparent', color: viewTab === t ? '#fff' : 'var(--mc-text-3)',
-              }}>{t === 'holdings' ? '\ud83d\udc0b Holdings' : t === 'analytics' ? '\ud83d\udcca Analytics' : t === 'regime' ? '\ud83c\udf00 Regime' : t === 'fundamentals' ? 'Fundamentals' : '\ud83d\udcc8 Earnings'}</button>
+              }}>{t === 'holdings' ? '\ud83d\udc0b Holdings' : t === 'analytics' ? '\ud83d\udcca Analytics' : t === 'regime' ? '\ud83c\udf00 Regime' : t === 'fundamentals' ? 'Fundamentals' : t === 'tradebook' ? '\ud83d\udcd2 Tradebook' : '\ud83d\udcc8 Earnings'}</button>
             ))}
           
           </div>
@@ -799,6 +800,10 @@ export default function PortfolioPage() {
       {/* PATCH 1100 — Analytics view */}
       {!loading && holdings.length > 0 && viewTab === 'fundamentals' && <FundamentalsAnalyzerPage scope="portfolio" />}
       {!loading && holdings.length > 0 && viewTab === 'earnings' && <PortfolioEarningsTab tickers={holdings.map(h => h.symbol)} />}
+      {/* zzz1231 — upload Zerodha tradebooks: XIRR, returns vs Nifty Smallcap 100, holdings applied automatically, dividends, P&L */}
+      {!loading && viewTab === 'tradebook' && (
+        <TradebookTab holdings={holdings} onApply={async (next) => { setHoldings(next as PortfolioHolding[]); return syncToAPI(next as PortfolioHolding[]); }} />
+      )}
         {!loading && holdings.length > 0 && viewTab === 'analytics' && (
         <PortfolioAnalytics rows={sortedRows}
           onSelectCap={(c) => { setCapFilter(c as any); setViewTab('holdings'); }}

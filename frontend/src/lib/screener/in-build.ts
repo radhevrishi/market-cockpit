@@ -176,9 +176,12 @@ async function refreshFunds(universe: string[], budgetMs: number, notes: string[
   // never read first; then companies stored the old way (before zzz948); then a failed read after 2 days; then older than 6 days
   // zzz989c — pages stored before zzz984 kept no 'cash from investing' line (FCF margin / Rule of 40 empty): read them again soon
   const lacksCfi = (t: string) => { const cf = store.get(t)?.raw?.T?.cf; return !!cf && !Object.keys(cf.rows).some((k) => /cash from investing/i.test(k)); };
-  const rank = (t: string) => (!age.has(t) ? 0 : !store.get(t)?.raw && !store.get(t)?.err ? 1 : lacksCfi(t) && (age.get(t) as number) > 0.25 ? 1.5 : 2);
+  // zzz1231 — and pages stored before the shareholding table was kept (free float for the Conviction Beats liquidity check)
+  const lacksShp = (t: string) => { const raw = store.get(t)?.raw; return !!raw && raw.shp === undefined; };
+  const reread = (t: string) => (lacksCfi(t) || lacksShp(t)) && (age.get(t) as number) > 0.25;
+  const rank = (t: string) => (!age.has(t) ? 0 : !store.get(t)?.raw && !store.get(t)?.err ? 1 : reread(t) ? 1.5 : 2);
   const due = universe
-    .filter((t) => !age.has(t) || (!store.get(t)?.raw && !store.get(t)?.err) || (lacksCfi(t) && (age.get(t) as number) > 0.25) || (store.get(t)?.err ? (age.get(t) as number) > 2 : (age.get(t) as number) > 6))
+    .filter((t) => !age.has(t) || (!store.get(t)?.raw && !store.get(t)?.err) || reread(t) || (store.get(t)?.err ? (age.get(t) as number) > 2 : (age.get(t) as number) > 6))
     .sort((a, b) => rank(a) - rank(b) || (age.get(b) ?? 0) - (age.get(a) ?? 0));
   const t0 = Date.now();
   const today = iso(new Date());
@@ -229,7 +232,7 @@ export function assembleInRow(t: string, name: string, latest: BhavDay, bhav: Bh
     ebitdaQoQ: f?.ebitdaQoQ ?? null, ebitdaAYoY: f?.ebitdaAYoY ?? null, epsQYoY: f?.epsQYoY ?? null, opmTTM: store?.raw ? f?.opmTTM ?? null : null,
     ps: mc != null && sales != null && sales > 0 ? r2(mc / sales) : null,
     evRev: mc != null && sales != null && sales > 0 && f?.borrowings != null && f?.cash != null ? r2((mc + f.borrowings - f.cash) / sales) : null,
-    de: store?.raw ? f?.de ?? null : null, cash: f?.cash ?? null, emp: p?.emp ?? null, flt: null, bb: null, fs: f?.fs ?? null, q: f?.q ?? null,
+    de: store?.raw ? f?.de ?? null : null, cash: f?.cash ?? null, emp: p?.emp ?? null, flt: f?.prom != null ? r1(100 - f.prom) : null, ...(f?.prom != null ? { prom: f.prom } : {}), bb: null, fs: f?.fs ?? null, q: f?.q ?? null,
     ...(f?.approx?.length ? { approx: f.approx } : {}),
     tvSec: tvSectorOf('IN', f?.sector, f?.industry, t), exch: f ? (f.bse ? ['NSE', 'BSE'] : ['NSE']) : ['NSE'],
     ...(tf ? {
@@ -246,7 +249,7 @@ export function assembleInRow(t: string, name: string, latest: BhavDay, bhav: Bh
     ...deliveryFields(bhav, t),   // zzz1046a — delivery % from NSE's price files
     ...(f?.fcfmFY != null ? { fcfmTTM: f.fcfmFY, r40: ruleOf40(f.revQYoY, f.fcfmFY), ...(f.fcfmAt ? { fcfmAt: f.fcfmAt } : {}) } : {}),
     earnD: earnIso ? Math.floor(Date.parse(`${earnIso.slice(0, 10)}T00:00:00Z`) / DAY) : null,
-    roeTTM: f?.roeTTM ?? null, roeFY: f?.roeFY ?? null, roceTTM: f?.roceTTM ?? null, roceFY: f?.roceFY ?? null, nmTTM: f?.nmTTM ?? null, ptmTTM: f?.ptmTTM ?? null,
+    roeTTM: f?.roeTTM ?? null, roeFY: f?.roeFY ?? null, roceTTM: f?.roceTTM ?? null, roceFY: f?.roceFY ?? null, ...(f?.roceP != null ? { roceP: f.roceP } : {}), nmTTM: f?.nmTTM ?? null, ptmTTM: f?.ptmTTM ?? null,
     opmFY: f?.opmFY ?? null, pe: mc != null && f?.npTTM != null && f.npTTM > 0 ? r2(mc / f.npTTM) : null,
     pcf: mc != null && f?.cash != null && f.cash > 0 ? r2(mc / f.cash) : null, netDebt: f?.netDebt ?? null, niFY: f?.niFY ?? null,
     epsTTMYoY: f?.epsTTMYoY ?? null, revTTMYoY: f?.revTTMYoY ?? null, gpAYoY: f?.gpAYoY ?? null, ebitdaTTMYoY: f?.ebitdaTTMYoY ?? null, ebitdaQYoY: f?.ebitdaQYoY ?? null,
@@ -263,6 +266,7 @@ function deliveryFields(bhav: readonly BhavDay[], t: string): { dlv10?: number; 
 
 // ── build ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
 const r2 = (v: number) => Math.round(v * 100) / 100;
+const r1 = (v: number) => Math.round(v * 10) / 10;
 export async function buildInSnapshot(opts: { fundBudgetMs?: number } = {}): Promise<{ ok: boolean; rows: number; notes: string[]; ms: number }> {
   const t0 = Date.now();
   const deadline = t0 + 13 * 60_000;   // the scheduler gives the job 15 minutes

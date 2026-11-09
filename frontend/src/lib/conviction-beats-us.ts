@@ -41,6 +41,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { passesStage2, readStage2, stageOf } from './cb-stage2';   // zzz1207
+import { passesLiquidity, liquidityFailText } from './cb-extras';   // zzz1231
 import { rule40From, roceFrom, type SwingKind } from '@/lib/us-earnings-core';
 import type { EarningsQuadrant } from '@/lib/earnings-grade-shared';
 import { runCriteriaCheck, type CriteriaCheck } from '@/lib/criteria-check';
@@ -2105,8 +2106,9 @@ export const US_PRESET = {
   eps: 25,
   pead: 40,
   opmDelta: 0,
-  cfoPatMin: 0.5,
+  cfoPatMin: 0.7,   // zzz1231 — the owner: operating cash at least 0.7× net income (was 0.5)
   mktCapMinMusd: 300,
+  avoidIlliquid: true,   // zzz1231 — leave out known low-float / low-turnover names (lib/cb-extras)
   // ═══ THE TREND GATE  (zzz661) ═════════════════════════════════════════
   // A great quarter in a downtrend is a great quarter you will hold through
   // a drawdown. Above BOTH averages is the classic definition of a stock the
@@ -2239,6 +2241,8 @@ export interface UsConvFilters {
   q: string;                     // free-text ticker/company search
   /** zzz1207 — Stage 2 (weekly Stage Analysis): 'yes' / 'no' / null = not used. No stage → passes neither. */
   stage2?: 'yes' | 'no' | null;
+  /** zzz1231 — leave out known low-float / low-turnover companies. Part of the preset. */
+  liqOk?: boolean | null;
 }
 
 export const US_FILTER_DEFAULT: UsConvFilters = {
@@ -2261,6 +2265,7 @@ export function usPresetFilters(): UsConvFilters {
     mktCapMin: US_PRESET.mktCapMinMusd, verdicts: [...US_PRESET.verdicts],
     aboveMa50: US_PRESET.requireAboveMa50, aboveMa200: US_PRESET.requireAboveMa200,
     stage2: ((p) => (p === 'any' ? null : p))(readStage2('US')),   // zzz1207 — the owner's remembered choice
+    liqOk: US_PRESET.avoidIlliquid,   // zzz1231
   };
 }
 
@@ -2268,6 +2273,7 @@ export function isUsPresetActive(f: UsConvFilters): boolean {
   return f.sales === US_PRESET.sales && f.eps === US_PRESET.eps && f.pead === US_PRESET.pead
     && f.opmDelta === US_PRESET.opmDelta && f.cfoPatMin === US_PRESET.cfoPatMin && f.opmMin === 0
     && f.mktCapMin === US_PRESET.mktCapMinMusd
+    && !!f.liqOk === US_PRESET.avoidIlliquid   // zzz1231
     && !!f.aboveMa50 === US_PRESET.requireAboveMa50 && !!f.aboveMa200 === US_PRESET.requireAboveMa200
     && JSON.stringify((f.verdicts || []).slice().sort()) === JSON.stringify(['BUY', 'STRONG BUY', 'WATCH']);
 }
@@ -2410,6 +2416,7 @@ export function passesUsConvictionFilter(e: UsConvictionEntry, f: UsConvFilters,
   // hidden. Each sweep re-prices older entries, so the count falls to zero on
   // its own.
   if (f.stage2 && !passesStage2(e, f.stage2)) return false;   // zzz1207
+  if (f.liqOk && !passesLiquidity(e)) return false;   // zzz1231
   if (f.aboveMa50) {
     const d50 = num(e.pct_vs_ma50);
     if (d50 != null && d50 <= 0) return false;
@@ -2605,7 +2612,7 @@ export function usCbSavedFilters(raw: string | null | undefined): UsConvFilters 
     saved.sales === US_PRESET.sales
     && saved.eps === US_PRESET.eps
     && saved.opmDelta === US_PRESET.opmDelta
-    && saved.cfoPatMin === US_PRESET.cfoPatMin
+    && (saved.cfoPatMin === US_PRESET.cfoPatMin || saved.cfoPatMin === 0.5)   // zzz1231 — 0.5 was the preset before
     && saved.mktCapMin === US_PRESET.mktCapMinMusd
     && JSON.stringify((saved.verdicts || []).slice().sort()) === JSON.stringify(['BUY', 'STRONG BUY', 'WATCH']);
   if (legacyMatchesPreset) return { ...saved, ...usPresetFilters(), cap: saved.cap, sector: saved.sector, q: saved.q };
@@ -2651,6 +2658,7 @@ export function usCbFailReasons(e: UsConvictionEntry, f: UsConvFilters, win?: Ne
     tiers: () => 'tier outside your list', verdicts: () => `quality read "${usVerdictWord(usVerdict(e).verdictLabel)}" is outside your chosen list (${(f.verdicts || []).map((v) => usVerdictWord(v)).join(' / ')})`, elite: () => 'not marked elite', multibagger: () => 'no multibagger setup',
     rule40: () => 'Rule of 40 not met (or not computable)', roce20: () => 'return on capital below 20% (or not known)', turnaround: () => 'not a turnaround', compounder: () => 'not a compounder',
     stage2: () => `${stageOf(e).text} (needs ${f.stage2 === 'yes' ? 'Stage 2' : 'not Stage 2'})`,   // zzz1207
+    liqOk: () => liquidityFailText(e),   // zzz1231
     prelimOnly: () => 'not a preliminary release', sector: () => `sector not ${f.sector}`, quarter: () => 'another fiscal quarter', fy: () => 'another fiscal year', fromDate: () => 'filed outside your dates', toDate: () => 'filed outside your dates',
   };
   const out: string[] = [];
@@ -2896,7 +2904,7 @@ export async function resyncUsBenchToEngine(fetchRows: (tickers: string[]) => Pr
 // ── why names are hidden ───────────────────────────────────────────────────
 const US_CRITERION_WORDS: Record<string, string> = {
   sales: 'Revenue growth', eps: 'EPS growth', pat: 'Net income growth', pead: 'Post-results drift',
-  opmDelta: 'Operating margin widening', opmMin: 'Operating margin level', cfoPatMin: 'Cash conversion',
+  opmDelta: 'Operating margin widening', opmMin: 'Operating margin level', cfoPatMin: 'Cash conversion', liqOk: 'Free float and trading (liquidity)',
   mktCapMin: 'Market cap', cap: 'Size band', peMax: 'P/E ceiling', deMax: 'Debt / equity ceiling', score: 'Engine rank', opLev: 'Operating leverage',
   winMin: 'Winners scorecard', aboveMa50: 'Above 50-day average', aboveMa200: 'Above 200-day average',
   d1Bucket: 'Day-one move', driftBucket: 'Move since results', guidance: 'Guidance', guideBeatOnly: 'Beat own guide',

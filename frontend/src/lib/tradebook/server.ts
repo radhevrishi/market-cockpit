@@ -1,0 +1,258 @@
+// zzz1231 — tradebook storage (Postgres) + the analytics run (prices from the chart data cache, Yahoo). Server only.
+import { dbQuery } from '../db';
+import { ensureSchema } from '../db-migrate';
+import { getDailySeries, type DailySeries } from '../chart-data';
+import { ensureIndexHistory, indexCloses } from '../index-history';
+import {
+  buildLedger, dayMs, dividendsByFy, isoDay, lotsTurningLongTerm, pnlByFy, pnlStats, qtyAt, valueAt, windowReturn, xirr, fyOf,
+  type Flow, type Ledger, type Split, type Trade, type WindowReturn,
+} from './core';
+
+const DAY = 86_400_000;
+export const BENCH_NAME = 'NIFTY Smallcap 100';   // NSE's daily index file (Yahoo ^CNXSC has no history)
+
+export async function tradebookFiles(): Promise<Array<{ hash: string; name: string | null; from: string | null; to: string | null; rows: number; added: number; at: string }>> {
+  if (!(await ensureSchema())) return [];
+  const r = await dbQuery<any>(`SELECT hash, name, to_char(from_date, 'YYYY-MM-DD') AS f, to_char(to_date, 'YYYY-MM-DD') AS t, rows, added, uploaded_at FROM tradebook_file ORDER BY uploaded_at DESC LIMIT 200`);
+  return r.map((x) => ({ hash: x.hash, name: x.name, from: x.f, to: x.t, rows: Number(x.rows), added: Number(x.added), at: new Date(x.uploaded_at).toISOString() }));
+}
+
+/** Adds the trades not stored yet. A file already uploaded (same content hash) adds nothing. */
+export async function saveTrades(file: { hash: string; name: string; from: string | null; to: string | null; rows: number }, trades: Trade[], last: boolean): Promise<{ added: number; duplicateFile: boolean }> {
+  if (!(await ensureSchema())) throw new Error('database not available');
+  const seen = await dbQuery<{ hash: string }>(`SELECT hash FROM tradebook_file WHERE hash = $1 AND rows > 0`, [file.hash]);
+  if (seen.length) return { added: 0, duplicateFile: true };
+  let added = 0;
+  for (let i = 0; i < trades.length; i += 2000) {
+    const c = trades.slice(i, i + 2000);
+    const r = await dbQuery<{ n: number }>(
+      `WITH ins AS (
+         INSERT INTO tradebook_trade (key, isin, symbol, trade_date, exchange, segment, side, qty, price, order_id, trade_id, exec_time, file_hash)
+         SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::date[], $5::text[], $6::text[], $7::text[], $8::float8[], $9::float8[], $10::text[], $11::text[], $12::text[], $13::text[])
+         ON CONFLICT (key) DO NOTHING RETURNING 1)
+       SELECT count(*)::int AS n FROM ins`,
+      [c.map((t) => t.key), c.map((t) => t.isin), c.map((t) => t.symbol), c.map((t) => t.date), c.map((t) => t.exchange), c.map((t) => t.segment),
+        c.map((t) => t.side), c.map((t) => t.qty), c.map((t) => t.price), c.map((t) => t.orderId || null), c.map((t) => t.tradeId || null), c.map((t) => t.time), c.map(() => file.hash)],
+    );
+    added += Number(r[0]?.n || 0);
+  }
+  await dbQuery(
+    `INSERT INTO tradebook_file (hash, name, from_date, to_date, rows, added) VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (hash) DO UPDATE SET added = tradebook_file.added + EXCLUDED.added, rows = GREATEST(tradebook_file.rows, EXCLUDED.rows)`,
+    [file.hash, file.name.slice(0, 200), file.from, file.to, last ? file.rows : 0, added],
+  );
+  if (added) _cache = null;
+  return { added, duplicateFile: false };
+}
+
+export async function loadTrades(): Promise<Trade[]> {
+  if (!(await ensureSchema())) return [];
+  const r = await dbQuery<any>(`SELECT key, isin, symbol, to_char(trade_date, 'YYYY-MM-DD') AS d, exchange, segment, side, qty, price, order_id, trade_id, exec_time FROM tradebook_trade`);
+  return r.map((x) => ({ key: x.key, isin: x.isin, symbol: x.symbol, date: x.d, exchange: x.exchange, segment: x.segment, side: x.side, qty: Number(x.qty), price: Number(x.price), orderId: x.order_id || '', tradeId: x.trade_id || '', time: x.exec_time || null }));
+}
+
+export async function clearTradebook(): Promise<void> {
+  if (!(await ensureSchema())) return;
+  await dbQuery(`DELETE FROM tradebook_trade`);
+  await dbQuery(`DELETE FROM tradebook_file`);
+  _cache = null;
+}
+
+// ── prices ─────────────────────────────────────────────────────────────────────
+
+interface Px { t: Float64Array; c: Float64Array; splits?: Split[]; divs?: Array<{ t: number; amount: number }>; at: string | null }
+function compact(s: DailySeries | null): Px | null {
+  if (!s || !s.bars.length) return null;
+  return { t: Float64Array.from(s.bars.map((b) => b.t)), c: Float64Array.from(s.bars.map((b) => b.c)), splits: s.splits, divs: s.divs, at: isoDay(s.bars[s.bars.length - 1].t) };
+}
+function closeAt(p: Px | null | undefined, t: number): number | null {
+  if (!p || !p.t.length || t < p.t[0]) return null;
+  let lo = 0, hi = p.t.length - 1;
+  while (lo < hi) { const m = (lo + hi + 1) >> 1; if (p.t[m] <= t) lo = m; else hi = m - 1; }
+  return p.c[lo];
+}
+
+async function pricesFor(symbols: Map<string, string>, budgetMs: number): Promise<{ px: Map<string, Px>; missing: string[] }> {
+  const px = new Map<string, Px>();
+  const missing: string[] = [];
+  const list = Array.from(symbols.entries());
+  const deadline = Date.now() + budgetMs;
+  let i = 0;
+  const worker = async () => {
+    while (i < list.length && Date.now() < deadline) {
+      const [isin, sym] = list[i++];
+      const s = await getDailySeries('IN', sym, '5y').catch(() => null);
+      const c = compact(s);
+      if (c) px.set(isin, c); else missing.push(sym);
+    }
+  };
+  await Promise.all(Array.from({ length: 8 }, worker));
+  for (; i < list.length; i++) missing.push(list[i][1]);
+  return { px, missing };
+}
+
+// ── analytics ──────────────────────────────────────────────────────────────────
+
+export interface TradebookAnalytics {
+  ok: true; builtAt: string; tradeCount: number; firstDate: string | null; lastDate: string | null; priceDate: string | null;
+  files: Awaited<ReturnType<typeof tradebookFiles>>;
+  summary: {
+    invested: number; value: number; unrealized: number; realized: number; dividends: number;
+    xirrAll: number | null; xirrYtd: number | null; xirrFytd: number | null; benchXirrAll: number | null;
+    totalGain: number; netInvested: number;
+  };
+  trailing: WindowReturn[];
+  byFy: WindowReturn[];
+  byYear: WindowReturn[];
+  growth: Array<{ d: string; value: number; bench: number | null; net: number }>;
+  holdings: Array<{ isin: string; symbol: string; qty: number; avgCost: number; cost: number; price: number | null; value: number | null; pnl: number | null; pnlPct: number | null; weight: number | null; firstBuy: string | null; daysHeld: number | null; ltcgPct: number }>;
+  pnl: ReturnType<typeof pnlStats>;
+  pnlByFy: ReturnType<typeof pnlByFy>;
+  bySymbol: Array<{ symbol: string; realized: number; trades: number }>;
+  dividends: ReturnType<typeof dividendsByFy>;
+  turningLongTerm: ReturnType<typeof lotsTurningLongTerm>;
+  unmatched: { count: number; symbols: string[] };
+  notes: string[];
+  ledgerPositions: Array<{ symbol: string; qty: number; avgCost: number; isin: string }>;
+  unmatchedIsins: string[];
+  tradedSymbols: Array<{ symbol: string; isin: string }>;
+}
+
+let _cache: { sig: string; at: number; data: TradebookAnalytics } | null = null;
+let _running: Promise<TradebookAnalytics> | null = null;
+
+export async function tradebookAnalytics(force = false): Promise<TradebookAnalytics> {
+  const trades = await loadTrades();
+  const sig = `${trades.length}|${trades.reduce((m, t) => (t.date > m ? t.date : m), '')}`;
+  if (!force && _cache && _cache.sig === sig && Date.now() - _cache.at < 3 * 3600_000) return _cache.data;
+  if (_running) return _running;
+  _running = build(trades).then((data) => { _cache = { sig, at: Date.now(), data }; return data; }).finally(() => { _running = null; });
+  return _running;
+}
+
+async function build(trades: Trade[]): Promise<TradebookAnalytics> {
+  const files = await tradebookFiles();
+  const notes: string[] = [
+    'Brokerage, STT and other charges are not in a tradebook — gains here are before charges and tax.',
+    'Splits and bonus issues are applied from Yahoo\'s records, so quantities are in today\'s share units.',
+  ];
+  // first pass without splits, only to know the instruments and their latest symbols
+  const pre = buildLedger(trades);
+  const { px, missing } = await pricesFor(pre.symbolOf, 150_000);
+  let bench: Px | null = null;
+  if (pre.firstDate) {
+    const fill = await ensureIndexHistory(isoDay(dayMs(pre.firstDate) - 7 * DAY), isoDay(Date.now()), 100_000).catch(() => ({ fetched: 0, pending: -1 }));
+    const ic = await indexCloses(BENCH_NAME).catch(() => []);
+    if (ic.length) bench = { t: Float64Array.from(ic.map((x) => x.t)), c: Float64Array.from(ic.map((x) => x.c)), at: isoDay(ic[ic.length - 1].t) };
+    if (fill.pending > 0) notes.push(`Nifty Smallcap 100 history is still being read from NSE (${fill.pending} days to go) — press Recompute in a few minutes for an exact comparison.`);
+  }
+  if (!bench) notes.push('Nifty Smallcap 100 closes could not be read from NSE — the comparison is left out.');
+  const priceAt = (isin: string, t: number) => closeAt(px.get(isin), t);
+  const openAt = (isin: string, startT: number) => {
+    const p = px.get(isin);
+    if (!p || !p.t.length) return null;
+    if (p.t[0] > startT) return { t: p.t[0], px: p.c[0] };   // listed (or first priced) after the first file
+    const c = closeAt(p, startT - DAY);
+    return c ? { t: startT, px: c } : null;
+  };
+  const l: Ledger = buildLedger(trades, (isin) => px.get(isin)?.splits, openAt);
+  const benchAt = bench ? (t: number) => closeAt(bench, t) : undefined;
+  if (missing.length) notes.push(`No price history for ${missing.length} instrument${missing.length === 1 ? '' : 's'} (renamed, merged or delisted) — valued at their last trade price: ${missing.slice(0, 12).join(', ')}${missing.length > 12 ? ' …' : ''}.`);
+
+  const now = Date.now();
+  const today = dayMs(isoDay(now));
+  const first = l.firstDate ? dayMs(l.firstDate) : today;
+  const lastPriceT = Math.max(...Array.from(px.values()).map((p) => p.t[p.t.length - 1] || 0), 0);
+  const asOf = lastPriceT > 0 ? Math.min(today, lastPriceT) : today;
+
+  // holdings
+  const cur = valueAt(l, asOf, priceAt);
+  const holdings = l.positions.map((p) => {
+    const price = priceAt(p.isin, asOf);
+    const value = price != null ? p.qty * price : null;
+    const lt = p.lots.filter((lot) => dayMs(lot.date) < asOf - 365 * DAY).reduce((s, lot) => s + lot.qty, 0);
+    return {
+      isin: p.isin, symbol: p.symbol, qty: p.qty, avgCost: p.avgCost, cost: p.cost, price, value,
+      pnl: value != null ? value - p.cost : null, pnlPct: value != null && p.cost > 0 ? (value - p.cost) / p.cost : null,
+      weight: value != null && cur.value > 0 ? value / cur.value : null,
+      firstBuy: p.lots[0]?.date ?? p.firstBuy, daysHeld: p.lots[0] ? Math.round((asOf - dayMs(p.lots[0].date)) / DAY) : null,
+      ltcgPct: p.qty > 0 ? lt / p.qty : 0,
+    };
+  }).sort((a, b) => (b.value ?? b.cost) - (a.value ?? a.cost));
+
+  const invested = l.positions.reduce((s, p) => s + p.cost, 0);
+  const pnlAll = pnlStats(l.realized);
+  const allFlows: Flow[] = [...l.flows, { t: asOf, amt: cur.value }];
+  const netInvested = -l.flows.reduce((s, f) => s + f.amt, 0);
+  const divs = dividendsByFy(l, (isin) => px.get(isin)?.divs);
+  const divTotal = divs.byFy.reduce((s, x) => s + x.amount, 0);
+
+  // windows
+  const yr = new Date(asOf).getUTCFullYear();
+  const fyStartYear = new Date(asOf).getUTCMonth() >= 3 ? yr : yr - 1;
+  const ytd = windowReturn(l, `${yr} so far`, Date.UTC(yr, 0, 1), asOf, priceAt, benchAt);
+  const fytd = windowReturn(l, `${fyOf(isoDay(asOf))} so far`, Date.UTC(fyStartYear, 3, 1), asOf, priceAt, benchAt);
+  const sinceStart = windowReturn(l, 'Since start', first, asOf, priceAt, benchAt);
+  const trailing: WindowReturn[] = [];
+  for (const [label, yrs] of [['1 year', 1], ['3 years', 3]] as const) {
+    const from = Date.UTC(new Date(asOf).getUTCFullYear() - yrs, new Date(asOf).getUTCMonth(), new Date(asOf).getUTCDate()) + DAY;
+    if (from >= first) trailing.push(windowReturn(l, label, from, asOf, priceAt, benchAt));
+  }
+  trailing.push(sinceStart);
+  const byFy: WindowReturn[] = [];
+  for (let y = new Date(first).getUTCMonth() >= 3 ? new Date(first).getUTCFullYear() : new Date(first).getUTCFullYear() - 1; y <= fyStartYear; y++) {
+    const from = Math.max(first, Date.UTC(y, 3, 1)), to = Math.min(asOf, Date.UTC(y + 1, 2, 31));
+    byFy.push(windowReturn(l, fyOf(isoDay(Date.UTC(y, 3, 1))) + (to === asOf ? ' (so far)' : ''), from, to, priceAt, benchAt));
+  }
+  const byYear: WindowReturn[] = [];
+  for (let y = new Date(first).getUTCFullYear(); y <= yr; y++) {
+    const from = Math.max(first, Date.UTC(y, 0, 1)), to = Math.min(asOf, Date.UTC(y, 11, 31));
+    byYear.push(windowReturn(l, String(y) + (to === asOf ? ' (so far)' : ''), from, to, priceAt, benchAt));
+  }
+
+  // growth: month ends, the book vs the same money in the index
+  const growth: TradebookAnalytics['growth'] = [];
+  let units = 0, net = 0, fi = 0;
+  const pts: number[] = [];
+  for (let d = new Date(first); ; ) {
+    const t = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0);
+    if (t >= asOf) { pts.push(asOf); break; }
+    pts.push(t);
+    d = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1));
+  }
+  for (const t of pts) {
+    for (; fi < l.flows.length && l.flows[fi].t <= t; fi++) {
+      const f = l.flows[fi];
+      net += -f.amt;
+      const ix = benchAt?.(f.t);
+      if (ix) units += -f.amt / ix;
+    }
+    const ix = benchAt?.(t);
+    growth.push({ d: isoDay(t), value: Math.round(valueAt(l, t, priceAt).value), bench: ix ? Math.round(units * ix) : null, net: Math.round(net) });
+  }
+
+  const bySym = new Map<string, { realized: number; trades: number }>();
+  for (const r of l.realized) { const x = bySym.get(r.symbol) || { realized: 0, trades: 0 }; x.realized += r.pnl; x.trades++; bySym.set(r.symbol, x); }
+
+  const benchAll = sinceStart.bench?.xirr ?? null;
+  if (l.unmatched.length) notes.push(`${new Set(l.unmatched.map((u) => u.isin)).size} instruments were sold without an earlier buy in the uploaded files (bought before the first file, or received outside the market). For returns those shares count as held from the first day at that day's price; they get no P&L (their cost is not in the files) — upload older tradebooks to include them.`);
+  void qtyAt;
+  return {
+    ok: true, builtAt: new Date().toISOString(), tradeCount: l.tradeCount, firstDate: l.firstDate, lastDate: l.lastDate, priceDate: isoDay(asOf), files,
+    summary: {
+      invested, value: cur.value, unrealized: cur.value - invested, realized: pnlAll.total, dividends: divTotal,
+      xirrAll: xirr(allFlows), xirrYtd: ytd.xirr, xirrFytd: fytd.xirr, benchXirrAll: benchAll,
+      totalGain: cur.value - netInvested, netInvested,
+    },
+    trailing, byFy, byYear, growth, holdings,
+    pnl: pnlAll, pnlByFy: pnlByFy(l.realized),
+    bySymbol: Array.from(bySym.entries()).map(([symbol, v]) => ({ symbol, ...v })).sort((a, b) => b.realized - a.realized),
+    dividends: { byFy: divs.byFy, items: divs.items.slice(0, 400) },
+    turningLongTerm: lotsTurningLongTerm(l, asOf, 60),
+    unmatched: { count: l.unmatched.length, symbols: Array.from(new Set(l.unmatched.map((u) => u.symbol))).slice(0, 60) },
+    notes,
+    ledgerPositions: l.positions.map((p) => ({ symbol: p.symbol, qty: p.qty, avgCost: p.avgCost, isin: p.isin })),
+    unmatchedIsins: Array.from(new Set(l.unmatched.map((u) => u.isin))),
+    tradedSymbols: Array.from(new Set(trades.map((t) => `${t.symbol}|${t.isin}`))).map((x) => { const [symbol, isin] = x.split('|'); return { symbol, isin }; }),
+  };
+}

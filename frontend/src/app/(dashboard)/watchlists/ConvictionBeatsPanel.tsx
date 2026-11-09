@@ -20,6 +20,7 @@ import { applyCbMarks, cbMarkReader, type CbMarkFilter } from '@/lib/cb-decision
 import { EarningsCardComponent, CoverageStatsBar, type EarningsScanCard } from '@/components/EarningsScanCard';
 import { ConvictionTable, ConvictionRow } from './ConvictionTable';
 import { useDebtEquityEntries } from '@/lib/use-debt-equity';   // zzz1068
+import { useCbFounderMoat } from '@/lib/use-cb-founder-moat';   // zzz1231
 import { STAGE2_PICKS, writeStage2, stageOf } from '@/lib/cb-stage2';   // zzz1207
 import { DE_MAX_OPTIONS } from '@/lib/cb-metric-view';
 import { HubFilterRail } from './HubFilterRail';
@@ -33,7 +34,10 @@ export let __cbFillRunning = false;
 
 export function ConvictionBeatsPanel({ entries: entriesIn, onRemove, onClearAll, onRebuild, onShowAll, benchSince, seasonBusy }: { entries: ConvictionEntry[]; onRemove: (t: string) => void; onClearAll?: () => void; onRebuild?: (days: number) => void | Promise<void>; onShowAll?: () => void; benchSince?: string | null; seasonBusy?: boolean }) {
   // zzz1068 — debt ÷ equity from the stock-screener snapshot, on every entry (card, D/E MAX filter, table, Excel)
-  const entries = useDebtEquityEntries(entriesIn, 'IN');
+  const entriesDe = useDebtEquityEntries(entriesIn, 'IN');
+  // zzz1231 — founder-led + moat (AI read) for the names the Quality Preset keeps
+  const presetKept = useMemo(() => entriesDe.filter((e) => passesConvictionFilter(e, { ...FILTER_DEFAULT, ...indiaPresetFilters() })), [entriesDe]);
+  const entries = useCbFounderMoat(entriesDe, presetKept, 'IN');
   // PATCH zzz99 — bulk Clear All button for Conviction Beats.
   // User flow: starting fresh for next earnings cycle, drain the entire
   // bench at once instead of clicking × on every row. Guarded by
@@ -1433,7 +1437,7 @@ export function ConvictionBeatsPanel({ entries: entriesIn, onRemove, onClearAll,
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <button
                 onClick={handleToggle}
-                title="Your saved screen: sales growth at least 20% · EPS growth at least 25% · PEAD (post-results drift) 40 or more · operating margin not falling · operating margin 0% or more (unknown passes) · cash from operations at least half of profit (same fiscal year; not checked when the figure is missing; skipped for lenders) · any market cap unless you pick a size floor (your setting; no size ceiling) · no promoter pledge (an unknown pledge is not a fail) · setup Top / Good / Watch. A missing figure is 'not checked', never a fail. Auto-applied on first visit; click to switch it off (remembered) or on again."
+                title="Your saved screen: sales growth at least 20% · EPS growth at least 25% · PEAD (post-results drift) 40 or more · operating margin not falling · operating margin 0% or more (unknown passes) · cash from operations at least 0.7× profit (same fiscal year; not checked when the figure is missing; skipped for lenders) · not low float or low turnover (free float at least 30% and worth at least ₹500 Cr, traded value at least ₹3 Cr a day, at least 0.1% of the float trading a day; unknown passes) · any market cap unless you pick a size floor (your setting; no size ceiling) · no promoter pledge (an unknown pledge is not a fail) · setup Top / Good / Watch. A missing figure is 'not checked', never a fail. Auto-applied on first visit; click to switch it off (remembered) or on again."
                 style={presetActive
                   ? chipActive('#F59E0B')
                   : { ...chipBase, border: '1px solid #F59E0B', color: '#F59E0B', fontWeight: 800 }}>

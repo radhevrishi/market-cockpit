@@ -309,7 +309,7 @@ export function assembleUsRows(universe: NasdaqRow[], ciks: Map<string, number>,
       ...(f?.fcfmFY != null ? { fcfmTTM: f.fcfmFY, r40: ruleOf40(f.revQYoY, f.fcfmFY), ...(f.fcfmAt ? { fcfmAt: f.fcfmAt } : {}) } : {}),
       // zzz1045e — the true trailing-12-month FCF margin and its Rule of 40 (new fields; fcfmTTM / r40 above keep their meaning)
       ...(f?.fcfmT != null ? { fcfmT: f.fcfmT, r40T: ruleOf40(f.revQYoY, f.fcfmT), ...(f.fcfmTAt ? { fcfmTAt: f.fcfmTAt } : {}) } : {}),
-      roeTTM: f?.roeTTM ?? null, roeFY: f?.roeFY ?? null, roceTTM: f?.roceTTM ?? null, roceFY: f?.roceFY ?? null, nmTTM: f?.nmTTM ?? null, ptmTTM: f?.ptmTTM ?? null,
+      roeTTM: f?.roeTTM ?? null, roeFY: f?.roeFY ?? null, roceTTM: f?.roceTTM ?? null, roceFY: f?.roceFY ?? null, ...(f?.roceP != null ? { roceP: f.roceP } : {}), nmTTM: f?.nmTTM ?? null, ptmTTM: f?.ptmTTM ?? null,
       opmFY: f?.opmFY ?? null, pe: mc != null && f?.niTTM != null && f.niTTM > 0 ? r2(mc / f.niTTM) : null,
       pcf: mc != null && f?.cash != null && f.cash > 0 ? r2(mc / f.cash) : null, netDebt: f?.netDebt ?? null, niFY: f?.niFY ?? null,
       epsTTMYoY: f?.epsTTMYoY ?? null, revTTMYoY: f?.revTTMYoY ?? null, gpAYoY: f?.gpAYoY ?? null, ebitdaTTMYoY: f?.ebitdaTTMYoY ?? null, ebitdaQYoY: f?.ebitdaQYoY ?? null,

@@ -26,6 +26,8 @@ export interface InRaw {
   /** cost of sales as % of sales per period: material + manufacturing + employee cost (screener.in's expense split) */
   cogsQ: Record<string, number>; cogsA: Record<string, number>; cash: Record<string, number>;
   ann: Array<{ d: string; s: string }>;   // results announcements (date, subject), newest first
+  /** zzz1231 — latest quarter's shareholding (%, screener.in "Shareholding Pattern"); pages read before zzz1231 have none */
+  shp?: { at: string | null; prom: number | null; fii: number | null; dii: number | null; gov: number | null; pub: number | null } | null;
 }
 
 export interface InFigures {
@@ -49,6 +51,10 @@ export interface InFigures {
   fcfmFY?: number | null;
   /** zzz1044 (F03) — the year of that margin ('Mar 2026') */
   fcfmAt?: string | null;
+  /** zzz1231 — ROCE of the year before roceFY (screener.in ratios table), for "is ROCE expanding" */
+  roceP?: number | null;
+  /** zzz1231 — promoter holding %, latest quarter, and that quarter */
+  prom?: number | null; promAt?: string | null;
 }
 
 const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -97,6 +103,35 @@ const BS_ROWS = ['equity capital', 'reserves', 'borrowings', 'borrowing', 'other
 const RESULTS_RE = /financial results|\bresults\b.*(quarter|half|year|period)|un-?audited|audited (standalone|consolidated)/i;
 const NOT_RESULTS_RE = /intimation|to consider|will be held|is scheduled|prior notice|trading window|newspaper/i;
 
+/** zzz1231 — the latest column of screener.in's quarterly shareholding table. */
+export function parseShareholding(html: string): InRaw['shp'] {
+  const i = html.indexOf('<div id="quarterly-shp"');
+  if (i < 0) return null;
+  const j = html.indexOf('</table>', i);
+  const tbl = html.slice(i, j > i ? j : i + 20000);
+  const trs = tbl.match(/<tr[^>]*>[\s\S]*?<\/tr>/g) || [];
+  if (trs.length < 2) return null;
+  const text = (c: string) => c.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
+  const cells = (tr: string) => (tr.match(/<t[hd][^>]*>[\s\S]*?<\/t[hd]>/g) || []).map(text);
+  const head = cells(trs[0] || "").slice(1);
+  const at = head.length ? head[head.length - 1] : null;
+  const out: NonNullable<InRaw['shp']> = { at, prom: null, fii: null, dii: null, gov: null, pub: null };
+  for (const tr of trs.slice(1)) {
+    const c = cells(tr);
+    const label = (c[0] || '').replace(/\+\s*$/, '').trim().toLowerCase();
+    const vals = c.slice(1).map((v) => parseFloat(v.replace(/[,%]/g, '')));
+    let last: number | null = null;
+    for (let k = vals.length - 1; k >= 0; k--) if (Number.isFinite(vals[k])) { last = vals[k]; break; }
+    if (last == null) continue;
+    if (/^promoters?/.test(label)) out.prom = last;
+    else if (/^fiis?/.test(label)) out.fii = last;
+    else if (/^diis?/.test(label)) out.dii = last;
+    else if (/^government/.test(label)) out.gov = last;
+    else if (/^public/.test(label)) out.pub = last;
+  }
+  return out.prom == null && out.pub == null ? null : out;
+}
+
 export function rawFromHtml(html: string, s: InSchedules = {}): InRaw {
   const tag = (t: string) => { const m = new RegExp(`title="${t}">([^<]+)<`).exec(html); return m ? m[1].replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim() : null; };
   const h1 = /<h1[^>]*>([^<]+)<\/h1>/.exec(html);
@@ -121,6 +156,7 @@ export function rawFromHtml(html: string, s: InSchedules = {}): InRaw {
     },
     cogsQ: cogsPct(s.expQ), cogsA: cogsPct(s.expA), cash: sched(s.otherAssets, 'Cash Equivalents'),
     ann,
+    shp: parseShareholding(html),
   };
 }
 
@@ -138,6 +174,7 @@ export function inFiguresFromRaw(raw: InRaw): InFigures {
     debtAssetsQ: null, debtAssetsA: null, debtCapQ: null, debtCapA: null, debtEbitdaQ: null, debtEbitdaA: null,
   };
   if (fin(raw.price) && raw.price > 0 && fin(raw.mcapCr) && raw.mcapCr > 0) out.shares = raw.mcapCr / raw.price;
+  if (raw.shp && fin(raw.shp.prom)) { out.prom = raw.shp.prom; out.promAt = raw.shp.at; }
   const { q: Q, a: A, bs: BS, cf: CF, r: R } = raw.T;
   const cogsQ = raw.cogsQ || {}, cogsA = raw.cogsA || {};
   // gross profit as TradingView has it for Indian companies (checked on 80: median gap 0.8 points of margin):
@@ -269,7 +306,10 @@ export function inFiguresFromRaw(raw: InRaw): InFigures {
   }
   // ROCE: screener.in's own (the ratios table's latest year, else the page's top ratio)
   const roceRow = row(R, 'ROCE %');
-  if (roceRow && R) { for (let i = R.headers.length - 1; i >= 0; i--) if (fin(roceRow[i])) { out.roceFY = roceRow[i] as number; break; } }
+  if (roceRow && R) {
+    let seen = 0;
+    for (let i = R.headers.length - 1; i >= 0; i--) if (fin(roceRow[i])) { if (seen++ === 0) out.roceFY = roceRow[i] as number; else { out.roceP = roceRow[i] as number; break; } }
+  }
   if (out.roceFY == null && fin(raw.roce)) out.roceFY = raw.roce;
   out.roceTTM = out.roceFY;
   if (out.roceFY != null) approx.push('roceTTM');

@@ -58,7 +58,7 @@ describe('zzz827 — cash is the same-year ratio, or not checked', () => {
     assert.equal(passesConvictionFilter(e, preset), false);
     const c = cbCriteriaCheck(e, preset);
     assert.equal(c.state, 'fail');
-    assert.match(c.failed.join(' '), /cash from operations 0\.42x profit, FY26 full year \(needs 0\.5x\)/);
+    assert.match(c.failed.join(' '), /cash from operations 0\.42x profit, FY26 full year \(needs 0\.7x\)/);
   });
   test('lenders: not meaningful, skipped (never a fail)', () => {
     const bank = good('ZZFIN', { company: 'ZZ Small Finance Bank Ltd', sector: 'Banks', cfo_to_pat_ratio: -3, ocf_to_pat_ratio: -3, ocf_annual_cr: -300 });
