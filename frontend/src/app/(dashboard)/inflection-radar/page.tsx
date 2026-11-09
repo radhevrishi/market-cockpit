@@ -32,7 +32,7 @@ function IndustryCard({ x, open, onToggle, smallOnly }: { x: RadarIndustry; open
     <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, padding: 14, borderLeft: `4px solid ${bandCol(x.top)}` }}>
       <button onClick={onToggle} style={{ all: 'unset', cursor: 'pointer', display: 'block', width: '100%' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
-          <div><span style={{ fontSize: 15, fontWeight: 900, color: C.txt }}>{x.name}</span> <span style={{ fontSize: 11.5, color: C.dim }}>· {x.newsCount} headlines · {x.signals.length} signals</span></div>
+          <div><span style={{ fontSize: 15, fontWeight: 900, color: C.txt }}>{x.name}</span> <span style={{ fontSize: 11.5, color: C.dim }}>· {x.newsCount} headlines · {x.signals.length} signals{typeof (x as any).confirmations === 'number' ? ` · ${(x as any).confirmations} confirming` : ''}</span></div>
           <div style={{ fontSize: 13, fontWeight: 900, color: bandCol(x.top) }}>{x.top}/100 · {x.band.label}</div>
         </div>
         <div style={{ fontSize: 12, color: C.mute, marginTop: 2 }}>{x.why} <i>{x.band.action}</i></div>

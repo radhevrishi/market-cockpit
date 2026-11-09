@@ -933,7 +933,7 @@ export default function UsConvictionBeatsPage() {
   // values are no longer the defaults. Reading a changed threshold as "off"
   // would have been the worst of both — the filter still cutting names while
   // the chip claimed it was not.
-  const PRESET_KEYS = ['sales', 'eps', 'pead', 'opmDelta', 'cfoPatMin', 'mktCapMin'] as const;
+  const PRESET_KEYS = ['sales', 'eps', 'pead', 'opmDelta', 'cfoPatMin', 'mktCapMin', 'deMax', 'r40Min'] as const;
   const presetLive = PRESET_KEYS.some((k) => (filters as any)[k] != null);
   const presetCustom = presetLive && !presetOn;
   const [showPreset, setShowPreset] = useState(false);
@@ -944,6 +944,8 @@ export default function UsConvictionBeatsPage() {
     { k: 'opmDelta', label: 'OPM Δ', unit: 'pp', step: 1, hint: 'Minimum change in operating margin, in percentage points, against the year-ago quarter.' },
     { k: 'cfoPatMin', label: 'CFO/NI', unit: '×', step: 0.1, hint: 'Minimum cash conversion. Skipped for banks, insurers and REITs, where the ratio does not mean the same thing.' },
     { k: 'mktCapMin', label: 'Market cap', unit: '$M', step: 100, hint: 'Minimum market capitalisation in US$ millions.' },
+    { k: 'deMax', label: 'Debt / equity', unit: '×', step: 0.1, hint: 'Maximum debt ÷ equity. Banks, insurers, REITs and an unknown figure pass.' },
+    { k: 'r40Min', label: 'Rule of 40', unit: '', step: 5, hint: 'Quarterly revenue growth YoY + free-cash-flow margin. An unknown figure passes.' },
   ];
   const togglePreset = () => {
     setFilters((prev) => {
@@ -1222,9 +1224,9 @@ export default function UsConvictionBeatsPage() {
       {/* ── quality preset + quick toggles ── */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
         <button onClick={togglePreset}
-          title={`Sales YoY ≥${US_PRESET.sales}% · EPS YoY ≥${US_PRESET.eps}% · PEAD ≥${US_PRESET.pead} · OPM Δ ≥${US_PRESET.opmDelta}pp · CFO/NI ≥${US_PRESET.cfoPatMin} — operating cash and net income over the SAME period, the last twelve months where the filing gives four quarters, else this quarter; a missing ratio is shown as not checked, a loss fails (skipped for banks, insurers and REITs) · Market cap ≥ $${US_PRESET.mktCapMinMusd}M · not low float or low turnover (float at least 30% and worth at least $150M, at least $3M traded a day, at least 0.1% of the float trading a day; unknown passes) · price above BOTH its 50-day and 200-day averages · Quality read ${US_PRESET.verdicts.map((v) => usVerdictWord(v)).join(' / ')}. No promoter-pledge gate — that concept does not exist in US markets. The 200-day leg falls back to the Weinstein stage for entries benched before the figure was captured (stages 2 and 3 are above it); the 50-day leg has no fallback, so an entry carrying neither passes it and is counted as unverified rather than silently dropped.`}
+          title={`Sales YoY ≥${US_PRESET.sales}% · EPS YoY ≥${US_PRESET.eps}% · PEAD ≥${US_PRESET.pead} · OPM Δ ≥${US_PRESET.opmDelta}pp · CFO/NI ≥${US_PRESET.cfoPatMin} — operating cash and net income over the SAME period, the last twelve months where the filing gives four quarters, else this quarter; a missing ratio is shown as not checked, a loss fails (skipped for banks, insurers and REITs) · Market cap ≥ $${US_PRESET.mktCapMinMusd}M · debt ÷ equity ≤ ${US_PRESET.deMax} (banks, insurers, REITs and unknown pass) · Rule of 40 ≥ ${US_PRESET.r40Min} (quarterly revenue growth YoY + free-cash-flow margin; unknown passes) · not low float or low turnover (float at least 30% and worth at least $150M, at least $3M traded a day, at least 0.1% of the float trading a day; unknown passes) · price above BOTH its 50-day and 200-day averages · Quality read ${US_PRESET.verdicts.map((v) => usVerdictWord(v)).join(' / ')}. No promoter-pledge gate — that concept does not exist in US markets. The 200-day leg falls back to the Weinstein stage for entries benched before the figure was captured (stages 2 and 3 are above it); the 50-day leg has no fallback, so an entry carrying neither passes it and is counted as unverified rather than silently dropped.`}
           style={{ fontSize: 'var(--mc-text-xs)', fontWeight: 800, padding: '7px 12px', borderRadius: 999, cursor: 'pointer', border: '1px solid #F59E0B', color: '#F59E0B', backgroundColor: presetOn ? 'color-mix(in srgb, #F59E0B 14%, transparent)' : 'var(--mc-bg-2)' }}>
-          ⚡ QUALITY PRESET · Sales≥{filters.sales ?? US_PRESET.sales} · EPS≥{filters.eps ?? US_PRESET.eps} · PEAD≥{filters.pead ?? US_PRESET.pead} · OPM Δ≥{filters.opmDelta ?? US_PRESET.opmDelta} · CFO/NI≥{filters.cfoPatMin ?? US_PRESET.cfoPatMin} · MktCap≥${filters.mktCapMin ?? US_PRESET.mktCapMinMusd}M · &gt;50DMA · &gt;200DMA{' '}
+          ⚡ QUALITY PRESET · Sales≥{filters.sales ?? US_PRESET.sales} · EPS≥{filters.eps ?? US_PRESET.eps} · PEAD≥{filters.pead ?? US_PRESET.pead} · OPM Δ≥{filters.opmDelta ?? US_PRESET.opmDelta} · CFO/NI≥{filters.cfoPatMin ?? US_PRESET.cfoPatMin} · MktCap≥${filters.mktCapMin ?? US_PRESET.mktCapMinMusd}M · D/E≤{filters.deMax ?? US_PRESET.deMax} · R40≥{filters.r40Min ?? US_PRESET.r40Min} · &gt;50DMA · &gt;200DMA{' '}
           {presetOn ? '✓ ON' : presetCustom ? '✓ ON · customised' : '· OFF — click to enable'}
         </button>
         {/* zzz1207 — Stage 2 yes / no (weekly Stage Analysis), part of the preset and remembered */}
@@ -1275,7 +1277,7 @@ export default function UsConvictionBeatsPage() {
                 return (
                   <label key={k} title={hint} style={{ display: 'block', fontSize: 'var(--mc-text-xs)' }}>
                     <div style={{ color: 'var(--mc-text-3)', fontWeight: 700, marginBottom: 3 }}>
-                      {label} ≥{unit === '$M' ? ' $' : ' '}<span style={{ color: 'var(--mc-text-1)' }}>{v ?? '—'}</span>{unit !== '$M' ? unit : 'M'}
+                      {label} {k === 'deMax' ? '≤' : '≥'}{unit === '$M' ? ' $' : ' '}<span style={{ color: 'var(--mc-text-1)' }}>{v ?? '—'}</span>{unit !== '$M' ? unit : 'M'}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <input
@@ -1362,6 +1364,8 @@ export default function UsConvictionBeatsPage() {
           <ChipRow label="P/E ≤" value={filters.peMax} opts={[15, 20, 30, 40]} fmt={(v) => `${v}×`} onSet={(v) => setFilters((p) => ({ ...p, peMax: v }))} count={(v) => countWith({ peMax: v })} />
           {/* zzz1068 — D/E MAX. Banks / insurers / REITs and an unknown D/E pass (not a fail). */}
           <ChipRow label="D/E MAX" value={filters.deMax ?? null} opts={DE_MAX_OPTIONS.map((o) => o.v)} fmt={(v) => `≤${v}`} onSet={(v) => setFilters((p) => ({ ...p, deMax: v }))} count={(v) => countWith({ deMax: v })} />
+          {/* zzz1238 — Rule of 40 floor (quarterly revenue growth YoY + FCF margin; unknown passes). 40 is in the preset. */}
+          <ChipRow label="Rule of 40 ≥" value={filters.r40Min ?? null} opts={[20, 40, 60]} fmt={(v) => `${v}`} onSet={(v) => setFilters((p) => ({ ...p, r40Min: v }))} count={(v) => countWith({ r40Min: v })} />
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={rowLabel}>Quality read</span>
             {VERDICTS.map((v) => {

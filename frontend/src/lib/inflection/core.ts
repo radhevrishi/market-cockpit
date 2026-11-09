@@ -40,6 +40,7 @@ export interface Industry {
   id: string; name: string; why: string;
   queries: string[];          // news searches (Google News)
   match: RegExp;              // a headline is about this industry
+  exclude?: RegExp;           // zzz1238 — …unless it is really about this (e.g. chip "packaging" is not packaging)
   beneficiaries: Beneficiary[];
 }
 
@@ -87,6 +88,7 @@ export const INDUSTRIES: Industry[] = [
     id: 'packaging', name: 'Packaging (paper, corrugated, flexible, glass, cans)', why: 'Packaging demand and prices move before converters\' margins — kraft paper, film, glass and can capacity is lumpy.',
     queries: ['packaging demand India', 'corrugated box prices', 'kraft paper prices India', 'flexible packaging film prices', 'glass packaging capacity India'],
     match: /packaging|corrugated|kraft paper|containerboard|\bboxboard\b|duplex board|bopet|bopp|flexible film|glass bottle|aluminium can|beverage can|paperboard/i,
+    exclude: /semiconductor|\bchips?\b|cowos|\bosat\b|advanced packaging|wafer|\bhbm\b|substrate|tsmc|nvidia|\bintel\b|amkor|chiplet|foundry/i,
     beneficiaries: [
       B('TCPLPACK', 'TCPL Packaging', 'Paperboard cartons', 'Volumes, capacity, export mix'),
       B('MOLDTKPAC', 'Mold-Tek Packaging', 'Rigid plastic packaging', 'Customer additions, utilisation, margins'),
@@ -213,6 +215,8 @@ export function readSignal(text: string): SignalRead {
   const t = text.replace(/\s+/g, ' ');
   const classes = new Set<SignalClass>();
   if (/\b(orders?|bookings?|demand|backlog|shipments?|sales|consumption|volumes?|builds?)\b.{0,50}\b(?:surge|soar|jump|rise|rose|up|climb|record|accelerat|strong|double|tripl)|\b(?:surge|soar|jump|record|strong)\w*\b.{0,40}\b(orders?|demand|bookings?|backlog)/i.test(t)) classes.add('DEMAND');
+  // zzz1238 — a won order / contract is demand too (rail, defence, grid headlines are mostly worded this way)
+  if (/\b(?:bags?|bagged|bagging|wins?|won|winning|secures?|secured|securing|receives?|received|bags|awarded|lands?|landed)\b.{0,50}\b(?:orders?|contracts?|tenders?|work orders?|loa)\b|\b(?:orders?|contracts?) (?:worth|valued at|of) (?:rs\.?|₹|inr|usd|\$)/i.test(t)) classes.add('DEMAND');
   if (/shortage|bottleneck|lead[- ]times?|sold out|supply (?:crunch|constraint|tight)|tight supply|allocation|wait(?:ing)? (?:list|times?)|scarce|capacity constraint/i.test(t)) classes.add('BOTTLENECK');
   if (/utili[sz]ation|second shift|third shift|running (?:at )?full|full capacity|capacity additions?|debottleneck|ramp(?:s|ed|ing)? up|production rate (?:increase|hike)|rate increase/i.test(t)) classes.add('UTILISATION');
   if (/qualif(?:ied|ication)|approved (?:vendor|supplier)|certif(?:ied|ication)|first (?:order|commercial)|new customer|platform win|design win|nominated/i.test(t)) classes.add('QUALIFICATION');
@@ -282,7 +286,26 @@ export function neglectFromPrices(perf3m: Array<number | null | undefined>): num
 
 /** Which industries a headline is about. */
 export function industriesOf(text: string): string[] {
-  return INDUSTRIES.filter((i) => i.match.test(text)).map((i) => i.id);
+  return INDUSTRIES.filter((i) => i.match.test(text) && !(i.exclude && i.exclude.test(text))).map((i) => i.id);
+}
+
+/** zzz1238 — our own alert / summary lines ("[STRUCTURAL ALERT] …") are not news. */
+export const isSyntheticHeadline = (t: string) => /^\s*\[[^\]]{2,40}\]/.test(t) || /^\s*(?:structural alert|bottleneck alert)\b/i.test(t);
+
+/** zzz1238 — older news counts less: ≤ 14 days in full, ≤ 30 days 90%, ≤ 60 days 75%, older 60%. */
+export function recencyWeight(ageDays: number): number {
+  return ageDays <= 14 ? 1 : ageDays <= 30 ? 0.9 : ageDays <= 60 ? 0.75 : 0.6;
+}
+
+/**
+ * zzz1238 — an industry's score: its best (recency-weighted) signal plus up to 12 points for OTHER recent signals that
+ * confirm it (each a different headline of at least 40 within 60 days, 3 points each). One loud headline alone is not an inflection.
+ */
+export function industryScore(signals: ReadonlyArray<{ score: number; ageDays: number; headline: string }>): { top: number; confirmations: number } {
+  if (!signals.length) return { top: 0, confirmations: 0 };
+  const best = signals.reduce((a, b) => (b.score > a.score ? b : a));
+  const confirmations = signals.filter((s) => s !== best && s.score >= 40 && s.ageDays <= 60).length;
+  return { top: Math.min(100, best.score + Math.min(12, confirmations * 3)), confirmations };
 }
 
 /** The framework's incremental-EPS sensitivity (bear / base / bull). Revenue in ₹ crore; shares in crore. */

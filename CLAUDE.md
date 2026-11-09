@@ -3970,3 +3970,12 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   shareholding history). `/inflection-radar` (`lib/inflection/*`, job `inflection-radar` 4×/day): Google News searches per
   industry + archive → six signal classes → framework score → Indian supply-chain map.
 - KV migration off Upstash finished 9 Nov (kvStore.migration.done) — the Upstash database can be deleted by the owner.
+- zzz1238 (9 Nov): Conviction Beats preset India + USA adds debt ÷ equity ≤ 0.5 (lenders / unknown pass) and Rule of 40 ≥ 40
+  (`passesR40Min` in cb-extras; unknown passes); "RULE OF 40 MIN" chip rows on both pages. All 31 of the owner's screener.in screens
+  (queries read from his account, with screener.in's own counts) in `lib/screener/screenerin-defaults.ts`; they run on our data by
+  default (a pasted query wins). Query language: '%', coalesce(), "Is not SME" (always true — main board only), Pledged percentage
+  = no data → that condition passes and is reported. New query-only columns `SCREENERIN_QUERY_COLUMNS` (returns, volumes, 52w/
+  all-time high/low, previous-day DMAs, net block / CWIP / investments, quarterly EPS / operating profit …); tech figures v3, India
+  pages re-read once for rv 4. Inflection radar (KEY v2): our "[...]" alert lines are not news, chip packaging is not packaging
+  (`exclude`), won orders = demand, older news weighted down (`recencyWeight`), industry score = best + 3 per confirming signal (≤ 12).
+  Tradebook upload bug: the input's FileList was emptied by resetting the input before it was read — copy to an array first.

@@ -9,24 +9,11 @@ import type { InRaw } from './in-assemble';
 import { industryPeMap, screenerInColumns, screenerInCsv, type ScreenerInRow } from './screenerin-columns';
 import { compileQuery } from './screenerin-query';
 import { SCREENERIN_FROZEN } from './screenerin-frozen';
+import { DEFAULT_QUERY_BY_SLUG, SCREENERIN_DEFAULT_SCREENS } from './screenerin-defaults';
 
+// zzz1238 — every screen of the owner's screener.in account (screenerin-defaults), then his three lists
 export const SCREENERIN_FILES: Array<{ slug: string; display: string; kind: 'screen' | 'portfolio' | 'watchlist' }> = [
-  { slug: 'fii', display: 'FII', kind: 'screen' },
-  { slug: 'future-leaders', display: 'Future leaders', kind: 'screen' },
-  { slug: 'lowequitycapital', display: 'Low equity capital', kind: 'screen' },
-  { slug: 'multibagger2-ignoring-trend', display: 'Multibagger 2 (ignoring trend)', kind: 'screen' },
-  { slug: 'stocks-like-bajaj-consumer', display: 'Stocks like Bajaj Consumer', kind: 'screen' },
-  { slug: 'rajeev-thakkar-ppfas-screener', display: 'Rajeev Thakkar PPFAS screener', kind: 'screen' },
-  { slug: '100-baggers-sales-and-eps-growth', display: '100-baggers: sales and EPS growth', kind: 'screen' },
-  { slug: 'multibagger-like-acutaasatlantadee-dev', display: 'Multibagger like Acutaas / Atlanta / Dee Dev', kind: 'screen' },
-  { slug: 'pead-master-screener-rishi-framework', display: 'PEAD master screener', kind: 'screen' },
-  { slug: 'ipobases', display: 'IPO bases', kind: 'screen' },
-  { slug: 'great-results-and-pullback', display: 'Great results and pullback', kind: 'screen' },
-  { slug: 'capex', display: 'Capex', kind: 'screen' },
-  { slug: 'weekly-volume-pockets', display: 'Weekly volume pockets', kind: 'screen' },
-  { slug: 'monthly-volume-pockets', display: 'Monthly volume pockets', kind: 'screen' },
-  { slug: 'turnarounds', display: 'Turnarounds', kind: 'screen' },
-  { slug: 'debt-reduction', display: 'Debt reduction', kind: 'screen' },
+  ...SCREENERIN_DEFAULT_SCREENS.map((d) => ({ slug: d.slug, display: d.display, kind: 'screen' as const })),
   { slug: 'watchlist-10432429', display: 'Portfolio', kind: 'portfolio' },
   { slug: 'watchlist-10432585', display: 'Watchlist', kind: 'watchlist' },
   { slug: 'watchlist-8105148', display: 'Watchlist 2', kind: 'watchlist' },
@@ -54,7 +41,7 @@ async function appList(key: 'mc_portfolio_holdings' | 'mc_watchlist_tickers'): P
   } catch { return []; }
 }
 
-let _cache: { at: number; built: Map<string, { csv: string; rows: number; source: string; note: string | null }>; builtAt: string } | null = null;
+let _cache: { at: number; built: Map<string, { csv: string; rows: number; source: string; note: string | null; members: string[] }>; builtAt: string } | null = null;
 
 /** Builds every file (memoised 10 minutes). */
 export async function buildScreenerInFiles(force = false) {
@@ -74,19 +61,24 @@ export async function buildScreenerInFiles(force = false) {
     return screenerInColumns(raws.get(t) || null, r, r.ind ? pe.get(r.ind) ?? null : null);
   };
   const queries = await loadQueries();
-  const built = new Map<string, { csv: string; rows: number; source: string; note: string | null }>();
+  const built = new Map<string, { csv: string; rows: number; source: string; note: string | null; members: string[] }>();
   let all: Array<{ t: string; c: ScreenerInRow }> | null = null;
   const everyone = () => (all ||= Array.from(byT.keys()).map((t) => ({ t, c: colsFor(t) as ScreenerInRow })).filter((x) => x.c));
   for (const f of SCREENERIN_FILES) {
     let members: string[] = [], source = 'last screener.in export (6 Nov 2026)', note: string | null = null;
-    const q = queries[f.slug];
+    const saved = queries[f.slug];
+    const def = DEFAULT_QUERY_BY_SLUG[f.slug];
+    const q = saved || (def ? { query: def.query, at: '' } : null);
     if (f.kind === 'screen' && q) {
       const cq = compileQuery(q.query);
       if (cq.error) note = `query not understood: ${cq.error}`;
       else {
         members = everyone().filter((x) => cq.test(x.c)).map((x) => x.t);
-        source = 'your query, run on our data';
-        if (cq.unknown.length) note = `not known here (those conditions fail): ${cq.unknown.join(', ')}`;
+        source = saved ? 'your pasted query, run on our data' : 'your screener.in query, run on our data';
+        const bits: string[] = [];
+        if (cq.unknown.length) bits.push(`not known here (those conditions fail): ${cq.unknown.join(', ')}`);
+        if (cq.assumed.length) bits.push(`no data here, taken as passing: ${cq.assumed.join(', ')}`);
+        note = bits.length ? bits.join(' · ') : null;
       }
     }
     if (!members.length && !(f.kind === 'screen' && q && !note)) {
@@ -97,7 +89,7 @@ export async function buildScreenerInFiles(force = false) {
     const out = members.map((t) => colsFor(String(t).toUpperCase())).filter((c): c is ScreenerInRow => !!c);
     const missing = members.length - out.length;
     if (missing > 0) note = [note, `${missing} not in our India universe`].filter(Boolean).join(' · ');
-    built.set(f.slug, { csv: screenerInCsv(out), rows: out.length, source, note });
+    built.set(f.slug, { csv: screenerInCsv(out), rows: out.length, source, note, members: out.map((c) => String(c['NSE Code'] || c['Name'] || '')).filter(Boolean) });
   }
   _cache = { at: Date.now(), built, builtAt: snap?.builtAt || new Date().toISOString() };
   return _cache;
@@ -111,7 +103,13 @@ export async function screenerInManifest() {
     lastSync: b.builtAt, ok: SCREENERIN_FILES.length, fail: 0, source: 'market-cockpit stock screener',
     files: SCREENERIN_FILES.map((f) => {
       const x = b.built.get(f.slug)!;
-      return { name: `${f.slug}.csv`, size: x.csv.length, displayName: f.display, ok: true, source: x.source, note: x.note, rows: x.rows, kind: f.kind, query: queries[f.slug]?.query ?? null };
+      const def = DEFAULT_QUERY_BY_SLUG[f.slug];
+      return {
+        name: `${f.slug}.csv`, size: x.csv.length, displayName: f.display, ok: true, source: x.source, note: x.note, rows: x.rows, kind: f.kind,
+        query: queries[f.slug]?.query ?? def?.query ?? null, customQuery: !!queries[f.slug],
+        screenerInCount: def?.ref ?? null, screenerInUrl: def ? `https://www.screener.in/screens/${def.id}/${f.slug}/` : null,
+        members: x.members.slice(0, 200),
+      };
     }),
   };
 }

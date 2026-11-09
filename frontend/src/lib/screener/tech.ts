@@ -30,6 +30,10 @@ export interface TechFigures {
   perfYTD: number | null; perf1Y: number | null; perf5Y: number | null; perfAll: number | null;
   avgVol10: number | null; avgVol30: number | null; avgVol60: number | null; vol1W: number | null;
   hi52: number | null;
+  /** zzz1238 — screener.in query fields: 52-week low, highest high in the history held (≤ 5 years), average volume over the last
+   *  week / month / year (5 / 21 / 250 sessions), and yesterday's 50 / 200-day averages (golden cross) */
+  lo52?: number | null; hiAll?: number | null; avgVol5?: number | null; avgVol21?: number | null; avgVol250?: number | null;
+  sma50P?: number | null; sma200P?: number | null;
   /** zzz969 — last bar's close; change over the last 5 trading sessions (not 7 calendar days) */
   close?: number | null; perf5D?: number | null;
   /** zzz996 — the previous bar's close (to tell a quote that is a session behind) */
@@ -163,7 +167,7 @@ export function periodCloses(d: readonly string[], c: readonly number[], by: 'W'
  *  digits, only float noise removed): rounding them to 2 decimals made SMA 50 100.0002 and SMA 200 100.00005 both "100.00", so
  *  "SMA 50 above SMA 200" turned false. Percentages keep 2 decimals. TECH_FIGURES_VERSION marks entries read with this rule; an
  *  older entry keeps being used until its company is read again (tech-fetch re-reads them after the due ones). */
-export const TECH_FIGURES_VERSION = 2;
+export const TECH_FIGURES_VERSION = 3;   // zzz1238: + lo52, hiAll, avgVol5/21/250, sma50P/sma200P
 export const PRICE_LEVEL_KEYS: readonly string[] = ['sma21', 'sma50', 'sma100', 'sma150', 'sma200', 'ema10', 'ema21', 'ema50', 'ema200', 'hi52', 'close', 'px', 'prevClose', 'prev2Close'];
 export const pxFull = (v: number) => Number(v.toPrecision(12));
 
@@ -210,6 +214,16 @@ export function techFigures(b: DailyBars): TechFigures {
   let hi = -Infinity;
   for (let i = n - 1; i >= 0 && b.d[i] > from; i--) hi = Math.max(hi, b.h[i]);
   out.hi52 = Number.isFinite(hi) ? pxFull(hi) : null;
+  // zzz1238
+  let lo = Infinity;
+  for (let i = n - 1; i >= 0 && b.d[i] > from; i--) if (b.l[i] > 0) lo = Math.min(lo, b.l[i]);
+  out.lo52 = Number.isFinite(lo) ? pxFull(lo) : null;
+  let ha = -Infinity;
+  for (let i = 0; i < n; i++) ha = Math.max(ha, b.h[i]);
+  out.hiAll = Number.isFinite(ha) ? pxFull(ha) : null;
+  out.avgVol5 = avg(5); out.avgVol21 = avg(21); out.avgVol250 = avg(250);
+  out.sma50P = n > 50 ? pf(smaOf(c.slice(0, -1), 50)) : null;
+  out.sma200P = n > 200 ? pf(smaOf(c.slice(0, -1), 200)) : null;
   out.close = pxFull(last);
   const p6 = (v: number) => (fin(v) ? Number(v.toPrecision(6)) : null);
   out.prevClose = n > 1 ? p6(c[n - 2]) : null;

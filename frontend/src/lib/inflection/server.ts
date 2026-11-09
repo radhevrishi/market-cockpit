@@ -4,15 +4,16 @@ import { kvGet, kvSet } from '../kv';
 import { fetchGoogleNewsRSS } from '../indian-news-rss';
 import { loadNews } from '../news/archive';
 import { getSnapshot } from '../screener/snapshot-cache';
-import { INDUSTRIES, industriesOf, neglectFromPrices, readSignal, scoreBand, scoreSignal, type ScoredSignal } from './core';
+import { INDUSTRIES, industriesOf, industryScore, isSyntheticHeadline, neglectFromPrices, readSignal, recencyWeight, scoreBand, scoreSignal, type ScoredSignal } from './core';
 
-const KEY = 'inflection-radar:v1';
+const KEY = 'inflection-radar:v2';   // zzz1238 — recency, confirmations, cleaner matching
 const TTL_S = 3 * 3600;
 
 export interface RadarIndustry {
   id: string; name: string; why: string;
   top: number; band: { label: string; action: string };
-  signals: ScoredSignal[];
+  confirmations: number;   // zzz1238 — other recent signals backing the best one
+  signals: Array<ScoredSignal & { ageDays: number; rawScore: number }>;
   companies: Array<{ ticker: string; name: string; bucket: string; verify: string; large: boolean; mc: number | null; revQYoY: number | null; epsQYoY: number | null; opm: number | null; perf3M: number | null; perf1Y: number | null; pe: number | null; stage: number | null; inUniverse: boolean }>;
   newsCount: number;
 }
@@ -38,7 +39,7 @@ export async function inflectionRadar(force = false): Promise<RadarData> {
   const since = Date.now() - 120 * 86_400_000;
   const pool = new Map<string, { title: string; url: string | null; source: string | null; at: string; ids: Set<string> }>();
   const add = (title: string, url: string | null, source: string | null, at: string, ids: string[]) => {
-    if (!title || !ids.length || !(Date.parse(at) >= since)) return;
+    if (!title || !ids.length || !(Date.parse(at) >= since) || isSyntheticHeadline(title)) return;
     const k = title.toLowerCase().replace(/\s*-\s*[^-]{2,40}$/, '').replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 120);
     const x = pool.get(k);
     if (x) { ids.forEach((i) => x.ids.add(i)); return; }
@@ -59,22 +60,27 @@ export async function inflectionRadar(force = false): Promise<RadarData> {
     const small = companies.filter((c) => !c.large);
     const neglect = neglectFromPrices(small.map((c) => c.perf3M));
     const news = Array.from(pool.values()).filter((p) => p.ids.has(ind.id));
-    const signals: ScoredSignal[] = [];
+    const signals: RadarIndustry['signals'] = [];
+    const now = Date.now();
     for (const n of news) {
       const read = readSignal(n.title);
       const s = scoreSignal(read, { neglect, smallCount: small.length });
       if (!s) continue;
-      signals.push({ industry: ind.id, headline: n.title, url: n.url, source: n.source, at: n.at, read, ...s });
+      const ageDays = Math.max(0, (now - Date.parse(n.at)) / 86_400_000);
+      const w = recencyWeight(ageDays);
+      const reasons = w < 1 ? [...s.reasons, `${Math.round(ageDays)} days old (counted at ${Math.round(w * 100)}%)`] : s.reasons;
+      signals.push({ industry: ind.id, headline: n.title, url: n.url, source: n.source, at: n.at, read, ...s, reasons, score: Math.round(s.score * w), rawScore: s.score, ageDays: Math.round(ageDays) });
     }
     signals.sort((a, b) => b.score - a.score || b.at.localeCompare(a.at));
-    const top = signals[0]?.score ?? 0;
-    return { id: ind.id, name: ind.name, why: ind.why, top, band: scoreBand(top), signals: signals.slice(0, 15), companies, newsCount: news.length };
+    const { top, confirmations } = industryScore(signals);
+    return { id: ind.id, name: ind.name, why: ind.why, top, confirmations, band: scoreBand(top), signals: signals.slice(0, 15), companies, newsCount: news.length };
   }).sort((a, b) => b.top - a.top);
 
   const data: RadarData = {
     builtAt: new Date().toISOString(), industries,
     notes: [
       `${searched.length} industry headlines searched today + ${archive.length} from our news archive (90 days).`,
+      'Industry score = its best signal (older news counts less: full weight for 14 days, 60% after 60 days) + 3 points for each other recent signal that confirms it (up to 12). Our own alert lines are not counted as news; chip "packaging" is kept out of packaging.',
       'A score is research priority (framework weights: magnitude 20, acceleration 15, duration 15, EPS impact 20, market neglect 15, bottleneck 15) — not a buy.',
       'The company map is a research lead, not proof of revenue linkage: verify product fit, customer, utilisation and materiality.',
     ],

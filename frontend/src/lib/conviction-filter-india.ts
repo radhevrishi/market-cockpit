@@ -17,7 +17,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { passesStage2, readStage2, stageOf } from './cb-stage2';   // zzz1207
-import { passesLiquidity, liquidityFailText } from './cb-extras';   // zzz1231
+import { passesLiquidity, liquidityFailText, passesR40Min, r40FailText } from './cb-extras';   // zzz1231
 import { peadScore } from '@/lib/pead-score';
 import { finSubKind } from '@/lib/fin-kind';
 import { INDIA_PRESET } from '@/lib/quality-preset';
@@ -156,6 +156,8 @@ export type ConvFilters = {
   stage2?: 'yes' | 'no' | null;
   /** zzz1231 — leave out known low-float / low-turnover companies (lib/cb-extras). Part of the preset. */
   liqOk?: boolean | null;
+  /** zzz1238 — Rule of 40 floor (lib/cb-extras r40). Part of the preset. */
+  r40Min?: number | null;
 };
 
 export const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, newOnly: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null, d2Bucket: null, driftBucket: null, opmDelta: null, score: null, opmMin: null, peMax: null, freshBypass: false, mktCapMin: null, cfoPatMin: null, pledgedMax: null, verdicts: null /* zzz362 */, cap: 'all' };
@@ -225,6 +227,8 @@ export const indiaPresetFilters = (floor: CbCapFloor = readCbPresetCapFloor()) =
   verdicts: [...INDIA_PRESET.verdicts],
   stage2: ((p) => (p === 'any' ? null : p))(readStage2('IN')) as 'yes' | 'no' | null,   // zzz1207 — the owner's remembered choice
   liqOk: INDIA_PRESET.avoidIlliquid as boolean | null,   // zzz1231
+  deMax: INDIA_PRESET.deMax as number | null,   // zzz1238
+  r40Min: INDIA_PRESET.r40Min as number | null,   // zzz1238
 });
 
 export const VERDICTS_SORTED = JSON.stringify([...INDIA_PRESET.verdicts].sort());
@@ -240,6 +244,7 @@ export function isIndiaPresetActive(f: ConvFilters): boolean {
     && isCapFloor(f.mktCapMin)   // zzz879 — any of the three size floors
     && f.pledgedMax === INDIA_PRESET.pledgedMax
     && !!f.liqOk === INDIA_PRESET.avoidIlliquid   // zzz1231
+    && f.deMax === INDIA_PRESET.deMax && f.r40Min === INDIA_PRESET.r40Min   // zzz1238
     && f.driftBucket == null
     && JSON.stringify((f.verdicts || []).map((v) => normalizeVerdictKey(v) || String(v)).sort()) === VERDICTS_SORTED;
 }
@@ -759,6 +764,7 @@ export function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): bool
   }
   if (f.stage2 && !passesStage2(e, f.stage2)) return false;   // zzz1207
   if (f.liqOk && !passesLiquidity(e)) return false;   // zzz1231
+  if (!passesR40Min(e, f.r40Min)) return false;   // zzz1238
   if (f.sales != null && sales < f.sales) return false;
   // zzz827 — a turn from loss to profit meets a growth gate (no % exists);
   // a loss that only narrowed never does, whatever % the feed computed.
@@ -1053,6 +1059,7 @@ export function cbFailReasons(e: ConvictionEntry, f: ConvFilters): string[] {
     cap: () => 'market-cap band outside your chip',
     stage2: () => `${stageOf(e).text} (needs ${f.stage2 === 'yes' ? 'Stage 2' : 'not Stage 2'})`,   // zzz1207
     liqOk: () => liquidityFailText(e),   // zzz1231
+    r40Min: () => r40FailText(e, f.r40Min as number),   // zzz1238
     newOnly: () => { const d = filingAgeDays((e as any).filing_date); return d == null ? 'filing date not known (NEW window)' : `filed ${d} days ago (NEW shows the last ${__NEW_WIN.days} days)`; },
   };
   const out: string[] = [];

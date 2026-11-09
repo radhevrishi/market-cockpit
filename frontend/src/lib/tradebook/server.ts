@@ -140,13 +140,16 @@ async function build(trades: Trade[]): Promise<TradebookAnalytics> {
   const pre = buildLedger(trades);
   const { px, missing } = await pricesFor(pre.symbolOf, 150_000);
   let bench: Px | null = null;
+  let benchPending = 0;
   if (pre.firstDate) {
     const fill = await ensureIndexHistory(isoDay(dayMs(pre.firstDate) - 7 * DAY), isoDay(Date.now()), 100_000).catch(() => ({ fetched: 0, pending: -1 }));
     const ic = await indexCloses(BENCH_NAME).catch(() => []);
     if (ic.length) bench = { t: Float64Array.from(ic.map((x) => x.t)), c: Float64Array.from(ic.map((x) => x.c)), at: isoDay(ic[ic.length - 1].t) };
+    benchPending = fill.pending;
     if (fill.pending > 0) notes.push(`Nifty Smallcap 100 history is still being read from NSE (${fill.pending} days to go) — press Recompute in a few minutes for an exact comparison.`);
   }
-  if (!bench) notes.push('Nifty Smallcap 100 closes could not be read from NSE — the comparison is left out.');
+  if (!bench && pre.firstDate && benchPending <= 0) notes.push('Nifty Smallcap 100 closes could not be read from NSE — the comparison is left out.');
+  if (!pre.firstDate) notes.push('No trades yet — upload your broker tradebook files (Excel or CSV) to see returns.');
   const priceAt = (isin: string, t: number) => closeAt(px.get(isin), t);
   const openAt = (isin: string, startT: number) => {
     const p = px.get(isin);

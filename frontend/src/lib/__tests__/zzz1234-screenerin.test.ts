@@ -20,7 +20,7 @@ test('the 63 screener.in columns, with figures worked out from the page', () => 
   assert.equal(typeof c['Sales growth 3Years'], 'number');
   assert.equal(typeof c['Debt'], 'number');
   assert.equal(c['Promoter holding'], 49.99);
-  assert.equal(raw.rv, 3);
+  assert.equal(raw.rv, 4);
   assert.ok(Array.isArray(raw.shpQ?.prom) && raw.shpQ!.prom.length >= 4);
   const csv = screenerInCsv([c]);
   assert.equal(csv.split('\n')[0].split(',').length, 63);

@@ -1437,7 +1437,7 @@ export function ConvictionBeatsPanel({ entries: entriesIn, onRemove, onClearAll,
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <button
                 onClick={handleToggle}
-                title="Your saved screen: sales growth at least 20% · EPS growth at least 25% · PEAD (post-results drift) 40 or more · operating margin not falling · operating margin 0% or more (unknown passes) · cash from operations at least 0.7× profit (same fiscal year; not checked when the figure is missing; skipped for lenders) · not low float or low turnover (free float at least 30% and worth at least ₹500 Cr, traded value at least ₹3 Cr a day, at least 0.1% of the float trading a day; unknown passes) · any market cap unless you pick a size floor (your setting; no size ceiling) · no promoter pledge (an unknown pledge is not a fail) · setup Top / Good / Watch. A missing figure is 'not checked', never a fail. Auto-applied on first visit; click to switch it off (remembered) or on again."
+                title="Your saved screen: sales growth at least 20% · EPS growth at least 25% · PEAD (post-results drift) 40 or more · operating margin not falling · operating margin 0% or more (unknown passes) · cash from operations at least 0.7× profit (same fiscal year; not checked when the figure is missing; skipped for lenders) · debt ÷ equity at most 0.5 (lenders skipped) · Rule of 40 (quarterly sales growth YoY + FCF margin) at least 40 (not known passes) · not low float or low turnover (free float at least 30% and worth at least ₹500 Cr, traded value at least ₹3 Cr a day, at least 0.1% of the float trading a day; unknown passes) · any market cap unless you pick a size floor (your setting; no size ceiling) · no promoter pledge (an unknown pledge is not a fail) · setup Top / Good / Watch. A missing figure is 'not checked', never a fail. Auto-applied on first visit; click to switch it off (remembered) or on again."
                 style={presetActive
                   ? chipActive('#F59E0B')
                   : { ...chipBase, border: '1px solid #F59E0B', color: '#F59E0B', fontWeight: 800 }}>
@@ -1511,6 +1511,10 @@ export function ConvictionBeatsPanel({ entries: entriesIn, onRemove, onClearAll,
         {/* zzz304 — CFO/PAT minimum ratio chips (earnings quality: cash conversion). */}
         {renderChipGroup('CFO/PAT MIN', '#34D399', 'cfoPatMin' as any, [
           { v: 0.5, lbl: '≥0.5' }, { v: 0.7, lbl: '≥0.7' }, { v: 0.8, lbl: '≥0.8' }, { v: 1.0, lbl: '≥1.0' },
+        ])}
+        {/* zzz1238 — Rule of 40 floor (quarterly sales growth YoY + FCF margin; not known passes). 40 is in the preset. */}
+        {renderChipGroup('RULE OF 40 MIN', '#22D3EE', 'r40Min' as any, [
+          { v: 20, lbl: '≥20' }, { v: 40, lbl: '≥40' }, { v: 60, lbl: '≥60' },
         ])}
         {/* zzz360 — promoter-pledge MAX chips. 0 = only unpledged names (governance
             clean). Null pledged_pct passes the gate so unknowns aren't dropped. */}

@@ -130,13 +130,13 @@ export default function TradebookTab({ holdings, onApply }: { holdings: H[]; onA
     setLog((l) => [...l, `Portfolio updated from the tradebook: ${changes.filter((c) => c.action === 'add').length} added, ${changes.filter((c) => c.action === 'update').length} quantity / price changed, ${changes.filter((c) => c.action === 'remove').length} sold out and removed${ok ? '' : ' (saved on this device only)'}.`]);
   }, [holdings, onApply]);
 
-  const onFiles = useCallback(async (list: FileList | null) => {
-    if (!list?.length) return;
+  const onFiles = useCallback(async (list: File[]) => {   // zzz1238 — an array copied at once (a FileList empties when the input is cleared)
+    if (!list.length) { setErr('No file picked.'); return; }
     setErr(null); setLog([]);
     const XLSX = await import('xlsx');
     const known = new Set(files.map((f) => f.hash));
     let total = 0;
-    for (const file of Array.from(list)) {
+    for (const file of list) {
       setBusy(`Reading ${file.name}…`);
       try {
         const buf = await file.arrayBuffer();
@@ -181,7 +181,7 @@ export default function TradebookTab({ holdings, onApply }: { holdings: H[]; onA
     <div data-testid="tradebook-tab">
       <Card title="📒 Tradebook — upload your Zerodha equity tradebooks" right={data && <button onClick={() => load(true)} disabled={!!busy} style={{ fontSize: 11.5, padding: '5px 10px', borderRadius: 6, border: `1px solid ${C.line}`, background: 'transparent', color: C.mute, cursor: 'pointer' }}>↻ Recompute with latest prices</button>}>
         <label style={{ display: 'block', border: `1.5px dashed ${C.line}`, borderRadius: 10, padding: 18, textAlign: 'center', cursor: busy ? 'wait' : 'pointer', color: C.mute, fontSize: 13 }}>
-          <input type="file" accept=".xlsx,.xls,.csv" multiple disabled={!!busy} style={{ display: 'none' }} onChange={(e) => { void onFiles(e.target.files); e.currentTarget.value = ''; }} />
+          <input type="file" accept=".xlsx,.xls,.csv" multiple disabled={!!busy} style={{ display: 'none' }} onChange={(e) => { const picked = Array.from(e.target.files || []); e.currentTarget.value = ''; void onFiles(picked); }} />
           <b style={{ color: C.txt }}>Choose tradebook files</b> (Console → Reports → Tradebook → Equity, one file per year is fine).<br />
           Upload all years once, then just the new month later — a file or trade already uploaded is ignored, and your portfolio quantities are updated automatically.
         </label>

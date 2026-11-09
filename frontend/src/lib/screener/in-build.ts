@@ -178,7 +178,7 @@ async function refreshFunds(universe: string[], budgetMs: number, notes: string[
   const lacksCfi = (t: string) => { const cf = store.get(t)?.raw?.T?.cf; return !!cf && !Object.keys(cf.rows).some((k) => /cash from investing/i.test(k)); };
   // zzz1231 — and pages stored before the shareholding table was kept (free float for the Conviction Beats liquidity check)
   // zzz1234 — and pages boiled down before interest / working-capital days / shareholding history were kept (screener.in columns)
-  const lacksShp = (t: string) => { const raw = store.get(t)?.raw; return !!raw && (raw.shp === undefined || (raw.rv ?? 0) < 3); };
+  const lacksShp = (t: string) => { const raw = store.get(t)?.raw; return !!raw && (raw.shp === undefined || (raw.rv ?? 0) < 4); };
   const reread = (t: string) => (lacksCfi(t) || lacksShp(t)) && (age.get(t) as number) > 0.25;
   const rank = (t: string) => (!age.has(t) ? 0 : !store.get(t)?.raw && !store.get(t)?.err ? 1 : reread(t) ? 1.5 : 2);
   const due = universe
@@ -241,6 +241,10 @@ export function assembleInRow(t: string, name: string, latest: BhavDay, bhav: Bh
       atrP: tf.atrP, adrP: tf.adrP, chgOpen: tf.chgOpen, chg1W: tf.chg1W, perf1W: tf.perf1W, perf1M: tf.perf1M, perf3M: tf.perf3M,
       perf6M: tf.perf6M, perfYTD: tf.perfYTD, perf1Y: tf.perf1Y, perf5Y: tf.perf5Y, perfAll: tf.perfAll, avgVol30: tf.avgVol30, avgVol60: tf.avgVol60, vol1W: tf.vol1W, hi52: tf.hi52,
       ipoD: tf.ipoD, perf5D: tf.perf5D ?? null,
+      // zzz1238 — for the owner's screener.in queries (lib/screener/screenerin-columns)
+      ...(tf.lo52 != null ? { lo52: tf.lo52 } : {}), ...(tf.hiAll != null ? { hiAll: tf.hiAll } : {}),
+      ...(tf.avgVol5 != null ? { avgVol5: tf.avgVol5 } : {}), ...(tf.avgVol21 != null ? { avgVol21: tf.avgVol21 } : {}), ...(tf.avgVol250 != null ? { avgVol250: tf.avgVol250 } : {}),
+      ...(tf.sma50P != null ? { sma50P: tf.sma50P } : {}), ...(tf.sma200P != null ? { sma200P: tf.sma200P } : {}),
       // zzz969 — the moving averages etc. were read mid-session: keep last-completed-session values (price stays NSE's close)
       ...(tf.cc ? { cc: Object.fromEntries(Object.entries(tf.cc).filter(([k]) => k !== 'px' && k !== 'chg' && k !== 'vol')) } : {}),
     } : {}),

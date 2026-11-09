@@ -30,7 +30,7 @@ export interface InRaw {
   shp?: { at: string | null; prom: number | null; fii: number | null; dii: number | null; gov: number | null; pub: number | null } | null;
   /** zzz1234 — the quarterly shareholding table (oldest first), for the screener.in-style "change in holding" columns */
   shpQ?: { h: string[]; prom: (number | null)[]; fii: (number | null)[]; dii: (number | null)[] } | null;
-  /** zzz1234 — 3 when the page was boiled down with interest, working-capital days and the shareholding history kept */
+  /** zzz1234 — 3 when the page was boiled down with interest, working-capital days and the shareholding history kept; 4 (zzz1238) + net block / CWIP / investments */
   rv?: number;
 }
 
@@ -102,7 +102,7 @@ function trim(t: Table | null, keep: string[]): Table | null {
   return { headers: t.headers, rows };
 }
 const PL_ROWS = ['sales', 'revenue', 'operating profit', 'financing profit', 'depreciation', 'profit before tax', 'net profit', 'eps in rs', 'interest', 'other income'];
-const BS_ROWS = ['equity capital', 'reserves', 'borrowings', 'borrowing', 'other liabilities', 'total assets', 'other assets', 'deposits'];
+const BS_ROWS = ['equity capital', 'reserves', 'borrowings', 'borrowing', 'other liabilities', 'total assets', 'other assets', 'deposits', 'net block', 'fixed assets', 'cwip', 'capital work in progress', 'investments'];
 /** A results filing — not the notice that a board meeting will consider results. */
 const RESULTS_RE = /financial results|\bresults\b.*(quarter|half|year|period)|un-?audited|audited (standalone|consolidated)/i;
 const NOT_RESULTS_RE = /intimation|to consider|will be held|is scheduled|prior notice|trading window|newspaper/i;
@@ -183,7 +183,7 @@ export function rawFromHtml(html: string, s: InSchedules = {}): InRaw {
     ann,
     shp: parseShareholding(html),
     shpQ: parseShareholdingSeries(html),
-    rv: 3,
+    rv: 4,
   };
 }
 

@@ -123,6 +123,17 @@ export function extrasIndex(rows: ReadonlyArray<any> | null | undefined, m: CbMa
   return out;
 }
 
+/** zzz1238 — Rule of 40 floor of the preset (the value on the card); not known passes. */
+export function passesR40Min(e: any, min: number | null | undefined): boolean {
+  if (min == null) return true;
+  const v = e?.cbx?.r40;
+  return typeof v !== 'number' || !Number.isFinite(v) || v >= min;
+}
+export function r40FailText(e: any, min: number): string {
+  const x = e?.cbx;
+  return x?.r40 != null ? `Rule of 40 = ${x.r40} (${x.revQ >= 0 ? '+' : ''}${x.revQ}% sales + ${x.fcfm}% FCF margin) — needs ${min} or more` : 'Rule of 40 not known';
+}
+
 /** The liquidity gate of the preset: a KNOWN low float or low turnover fails; unknown passes. */
 export function passesLiquidity(e: any): boolean {
   const l: CbLiquidity | undefined = e?.cbx?.liq;

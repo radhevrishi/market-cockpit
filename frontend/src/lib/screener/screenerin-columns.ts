@@ -30,7 +30,18 @@ export const SCREENERIN_COLUMNS = [
   'Book value', 'EBIT', 'Enterprise Value', 'DMA 200', 'DMA 50', 'Change in FII holding',
 ] as const;
 export type ScreenerInColumn = typeof SCREENERIN_COLUMNS[number];
-export type ScreenerInRow = Partial<Record<ScreenerInColumn, number | string | null>>;
+/** zzz1238 — more screener.in names the owner's queries use (not in the export columns; worked out for queries only) */
+export const SCREENERIN_QUERY_COLUMNS = [
+  'Return over 1day', 'Return over 1week', 'Return over 1month', 'Volume', 'Volume 1week average', 'Volume 1month average', 'Volume 1year average',
+  'High price', 'Low price', 'High price all time', 'RSI', 'DMA 50 previous day', 'DMA 200 previous day', 'Down from 52w high',
+  'Market Capitalization 3years back', 'Return on equity', 'Equity capital', 'Net block', 'Net block preceding year', 'Net block 3Years back',
+  'Capital work in progress', 'Capital work in progress preceding year', 'EBIDT latest quarter', 'Operating profit latest quarter',
+  'Operating profit preceding year quarter', 'EPS latest quarter', 'EPS preceding quarter', 'EPS preceding year quarter',
+  'OPM preceding year quarter', 'Net profit latest quarter', 'Cash from operations last year', 'Operating cash flow 3years',
+  'EPS growth 3Years', 'Return on capital employed preceding year', 'Investments', 'Cash Equivalents', 'Operating profit', 'Interest',
+  'Depreciation', 'Sales', 'Public holding', 'Change in DII holding',
+] as const;
+export type ScreenerInRow = Partial<Record<ScreenerInColumn | typeof SCREENERIN_QUERY_COLUMNS[number], number | string | null>>;
 
 type Table = { headers: string[]; rows: Record<string, (number | null)[]> } | null | undefined;
 const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -76,6 +87,19 @@ export function screenerInColumns(raw: InRaw | null | undefined, r: any, industr
   o['DMA 50'] = fin(r?.sma50) ? r2(r.sma50) : null;
   o['Promoter holding'] = fin(r?.prom) ? r.prom : raw?.shp?.prom ?? null;
   o['Industry PE'] = fin(industryPe) ? r2(industryPe) : null;
+  // zzz1238 — price / volume names used by the queries
+  const num = (k: string) => (fin(r?.[k]) ? (r[k] as number) : null);
+  o['Return over 1day'] = num('chg'); o['Return over 1week'] = num('perf1W'); o['Return over 1month'] = num('perf1M');
+  o['Volume'] = num('vol'); o['Volume 1week average'] = num('avgVol5') ?? num('avgVol10'); o['Volume 1month average'] = num('avgVol21') ?? num('avgVol30');
+  o['Volume 1year average'] = num('avgVol250');
+  o['High price'] = num('hi52'); o['Low price'] = num('lo52'); o['High price all time'] = num('hiAll');
+  o['RSI'] = num('rsi'); o['DMA 50 previous day'] = num('sma50P'); o['DMA 200 previous day'] = num('sma200P');
+  o['Down from 52w high'] = fin(px) && fin(r?.hi52) && r.hi52 > 0 ? r2((1 - px / r.hi52) * 100) : null;
+  // listed at least 3 years → a value (only "is there one" matters in the owner's IPO-bases query); listed later → none
+  const ipo = typeof r?.ipoD === 'string' ? Date.parse(`${r.ipoD.slice(0, 10)}T00:00:00Z`) : NaN;
+  o['Market Capitalization 3years back'] = Number.isFinite(ipo) && Date.now() - ipo < 3 * 365.25 * 86_400_000 ? null : (o['Market Capitalization'] as number | null);
+  o['Return on equity'] = num('roeFY');
+  o['Cash Equivalents'] = num('cash');
   if (!raw) return o;
 
   const { q: Q, a: A, bs: BS, cf: CF, r: R } = raw.T;
@@ -155,7 +179,28 @@ export function screenerInColumns(raw: InRaw | null | undefined, r: any, industr
     o['Change in promoter holding 3Years'] = chg(sh.prom, 12); o['Change in FII holding 3Years'] = chg(sh.fii, 12); o['Change in DII holding 3Years'] = chg(sh.dii, 12);
     o['Change in FII holding'] = chg(sh.fii, 1);
   } else if (raw.shp) { o['FII holding'] = raw.shp.fii; o['DII holding'] = raw.shp.dii; }
-  void adep;
+  // zzz1238 — quarter / year / balance-sheet names used by the queries
+  const qeq = (back: number) => qv(qeps, back);
+  o['EPS latest quarter'] = qeq(0); o['EPS preceding quarter'] = qeq(1); o['EPS preceding year quarter'] = qeq(4);
+  o['Operating profit latest quarter'] = qv(qop, 0); o['Operating profit preceding year quarter'] = qv(qop, 4);
+  o['EBIDT latest quarter'] = qv(qop, 0);
+  o['OPM preceding year quarter'] = qopm(4);
+  o['Net profit latest quarter'] = qv(qp, 0);
+  o['Operating profit'] = last(aop, yi); o['Interest'] = last(aint, yi); o['Depreciation'] = last(adep, yi); o['Sales'] = last(as, yi);
+  const aeps = row(A, 'eps in rs');
+  o['EPS growth 3Years'] = cagr(last(aeps, yi), last(aeps, yi, 3), 3);
+  o['Equity capital'] = last(eqc, bi);
+  const nb = row(BS, 'net block', 'fixed assets'), cw = row(BS, 'cwip', 'capital work in progress'), inv = row(BS, 'investments');
+  o['Net block'] = last(nb, bi); o['Net block preceding year'] = last(nb, bi, 1); o['Net block 3Years back'] = last(nb, bi, 3);
+  o['Capital work in progress'] = last(cw, bi); o['Capital work in progress preceding year'] = last(cw, bi, 1);
+  o['Investments'] = last(inv, bi);
+  const cfoRow = row(CF, 'cash from operating activity');
+  o['Cash from operations last year'] = cfo;
+  const c3 = [0, 1, 2].map((b) => last(cfoRow, ci, b));
+  o['Operating cash flow 3years'] = c3.every(fin) ? r2((c3 as number[]).reduce((s2, v) => s2 + v, 0)) : null;
+  o['Return on capital employed preceding year'] = last(roce, ri, 1);
+  if (sh) { const now = lastN(sh.dii), was = lastN(sh.dii, 1); o['Change in DII holding'] = fin(now) && fin(was) ? r2(now - was) : null; }
+  o['Public holding'] = raw.shp?.pub ?? null;
   return o;
 }
 

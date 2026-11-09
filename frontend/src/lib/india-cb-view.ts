@@ -87,7 +87,7 @@ export const CB_CRITERION_NAME: Record<string, string> = {
   sales: 'Sales growth', pat: 'Profit growth', eps: 'EPS growth', opLev: 'Profit vs sales growth',
   pead: 'Post-results drift', opmDelta: 'Operating margin change', cfoPatMin: 'Cash conversion (same-year)',
   pledgedMax: 'Promoter pledge', mktCapMin: 'Market cap (your setting)', peMax: 'P/E cap',
-  score: 'Grade strength', opmMin: 'Operating margin level', verdicts: 'Setup label', liqOk: 'Free float and trading (liquidity)',
+  score: 'Grade strength', opmMin: 'Operating margin level', verdicts: 'Setup label', liqOk: 'Free float and trading (liquidity)', r40Min: 'Rule of 40', deMax: 'Debt / equity',
   guidance: 'Guidance', quarter: 'Quarter', fy: 'Fiscal year', fromDate: 'Filed from', toDate: 'Filed to',
   d1Bucket: 'Day-one move', d2Bucket: 'Two-day move', driftBucket: 'Move since results', cap: 'Market-cap band',
   freshBypass: 'Filed in the last 3 days', elite: 'ELITE only', multibagger: 'MULTIBAGGER only', newOnly: 'New in the window',
@@ -156,7 +156,7 @@ export function hiddenReportLine(r: HiddenReport): string {
 /** The preset bar, in words (no 0–100 number, no buy / sell words). */
 export function presetBarText(capFloor: number | null = null): string {   // zzz1068 — Any size by default
   const cap = capFloor == null ? 'any market cap' : `market cap ≥₹${capFloor >= 1000 ? `${capFloor / 1000}k` : capFloor} Cr`;
-  return `Sales ≥20% · EPS ≥25% · PEAD 40 or more · margin not falling · margin ≥0% · cash ≥0.7x profit (same year) · ${cap} · no pledge · not low float / low turnover · setup: Top / Good / Watch`;
+  return `Sales ≥20% · EPS ≥25% · PEAD 40 or more · margin not falling · margin ≥0% · cash ≥0.7x profit (same year) · ${cap} · no pledge · debt ÷ equity ≤0.5 · Rule of 40 ≥40 · not low float / low turnover · setup: Top / Good / Watch`;
 }
 
 // ─── Stale tiers: re-sync from the current graded rows ────────────────────
@@ -285,7 +285,7 @@ export interface CbTabSnapshot {
 
 /** Are the tab's live chips the owner's saved criteria (preset on, or everything off)? */
 export function filtersMatchSaved(f: ConvFilters, optedOut: boolean): boolean {
-  if (!optedOut) return isIndiaPresetActive(f) && cbActiveKeys(f).every((k) => ['sales', 'eps', 'pead', 'opmDelta', 'opmMin', 'cfoPatMin', 'mktCapMin', 'mktCapMax', 'pledgedMax', 'verdicts', 'liqOk'].includes(k));
+  if (!optedOut) return isIndiaPresetActive(f) && cbActiveKeys(f).every((k) => ['sales', 'eps', 'pead', 'opmDelta', 'opmMin', 'cfoPatMin', 'mktCapMin', 'mktCapMax', 'pledgedMax', 'verdicts', 'liqOk', 'deMax', 'r40Min'].includes(k));
   return cbActiveKeys(f).length === 0;
 }
 

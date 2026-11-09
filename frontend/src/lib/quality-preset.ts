@@ -29,6 +29,8 @@ export const INDIA_PRESET = {
   mktCapMin: 3000, // ₹ Cr
   pledgedMax: 0,   // zzz360 — a null pledge passes; this gates KNOWN pledges.
   verdicts: ['STRONG BUY', 'BUY', 'WATCH'] as string[],
+  deMax: 0.5, // zzz1238 — debt ÷ equity at most 0.5 (lenders skipped; not known passes)
+  r40Min: 40, // zzz1238 — Rule of 40 (quarterly sales growth YoY + FCF margin) at least 40 (not known passes)
   avoidIlliquid: true, // zzz1231 — leave out known low-float / low-turnover names (lib/cb-extras: float < 30%, traded value < ₹3 Cr a day …)
 };
 
