@@ -545,7 +545,7 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
         await new Promise<void>((r) => setTimeout(r, 40));
       }
       if (loaded === 0 || freshRows.length === 0) {
-        setError('Auto-sync failed: no matching files in /data/screener/ (or file was empty).');
+        setError('Auto-sync failed: no matching screen built from our Stock Screener data (or it was empty).');
       } else {
         markAutoLoaded(autoLoadScope);
         // zzz221 — stamp the absorption time so the freshness effect below

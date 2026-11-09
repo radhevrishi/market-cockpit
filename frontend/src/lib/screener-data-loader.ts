@@ -89,8 +89,10 @@ export const SYNC_ROUTING = {
   portfolioUsa: 'watchlist-usa-339270482.csv',
 } as const;
 
-const MANIFEST_URL = '/data/screener/manifest.json';
-const FILE_URL_BASE = '/data/screener/';
+// zzz1234 — made from our own Stock Screener (lib/screener/screenerin-server): same file names, same screener.in columns.
+// The "Sync Screener.in CSVs" GitHub workflow no longer runs; public/data/screener/ keeps the last export as a static copy.
+const MANIFEST_URL = '/api/v1/screener-data';
+const FILE_URL_BASE = '/api/v1/screener-data?file=';
 // zzz162 — TradingView CSVs live in a separate folder + manifest.
 // zzz1048 — no longer a committed folder: our own Stock Screener builds the same
 // files on request (lib/screener/tv-replacement.ts). When a snapshot is missing the

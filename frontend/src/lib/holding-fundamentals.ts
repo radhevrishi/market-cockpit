@@ -46,10 +46,16 @@ export async function loadScreener(): Promise<Map<string, any>> {
   if (_screener && Date.now() - _screener.at < SCREENER_TTL_MS) return _screener.byTicker;
   const byTicker = new Map<string, any>();
   try {
-    const files = (await fs.readdir(SCREENER_DIR)).filter((f) => f.endsWith('.csv'));
-    for (const f of files) {
+    // zzz1234 — the screener.in files are made from our own Stock Screener now; the committed copies are the fallback
+    let texts: string[] = [];
+    try { const { buildScreenerInFiles } = await import('./screener/screenerin-server'); const b = await buildScreenerInFiles(); texts = Array.from(b.built.values()).filter((x) => x.rows > 0).map((x) => x.csv); } catch { texts = []; }
+    if (!texts.length) {
+      const files = (await fs.readdir(SCREENER_DIR)).filter((f) => f.endsWith('.csv'));
+      for (const f of files) { try { texts.push(await fs.readFile(path.join(SCREENER_DIR, f), 'utf8')); } catch { /* skip */ } }
+    }
+    for (const text of texts) {
       let rows: Record<string, string>[] = [];
-      try { rows = parseCsv(await fs.readFile(path.join(SCREENER_DIR, f), 'utf8')); }
+      try { rows = parseCsv(text); }
       catch { continue; }
       for (const r of rows) {
         const k = norm(r['NSE Code']);
@@ -83,7 +89,7 @@ export async function loadScreener(): Promise<Map<string, any>> {
           pe: num(r['Price to Earning']),
           market_cap_cr: num(r['Market Capitalization']),
           source: 'screener',
-          source_file: f,
+          source_file: 'screener.in columns',
         });
       }
     }

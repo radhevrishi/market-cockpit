@@ -61,7 +61,7 @@ export function VolumePocketsPanel({ techRows, onBest, onOpen }: { techRows: any
           const n = typeof v === 'number' ? v : Number(String(v).replace(/,/g, ''));
           return Number.isFinite(n) ? n : undefined;
         };
-        const mResp = await fetch('/data/screener/manifest.json', { cache: 'no-store' });
+        const mResp = await fetch('/api/v1/screener-data', { cache: 'no-store' });
         if (!mResp.ok) { if (!cancelled) setStocks([]); return; }
         const manifest = await mResp.json();
         const files: { name: string }[] = manifest?.files || [];
@@ -73,7 +73,7 @@ export function VolumePocketsPanel({ techRows, onBest, onOpen }: { techRows: any
           if (!f) continue;
           let raw: Record<string, any>[] = [];
           try {
-            const r = await fetch(`/data/screener/${f.name}`, { cache: 'no-store' });
+            const r = await fetch(`/api/v1/screener-data?file=${encodeURIComponent(f.name)}`, { cache: 'no-store' });
             if (!r.ok) continue;
             const ab = await r.arrayBuffer();
             const wb = XLSX.read(new Uint8Array(ab), { type: 'array' });

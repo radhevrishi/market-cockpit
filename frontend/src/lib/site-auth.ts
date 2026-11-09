@@ -58,6 +58,7 @@ export const PROTECTED_API_PREFIXES = [
   '/api/v1/transformational',    // zzz1166 — Transformational Gainers (reads the book's research; /ai is paid AI)
   '/api/v1/cb-founder-moat',     // zzz1231 — founder-led / moat AI read (paid AI)
   '/api/v1/tradebook',           // zzz1231 — the owner's broker tradebook (personal data)
+  '/api/v1/screener-data',       // zzz1234 — screener.in screens from our data (includes the portfolio list)
   '/api/v1/choke-themes',       // zzz1174 — Choke-Point Themes (POST is paid AI, on the owner's click)
   '/api/v1/hundred-baggers',     // zzz1178 — Future 100-baggers (POST is paid AI, on the owner's click)
   '/api/v1/search',              // zzz1051 — document search (paid embeddings / rerank within small daily ceilings)

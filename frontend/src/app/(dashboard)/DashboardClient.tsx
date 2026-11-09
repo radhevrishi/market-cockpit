@@ -88,6 +88,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/ai-gainers',                label: 'AI Daily Gainers',          icon: <Zap className="w-4 h-4" /> },
       // zzz1166 — the 60-day board of transformational events from the gainers, with themes and a multibagger-chance read.
       { href: '/transformational-gainers',  label: 'Transformational Gainers',  icon: <Zap className="w-4 h-4" /> },
+      { href: '/inflection-radar',  label: 'Hidden Inflection Radar',  icon: <Zap className="w-4 h-4" /> },   // zzz1235 — abnormal industry signals → Indian suppliers
       // zzz1208 — one or several companies: FCF checklist, growth vs price, Stage 2 + trend template, links to every other page
       { href: '/company-lab',               label: 'Company Lab',               icon: <Microscope className="w-4 h-4" /> },
       // zzz843 — positive guidance raises in the last 7 days, verified and quantified.
@@ -162,6 +163,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/capex-tracker', label: 'Capex Tracker', icon: <Factory className="w-4 h-4" /> },
       { href: '/valuations',      label: 'Valuations',            icon: <Star className="w-4 h-4" /> },
       { href: '/valuation-calc',  label: 'Valuation Calculators', icon: <Star className="w-4 h-4" /> },
+      { href: '/return-simulator', label: 'Return Simulator', icon: <Star className="w-4 h-4" /> },   // zzz1232
       { href: '/valuation-bands', label: 'Valuation Bands',        icon: <BarChart3 className="w-4 h-4" /> },
       { href: '/portfolio-simulator', label: 'Portfolio Simulator', icon: <LineChart className="w-4 h-4" /> },
       { href: '/winning-playbook', label: 'Winning Playbook', icon: <Star className="w-4 h-4" /> },
@@ -170,6 +172,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/stock-sheet',    label: 'Stock Sheet',     icon: <BookMarked className="w-4 h-4" /> },
       { href: '/screener',       label: 'Screener',        icon: <Filter className="w-4 h-4" /> },
       { href: '/stock-screener', label: 'Stock Screener',  icon: <Filter className="w-4 h-4" /> },   // zzz938 — our own screener (USA + India)
+      { href: '/screener-screens', label: 'Screener.in Screens', icon: <Filter className="w-4 h-4" /> },   // zzz1234 — screener.in screens made from our own data
       { href: '/pine-screener',  label: 'Pine Screener',   icon: <ScanSearch className="w-4 h-4" /> },   // zzz983 — chart patterns across every company
       { href: '/charts',         label: 'Charts',          icon: <LineChart className="w-4 h-4" /> },   // zzz937 — our own charts with drawings
       { href: '/charts/grid',    label: 'Multi-chart · Intraday', icon: <LineChart className="w-4 h-4" /> },   // zzz1088 — 1/2/4 charts, 5m/15m/1h + VWAP

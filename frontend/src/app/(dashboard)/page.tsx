@@ -4260,7 +4260,9 @@ const FAVS: Array<{ href: string; label: string; color: string; ext?: boolean }>
   { href: '/ai-gainers', label: '📊 AI Daily Gainers', color: '#A78BFA' },
   // zzz1166 — transformational events from the gainers, 60 days, themes + multibagger chance.
   { href: '/transformational-gainers', label: '🧬 Transformational Gainers', color: '#A78BFA' },
-  { href: '/company-lab', label: '🧪 Company Lab', color: '#22D3EE' },   // zzz1208 — add one or several companies: FCF checklist, growth vs price, Stage 2
+  { href: '/company-lab', label: '🧪 Company Lab', color: '#22D3EE' },
+  { href: '/return-simulator', label: '🧮 Return Simulator', color: '#22D3EE' },
+  { href: '/inflection-radar', label: '📡 Inflection Radar', color: '#22D3EE' },   // zzz1235   // zzz1232 — EPS growth × P/E change, buy-below price, timeline, guidance → price   // zzz1208 — add one or several companies: FCF checklist, growth vs price, Stage 2
   { href: '/hundred-baggers', label: '🚀 Future 100-baggers', color: '#F59E0B' },   // zzz1180
   { href: '/news?choke=1', label: '🔥 Choke-Point Themes', color: '#EF4444' },   // zzz1180 — opens the panel on the News page
   // zzz843 — positive guidance raises, verified and quantified.

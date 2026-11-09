@@ -7,10 +7,8 @@ name: Sync Screener.in CSVs
 on:
   # zzz177 -- GitHub Actions cron is unreliable (starvation delays 30min-4hr, sometimes skips days).
   # Fire multiple times daily so at least one attempt lands. Concurrency:group prevents duplicate runs.
-  schedule:
-    # zzz933 (GitHub minutes): 2 runs a day, was 4
-    - cron: '16 4 * * *'      # 04:00 UTC / 09:30 IST -- pre-open primary
-    - cron: '16 12 * * *'     # 12:00 UTC / 17:30 IST -- post-close redundancy
+  # zzz1234 — no schedule: the screens are made from the portal's own Stock Screener data (/api/v1/screener-data).
+  # Kept only as a manual fallback; it needs a valid SCREENER_SESSIONID.
   workflow_dispatch:
 
 permissions:

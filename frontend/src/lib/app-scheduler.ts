@@ -294,6 +294,11 @@ async function transformationalJob(ctx: JobCtx): Promise<JobOutcome> {
     const r = await ctx.call('/api/v1/transformational/ai', { method: 'POST', timeoutMs: 65_000, retry: false, body: { auto: true, market, sinceDays: 3 } });
     ctx.log(`${market}: AI reads ${r.json?.read ?? '?'}${r.json?.note ? ` (${r.json.note})` : ''}`);
   }
+  // zzz1233 — settle the "Needs verification" rows (criteria, then the filing + AI check, ≤ 80 AI checks a day)
+  if (Date.now() < ctx.deadline) {
+    const v = await ctx.call('/api/v1/transformational/verify', { method: 'POST', timeoutMs: 170_000, retry: false, body: {} });
+    ctx.log(`verified: ${v.json?.decided ?? '?'} (accepted ${v.json?.accepted ?? '?'}, rejected ${v.json?.rejected ?? '?'}, not verifiable ${v.json?.unverifiable ?? '?'}, pending ${v.json?.pending ?? '?'})`);
+  }
   ctx.log(`transformational events saved: ${saved}`);
   return { ok: true, status: 200 };
 }
@@ -500,6 +505,11 @@ export const APP_JOBS: readonly AppJob[] = [
   } },
   // zzz1166 — Transformational Gainers: each stored gainers session (≤ 14 days back) is saved to the 60-day board, then the
   // strongest new events get the AI multibagger read (≤ 12 a call, ≤ 60 a day in total).
+  { name: 'inflection-radar', crons: ['11 2,8,14,20 * * *'], timeoutMs: 5 * MIN, workflow: BRIDGE, does: 'in-process: lib/inflection/server inflectionRadar(force) — industry news searches + archive → abnormal-signal scores; by hand: GET /api/v1/inflection-radar?force=1', run: async () => {   // zzz1235
+    const r = await (await import('./inflection/server')).inflectionRadar(true);
+    console.log('[inflection-radar]', r.industries.map((i) => `${i.id}:${i.top}`).join(' '));
+    return { ok: true, status: 200 };
+  } },
   { name: 'transformational-archive', crons: ['17 3 * * 2-6', '23 12 * * 1-5', '43 13 * * 1-5', '27 17 * * 1-5', '47 23 * * 1-5'],   // zzz1188/1189 — + 17:53 / 19:13 / 22:57 IST: today's India gainers (swept from 16:20 IST, sometimes finishing late evening) reach the board the same day
     timeoutMs: 12 * MIN, workflow: 'daily-research.yml', does: 'GET /api/v1/ai-gainers/research?archive=1&lite=1 for the stored sessions of the last 14 days (IN + US), then POST /api/v1/transformational/ai {auto} per market', run: transformationalJob },
   // zzz913 — Daily Gainers Brief (was a Claude scheduled task). Logic in lib/gainers-brief.ts (loaded lazily: no import edit here).

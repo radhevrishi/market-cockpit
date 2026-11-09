@@ -73,7 +73,7 @@ const MEDIUM: Record<string, TgKind> = {
   record_results: 'RESULTS', margin_expansion: 'RESULTS', tech_milestone: 'NEW_BUSINESS', product_launch: 'NEW_BUSINESS', trial_results: 'APPROVAL',
   designation: 'APPROVAL', insider_buying: 'STRATEGIC', product_mix: 'RESULTS', pricing_action: 'RESULTS',
 };
-const KIND_WORD: Record<TgKind, string> = {
+export const KIND_WORD: Record<TgKind, string> = {
   ORDERS: 'Orders / contracts', CAPACITY: 'Capacity / production', APPROVAL: 'Approval / qualification', NEW_BUSINESS: 'New business / segment',
   STRATEGIC: 'Strategic deal', GUIDANCE: 'Guidance raised', RESULTS: 'Earnings inflection', TURNAROUND: 'Turnaround',
 };

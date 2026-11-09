@@ -610,7 +610,7 @@ export function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(
     try {
       const files = await fetchCsvsAsFiles(SYNC_ROUTING.multibaggerIndia);
       if (files.length === 0) {
-        setParseError('Auto-sync failed: no CSVs in /data/screener/. Run the GitHub Action first.');
+        setParseError('Auto-sync failed: the screens could not be built from our Stock Screener data — try again in a minute.');
         return;
       }
       // zzz479 — also pull the India Multibagger screeners that live on TradingView

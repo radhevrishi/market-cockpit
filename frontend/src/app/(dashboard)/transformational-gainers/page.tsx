@@ -11,6 +11,7 @@ import { R, tint } from '@/components/special-situations/radar-tokens';
 import { MbChip, MB_COLOR } from '@/components/transformational/MbChip';
 import { TurnaroundBadge } from '@/components/turnaround/TurnaroundBadge';   // zzz1227
 import { turnaroundFromTg, type Turnaround } from '@/lib/turnaround/core';
+import type { TgVerify } from '@/lib/transformational/verify';   // zzz1233
 import { MB_NAME, MB_WORD, ONE_PAGE_CASE, OTHER_THEME, chanceOf, tgKindWord, type MbLabel, type TgBoard, type TgItem, type TgStrength } from '@/lib/transformational/core';
 
 type Mkt = 'ALL' | 'IN' | 'US';
@@ -25,7 +26,9 @@ const pct = (v: number | null) => (v == null ? '—' : `${v > 0 ? '+' : ''}${v.t
 interface Group { key: string; market: 'IN' | 'US'; ticker: string; company: string; items: TgItem[]; best: TgItem }
 
 export default function TransformationalGainersPage() {
-  const [data, setData] = useState<TgBoard | null>(null);
+  const [data, setData] = useState<(TgBoard & { rejected?: Array<TgItem & { verify?: TgVerify | null }>; verifiedCount?: number }) | null>(null);
+  const [verBusy, setVerBusy] = useState<string | null>(null);   // zzz1233
+  const [showRej, setShowRej] = useState(false);
   const [state, setState] = useState<'loading' | 'ok' | 'error'>('loading');
   const [err, setErr] = useState<string | null>(null);
   const [mkt, setMkt] = useState<Mkt>('ALL');
@@ -362,13 +365,41 @@ export default function TransformationalGainersPage() {
             {data.needsCheck?.length > 0 && (
               <div style={{ marginTop: 12, border: `1px solid ${R.border}`, borderRadius: 10, background: R.bg, padding: '10px 12px' }}>
                 <button type="button" onClick={() => setShowCheck((v) => !v)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: R.amber, fontWeight: 800, fontSize: 13, padding: 0 }}>
-                  {showCheck ? '▲' : '▼'} Needs verification ({data.needsCheck.length}) — the shown text does not back the label, so these are not ranked
+                  {showCheck ? '▲' : '▼'} Waiting for verification ({data.needsCheck.length}) — the shown text does not back the label yet; each is checked against the company's filing and accepted or rejected
                 </button>
+                {/* zzz1233 — settle them now: criteria first, then the filing + AI check (≤ 80 a day) */}
+                <button type="button" disabled={!!verBusy} onClick={async () => {
+                  setVerBusy('Checking each against its filing…');
+                  try {
+                    const r = await fetch('/api/v1/transformational/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', signal: AbortSignal.timeout(280_000) });
+                    const j = await r.json();
+                    setVerBusy(j?.ok ? `Done: ${j.accepted} accepted, ${j.rejected} rejected, ${j.unverifiable} not verifiable${j.pending ? `, ${j.pending} left` : ''}${j.note ? ` — ${j.note}` : ''}` : `Failed: ${j?.error || r.status}`);
+                    await load();
+                  } catch (e: any) { setVerBusy(`Failed: ${String(e?.message || e).slice(0, 80)}`); }
+                }} style={{ marginLeft: 10, fontSize: 11.5, fontWeight: 800, padding: '3px 10px', borderRadius: 6, border: `1px solid ${R.cyan}`, color: R.cyan, background: 'transparent', cursor: verBusy ? 'wait' : 'pointer' }}>✓ Verify now</button>
+                {verBusy && <span style={{ marginLeft: 8, fontSize: 11.5, color: R.dim }}>{verBusy}</span>}
                 {showCheck && <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
                   {data.needsCheck.filter((x) => mkt === 'ALL' || x.market === mkt).map((x) => (
                     <div key={x.id} style={{ fontSize: 12, borderTop: `1px dashed ${R.border}`, paddingTop: 6 }}>
                       <b>{x.ticker}</b> <span style={{ color: R.dim }}>{x.market === 'IN' ? '🇮🇳' : '🇺🇸'} {x.company} · labelled {tgKindWord(x.kind)} · {x.sessionDate}</span>
                       <div style={{ color: R.amber }}>⚠ {x.needsCheck}</div>
+                      <div style={{ color: R.dim }} className="tg-clamp">{x.headline}</div>
+                      {x.sourceUrl && /^https?:\/\//.test(x.sourceUrl) && <a href={x.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: R.cyan }}>open the filing ↗</a>}
+                    </div>
+                  ))}
+                </div>}
+              </div>
+            )}
+            {(data.rejected?.length || 0) > 0 && (
+              <div style={{ marginTop: 12, border: `1px solid ${R.border}`, borderRadius: 10, background: R.bg, padding: '10px 12px' }}>
+                <button type="button" onClick={() => setShowRej((v) => !v)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: R.dim, fontWeight: 800, fontSize: 13, padding: 0 }}>
+                  {showRej ? '▲' : '▼'} Checked and not accepted ({data.rejected!.length}) — rejected under the criteria, or the filing could not be read{data.verifiedCount ? ` · ${data.verifiedCount} accepted are on the board above (✓ verified)` : ''}
+                </button>
+                {showRej && <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {data.rejected!.filter((x) => mkt === 'ALL' || x.market === mkt).map((x) => (
+                    <div key={x.id} style={{ fontSize: 12, borderTop: `1px dashed ${R.border}`, paddingTop: 6 }}>
+                      <b>{x.ticker}</b> <span style={{ color: R.dim }}>{x.market === 'IN' ? '🇮🇳' : '🇺🇸'} {x.company} · labelled {tgKindWord(x.kind)} · {x.sessionDate}</span>
+                      <div style={{ color: x.verify?.verdict === 'NOT_VERIFIABLE' ? R.amber : R.red }}>{x.verify?.verdict === 'NOT_VERIFIABLE' ? '◌ Not verifiable' : '✗ Rejected'} ({x.verify?.by === 'ai' ? 'filing + AI check' : 'criteria'}): {x.verify?.reason}</div>
                       <div style={{ color: R.dim }} className="tg-clamp">{x.headline}</div>
                       {x.sourceUrl && /^https?:\/\//.test(x.sourceUrl) && <a href={x.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: R.cyan }}>open the filing ↗</a>}
                     </div>

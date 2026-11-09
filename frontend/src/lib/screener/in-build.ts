@@ -177,7 +177,8 @@ async function refreshFunds(universe: string[], budgetMs: number, notes: string[
   // zzz989c — pages stored before zzz984 kept no 'cash from investing' line (FCF margin / Rule of 40 empty): read them again soon
   const lacksCfi = (t: string) => { const cf = store.get(t)?.raw?.T?.cf; return !!cf && !Object.keys(cf.rows).some((k) => /cash from investing/i.test(k)); };
   // zzz1231 — and pages stored before the shareholding table was kept (free float for the Conviction Beats liquidity check)
-  const lacksShp = (t: string) => { const raw = store.get(t)?.raw; return !!raw && raw.shp === undefined; };
+  // zzz1234 — and pages boiled down before interest / working-capital days / shareholding history were kept (screener.in columns)
+  const lacksShp = (t: string) => { const raw = store.get(t)?.raw; return !!raw && (raw.shp === undefined || (raw.rv ?? 0) < 3); };
   const reread = (t: string) => (lacksCfi(t) || lacksShp(t)) && (age.get(t) as number) > 0.25;
   const rank = (t: string) => (!age.has(t) ? 0 : !store.get(t)?.raw && !store.get(t)?.err ? 1 : reread(t) ? 1.5 : 2);
   const due = universe

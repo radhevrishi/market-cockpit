@@ -3,6 +3,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { buildBoard, type TgMarket } from '@/lib/transformational/core';
 import { loadReviewed } from '@/lib/transformational/reviewed';
+import { loadVerifies } from '@/lib/transformational/verify-server';
+import { applyVerify } from '@/lib/transformational/verify';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -17,10 +19,19 @@ export async function GET(req: NextRequest) {
     // multibagger read are not shown (the daily job re-saves each session under the current rule)
     // zzz1169 — every stored row passes today's review (clean text, industry theme, figures from the stock screener, takeover
     // targets / old events / small orders out, chance re-read) so the board is right now, not after the night job
-    const all = await loadReviewed(days + 7, market);
+    const raw = await loadReviewed(days + 7, market);
+    // zzz1233 — held-back rows that were verified: accepted ones join the board, rejected / not verifiable are listed apart
+    const vs = await loadVerifies(raw.filter((x) => x.needsCheck).map((x) => x.id));
+    const all = raw.map((x) => applyVerify(x, vs.get(x.id)));
     const today = new Date().toISOString().slice(0, 10);
     const board = buildBoard(all, today, days);
-    return NextResponse.json({ ok: true, ...board, generatedAt: new Date().toISOString() }, { headers: { 'cache-control': 'no-store' } });
+    const decided = board.needsCheck.filter((x: any) => x.verify);
+    return NextResponse.json({
+      ok: true, ...board,
+      needsCheck: board.needsCheck.filter((x: any) => !x.verify),
+      rejected: decided, verifiedCount: board.items.filter((x: any) => x.verify?.verdict === 'ACCEPTED').length,
+      generatedAt: new Date().toISOString(),
+    }, { headers: { 'cache-control': 'no-store' } });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 });
   }

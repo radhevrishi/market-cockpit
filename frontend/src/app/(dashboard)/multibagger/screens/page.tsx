@@ -519,7 +519,7 @@ export default function MultibaggerScreensPage() {
   // zzz-manifest — load the daily-synced screen manifest, then data-drive the
   // whole page off it (all ~19 screens, not a hardcoded 8).
   useEffect(() => {
-    fetch('/data/screener/manifest.json', { cache: 'no-store' })
+    fetch('/api/v1/screener-data', { cache: 'no-store' })
       .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
       .then((m: Manifest) => setManifest(m && Array.isArray(m.files) ? m : { files: [] }))
       .catch(() => setManifest({ files: [] }));
@@ -533,7 +533,7 @@ export default function MultibaggerScreensPage() {
   useEffect(() => {
     for (const s of screens) {
       if (data[s.slug]) continue;
-      fetch(`/data/screener/${s.slug}.csv`, { cache: 'no-store' })
+      fetch(`/api/v1/screener-data?file=${encodeURIComponent(s.slug)}.csv`, { cache: 'no-store' })
         .then(r => r.ok ? r.text() : Promise.reject(new Error('HTTP ' + r.status)))
         .then(csv => setData(prev => ({ ...prev, [s.slug]: parseCsv(csv) })))
         .catch(e => setData(prev => ({ ...prev, [s.slug]: { columns: [], rows: [], err: String(e) } })));
@@ -580,7 +580,7 @@ export default function MultibaggerScreensPage() {
         <div style={{ fontSize: 11, color: C.text3, marginBottom: 4, letterSpacing: '0.5px' }}>MULTIBAGGER · CSV-BACKED</div>
         <h1 style={{ fontSize: 26, fontWeight: 800, margin: '0 0 4px', letterSpacing: '-0.4px' }}>🔍 Per-Screener Breakdown</h1>
         <div style={{ fontSize: 13, color: C.text2, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <span>{screens.length || '…'} screens · /data/screener/ (synced daily) · CB bench overlap in gold</span>
+          <span>{screens.length || '…'} screens · built from our own Stock Screener data · CB bench overlap in gold</span>
           {lastSyncMs > 0
             ? <PanelFreshness dataUpdatedAt={lastSyncMs} label="synced" staleAfterMs={26 * 60 * 60_000} />
             : null}
@@ -641,7 +641,7 @@ export default function MultibaggerScreensPage() {
           )}
         </>
       )}
-      <div style={{ marginTop: 16, fontSize: 11, color: C.text3, textAlign: 'center' }}>Data source: /data/screener/*.csv · synced daily by GitHub Action · gold rows = ticker in CB bench</div>
+      <div style={{ marginTop: 16, fontSize: 11, color: C.text3, textAlign: 'center' }}>Data source: our Stock Screener (screener.in columns) · queries on /screener-screens · gold rows = ticker in CB bench</div>
     </div>
   );
 }

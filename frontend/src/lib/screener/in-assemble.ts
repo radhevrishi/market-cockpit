@@ -28,6 +28,10 @@ export interface InRaw {
   ann: Array<{ d: string; s: string }>;   // results announcements (date, subject), newest first
   /** zzz1231 — latest quarter's shareholding (%, screener.in "Shareholding Pattern"); pages read before zzz1231 have none */
   shp?: { at: string | null; prom: number | null; fii: number | null; dii: number | null; gov: number | null; pub: number | null } | null;
+  /** zzz1234 — the quarterly shareholding table (oldest first), for the screener.in-style "change in holding" columns */
+  shpQ?: { h: string[]; prom: (number | null)[]; fii: (number | null)[]; dii: (number | null)[] } | null;
+  /** zzz1234 — 3 when the page was boiled down with interest, working-capital days and the shareholding history kept */
+  rv?: number;
 }
 
 export interface InFigures {
@@ -97,7 +101,7 @@ function trim(t: Table | null, keep: string[]): Table | null {
   for (const [k, v] of Object.entries(t.rows)) if (keep.includes(k.replace(/\s+/g, ' ').toLowerCase())) rows[k] = v;
   return { headers: t.headers, rows };
 }
-const PL_ROWS = ['sales', 'revenue', 'operating profit', 'financing profit', 'depreciation', 'profit before tax', 'net profit', 'eps in rs'];
+const PL_ROWS = ['sales', 'revenue', 'operating profit', 'financing profit', 'depreciation', 'profit before tax', 'net profit', 'eps in rs', 'interest', 'other income'];
 const BS_ROWS = ['equity capital', 'reserves', 'borrowings', 'borrowing', 'other liabilities', 'total assets', 'other assets', 'deposits'];
 /** A results filing — not the notice that a board meeting will consider results. */
 const RESULTS_RE = /financial results|\bresults\b.*(quarter|half|year|period)|un-?audited|audited (standalone|consolidated)/i;
@@ -132,6 +136,27 @@ export function parseShareholding(html: string): InRaw['shp'] {
   return out.prom == null && out.pub == null ? null : out;
 }
 
+/** zzz1234 — the whole quarterly shareholding table (oldest first): promoters, FIIs, DIIs. */
+export function parseShareholdingSeries(html: string): InRaw['shpQ'] {
+  const i = html.indexOf('<div id="quarterly-shp"');
+  if (i < 0) return null;
+  const j = html.indexOf('</table>', i);
+  const tbl = html.slice(i, j > i ? j : i + 20000);
+  const trs = tbl.match(/<tr[^>]*>[\s\S]*?<\/tr>/g) || [];
+  if (trs.length < 2) return null;
+  const text = (c: string) => c.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+  const cells = (tr: string) => (tr.match(/<t[hd][^>]*>[\s\S]*?<\/t[hd]>/g) || []).map(text);
+  const h = cells(trs[0] || '').slice(1);
+  const out: NonNullable<InRaw['shpQ']> = { h, prom: [], fii: [], dii: [] };
+  for (const tr of trs.slice(1)) {
+    const c = cells(tr);
+    const label = (c[0] || '').replace(/\+\s*$/, '').trim().toLowerCase();
+    const vals = c.slice(1).map((v) => { const n = parseFloat(v.replace(/[,%]/g, '')); return Number.isFinite(n) ? n : null; });
+    if (/^promoters?/.test(label)) out.prom = vals; else if (/^fiis?/.test(label)) out.fii = vals; else if (/^diis?/.test(label)) out.dii = vals;
+  }
+  return out.prom.length || out.fii.length ? out : null;
+}
+
 export function rawFromHtml(html: string, s: InSchedules = {}): InRaw {
   const tag = (t: string) => { const m = new RegExp(`title="${t}">([^<]+)<`).exec(html); return m ? m[1].replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim() : null; };
   const h1 = /<h1[^>]*>([^<]+)<\/h1>/.exec(html);
@@ -152,11 +177,13 @@ export function rawFromHtml(html: string, s: InSchedules = {}): InRaw {
     price: fin(top.price) ? top.price : null, mcapCr: fin(top.marketCapCr) ? top.marketCapCr : null, roce: Number.isFinite(roce) ? roce : null,
     T: {
       q: trim(parseSection(html, 'quarters'), PL_ROWS), a: trim(parseSection(html, 'profit-loss'), PL_ROWS), bs: trim(parseSection(html, 'balance-sheet'), BS_ROWS),
-      cf: trim(parseSection(html, 'cash-flow'), ['cash from operating activity', 'cash from investing activity']), r: trim(parseSection(html, 'ratios'), ['roce %']),
+      cf: trim(parseSection(html, 'cash-flow'), ['cash from operating activity', 'cash from investing activity']), r: trim(parseSection(html, 'ratios'), ['roce %', 'working capital days', 'debtor days', 'inventory days']),
     },
     cogsQ: cogsPct(s.expQ), cogsA: cogsPct(s.expA), cash: sched(s.otherAssets, 'Cash Equivalents'),
     ann,
     shp: parseShareholding(html),
+    shpQ: parseShareholdingSeries(html),
+    rv: 3,
   };
 }
 
