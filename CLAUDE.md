@@ -3951,3 +3951,22 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   Upstash second. Direct Upstash readers (quotes, opportunities, prewarm EXISTS, guidance-docs strict read) go through lib/kv.
   swr-cache: a stored value still arriving at readWaitMs (7 MB radar scan) is kept and put in memory when it lands; meanwhile
   "pending" WITHOUT a cold rebuild (radar 7d spun "Rebuilding…" for minutes).
+- zzz1231 (9 Nov): Conviction Beats India + USA — `lib/cb-extras.ts` (gross profit growth, Rule of 40 = quarterly revenue YoY + FCF
+  margin with the sum shown, ROCE trend from new row field `roceP`, liquidity: free float < 30% / float worth < ₹500 Cr or $150M /
+  traded < ₹3 Cr or $3M a day / < 0.1% of float a day = LOW FLOAT / LOW TURNOVER; unknown passes). India float = 100 − promoter
+  (`InRaw.shp`, screener.in shareholding; row `prom`, `flt`). Preset: CFO/PAT ≥ 0.7 (was 0.5; US saved 0.5 still = preset) + `liqOk`.
+  Founder-led + moat: AI read for preset-kept names only (`lib/cb-founder-moat.ts`, `/api/v1/cb-founder-moat`, ≤ 40 a day, 180 days).
+  Cards: `components/conviction/CbExtrasStrip.tsx` (US: card footer). Fundamentals tables: sessions below the 50 / 200 average +
+  3-candle low (`lib/ma-streak.ts`, `/api/v1/ma-streak`). Tradebook (Portfolio → 📒 Tradebook): `lib/tradebook/{core,server}.ts`,
+  `/api/v1/tradebook`, migration 12 (`tradebook_trade` keyed exchange|date|trade id|order id…, `tradebook_file` by SHA-256,
+  `index_close` from NSE ind_close_all files — Yahoo ^CNXSC has no history). Splits/bonus from Yahoo (`DailySeries.splits`);
+  sells without an earlier buy = held from the first day (or listing day) at that day's price for returns, no P&L.
+- zzz1232–1235 (9 Nov): `/return-simulator` (`lib/return-sim.ts`; `lib/return-math.ts` is the older Learn-tab maths — different file).
+  TG "Needs verification" settled (`lib/transformational/verify*.ts`, `POST /api/v1/transformational/verify`, run by the
+  transformational job; criteria rejects, then filing text + AI check whose quote must be in the filing, ≤ 80 a day).
+  Screener.in screens from our data: `lib/screener/screenerin-{columns,query,server,frozen}.ts`, `/api/v1/screener-data`
+  (manifest + `?file=`), `/screener-screens` (paste a screen's query). Loader, Multibagger screens / technicals and
+  holding-fundamentals read it; `screener-sync.yml` has no schedule. India pages re-read once for `rv` 3 (interest, WC days,
+  shareholding history). `/inflection-radar` (`lib/inflection/*`, job `inflection-radar` 4×/day): Google News searches per
+  industry + archive → six signal classes → framework score → Indian supply-chain map.
+- KV migration off Upstash finished 9 Nov (kvStore.migration.done) — the Upstash database can be deleted by the owner.
