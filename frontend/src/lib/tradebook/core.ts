@@ -49,6 +49,7 @@ export type PnlKind = 'STCG' | 'LTCG' | 'INTRADAY';
 export interface Realized {
   isin: string; symbol: string; buyDate: string; sellDate: string;
   qty: number; buyPx: number; sellPx: number; pnl: number; days: number; kind: PnlKind;
+  demerged?: boolean;   // zzz1239 — shares received in a demerger: no cost of their own (it stays with the parent)
 }
 export interface Lot { date: string; qty: number; px: number }
 export interface Position {
@@ -112,6 +113,98 @@ export function parseTradebookRows(rows: unknown[][]): { trades: Trade[]; skippe
   return { trades, skipped, from: ds[0] ?? null, to: ds[ds.length - 1] ?? null };
 }
 
+// ── one company = one instrument (zzz1239) ──────────────────────────────────────
+//
+// Three things split one company into several "instruments" before:
+//   1. Zerodha leaves the ISIN empty on many BSE trades (FY25 / FY26 files) — the BSE buys and the NSE sells were two
+//      positions, so every NSE sell looked "sold without a buy" and the BSE buys stayed open for ever.
+//   2. A face-value split gives the shares a NEW ISIN (INE262H01013 → INE262H01021): buys before the split and sells
+//      after it did not meet. The issuer part of the ISIN (first 9 characters, "01" = equity shares) does not change.
+//   3. Renames, mergers and demergers between two different ISINs (Mindtree → LTIMindtree, Suven → Cohance,
+//      Tata Motors → TMCV …), listed below.
+
+/** Company key: an Indian equity ISIN without its serial / check digits (a split keeps the company, changes the serial). */
+export function companyKey(isin: string): string {
+  return /^INE[A-Z0-9]{4}01[A-Z0-9]{3}$/.test(isin) ? isin.slice(0, 9) : isin;
+}
+
+/** Symbol renames where the exchange gave the new name no ISIN in the files (same company, same shares). */
+export const SYMBOL_ALIASES: Record<string, string> = { COHANCE: 'SUVENPHAR' };
+
+/** Mergers into another company's shares: each old share became `ratio` new shares on `date`. */
+export const MERGERS: Array<{ from: string; to: string; date: string; ratio: number; note: string }> = [
+  { from: 'MINDTREE', to: 'LTIM', date: '2022-11-24', ratio: 0.73, note: 'Mindtree merged into LTIMindtree, 73 shares for 100' },
+];
+
+/** Demergers: shares of `child` arrived for shares of `parent` (outside the market, no trade). Cost stays with the parent. */
+export const DEMERGERS: Record<string, { parent: string; note: string }> = {
+  JIOFIN: { parent: 'RELIANCE', note: 'Jio Financial demerged from Reliance (1 for 1, Jul 2023)' },
+  ATL: { parent: 'ALLCARGO', note: 'Allcargo Terminals demerged from Allcargo' },
+  TREL: { parent: 'ALLCARGO', note: 'Transindia Real Estate demerged from Allcargo' },
+  TMCV: { parent: 'TATAMOTORS', note: 'Tata Motors commercial vehicles demerged (1 for 1, Oct 2025)' },
+};
+
+/**
+ * Trades with one key per company: a missing ISIN is taken from the same symbol's trades nearest in time (or from the
+ * NSE company list via `isinOfSymbol`), ISINs are cut to the company key, mergers are put into the new company's shares.
+ */
+export function normalizeTrades(tradesIn: Trade[], isinOfSymbol?: (symbol: string) => string | null): Trade[] {
+  const bySym = new Map<string, Array<{ t: number; isin: string }>>();
+  for (const t of tradesIn) if (t.isin && !t.isin.startsWith('SYM:')) {
+    const a = bySym.get(t.symbol) || []; a.push({ t: dayMs(t.date), isin: t.isin }); bySym.set(t.symbol, a);
+  }
+  const isinFor = (sym: string, date: string): string | null => {
+    const c = bySym.get(sym);
+    if (c?.length) { const d = dayMs(date); return c.reduce((b, x) => (Math.abs(x.t - d) < Math.abs(b.t - d) ? x : b)).isin; }
+    return isinOfSymbol?.(sym) ?? null;
+  };
+  const merged = new Map(MERGERS.map((m) => [m.from, m]));
+  return tradesIn.map((t) => {
+    let isin = t.isin, symbol = t.symbol, qty = t.qty, price = t.price;
+    if (!isin || isin.startsWith('SYM:')) {
+      const alias = SYMBOL_ALIASES[symbol];
+      isin = isinFor(symbol, t.date) ?? (alias ? isinFor(alias, t.date) : null) ?? `SYM:${symbol}`;
+    }
+    const m = merged.get(symbol);
+    if (m && t.date < m.date) {
+      const to = isinFor(m.to, t.date) ?? `SYM:${m.to}`;
+      isin = to; qty = t.qty * m.ratio; price = t.price / m.ratio;   // in the new company's shares; money unchanged
+    }
+    return { ...t, isin: companyKey(isin), symbol, qty, price };
+  });
+}
+
+/**
+ * zzz1239 — a face-value split read from the files themselves, for when the price source has no record of it: the
+ * company's ISIN changes serial, and the last trade price before ÷ the first after is close to a split ratio (2, 2.5,
+ * 4, 5, 10, 20 — within 12%, the two trades at most 120 days apart). Returned per company key, dated the first new-ISIN day.
+ */
+export function inferIsinSplits(raw: Trade[]): Map<string, Split[]> {
+  const by = new Map<string, Trade[]>();
+  for (const t of raw) {
+    if (!/^INE[A-Z0-9]{4}01[A-Z0-9]{3}$/.test(t.isin)) continue;
+    const k = companyKey(t.isin); const a = by.get(k) || []; a.push(t); by.set(k, a);
+  }
+  const out = new Map<string, Split[]>();
+  const RATIOS = [2, 2.5, 4, 5, 10, 20];
+  for (const [k, ts] of by) {
+    const isins = Array.from(new Set(ts.map((t) => t.isin)));
+    if (isins.length < 2) continue;
+    const sorted = ts.slice().sort((a, b) => a.date.localeCompare(b.date));
+    const splits: Split[] = [];
+    for (let i = 1; i < sorted.length; i++) {
+      const a = sorted[i - 1], b = sorted[i];
+      if (a.isin === b.isin || b.isin < a.isin) continue;   // serials go up at a split
+      if (dayMs(b.date) - dayMs(a.date) > 120 * DAY) continue;
+      const r = a.price / b.price;
+      const hit = RATIOS.find((x) => Math.abs(r / x - 1) <= 0.12);
+      if (hit && !splits.some((s) => s.t === dayMs(b.date))) splits.push({ t: dayMs(b.date), ratio: hit });
+    }
+    if (splits.length) out.set(k, splits);
+  }
+  return out;
+}
+
 /** Same trade in two files (or twice in one) → once. */
 export function dedupeTrades(trades: Trade[]): Trade[] {
   const m = new Map<string, Trade>();
@@ -147,6 +240,7 @@ export interface Ledger {
   lastPx: Map<string, Array<{ t: number; px: number }>>;       // isin → trade prices in today's units (fallback valuation)
   symbolOf: Map<string, string>;
   unmatched: Array<{ isin: string; symbol: string; date: string; qty: number }>;
+  demerged: Array<{ symbol: string; parent: string; qty: number; date: string }>;
   firstDate: string | null; lastDate: string | null;
   tradeCount: number;
 }
@@ -157,6 +251,8 @@ export interface Ledger {
  * They still get no P&L (their real cost is not in the files).
  */
 export function buildLedger(tradesIn: Trade[], splitsOf: (isin: string) => Split[] | undefined = () => undefined, openPrice?: (isin: string, startT: number) => { t: number; px: number } | null): Ledger {
+  const tradedSyms = new Set(tradesIn.map((t) => t.symbol));
+  const demerged: Ledger['demerged'] = [];
   const trades = dedupeTrades(tradesIn).slice().sort((a, b) => a.date.localeCompare(b.date) || String(a.time || '').localeCompare(String(b.time || '')));
   const startT = trades.length ? dayMs(trades[0].date) : 0;
   const opening: Flow[] = [];
@@ -213,6 +309,17 @@ export function buildLedger(tradesIn: Trade[], splitsOf: (isin: string) => Split
           if (lot.qty <= 1e-9) lots.shift();
         }
         if (sold > 0) ch.push({ t: dayMs(date), dq: -sold });
+        // zzz1239 — shares received in a demerger (the parent was held): no money in, no cost of their own
+        const dm = left > 1e-9 ? DEMERGERS[symbol] : undefined;
+        if (left > 1e-9 && dm && tradedSyms.has(dm.parent)) {
+          const op = openPrice?.(isin, startT) ?? null;
+          const ot = op && op.t <= dayMs(date) ? op.t : dayMs(date);
+          realized.push({ isin, symbol, buyDate: isoDay(ot), sellDate: date, qty: left, buyPx: 0, sellPx: spx, pnl: left * spx, days: Math.round((dayMs(date) - ot) / DAY), kind: 'STCG', demerged: true });
+          ch.push({ t: ot, dq: left }, { t: dayMs(date), dq: -left });
+          px.push({ t: ot, px: op?.px || spx });
+          demerged.push({ symbol, parent: dm.parent, qty: r2(left), date });
+          left = 0;
+        }
         if (left > 1e-9) {
           unmatchedQty += left; unmatched.push({ isin, symbol, date, qty: r2(left) });
           // held since before the first file (or received later outside the market — a demerger, an IPO allotment): in the book
@@ -230,6 +337,10 @@ export function buildLedger(tradesIn: Trade[], splitsOf: (isin: string) => Split
     px.sort((a, b) => a.t - b.t);
     qtyChanges.set(isin, ch);
     lastPx.set(isin, px);
+    // zzz1239 — a fraction of a share left by a split / bonus / merger ratio was paid out in cash, not held
+    const whole = lots.reduce((s, l) => s + l.qty, 0);
+    const dust = whole - Math.floor(whole + 1e-6);
+    if (dust > 1e-6 && lots.length) { let d = dust; for (let i = lots.length - 1; i >= 0 && d > 1e-9; i--) { const q = Math.min(lots[i].qty, d); lots[i].qty -= q; d -= q; if (lots[i].qty <= 1e-9) lots.splice(i, 1); } }
     const qty = lots.reduce((s, l) => s + l.qty, 0);
     if (qty > 1e-6) {
       const cost = lots.reduce((s, l) => s + l.qty * l.px, 0);
@@ -240,7 +351,7 @@ export function buildLedger(tradesIn: Trade[], splitsOf: (isin: string) => Split
   const flows = Array.from(flowsByDay.entries()).map(([d, amt]) => ({ t: dayMs(d), amt })).sort((a, b) => a.t - b.t);
   positions.sort((a, b) => b.cost - a.cost);
   return {
-    positions, realized, flows, qtyChanges, lastPx, symbolOf, unmatched,
+    positions, realized, flows, qtyChanges, lastPx, symbolOf, unmatched, demerged,
     firstDate: trades[0]?.date ?? null, lastDate: trades[trades.length - 1]?.date ?? null, tradeCount: trades.length,
   };
 }
@@ -311,6 +422,8 @@ export function windowReturn(l: Ledger, label: string, from: number, to: number,
   const gain = end.value + withdrawn - start.value - invested;
   const flows: Flow[] = [...(start.value > 0 ? [{ t: from, amt: -start.value }] : []), ...inside, ...(end.value > 0 ? [{ t: to, amt: end.value }] : [])];
   const span = Math.max(1, to - from);
+  // zzz1239 — an annual rate over a few days is meaningless (2 days of FY22 showed +1149% a year): under 60 days, none
+  const shortWindow = to - from < 60 * DAY;
   const weighted = start.value + inside.reduce((s, f) => s + (-f.amt) * ((to - f.t) / span), 0);
   let bench: WindowReturn['bench'] = null;
   if (benchAt) {
@@ -321,12 +434,12 @@ export function windowReturn(l: Ledger, label: string, from: number, to: number,
       for (const f of inside) { const ix = benchAt(f.t); if (ix) units += -f.amt / ix; }
       const bEnd = units * i1;
       const bFlows: Flow[] = [...(start.value > 0 ? [{ t: from, amt: -start.value }] : []), ...inside, ...(bEnd > 0 ? [{ t: to, amt: bEnd }] : [{ t: to, amt: bEnd }])];
-      bench = { xirr: xirr(bFlows), endValue: bEnd, gain: bEnd + withdrawn - start.value - invested };
+      bench = { xirr: shortWindow ? null : xirr(bFlows), endValue: bEnd, gain: bEnd + withdrawn - start.value - invested };
     }
   }
   return {
     label, from: isoDay(from), to: isoDay(to), startValue: start.value, endValue: end.value, invested, withdrawn, gain,
-    xirr: xirr(flows), simple: weighted > 0 ? gain / weighted : null, bench, estimated: Math.max(start.estimated, end.estimated),
+    xirr: shortWindow ? null : xirr(flows), simple: weighted > 0 ? gain / weighted : null, bench, estimated: Math.max(start.estimated, end.estimated),
   };
 }
 
@@ -391,9 +504,14 @@ export function dividendsByFy(l: Ledger, divsOf: (isin: string) => Array<{ t: nu
   const items: Array<{ symbol: string; exDate: string; qty: number; perShare: number; amount: number; fy: string }> = [];
   const start = l.firstDate ? dayMs(l.firstDate) : Infinity;
   for (const isin of l.qtyChanges.keys()) {
+    const seenDay = new Set<string>();
     for (const d of divsOf(isin) || []) {
       if (d.t <= start) continue;
-      const q = qtyAt(l, isin, d.t - DAY);
+      // zzz1239 — the price source sometimes lists one dividend twice (same day, same amount)
+      const dk = `${isoDay(d.t)}|${d.amount}`;
+      if (seenDay.has(dk)) continue;
+      seenDay.add(dk);
+      const q = Math.floor(qtyAt(l, isin, d.t - DAY) + 1e-6);   // zzz1239 — whole shares (a split's fraction is paid in cash)
       if (!q) continue;
       const ex = isoDay(d.t);
       items.push({ symbol: l.symbolOf.get(isin) || isin, exDate: ex, qty: r2(q), perShare: d.amount, amount: q * d.amount, fy: fyOf(ex) });

@@ -3,8 +3,9 @@ import { dbQuery } from '../db';
 import { ensureSchema } from '../db-migrate';
 import { getDailySeries, type DailySeries } from '../chart-data';
 import { ensureIndexHistory, indexCloses } from '../index-history';
+import { nseEquityIsins } from '../screener/in-build';
 import {
-  buildLedger, dayMs, dividendsByFy, isoDay, lotsTurningLongTerm, pnlByFy, pnlStats, qtyAt, valueAt, windowReturn, xirr, fyOf,
+  buildLedger, companyKey, inferIsinSplits, normalizeTrades, MERGERS, dayMs, dividendsByFy, isoDay, lotsTurningLongTerm, pnlByFy, pnlStats, qtyAt, valueAt, windowReturn, xirr, fyOf,
   type Flow, type Ledger, type Split, type Trade, type WindowReturn,
 } from './core';
 
@@ -72,22 +73,27 @@ function closeAt(p: Px | null | undefined, t: number): number | null {
   return p.c[lo];
 }
 
-async function pricesFor(symbols: Map<string, string>, budgetMs: number): Promise<{ px: Map<string, Px>; missing: string[] }> {
+/** zzz1239 — every instrument tries its symbols in turn (today's NSE symbol first, then the names it traded under). */
+async function pricesFor(candidates: Map<string, string[]>, budgetMs: number): Promise<{ px: Map<string, Px>; missing: string[] }> {
   const px = new Map<string, Px>();
   const missing: string[] = [];
-  const list = Array.from(symbols.entries());
+  const list = Array.from(candidates.entries());
   const deadline = Date.now() + budgetMs;
   let i = 0;
   const worker = async () => {
     while (i < list.length && Date.now() < deadline) {
-      const [isin, sym] = list[i++];
-      const s = await getDailySeries('IN', sym, '5y').catch(() => null);
-      const c = compact(s);
-      if (c) px.set(isin, c); else missing.push(sym);
+      const [isin, syms] = list[i++];
+      let c: Px | null = null;
+      for (const sym of syms) {
+        if (/^\d+$/.test(sym)) continue;   // a BSE scrip code is not a Yahoo symbol
+        c = compact(await getDailySeries('IN', sym, '5y').catch(() => null));
+        if (c) break;
+      }
+      if (c) px.set(isin, c); else missing.push(syms[0] || isin);
     }
   };
   await Promise.all(Array.from({ length: 8 }, worker));
-  for (; i < list.length; i++) missing.push(list[i][1]);
+  for (; i < list.length; i++) missing.push(list[i][1][0] || list[i][0]);
   return { px, missing };
 }
 
@@ -130,15 +136,27 @@ export async function tradebookAnalytics(force = false): Promise<TradebookAnalyt
   return _running;
 }
 
-async function build(trades: Trade[]): Promise<TradebookAnalytics> {
+async function build(rawTrades: Trade[]): Promise<TradebookAnalytics> {
   const files = await tradebookFiles();
+  // zzz1239 — one company = one instrument (missing BSE ISINs, split-changed ISINs, renames, mergers)
+  const nseIsin = await nseEquityIsins().catch(() => ({} as Record<string, string>));
+  const trades = normalizeTrades(rawTrades, (sym) => nseIsin[sym] ?? null);
+  const nowSymbol = new Map<string, string>();   // company key → today's NSE symbol
+  for (const [sym, isin] of Object.entries(nseIsin)) nowSymbol.set(companyKey(isin), sym);
   const notes: string[] = [
     'Brokerage, STT and other charges are not in a tradebook — gains here are before charges and tax.',
     'Splits and bonus issues are applied from Yahoo\'s records, so quantities are in today\'s share units.',
   ];
   // first pass without splits, only to know the instruments and their latest symbols
   const pre = buildLedger(trades);
-  const { px, missing } = await pricesFor(pre.symbolOf, 150_000);
+  const cands = new Map<string, string[]>();
+  const symsOf = new Map<string, Trade[]>();
+  for (const t of trades) { const a = symsOf.get(t.isin) || []; a.push(t); symsOf.set(t.isin, a); }
+  for (const [isin, sym] of pre.symbolOf) {
+    const seen = (symsOf.get(isin) || []).slice().sort((a, b) => b.date.localeCompare(a.date) || Number(b.exchange === 'NSE') - Number(a.exchange === 'NSE')).map((t) => t.symbol);
+    cands.set(isin, Array.from(new Set([nowSymbol.get(isin), sym, ...seen].filter((x): x is string => !!x))));
+  }
+  const { px, missing } = await pricesFor(cands, 150_000);
   let bench: Px | null = null;
   let benchPending = 0;
   if (pre.firstDate) {
@@ -158,7 +176,14 @@ async function build(trades: Trade[]): Promise<TradebookAnalytics> {
     const c = closeAt(p, startT - DAY);
     return c ? { t: startT, px: c } : null;
   };
-  const l: Ledger = buildLedger(trades, (isin) => px.get(isin)?.splits, openAt);
+  // zzz1239 — the price source's splits, plus splits read from an ISIN change in the files when it has none near that date
+  const inferred = inferIsinSplits(rawTrades);
+  const splitsOf = (isin: string): Split[] | undefined => {
+    const y = px.get(isin)?.splits || [];
+    const extra = (inferred.get(isin) || []).filter((s) => !y.some((x) => Math.abs(x.t - s.t) <= 45 * DAY));
+    return y.length || extra.length ? [...y, ...extra] : undefined;
+  };
+  const l: Ledger = buildLedger(trades, splitsOf, openAt);
   const benchAt = bench ? (t: number) => closeAt(bench, t) : undefined;
   if (missing.length) notes.push(`No price history for ${missing.length} instrument${missing.length === 1 ? '' : 's'} (renamed, merged or delisted) — valued at their last trade price: ${missing.slice(0, 12).join(', ')}${missing.length > 12 ? ' …' : ''}.`);
 
@@ -170,12 +195,13 @@ async function build(trades: Trade[]): Promise<TradebookAnalytics> {
 
   // holdings
   const cur = valueAt(l, asOf, priceAt);
+  const showSym = (isin: string, sym: string) => nowSymbol.get(isin) ?? sym;   // zzz1239 — today's NSE symbol for a renamed company
   const holdings = l.positions.map((p) => {
     const price = priceAt(p.isin, asOf);
     const value = price != null ? p.qty * price : null;
     const lt = p.lots.filter((lot) => dayMs(lot.date) < asOf - 365 * DAY).reduce((s, lot) => s + lot.qty, 0);
     return {
-      isin: p.isin, symbol: p.symbol, qty: p.qty, avgCost: p.avgCost, cost: p.cost, price, value,
+      isin: p.isin, symbol: showSym(p.isin, p.symbol), qty: p.qty, avgCost: p.avgCost, cost: p.cost, price, value,
       pnl: value != null ? value - p.cost : null, pnlPct: value != null && p.cost > 0 ? (value - p.cost) / p.cost : null,
       weight: value != null && cur.value > 0 ? value / cur.value : null,
       firstBuy: p.lots[0]?.date ?? p.firstBuy, daysHeld: p.lots[0] ? Math.round((asOf - dayMs(p.lots[0].date)) / DAY) : null,
@@ -238,6 +264,9 @@ async function build(trades: Trade[]): Promise<TradebookAnalytics> {
   for (const r of l.realized) { const x = bySym.get(r.symbol) || { realized: 0, trades: 0 }; x.realized += r.pnl; x.trades++; bySym.set(r.symbol, x); }
 
   const benchAll = sinceStart.bench?.xirr ?? null;
+  if (l.demerged.length) notes.push(`Shares received in demergers (no money paid; their cost stays with the parent): ${Array.from(new Set(l.demerged.map((d) => `${d.symbol} from ${d.parent}`))).join(', ')}.`);
+  const mergedSeen = MERGERS.filter((m) => rawTrades.some((t) => t.symbol === m.from));
+  if (mergedSeen.length) notes.push(`Mergers applied: ${mergedSeen.map((m) => m.note).join('; ')}.`);
   if (l.unmatched.length) notes.push(`${new Set(l.unmatched.map((u) => u.isin)).size} instruments were sold without an earlier buy in the uploaded files (bought before the first file, or received outside the market). For returns those shares count as held from the first day at that day's price; they get no P&L (their cost is not in the files) — upload older tradebooks to include them.`);
   void qtyAt;
   return {
@@ -254,8 +283,8 @@ async function build(trades: Trade[]): Promise<TradebookAnalytics> {
     turningLongTerm: lotsTurningLongTerm(l, asOf, 60),
     unmatched: { count: l.unmatched.length, symbols: Array.from(new Set(l.unmatched.map((u) => u.symbol))).slice(0, 60) },
     notes,
-    ledgerPositions: l.positions.map((p) => ({ symbol: p.symbol, qty: p.qty, avgCost: p.avgCost, isin: p.isin })),
+    ledgerPositions: l.positions.map((p) => ({ symbol: showSym(p.isin, p.symbol), qty: p.qty, avgCost: p.avgCost, isin: p.isin })),
     unmatchedIsins: Array.from(new Set(l.unmatched.map((u) => u.isin))),
-    tradedSymbols: Array.from(new Set(trades.map((t) => `${t.symbol}|${t.isin}`))).map((x) => { const [symbol, isin] = x.split('|'); return { symbol, isin }; }),
+    tradedSymbols: Array.from(new Set([...trades.map((t) => `${t.symbol}|${t.isin}`), ...l.positions.map((p) => `${showSym(p.isin, p.symbol)}|${p.isin}`)])).map((x) => { const [symbol, isin] = x.split('|'); return { symbol, isin }; }),
   };
 }

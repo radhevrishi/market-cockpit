@@ -3979,3 +3979,12 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   pages re-read once for rv 4. Inflection radar (KEY v2): our "[...]" alert lines are not news, chip packaging is not packaging
   (`exclude`), won orders = demand, older news weighted down (`recencyWeight`), industry score = best + 3 per confirming signal (≤ 12).
   Tradebook upload bug: the input's FileList was emptied by resetting the input before it was read — copy to an array first.
+- zzz1239 (9 Nov): tradebook correctness (owner's 6 Zerodha files). Zerodha leaves the ISIN empty on many BSE trades (FY25/FY26)
+  and a face-value split changes the ISIN serial — both split one company into several instruments (133 "sold without a buy",
+  sold-out names like DEEDEV / LIQUIDCASE shown as held, duplicate rows, duplicate dividends). `normalizeTrades` (core) fills a
+  missing ISIN from the same symbol's trades nearest in date (else NSE's list, `nseEquityIsins` in in-build, key
+  sec_frame_cache 'nse-equity-isin'), keys instruments by `companyKey` (ISIN without serial), applies `SYMBOL_ALIASES`
+  (COHANCE→SUVENPHAR) and `MERGERS` (MINDTREE→LTIM 0.73). `DEMERGERS` children (JIOFIN, ATL, TREL, TMCV) arrive with no money and
+  cost 0 (cost stays with the parent). `inferIsinSplits` reads a split from an ISIN change when Yahoo has none within 45 days.
+  Split / merger fractions are dropped (cash in lieu); dividends on whole shares, one per day; no XIRR for windows < 60 days.
+  Prices try today's NSE symbol first. The tab previews what "Update portfolio from tradebook" changes.

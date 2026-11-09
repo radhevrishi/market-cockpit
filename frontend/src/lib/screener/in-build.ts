@@ -43,6 +43,21 @@ export function parseEquityList(text: string): Map<string, string> {
   for (const r of parseCsv(text)) if ((r.SERIES === 'EQ' || r.SERIES === 'BE') && r.SYMBOL) m.set(r.SYMBOL.toUpperCase(), r['NAME OF COMPANY'] || r.SYMBOL);
   return m;
 }
+/** zzz1239 — Pure: EQUITY_L.csv → { symbol: ISIN } for every series (the tradebook uses it for renamed companies). */
+export function parseEquityIsins(text: string): Record<string, string> {
+  const o: Record<string, string> = {};
+  for (const r of parseCsv(text)) { const isin = (r['ISIN NUMBER'] || '').toUpperCase(); if (r.SYMBOL && /^IN[A-Z0-9]{10}$/.test(isin)) o[r.SYMBOL.toUpperCase()] = isin; }
+  return o;
+}
+/** zzz1239 — NSE symbol → ISIN (saved by the hourly build; read from NSE when there is no saved copy yet). */
+export async function nseEquityIsins(): Promise<Record<string, string>> {
+  const hit = await dbQuery<{ data: Record<string, string> }>(`SELECT data FROM sec_frame_cache WHERE key = 'nse-equity-isin'`).catch(() => []);
+  if (hit.length && Object.keys(hit[0].data || {}).length > 1000) return hit[0].data;
+  const eq = await getText('https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv').catch(() => ({ status: 0, text: null }));
+  const isins = eq.text ? parseEquityIsins(eq.text) : {};
+  if (Object.keys(isins).length > 1000) await dbQuery(`INSERT INTO sec_frame_cache (key, data) VALUES ('nse-equity-isin', $1) ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, fetched_at = now()`, [JSON.stringify(isins)]).catch(() => null);
+  return isins;
+}
 /** Pure: one NSE daily price file → { symbol: [close, previous close, volume, open, high, low, delivery %] } for the EQ / BE series.
  *  zzz1046a — delivery % (DELIV_PER) at index 6, only when the file has it for the company; open / high / low are then null when
  *  missing, so index 6 is always the delivery %. A file without the column keeps the old 6- (or 3-) element days. */
@@ -279,7 +294,11 @@ export async function buildInSnapshot(opts: { fundBudgetMs?: number } = {}): Pro
   if (!getPool() || !(await ensureSchema())) return { ok: false, rows: 0, notes: ['Postgres is not available'], ms: 0 };
   const eq = await getText('https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv');
   let names = eq.text ? parseEquityList(eq.text) : new Map<string, string>();
-  if (names.size > 1000) await dbQuery(`INSERT INTO sec_frame_cache (key, data) VALUES ('nse-equity-list', $1) ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, fetched_at = now()`, [JSON.stringify(Object.fromEntries(names))]).catch(() => null);
+  if (names.size > 1000) {
+    await dbQuery(`INSERT INTO sec_frame_cache (key, data) VALUES ('nse-equity-list', $1) ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, fetched_at = now()`, [JSON.stringify(Object.fromEntries(names))]).catch(() => null);
+    const isins = parseEquityIsins(eq.text!);
+    if (Object.keys(isins).length > 1000) await dbQuery(`INSERT INTO sec_frame_cache (key, data) VALUES ('nse-equity-isin', $1) ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, fetched_at = now()`, [JSON.stringify(isins)]).catch(() => null);
+  }
   else {
     const hit = await dbQuery<{ data: Record<string, string> }>(`SELECT data FROM sec_frame_cache WHERE key = 'nse-equity-list'`).catch(() => []);
     if (hit.length) { names = new Map(Object.entries(hit[0].data)); notes.push('NSE company list not reachable — the last saved copy was used'); }

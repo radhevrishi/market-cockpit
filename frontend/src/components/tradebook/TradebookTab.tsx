@@ -199,6 +199,10 @@ export default function TradebookTab({ holdings, onApply }: { holdings: H[]; onA
         {!applied && data && pending.length > 0 && (
           <div style={{ marginTop: 10, fontSize: 12.5, color: C.amber }}>
             {pending.length} holding{pending.length === 1 ? '' : 's'} differ from the tradebook. <button onClick={() => data && autoApply(data)} style={{ fontSize: 11.5, padding: '3px 10px', borderRadius: 6, border: `1px solid ${C.amber}`, color: C.amber, background: 'transparent', cursor: 'pointer' }}>Update portfolio from tradebook</button>
+            {/* zzz1239 — what the button will change, before it is pressed (Undo stays available after) */}
+            <div data-testid="tradebook-pending" style={{ maxHeight: 180, overflowY: 'auto', marginTop: 6, color: C.mute }}>
+              {pending.map((c) => <div key={c.symbol}>{c.action === 'add' ? '＋ add' : c.action === 'remove' ? '－ remove (sold out)' : '✎ change'} <b>{c.symbol}</b>: {c.before ? `${c.before.quantity} @ ₹${c.before.entryPrice}` : 'not in portfolio'} → {c.action === 'remove' ? '0' : `${c.quantity} @ ₹${c.entryPrice}`}</div>)}
+            </div>
           </div>
         )}
       </Card>
