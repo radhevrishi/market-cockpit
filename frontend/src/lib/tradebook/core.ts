@@ -77,6 +77,16 @@ function excelDate(v: unknown): string | null {
   return null;
 }
 
+/**
+ * zzz1240 — what makes a trade the same trade in two downloads: exchange + date + trade ID + order ID. Not the ISIN (Zerodha
+ * fills it on some downloads and not others) and not the price text. The owner re-downloads the current year's file as it
+ * grows; every earlier trade must match itself so only the new ones are added. The SQL in db-migrate (migration 13) builds
+ * the same string — keep the two in step.
+ */
+export function tradeIdentity(t: { exchange: string; date: string; tradeId: string; orderId: string; time: string | null; side: string; qty: number; price: number }): string {
+  return t.tradeId ? `${t.exchange}|${t.date}|T${t.tradeId}|O${t.orderId}` : `${t.exchange}|${t.date}|O${t.orderId}|${t.time || ''}|${t.side}|${t.qty}|${t.price}`;
+}
+
 /** Sheet rows (arrays) → trades. Finds the header row ("Symbol", "Trade Date"…) wherever it sits. */
 export function parseTradebookRows(rows: unknown[][]): { trades: Trade[]; skipped: number; from: string | null; to: string | null } {
   let h = -1;
@@ -103,11 +113,12 @@ export function parseTradebookRows(rows: unknown[][]): { trades: Trade[]; skippe
     const exchange = cell(r[C.ex]).toUpperCase() || 'NSE';
     const tradeId = cell(r[C.tid]), orderId = cell(r[C.oid]);
     const isin = cell(r[C.isin]).toUpperCase() || `SYM:${symbol}`;
-    trades.push({
-      key: `${exchange}|${date}|${tradeId || '-'}|${orderId || '-'}|${isin}|${side}|${qty}|${price}`,
-      isin, symbol, date, exchange, segment: cell(r[C.seg]).toUpperCase() || 'EQ', side: side as 'buy' | 'sell',
+    const t = {
+      key: '', isin, symbol, date, exchange, segment: cell(r[C.seg]).toUpperCase() || 'EQ', side: side as 'buy' | 'sell',
       qty, price, orderId, tradeId, time: cell(r[C.time]) || null,
-    });
+    };
+    t.key = tradeIdentity(t);
+    trades.push(t);
   }
   const ds = trades.map((t) => t.date).sort();
   return { trades, skipped, from: ds[0] ?? null, to: ds[ds.length - 1] ?? null };
@@ -208,7 +219,7 @@ export function inferIsinSplits(raw: Trade[]): Map<string, Split[]> {
 /** Same trade in two files (or twice in one) → once. */
 export function dedupeTrades(trades: Trade[]): Trade[] {
   const m = new Map<string, Trade>();
-  for (const t of trades) if (!m.has(t.key)) m.set(t.key, t);
+  for (const t of trades) { const k = tradeIdentity(t); if (!m.has(k)) m.set(k, t); }
   return Array.from(m.values());
 }
 
@@ -340,7 +351,11 @@ export function buildLedger(tradesIn: Trade[], splitsOf: (isin: string) => Split
     // zzz1239 — a fraction of a share left by a split / bonus / merger ratio was paid out in cash, not held
     const whole = lots.reduce((s, l) => s + l.qty, 0);
     const dust = whole - Math.floor(whole + 1e-6);
-    if (dust > 1e-6 && lots.length) { let d = dust; for (let i = lots.length - 1; i >= 0 && d > 1e-9; i--) { const q = Math.min(lots[i].qty, d); lots[i].qty -= q; d -= q; if (lots[i].qty <= 1e-9) lots.splice(i, 1); } }
+    if (dust > 1e-6 && lots.length) {
+      const lastT = Math.max(...Array.from(days.keys()).map(dayMs));
+      ch.push({ t: lastT, dq: -dust });   // zzz1240 — and out of the book's value history, not only the holdings list
+      ch.sort((a, b) => a.t - b.t);
+      let d = dust; for (let i = lots.length - 1; i >= 0 && d > 1e-9; i--) { const q = Math.min(lots[i].qty, d); lots[i].qty -= q; d -= q; if (lots[i].qty <= 1e-9) lots.splice(i, 1); } }
     const qty = lots.reduce((s, l) => s + l.qty, 0);
     if (qty > 1e-6) {
       const cost = lots.reduce((s, l) => s + l.qty * l.px, 0);
@@ -387,8 +402,9 @@ export function xirr(flowsIn: Flow[]): number | null {
 export type PriceAt = (isin: string, t: number) => number | null;
 
 /** The book's value at the end of day t; `estimated` counts holdings valued at their last trade price. */
-export function valueAt(l: Ledger, t: number, priceAt: PriceAt): { value: number; estimated: number } {
+export function valueAt(l: Ledger, t: number, priceAt: PriceAt): { value: number; estimated: number; estimatedSymbols: string[] } {
   let value = 0, estimated = 0;
+  const estimatedSymbols: string[] = [];
   for (const isin of l.qtyChanges.keys()) {
     const q = qtyAt(l, isin, t);
     if (!q) continue;
@@ -397,10 +413,11 @@ export function valueAt(l: Ledger, t: number, priceAt: PriceAt): { value: number
       const tp = (l.lastPx.get(isin) || []).filter((x) => x.t <= t && x.px > 0);
       p = tp.length ? tp[tp.length - 1].px : null;
       estimated++;
+      estimatedSymbols.push(l.symbolOf.get(isin) || isin);
     }
     if (p) value += q * p;
   }
-  return { value, estimated };
+  return { value, estimated, estimatedSymbols };
 }
 
 export interface WindowReturn {
@@ -411,6 +428,8 @@ export interface WindowReturn {
   simple: number | null;       // Modified Dietz, for the window (not annualised)
   bench: { xirr: number | null; endValue: number; gain: number } | null;
   estimated: number;
+  estimatedSymbols: string[];   // zzz1240 — held then, but valued at their last trade price (no price history)
+  annualised: boolean;          // zzz1240 — false for a window under a year: xirr / bench.xirr are then the rate FOR the window
 }
 
 /** Returns over [from, to]: the book at the close before `from`, the trade flows inside, the book at `to`. */
@@ -424,6 +443,9 @@ export function windowReturn(l: Ledger, label: string, from: number, to: number,
   const span = Math.max(1, to - from);
   // zzz1239 — an annual rate over a few days is meaningless (2 days of FY22 showed +1149% a year): under 60 days, none
   const shortWindow = to - from < 60 * DAY;
+  // zzz1240 — under a year, an annual rate overstates (FY27 so far: +47% real, +88% "a year"); show the rate for the window itself
+  const annualised = to - from >= 360 * DAY;
+  const perWindow = (r: number | null) => (r == null || annualised ? r : Math.pow(1 + r, (to - from + DAY) / (365 * DAY)) - 1);
   const weighted = start.value + inside.reduce((s, f) => s + (-f.amt) * ((to - f.t) / span), 0);
   let bench: WindowReturn['bench'] = null;
   if (benchAt) {
@@ -434,12 +456,13 @@ export function windowReturn(l: Ledger, label: string, from: number, to: number,
       for (const f of inside) { const ix = benchAt(f.t); if (ix) units += -f.amt / ix; }
       const bEnd = units * i1;
       const bFlows: Flow[] = [...(start.value > 0 ? [{ t: from, amt: -start.value }] : []), ...inside, ...(bEnd > 0 ? [{ t: to, amt: bEnd }] : [{ t: to, amt: bEnd }])];
-      bench = { xirr: shortWindow ? null : xirr(bFlows), endValue: bEnd, gain: bEnd + withdrawn - start.value - invested };
+      bench = { xirr: shortWindow ? null : perWindow(xirr(bFlows)), endValue: bEnd, gain: bEnd + withdrawn - start.value - invested };
     }
   }
   return {
     label, from: isoDay(from), to: isoDay(to), startValue: start.value, endValue: end.value, invested, withdrawn, gain,
-    xirr: shortWindow ? null : xirr(flows), simple: weighted > 0 ? gain / weighted : null, bench, estimated: Math.max(start.estimated, end.estimated),
+    xirr: shortWindow ? null : perWindow(xirr(flows)), simple: weighted > 0 ? gain / weighted : null, bench, estimated: Math.max(start.estimated, end.estimated),
+    estimatedSymbols: Array.from(new Set([...start.estimatedSymbols, ...end.estimatedSymbols])), annualised,
   };
 }
 
@@ -589,4 +612,39 @@ export function applyHoldingsDiff<H extends { symbol: string; quantity: number; 
   }
   for (const d of diff) if (d.action === 'add') out.push(make(d));
   return out;
+}
+
+// ── portfolio vs tradebook (zzz1240) ─────────────────────────────────────────
+
+export interface ReconRow {
+  symbol: string;
+  kind: 'same' | 'only-portfolio' | 'only-tradebook' | 'quantity' | 'price';
+  portfolioQty: number; portfolioCost: number; tradebookQty: number; tradebookCost: number;
+  note: string;
+}
+/**
+ * Why the portfolio's invested value differs from the tradebook's cost: one row per company, matched by symbol or by any symbol
+ * the company traded under in the files. Pure.
+ */
+export function reconcilePortfolio(l: DiffInput, current: Array<{ symbol: string; quantity: number; entryPrice: number }>): { rows: ReconRow[]; portfolioCost: number; tradebookCost: number } {
+  const isinOfSym = new Map(l.tradedSymbols.map((x) => [x.symbol.toUpperCase(), x.isin]));
+  const posByIsin = new Map(l.positions.map((p) => [p.isin, p]));
+  const used = new Set<string>();
+  const rows: ReconRow[] = [];
+  for (const h of current) {
+    const sym = String(h.symbol).toUpperCase();
+    const q = Number(h.quantity) || 0, cost = q * (Number(h.entryPrice) || 0);
+    const isin = isinOfSym.get(sym) ?? l.positions.find((p) => p.symbol.toUpperCase() === sym)?.isin;
+    const p = isin ? posByIsin.get(isin) : undefined;
+    if (!isin) { rows.push({ symbol: sym, kind: 'only-portfolio', portfolioQty: q, portfolioCost: cost, tradebookQty: 0, tradebookCost: 0, note: 'never traded in the uploaded files (another broker, a gift, an IPO allotment, or a name the files do not cover)' }); continue; }
+    if (!p) { rows.push({ symbol: sym, kind: 'only-portfolio', portfolioQty: q, portfolioCost: cost, tradebookQty: 0, tradebookCost: 0, note: l.unmatchedIsins.includes(isin) ? 'sold with shares from before the first file — check by hand' : 'sold out in the tradebook — still in the portfolio' }); continue; }
+    used.add(isin);
+    const tq = Math.round(p.qty), tc = p.qty * p.avgCost;
+    const kind: ReconRow['kind'] = Math.round(q) !== tq ? 'quantity' : Math.abs(cost - tc) > Math.max(1, tc * 0.001) ? 'price' : 'same';
+    rows.push({ symbol: sym, kind, portfolioQty: q, portfolioCost: cost, tradebookQty: tq, tradebookCost: tc, note: kind === 'quantity' ? 'quantity differs' : kind === 'price' ? 'entry price differs (portfolio average vs tradebook FIFO cost of the shares still held)' : '' });
+  }
+  for (const p of l.positions) if (!used.has(p.isin)) rows.push({ symbol: p.symbol, kind: 'only-tradebook', portfolioQty: 0, portfolioCost: 0, tradebookQty: Math.round(p.qty), tradebookCost: p.qty * p.avgCost, note: 'held per the tradebook — not in the portfolio' });
+  const order = { 'only-portfolio': 0, 'only-tradebook': 1, quantity: 2, price: 3, same: 4 } as const;
+  rows.sort((a, b) => order[a.kind] - order[b.kind] || Math.abs(b.portfolioCost - b.tradebookCost) - Math.abs(a.portfolioCost - a.tradebookCost));
+  return { rows, portfolioCost: rows.reduce((s, r) => s + r.portfolioCost, 0), tradebookCost: rows.reduce((s, r) => s + r.tradebookCost, 0) };
 }

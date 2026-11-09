@@ -1,7 +1,7 @@
 // zzz1239 — tradebook: one company = one instrument. Cases from the owner's own Zerodha files (Nov 2026).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildLedger, companyKey, dividendsByFy, inferIsinSplits, normalizeTrades, windowReturn, type Trade } from '../tradebook/core';
+import { buildLedger, companyKey, dedupeTrades, dividendsByFy, inferIsinSplits, normalizeTrades, reconcilePortfolio, tradeIdentity, valueAt, windowReturn, type Trade } from '../tradebook/core';
 
 let n = 0;
 const T = (symbol: string, isin: string, date: string, side: 'buy' | 'sell', qty: number, price: number, exchange = 'NSE'): Trade =>
@@ -80,4 +80,43 @@ test('one dividend listed twice by the price source is counted once', () => {
   const d = dividendsByFy(l, () => [{ t, amount: 1.5 }, { t, amount: 1.5 }]);
   assert.equal(d.items.length, 1);
   assert.equal(Math.round(d.items[0].amount), 429);
+});
+
+// zzz1240 — part-year windows and leftover fractions
+test('a part-year window shows the rate for that part, not stretched to a year', () => {
+  const l = buildLedger([T('X', 'INE000X01011', '2026-04-01', 'buy', 100, 100)]);
+  const from = Date.parse('2026-04-01T00:00:00Z'), to = Date.parse('2026-10-01T00:00:00Z');
+  const w = windowReturn(l, 'FY27 so far', from, to, (_i, t) => (t >= to ? 120 : 100), (t) => (t >= to ? 110 : 100));
+  assert.equal(w.annualised, false);
+  assert.ok(Math.abs(w.xirr! - 0.2) < 0.01, `+20% in six months stays ~+20%, got ${w.xirr}`);
+  assert.ok(Math.abs(w.bench!.xirr! - 0.1) < 0.01);
+});
+
+test('a fraction left by a merger is not valued in the book after its last trade', () => {
+  const l = buildLedger(normalizeTrades([
+    T('MINDTREE', 'INE018I01017', '2022-11-14', 'buy', 6, 3600),
+    T('LTIM', 'INE214T01019', '2024-01-20', 'sell', 4, 5625),
+  ]));
+  const later = Date.parse('2025-01-01T00:00:00Z');
+  assert.equal(valueAt(l, later, () => 5000).value, 0);
+});
+
+test('re-uploading a grown file adds only the new trades, even when the ISIN column was filled differently', () => {
+  const a = { ...T('DEEDEV', 'SYM:DEEDEV', '2025-06-12', 'sell', 10, 300, 'BSE'), tradeId: '991', orderId: '77' };
+  const b = { ...a, isin: 'INE841L01016', key: 'other' };   // the same trade in a later download
+  const c = { ...T('DEEDEV', 'INE841L01016', '2025-06-13', 'buy', 5, 290), tradeId: '992', orderId: '78' };
+  assert.equal(tradeIdentity(a), tradeIdentity(b));
+  assert.equal(dedupeTrades([a, b, c]).length, 2);
+});
+
+test('portfolio vs tradebook: a holding outside the files and a sold-out holding explain the invested gap', () => {
+  const r = reconcilePortfolio(
+    { positions: [{ symbol: 'NETWEB', qty: 31, avgCost: 3800, isin: 'INE0NT901' }], unmatchedIsins: [], tradedSymbols: [{ symbol: 'NETWEB', isin: 'INE0NT901' }, { symbol: 'GVTD', isin: 'INE200A01' }] },
+    [{ symbol: 'NETWEB', quantity: 31, entryPrice: 3800 }, { symbol: 'GVTD', quantity: 64, entryPrice: 2715 }, { symbol: 'GOLDBEES', quantity: 100, entryPrice: 80 }],
+  );
+  const kinds = Object.fromEntries(r.rows.map((x) => [x.symbol, x.kind]));
+  assert.equal(kinds.NETWEB, 'same');
+  assert.equal(kinds.GVTD, 'only-portfolio');
+  assert.equal(kinds.GOLDBEES, 'only-portfolio');
+  assert.equal(Math.round(r.portfolioCost - r.tradebookCost), 64 * 2715 + 100 * 80);
 });

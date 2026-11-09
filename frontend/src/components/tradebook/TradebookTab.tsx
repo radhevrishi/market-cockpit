@@ -3,7 +3,7 @@
 // before is ignored), then returns (XIRR overall / this year / by fiscal year, against Nifty Smallcap 100), holdings
 // rebuilt from the trades (applied to the portfolio automatically, with Undo), estimated dividends, and trades / P&L.
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { applyHoldingsDiff, holdingsDiff, parseTradebookRows, type HoldingChange, type Trade } from '@/lib/tradebook/core';
+import { applyHoldingsDiff, holdingsDiff, parseTradebookRows, reconcilePortfolio, type HoldingChange, type Trade } from '@/lib/tradebook/core';
 import type { TradebookAnalytics } from '@/lib/tradebook/server';
 
 type H = { symbol: string; entryPrice: number; quantity: number; weight: number; addedAt: string; notes?: string };
@@ -68,17 +68,17 @@ function ReturnsTable({ rows, title }: { rows: TradebookAnalytics['byFy']; title
   return (
     <div style={{ overflowX: 'auto' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-        <thead><tr><th style={thL}>{title}</th><th style={th}>Value at start</th><th style={th}>Bought</th><th style={th}>Sold</th><th style={th}>Value at end</th><th style={th}>Gain</th><th style={th} title="Money-weighted return of the period (Modified Dietz) — not annualised">Return</th><th style={th}>XIRR</th><th style={th} title="The same money in Nifty Smallcap 100 on the same days">Nifty Smallcap 100 XIRR</th><th style={th}>Beat index by</th></tr></thead>
+        <thead><tr><th style={thL}>{title}</th><th style={th}>Value at start</th><th style={th}>Bought</th><th style={th}>Sold</th><th style={th}>Value at end</th><th style={th}>Gain</th><th style={th} title="Money-weighted return of the period (Modified Dietz) — not annualised">Return</th><th style={th} title="Money-weighted rate (XIRR). A year or longer: per year. A part year (marked 'period'): the rate for that part only, not stretched to a year.">XIRR</th><th style={th} title="The same money in Nifty Smallcap 100 on the same days, on the same basis">Nifty Smallcap 100</th><th style={th}>Beat index by</th></tr></thead>
         <tbody>
           {rows.map((r) => {
             const diff = r.xirr != null && r.bench?.xirr != null ? r.xirr - r.bench.xirr : null;
             return (
               <tr key={r.label}>
-                <td style={tdL}><b>{r.label}</b><div style={{ fontSize: 10.5, color: C.dim }}>{r.from} → {r.to}{r.estimated ? ` · ${r.estimated} valued at last trade price` : ''}</div></td>
+                <td style={tdL}><b>{r.label}</b><div style={{ fontSize: 10.5, color: C.dim }}>{r.from} → {r.to}{r.estimated ? ` · valued at last trade price (no price history): ${(r.estimatedSymbols || []).join(', ') || r.estimated}` : ''}</div></td>
                 <td style={td}>{inr(r.startValue)}</td><td style={td}>{inr(r.invested)}</td><td style={td}>{inr(r.withdrawn)}</td><td style={td}>{inr(r.endValue)}</td>
                 <td style={{ ...td, color: tone(r.gain), fontWeight: 700 }}>{inr(r.gain)}</td>
                 <td style={{ ...td, color: tone(r.simple) }}>{pct(r.simple)}</td>
-                <td style={{ ...td, color: tone(r.xirr), fontWeight: 800 }}>{pct(r.xirr)}</td>
+                <td style={{ ...td, color: tone(r.xirr), fontWeight: 800 }}>{pct(r.xirr)}{r.xirr != null && r.annualised === false ? <div style={{ fontSize: 9.5, color: C.dim, fontWeight: 600 }}>period</div> : null}</td>
                 <td style={{ ...td, color: C.violet }}>{pct(r.bench?.xirr)}</td>
                 <td style={{ ...td, color: tone(diff), fontWeight: 700 }}>{diff == null ? '—' : `${diff >= 0 ? '+' : ''}${(diff * 100).toFixed(1)} pts`}</td>
               </tr>
@@ -175,6 +175,8 @@ export default function TradebookTab({ holdings, onApply }: { holdings: H[]; onA
   }, [applied, onApply]);
 
   const s = data?.summary;
+  // zzz1240 — why the portfolio's invested value is not the tradebook's cost
+  const recon = useMemo(() => (data ? reconcilePortfolio({ positions: data.ledgerPositions, unmatchedIsins: data.unmatchedIsins, tradedSymbols: data.tradedSymbols }, holdings) : null), [data, holdings]);
   const pending = useMemo(() => (data ? holdingsDiff({ positions: data.ledgerPositions, unmatchedIsins: data.unmatchedIsins, tradedSymbols: data.tradedSymbols }, holdings).filter((d) => d.action !== 'keep') : []), [data, holdings]);
 
   return (
@@ -183,7 +185,7 @@ export default function TradebookTab({ holdings, onApply }: { holdings: H[]; onA
         <label style={{ display: 'block', border: `1.5px dashed ${C.line}`, borderRadius: 10, padding: 18, textAlign: 'center', cursor: busy ? 'wait' : 'pointer', color: C.mute, fontSize: 13 }}>
           <input type="file" accept=".xlsx,.xls,.csv" multiple disabled={!!busy} style={{ display: 'none' }} onChange={(e) => { const picked = Array.from(e.target.files || []); e.currentTarget.value = ''; void onFiles(picked); }} />
           <b style={{ color: C.txt }}>Choose tradebook files</b> (Console → Reports → Tradebook → Equity, one file per year is fine).<br />
-          Upload all years once, then just the new month later — a file or trade already uploaded is ignored, and your portfolio quantities are updated automatically.
+          Upload all years once. After that, re-download and upload just this year's file whenever you trade — trades already stored are recognised (by exchange, date, trade and order number) and only the new ones are added; earlier years stay as they are. The portfolio list below shows any change before it is made.
         </label>
         {busy && <div style={{ marginTop: 10, color: C.blue, fontSize: 12.5 }}>⏳ {busy}</div>}
         {err && <div style={{ marginTop: 10, color: C.red, fontSize: 12.5 }}>⚠ {err}</div>}
@@ -214,7 +216,7 @@ export default function TradebookTab({ holdings, onApply }: { holdings: H[]; onA
             <Kpi label="UNREALISED" value={inr(s.unrealized)} color={tone(s.unrealized)} sub={pct(s.invested ? s.unrealized / s.invested : null)} />
             <Kpi label="REALISED (all years)" value={inr(s.realized)} color={tone(s.realized)} sub="before charges and tax" />
             <Kpi label="XIRR — OVERALL" value={pct(s.xirrAll)} color={tone(s.xirrAll)} sub={`Nifty Smallcap 100: ${pct(s.benchXirrAll)}`} />
-            <Kpi label={`XIRR — ${new Date().getFullYear()} SO FAR`} value={pct(s.xirrYtd)} color={tone(s.xirrYtd)} sub={`this fiscal year: ${pct(s.xirrFytd)}`} />
+            <Kpi label={`${new Date().getFullYear()} SO FAR`} value={pct(s.xirrYtd)} color={tone(s.xirrYtd)} sub={`this fiscal year so far: ${pct(s.xirrFytd)} · money-weighted, not stretched to a year`} />
             <Kpi label="DIVIDENDS (estimated)" value={inr(s.dividends)} sub={`${data.tradeCount.toLocaleString('en-IN')} trades · ${data.firstDate} → ${data.lastDate}`} />
           </div>
           <div style={{ display: 'flex', gap: 4, marginBottom: 12, flexWrap: 'wrap' }}>
@@ -236,6 +238,19 @@ export default function TradebookTab({ holdings, onApply }: { holdings: H[]; onA
 
           {sub === 'holdings' && (
             <>
+              {recon && (
+                <Card title={`Your portfolio vs the tradebook — invested ${inr(recon.portfolioCost)} vs cost ${inr(recon.tradebookCost)} (difference ${inr(recon.portfolioCost - recon.tradebookCost)})`}>
+                  <div style={{ fontSize: 12, color: C.mute, marginBottom: 8 }}>The portfolio's invested value is quantity × entry price of what you hold there. The tradebook's cost is what you paid for the shares still held (oldest bought, oldest sold). Rows that differ:</div>
+                  {recon.rows.filter((x) => x.kind !== 'same').length === 0 ? <div style={{ fontSize: 12.5, color: C.green }}>They match, holding by holding.</div> : (
+                    <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead><tr><th style={thL}>Stock</th><th style={th}>Portfolio qty</th><th style={th}>Portfolio invested</th><th style={th}>Tradebook qty</th><th style={th}>Tradebook cost</th><th style={th}>Difference</th><th style={thL}>Why</th></tr></thead>
+                      <tbody>{recon.rows.filter((x) => x.kind !== 'same').map((x) => (
+                        <tr key={x.symbol + x.kind}><td style={tdL}><b>{x.symbol}</b></td><td style={td}>{x.portfolioQty || '—'}</td><td style={td}>{inr(x.portfolioCost)}</td><td style={td}>{x.tradebookQty || '—'}</td><td style={td}>{inr(x.tradebookCost)}</td>
+                          <td style={{ ...td, fontWeight: 700, color: tone(x.portfolioCost - x.tradebookCost) }}>{inr(x.portfolioCost - x.tradebookCost)}</td><td style={{ ...tdL, whiteSpace: 'normal', color: C.mute, fontSize: 11.5 }}>{x.note}</td></tr>
+                      ))}</tbody></table></div>
+                  )}
+                </Card>
+              )}
               <Card title={`Holdings rebuilt from the trades — ${data.holdings.length}`}>
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>

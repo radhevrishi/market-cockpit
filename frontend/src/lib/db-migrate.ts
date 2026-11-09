@@ -416,6 +416,23 @@ export const MIGRATIONS: readonly Migration[] = [
         checked TIMESTAMPTZ NOT NULL DEFAULT now()
       );`,
   },
+  {
+    // zzz1240 — a trade's key is exchange + date + trade ID + order ID (lib/tradebook/core tradeIdentity), so a re-downloaded
+    //   file of the current year only adds its new trades even when the ISIN column is filled differently. Old keys rewritten,
+    //   duplicates under the new key dropped (the oldest copy kept).
+    id: 13, name: 'tradebook-trade-identity',
+    sql: `
+      CREATE TEMP TABLE tb_nk ON COMMIT DROP AS
+        SELECT key, CASE WHEN coalesce(trade_id, '') <> ''
+            THEN exchange || '|' || to_char(trade_date, 'YYYY-MM-DD') || '|T' || trade_id || '|O' || coalesce(order_id, '')
+            ELSE exchange || '|' || to_char(trade_date, 'YYYY-MM-DD') || '|O' || coalesce(order_id, '') || '|' || coalesce(exec_time, '') || '|' || side || '|' || qty::text || '|' || price::text
+          END AS nk, added_at
+        FROM tradebook_trade;
+      DELETE FROM tradebook_trade t USING (
+        SELECT key FROM (SELECT key, row_number() OVER (PARTITION BY nk ORDER BY added_at, key) AS rn FROM tb_nk) x WHERE rn > 1
+      ) d WHERE t.key = d.key;
+      UPDATE tradebook_trade t SET key = n.nk FROM tb_nk n WHERE t.key = n.key AND t.key <> n.nk;`,
+  },
 ] as const;
 
 const LOCK_ID = 88_301_883;   // advisory-lock id for migrations

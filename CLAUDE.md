@@ -3988,3 +3988,9 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   cost 0 (cost stays with the parent). `inferIsinSplits` reads a split from an ISIN change when Yahoo has none within 45 days.
   Split / merger fractions are dropped (cash in lieu); dividends on whole shares, one per day; no XIRR for windows < 60 days.
   Prices try today's NSE symbol first. The tab previews what "Update portfolio from tradebook" changes.
+- zzz1240 (9 Nov): tradebook follow-up. Trade identity = exchange + date + trade ID + order ID (`tradeIdentity`; migration 13
+  rewrote stored keys and dropped duplicates) — the owner re-uploads the CURRENT year's file as it grows; only new trades are added,
+  even when Zerodha fills the ISIN differently between downloads. Part-year windows (< 360 days) show the rate for the window
+  (`annualised: false`), not an annual rate; merger / split fractions leave the value history too (not just holdings); windows name
+  the holdings valued at last trade price. Holdings tab: `reconcilePortfolio` card — why the portfolio's invested value differs from
+  the tradebook cost (outside the files / sold out / quantity / price), row by row.
