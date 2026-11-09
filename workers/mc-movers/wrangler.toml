@@ -24,5 +24,9 @@ compatibility_date = "2026-01-01"
 # Total: ~120 runs Mon-Fri (~96 intraday + ~28 post-close).
 # The scheduled handler now allows both the intraday window (09:15-15:35)
 # and the post-close window (15:35-22:00), still Mon-Fri only.
+# zzz1230 — the app's Upstash-compatible relay onto its Postgres store (tried first; Upstash stays the fallback)
+[vars]
+MC_KV_RELAY_URL = "https://market-cockpit-production.up.railway.app/api/v1/kv-rest"
+
 [triggers]
 crons = ["*/5 3-10 * * 1-5", "*/15 10-16 * * 1-5"]

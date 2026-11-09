@@ -49,13 +49,30 @@ function marketOpenIntraday() {
   return mins >= 9 * 60 + 15 && mins <= 15 * 60 + 35;
 }
 
-function kvBase(env) { return String(env.UPSTASH_REDIS_REST_URL || '').replace(/\/+$/, ''); }
+// zzz1230 — the app stores in its own Postgres now; its Upstash-compatible relay (MC_KV_RELAY_URL, same token) is tried
+// first and Upstash is the fallback, so a relay outage never loses a capture.
+function kvBases(env) {
+  const up = String(env.UPSTASH_REDIS_REST_URL || '').replace(/\/+$/, '');
+  const relay = String(env.MC_KV_RELAY_URL || '').replace(/\/+$/, '');
+  return [relay, up].filter(Boolean);
+}
+function kvBase(env) { return kvBases(env)[0] || ''; }
 
 async function kvGetRaw(env, key) {
-  const r = await fetch(kvBase(env) + '/get/' + encodeURIComponent(key), {
+  for (const base of kvBases(env)) {
+    try {
+      const v = await kvGetRawAt(env, base, key);
+      if (v !== undefined) return v;
+    } catch { /* next */ }
+  }
+  return null;
+}
+async function kvGetRawAt(env, base, key) {
+  const r = await fetch(base + '/get/' + encodeURIComponent(key), {
     headers: { Authorization: 'Bearer ' + env.UPSTASH_REDIS_REST_TOKEN },
     signal: AbortSignal.timeout(15000),
   });
+  if (!r.ok) return undefined;
   const j = await r.json().catch(() => ({}));
   let v = j && j.result;
   if (typeof v === 'string') { try { v = JSON.parse(v); } catch {} }
@@ -64,14 +81,22 @@ async function kvGetRaw(env, key) {
 }
 
 async function kvSet(env, key, value, ttlSeconds) {
-  const url = kvBase(env) + '/set/' + encodeURIComponent(key) + '?EX=' + ttlSeconds;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { Authorization: 'Bearer ' + env.UPSTASH_REDIS_REST_TOKEN, 'Content-Type': 'application/json' },
-    body: JSON.stringify(value),
-    signal: AbortSignal.timeout(15000),
-  });
-  if (!res.ok) { const t = await res.text().catch(() => ''); throw new Error('Upstash SET ' + res.status + ' ' + t.slice(0, 200)); }
+  let last = null;
+  for (const base of kvBases(env)) {
+    const url = base + '/set/' + encodeURIComponent(key) + '?EX=' + ttlSeconds;
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + env.UPSTASH_REDIS_REST_TOKEN, 'Content-Type': 'application/json' },
+        body: JSON.stringify(value),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (res.ok) return;
+      const t = await res.text().catch(() => '');
+      last = new Error('KV SET ' + res.status + ' ' + t.slice(0, 200));
+    } catch (e) { last = e; }
+  }
+  throw last || new Error('KV SET: no store configured');
 }
 
 // ---- Yahoo spark (v7) — batch endpoint that still works without cookie/crumb.

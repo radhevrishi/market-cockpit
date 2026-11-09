@@ -170,7 +170,7 @@ describe('D7 / D8 · refill and stale-rule rebuild are scheduled and bounded', (
     assert.match(cron, /const WINDOW_DAYS = 60;/);
     assert.match(cron, /const STALE_BUDGET = 1;/);
     assert.match(cron, /graded:stale-rebuild-lock:/);
-    assert.match(cron, /\['EXISTS', k\]/);
+    assert.match(cron, /kvExistsMany/);   // zzz1230: EXISTS-only scan through lib/kv (Postgres or one Upstash pipeline)
     assert.match(cron, /INDIA_REGRADABLE_FROM/);
     assert.match(cron, /noPrice > 0/);
   });

@@ -551,6 +551,15 @@ export const LIGHT_JOBS: readonly LightJob[] = [
       if (r.fired || r.error) console.log('[price-alerts]', JSON.stringify(r));
       return r.ok ? { ok: true, status: 200, error: r.skipped || null } : { ok: false, status: 503, error: r.error || 'failed' };
     } },
+  // zzz1230 — key-value store upkeep (lib/kv-maintenance): deletes expired keys and, until finished, copies the keys still held in
+  // Upstash into Postgres (budgeted 120 s a run). Postgres only once the copy is done.
+  { name: 'kv-maintenance', crons: ['*/5 * * * *'], heartbeatEveryMin: 60,
+    does: 'in-process: lib/kv-maintenance runKvMaintenance (expired-key sweep + one-time Upstash → Postgres copy)',
+    run: async () => {
+      const r: any = await (await import('./kv-maintenance')).runKvMaintenance();
+      if (r.pages || r.error) console.log('[kv-maintenance]', JSON.stringify(r));
+      return r.ok ? { ok: true, status: 200, error: r.skipped || null } : { ok: false, status: 503, error: r.error || 'failed' };
+    } },
   // zzz1063 — price-alert DELIVERY from the Postgres outbox (lib/alerts/delivery deliverDue): Telegram / email / phone push with
   // retries (1, 5, 15, 60, 60 min), every minute of every day so retries finish outside market hours too. Reads Postgres only when
   // something is due (earliest due time kept in memory; a full look every 5 min). No Redis; SKIP LOCKED keeps server copies apart.

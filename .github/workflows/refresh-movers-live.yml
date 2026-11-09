@@ -38,7 +38,7 @@ jobs:
             echo "::error title=Missing secrets::Add UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN in Settings → Secrets and variables → Actions."
             exit 1
           fi
-          node .github/scripts/scrape-movers-live.mjs
+          node --import ./.github/scripts/lib/kv-preload.mjs .github/scripts/scrape-movers-live.mjs
 
       - name: Heartbeat (always run)
         if: always()

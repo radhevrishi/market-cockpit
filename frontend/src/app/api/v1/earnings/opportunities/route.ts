@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
-import { Redis } from '@upstash/redis';
-import { kvGet, kvSet } from '@/lib/kv';
+import { isRedisAvailable, kvGet, kvSet } from '@/lib/kv';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -347,15 +346,7 @@ async function fetchFeed(url: string, ms = 9000): Promise<{ xml: string; error?:
 }
 
 // ─── KV cache ──────────────────────────────────────────────────────────────
-let redis: Redis | null = null;
-try {
-  if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
-    redis = new Redis({
-      url: process.env.UPSTASH_REDIS_REST_URL!,
-      token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-    });
-  }
-} catch {}
+// zzz1230: the store is whatever lib/kv uses (Postgres, or Upstash when forced)
 
 // PATCH 0873 — Slashed from 12h → 10min. 12h cache meant a single bad
 // run (all feeds failing → 0 candidates) blocked fresh data for the rest
@@ -376,7 +367,7 @@ export async function GET(req: Request) {
   const force = url.searchParams.get('force') === '1';
 
   // Try cache
-  if (redis && !force) {
+  if (isRedisAvailable() && !force) {
     try {
       const hit = await kvGet(cacheKey(date));   // zzz1049: through lib/kv (memory cache + command counter)
       if (hit) return NextResponse.json(hit);
@@ -466,7 +457,7 @@ export async function GET(req: Request) {
   // when every feed errored locked the user into "0 candidates" for 12h
   // (now 10min). We only cache when at least one feed succeeded AND we got
   // at least one candidate — otherwise let the next caller retry upstream.
-  if (redis && !allFeedsFailed && candidates.length > 0) {
+  if (isRedisAvailable() && !allFeedsFailed && candidates.length > 0) {
     try { await kvSet(cacheKey(date), payload, CACHE_TTL_S); } catch {}
   }
 

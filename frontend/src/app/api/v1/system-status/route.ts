@@ -7,7 +7,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import { NextResponse } from 'next/server';
 import { internalBase } from '@/lib/internal-base';
-import { kvUsageSnapshot } from '@/lib/kv';
+import { kvUsageSnapshot, kvBackendStatus } from '@/lib/kv';
 import { memoryReport } from '@/lib/mem-sampler';
 
 export const runtime = 'nodejs';
@@ -78,7 +78,9 @@ const MEMO_MS = 90_000;   // zzz1049: 30 s → 90 s (each build fires eleven pro
 // zzz1049 — Upstash commands sent by this process, per hour and per key family (memory counter; always live, never memoised)
 // zzz1194 — the running process's memory (Railway bills memory by the GB-hour): rss = what the host counts, heap = JavaScript objects
 const procMem = () => { try { const m = process.memoryUsage(); const mb = (v: number) => Math.round(v / 1048576); return { rssMb: mb(m.rss), heapUsedMb: mb(m.heapUsed), heapTotalMb: mb(m.heapTotal), externalMb: mb(m.external), uptimeH: Math.round(process.uptime() / 360) / 10 }; } catch { return null; } };
-const withKv = (body: any) => ({ ...body, kvUsage: kvUsageSnapshot(), processMemory: procMem(), memory: memReport() });
+// zzz1230: which key-value store is live, its size, and the Upstash → Postgres copy progress
+const kvStoreStatus = async () => { try { return await Promise.race([kvBackendStatus(), new Promise((r) => setTimeout(() => r({ error: 'timeout' }), 4000))]); } catch { return null; } };
+const withKv = async (body: any) => ({ ...body, kvUsage: kvUsageSnapshot(), kvStore: await kvStoreStatus(), processMemory: procMem(), memory: memReport() });
 const memReport = () => { try { return memoryReport(); } catch { return null; } };
 /** Optional extras must never hold the status answer up: give each at most `ms`. */
 function capped<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
@@ -87,14 +89,14 @@ function capped<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
 
 export async function GET(request: Request) {
   const fresh = new URL(request.url).searchParams.get('fresh') === '1';
-  if (!fresh && _memo && Date.now() - _memo.at < MEMO_MS) return NextResponse.json(withKv({ ..._memo.body, cached_for_s: Math.round((Date.now() - _memo.at) / 1000) }), { headers: { 'Cache-Control': 'no-store' } });
-  if (!fresh && _inflight) return NextResponse.json(withKv(await _inflight), { headers: { 'Cache-Control': 'no-store' } });
+  if (!fresh && _memo && Date.now() - _memo.at < MEMO_MS) return NextResponse.json(await withKv({ ..._memo.body, cached_for_s: Math.round((Date.now() - _memo.at) / 1000) }), { headers: { 'Cache-Control': 'no-store' } });
+  if (!fresh && _inflight) return NextResponse.json(await withKv(await _inflight), { headers: { 'Cache-Control': 'no-store' } });
   const run = buildStatus(request);
   if (!fresh) _inflight = run;
   try {
     const body = await run;
     _memo = { at: Date.now(), body };
-    return NextResponse.json(withKv(body), { headers: { 'Cache-Control': 'no-store' } });
+    return NextResponse.json(await withKv(body), { headers: { 'Cache-Control': 'no-store' } });
   } finally { if (_inflight === run) _inflight = null; }
 }
 

@@ -3936,3 +3936,18 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   Live review: "Change in Management" (KMP change), a minority strategic / marquee stake and the company buying a stake ELSEWHERE are
   not ownership rescues; funding repair needs a repair word (settlement, restructuring, resolution plan, NCLT exit, refinancing,
   lenders) or a rating upgrade FROM sub-investment grade — a growth raise or AA- → AA is not a turnaround.
+- zzz1230 (9 Nov): KEY-VALUE STORE MOVED OFF UPSTASH (owner: "Upstash lot of money"). `lib/kv-pg.ts` = the app's own Postgres
+  (tables kv_store / kv_set / kv_meta, own pool KV_PG_POOL default 6, 'pg' loaded lazily); same method subset as the Upstash client
+  (get / mget / set {ex,nx} / del / incrbyfloat / expire / sadd / exists), eval understands only the three app scripts (versioned
+  compare-and-set, AI budget reserve / settle) and runs them in one transaction under advisory locks. `kvBackend()` = 'pg' whenever
+  DATABASE_URL is set; KV_BACKEND=upstash is the rollback switch. While on pg, Upstash is only READ until every key is copied:
+  copy-on-read (value + PTTL, never over a newer Postgres copy; locks / counters / versioned keys are copied BEFORE they are
+  changed) plus light job `kv-maintenance` (every 5 min, 120 s budget: expired-key sweep + SCAN copy with cursor in kv_meta
+  'upstash-migration'; done → Upstash never asked again; pauses if the database passes KV_PG_MAX_DB_MB, default 4500).
+  /api/v1/system-status → kvStore (backend, size, copy progress). Collectors: Upstash-compatible relay `/api/v1/kv-rest/...`
+  (GET /get/<k>, POST /set/<k>?EX=, POST / command, /pipeline; Bearer = the existing Upstash token, KV_RELAY_TOKEN or a
+  service key); workflows run scripts with `node --import ./.github/scripts/lib/kv-preload.mjs` which points
+  UPSTASH_REDIS_REST_URL at the relay when /ping says backend pg (else unchanged). CF movers worker tries MC_KV_RELAY_URL first,
+  Upstash second. Direct Upstash readers (quotes, opportunities, prewarm EXISTS, guidance-docs strict read) go through lib/kv.
+  swr-cache: a stored value still arriving at readWaitMs (7 MB radar scan) is kept and put in memory when it lands; meanwhile
+  "pending" WITHOUT a cold rebuild (radar 7d spun "Rebuilding…" for minutes).

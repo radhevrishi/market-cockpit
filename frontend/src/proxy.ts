@@ -43,6 +43,7 @@ const CHEAP_CACHED_ROUTES = [
   '/api/v1/news/in-play',
   '/api/v1/news/bottleneck-dashboard',
   '/api/v1/cron/heartbeat',
+  '/api/v1/kv-rest',          // zzz1230 — collectors' key-value relay (own bearer auth; one scrape writes hundreds of keys)
 ];
 
 // PATCH 0699 — Permanent (308) redirects for legacy / wrong slugs that

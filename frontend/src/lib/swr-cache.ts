@@ -185,6 +185,8 @@ function refreshInBackground<T>(o: SwrOptions<T>, store: SwrStore, now: () => nu
 
 // Bound a slow KV read independently of the rebuild deadline. Late rejection is
 // observed by Promise.race; timer is cleared when the read completes early.
+/** Keys whose stored value was still arriving at the read deadline (zzz1230). */
+const LATE_READS = new Map<string, number>();
 async function boundedRead<T>(read: Promise<T>, ms?: number): Promise<T | null> {
   if (ms == null || ms < 0) return read;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -213,13 +215,35 @@ export async function swrGet<T>(o: SwrOptions<T>): Promise<SwrResult<T>> {
     // memory miss, or memory only holds a stale value: KV may hold a newer one written by another instance
     if (useKv && (!env || (now() - env.ts >= o.freshMs && !INFLIGHT.has(o.key) && !REFRESHING.has(o.key)))) {
       try {
-        const k = await boundedRead(store.get<Envelope<T>>(kvKeyOf(o.key)), o.readWaitMs);
+        // zzz1230 — a stored value too big to arrive within readWaitMs (the 90-day radar scan, ~7 MB) used to be thrown away:
+        // the request then started a full cold rebuild and every poll timed out the same way, so the page spun "building"
+        // for minutes. The read now keeps going after the deadline and fills memory when it lands; meanwhile, with nothing
+        // in memory, the caller is told "pending" WITHOUT starting a rebuild (unless forced).
+        const read = store.get<Envelope<T>>(kvKeyOf(o.key));
+        let settled = false;
+        read.then((v) => { settled = true; return v; }, () => { settled = true; return null; });
+        const k = await boundedRead(read, o.readWaitMs);
+        if (!settled && k === null) {
+          read.then((late) => {
+            if (useMem && isEnvelope(late) && usable(late.value as T)) {
+              const cur = MEM.get(o.key) as Envelope<T> | undefined;
+              if (!cur || late.ts > cur.ts) memPut(o.key, late as Envelope<T>);
+              LATE_READS.delete(o.key);
+            }
+          }, () => { /* store down */ });
+          // a store that keeps failing to answer for a minute is treated as empty: build after all
+          const since = LATE_READS.get(o.key);
+          if (!env && !o.force && (!since || Date.now() - since < 60_000)) {
+            if (!since) LATE_READS.set(o.key, Date.now());
+            throw new SwrPendingError(o.key);
+          }
+        } else LATE_READS.delete(o.key);
         if (isEnvelope(k) && usable(k.value as T) && (!env || k.ts > env.ts)) {
           env = k as Envelope<T>;
           source = 'kv';
           if (useMem) memPut(o.key, env);
         }
-      } catch { /* KV down: memory or build */ }
+      } catch (e) { if (e instanceof SwrPendingError) throw e; /* KV down: memory or build */ }
     }
   }
 

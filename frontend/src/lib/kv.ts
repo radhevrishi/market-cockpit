@@ -22,11 +22,101 @@ import { createHash } from 'node:crypto';
 import { MemoryKvStore } from './kv-memory';
 import { VERSIONED_SET_LUA, parseVersionedResult, type VersionedValue } from './kv-versioned';
 import { KvReadCache, KvUsage, readThrough, isCacheableKey, RestFallbackLearner, keyFamily as mgetFamily } from './kv-read-cache';
+import { pgKv, pgUrl, decodeValue, type PgKv } from './kv-pg';
 
 let redis: Redis | null = null;
 let redisAvailable: boolean | null = null;
 
+// ── zzz1230: storage backend ────────────────────────────────────────────────────────────────────────────────────────
+// 'pg'      — the app's own PostgreSQL (lib/kv-pg): no per-command bill. Default whenever DATABASE_URL is set.
+// 'upstash' — Upstash Redis (the old store). Forced with KV_BACKEND=upstash (rollback switch).
+// While on 'pg', Upstash is only READ, and only until every key has been copied over (lib/kv-maintenance): a key missing
+// here is looked up there once and copied (with its remaining lifetime). After the copy is complete Upstash is never asked.
+export type KvBackend = 'upstash' | 'pg';
+export function kvBackend(): KvBackend {
+  const f = String(process.env.KV_BACKEND || '').toLowerCase();
+  if (f === 'upstash') return 'upstash';
+  return pgUrl() ? 'pg' : 'upstash';
+}
+const onPg = (): boolean => kvBackend() === 'pg';
+function pgStore(): PgKv | null { return onPg() ? pgKv() : null; }
+
+/** The Upstash REST address, whatever the backend (used only to read keys not yet copied). */
+export function upstashCreds(): { url: string; token: string } | null {
+  const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
+  return url && token ? { url: url.replace(/\/+$/, ''), token } : null;
+}
+/** One Upstash REST pipeline call (counted). Null on any failure. */
+export async function upstashPipeline(cmds: Array<Array<string | number>>, label = 'migrate'): Promise<any[] | null> {
+  const c = upstashCreds();
+  if (!c || !cmds.length) return null;
+  try {
+    KV_USAGE.record(label, String(cmds[0][1] ?? label), cmds.length);
+    const r = await fetch(`${c.url}/pipeline`, {
+      method: 'POST', headers: { Authorization: `Bearer ${c.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(cmds), cache: 'no-store', signal: AbortSignal.timeout(30_000),
+    });
+    if (!r.ok) return null;
+    const j: any = await r.json();
+    return Array.isArray(j) && j.length === cmds.length ? j : null;
+  } catch { return null; }
+}
+
+// Copy-on-read while the Upstash copy is not finished.
+const MIG: { done: boolean | null; checkedAt: number; seen: Set<string> } =
+  (globalThis as any).__MC_KV_MIG__ || ((globalThis as any).__MC_KV_MIG__ = { done: null, checkedAt: 0, seen: new Set<string>() });
+export const UPSTASH_MIGRATION_META = 'upstash-migration';
+/** True while keys may still exist only in Upstash. */
+export async function kvMigrating(): Promise<boolean> {
+  if (!onPg() || !upstashCreds() || process.env.KV_UPSTASH_MIGRATION === '0') return false;
+  if (MIG.done !== null && Date.now() - MIG.checkedAt < 5 * 60_000) return !MIG.done;
+  try { const m: any = await pgKv()!.metaGet(UPSTASH_MIGRATION_META); MIG.done = !!m?.done; } catch { MIG.done = MIG.done ?? false; }
+  MIG.checkedAt = Date.now();
+  return !MIG.done;
+}
+export function noteMigrationDone(done: boolean): void { MIG.done = done; MIG.checkedAt = Date.now(); }
+/** Reads keys from Upstash (value + remaining lifetime) and copies the ones found into Postgres (never over a newer copy).
+ *  Each key is asked at most once per server process. Returns the raw text per key. */
+async function copyFromUpstash(keys: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const pg = pgKv();
+  const ask = keys.filter((k) => !MIG.seen.has(k));
+  if (!pg || !ask.length) return out;
+  if (MIG.seen.size > 50_000) MIG.seen.clear();
+  for (let i = 0; i < ask.length; i += 50) {
+    const chunk = ask.slice(i, i + 50);
+    const res = await upstashPipeline(chunk.flatMap((k) => [['GET', k], ['PTTL', k]]), 'get(migrate)');
+    if (!res) continue;   // not marked seen: a later read retries
+    for (let j = 0; j < chunk.length; j++) {
+      MIG.seen.add(chunk[j]);
+      const raw = res[2 * j]?.result;
+      const pttl = Number(res[2 * j + 1]?.result);
+      if (typeof raw !== 'string') continue;
+      out.set(chunk[j], raw);
+      try { await pg.setIfAbsent(chunk[j], raw, pttl > 0 ? new Date(Date.now() + pttl) : null); } catch { /* served anyway */ }
+    }
+  }
+  return out;
+}
+/** Before a read-modify-write (versioned save, lock, counter, budget script) the key must already be here. */
+async function migrateKeys(keys: string[]): Promise<void> {
+  if (!(await kvMigrating())) return;
+  const pg = pgKv(); if (!pg) return;
+  const have = await pg.existsMany(keys).catch(() => keys.map(() => true));
+  const missing = keys.filter((_, i) => !have[i]);
+  if (missing.length) await copyFromUpstash(missing);
+}
+/** pg text → value: one JSON parse (as the Upstash client), plus the REST path's tolerance for a value stored double-encoded. */
+function pgDecode<T>(raw: string): T | null {
+  let v: any = decodeValue(raw);
+  if (typeof v === 'string' && /^\s*[[{"]/.test(v)) { try { v = JSON.parse(v); } catch { /* a plain string */ } }
+  return unpackLarge<T>(v);
+}
+
+/** The store client: the Postgres adapter (same method subset as the Upstash client) or the Upstash client. */
 function getRedis(): Redis | null {
+  if (onPg()) return pgKv() as unknown as Redis | null;
   if (redisAvailable === false) return null;
   if (redis) return redis;
 
@@ -51,10 +141,9 @@ function getRedis(): Redis | null {
   }
 }
 
+/** Upstash REST for the app's own reads and writes — none while the store is Postgres. */
 function restCreds(): { url: string; token: string } | null {
-  const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
-  return url && token ? { url: url.replace(/\/+$/, ''), token } : null;
+  return onPg() ? null : upstashCreds();
 }
 
 // In-memory fallback store
@@ -62,7 +151,7 @@ function restCreds(): { url: string; token: string } | null {
 // zzz1196 — bounded when Redis is configured (it holds everything; this copy only answers during a Redis outage): rebuildable
 // market data up to KV_MEM_FALLBACK_MB (default 48 MB), personal state / locks always kept (isCacheableKey = false for those).
 const MEM_STORE: MemoryKvStore = (globalThis as any).__MC_KV_STORE_V3__ || new MemoryKvStore(Date.now, {
-  maxBytes: restCreds() ? Math.max(8, Number(process.env.KV_MEM_FALLBACK_MB) || 48) * 1024 * 1024 : undefined,
+  maxBytes: (onPg() || upstashCreds()) ? Math.max(8, Number(process.env.KV_MEM_FALLBACK_MB) || 48) * 1024 * 1024 : undefined,
   pinned: (k) => !isCacheableKey(k),
 });
 (globalThis as any).__MC_KV_STORE_V3__ = MEM_STORE;
@@ -85,11 +174,13 @@ const REST_LEARN: RestFallbackLearner = (globalThis as any).__MC_KV_REST_LEARN__
 
 /** For callers that talk to the Upstash REST API directly, so the per-hour counter stays complete. */
 export function kvCountExternal(op: string, key: string, commands = 1, bytes = 0): void { KV_USAGE.record(op, key, commands, bytes); }
-const readCacheOn = (): boolean => process.env.KV_READ_CACHE !== '0' && !!restCreds();
+const readCacheOn = (): boolean => process.env.KV_READ_CACHE !== '0' && (onPg() || !!restCreds());
 /** Usage + cache numbers for /api/v1/system-status. */
 export function kvUsageSnapshot() {
   const s = READ_CACHE.size();
   return {
+    backend: kvBackend(),
+    migratingFromUpstash: MIG.done === null ? null : !MIG.done,
     ...KV_USAGE.snapshot(),
     restRetry: { skippedMisses: REST_LEARN.skipped, families: REST_LEARN.snapshot().sort((a, b) => b.tried - a.tried).slice(0, 15) },
     readCache: { on: readCacheOn(), entries: s.entries, mb: Math.round(s.bytes / 1e4) / 100, hits: READ_CACHE.hits, knownMissingHits: READ_CACHE.missHits, storeReads: READ_CACHE.loads, evictions: READ_CACHE.evictions, ttlS: READ_CACHE.opts.hitTtlMs / 1000 },
@@ -156,6 +247,23 @@ async function kvGetFromStore<T = any>(key: string): Promise<{ value: T | null; 
   // zzz1049: note a MISS therefore costs two commands — the memory cache keeps "missing" for 30 s.
   let failed = false;
   let clientMissed = false;
+  const pg = pgStore();
+  if (pg) {
+    try {
+      const raw = await pg.getRaw(key);
+      if (raw !== null) return { value: pgDecode<T>(raw), failed: false };
+      if (await kvMigrating()) {
+        const got = (await copyFromUpstash([key])).get(key);
+        if (got !== undefined) return { value: pgDecode<T>(got), failed: false };
+      }
+      return { value: null, failed: false };
+    } catch (e) {
+      console.error(`[KV] Postgres GET failed for ${key}:`, (e as any)?.message || e);
+      const mem = MEM_STORE.get(key);
+      if (mem) { try { return { value: JSON.parse(mem) as T, failed: true }; } catch { return { value: mem as unknown as T, failed: true }; } }
+      return { value: null, failed: true };
+    }
+  }
   const r = getRedis();
   if (r) {
     try {
@@ -205,6 +313,13 @@ async function kvGetFromStore<T = any>(key: string): Promise<{ value: T | null; 
 
 /** Backup reads must distinguish absent data from unavailable storage. Never served from the memory cache. */
 export async function kvGetDurable<T = any>(key: string): Promise<T | null> {
+  const pg = pgStore();
+  if (pg) {
+    const raw = await pg.getRaw(key);
+    if (raw !== null) return decodeValue<T>(raw);
+    if (await kvMigrating()) { const got = (await copyFromUpstash([key])).get(key); if (got !== undefined) return decodeValue<T>(got); }
+    return null;
+  }
   const r = getRedis();
   if (!r) throw new Error('Durable storage is unavailable');
   KV_USAGE.record('get(durable)', key);
@@ -257,6 +372,20 @@ export function noteMgetTooLarge(family: string, keysAsked: number): void {
 }
 
 async function kvMGetFromStore<T = any>(keys: string[]): Promise<{ values: Array<T | null>; batched: boolean }> {
+  const pg = pgStore();
+  if (pg) {
+    try {
+      const raws = await pg.mgetRaw(keys);
+      if (raws.some((r) => r === null) && await kvMigrating()) {
+        const got = await copyFromUpstash(keys.filter((_, i) => raws[i] === null));
+        keys.forEach((k, i) => { if (raws[i] === null && got.has(k)) raws[i] = got.get(k)!; });
+      }
+      return { values: raws.map((r) => (r === null ? null : pgDecode<T>(r))), batched: true };
+    } catch (e) {
+      console.error('[KV] Postgres MGET failed:', (e as any)?.message || e);
+      return { values: keys.map(() => null), batched: false };
+    }
+  }
   const fam = mgetFamily(keys[0]);
   const safe = mgetSafeKeys(fam);
   if (safe != null && keys.length > safe) {
@@ -339,6 +468,8 @@ async function kvMGetFromStore<T = any>(keys: string[]): Promise<{ values: Array
 const KV_REMOTE_MAX_BYTES = 8 * 1024 * 1024;  // 8 MB safety cap (Upstash hard limit is 10 MB)
 /** zzz1147 — above this size ON THE WIRE a value is stored compressed (readers outside the app read the smaller keys as plain JSON) */
 const KV_PACK_ABOVE_BYTES = KV_REMOTE_MAX_BYTES;
+/** zzz1230 — Postgres has no 10 MB request limit (values over 8 MB are still stored compressed, to save space). */
+const remoteMaxBytes = (): number => (onPg() ? 256 * 1024 * 1024 : KV_REMOTE_MAX_BYTES);
 /** zzz1147 — bytes the value takes inside the request body (JSON-escaped once more by the client). Pure. */
 export function requestBytesOf(serialized: string): number { return Buffer.byteLength(JSON.stringify(serialized), 'utf8'); }
 
@@ -347,11 +478,12 @@ export async function kvSetVersioned<T extends VersionedValue>(key: string, valu
   const base = baseVersion ?? 0;
   if (!Number.isSafeInteger(base) || base < 0 || base >= Number.MAX_SAFE_INTEGER) throw new Error('Invalid base version');
   const serialized = JSON.stringify({ ...value, version: base + 1 });
-  if (requestBytesOf(serialized) > KV_REMOTE_MAX_BYTES) throw new Error('Durable KV value exceeds the storage limit');
+  if (requestBytesOf(serialized) > remoteMaxBytes()) throw new Error('Durable KV value exceeds the storage limit');
   const r = getRedis();
   if (!r) throw new Error('Durable storage is unavailable; save was not confirmed');
   READ_CACHE.invalidate(key); LAST_WRITE.delete(key);
-  KV_USAGE.record('eval(versioned-set)', key, 1, serialized.length);
+  if (onPg()) await migrateKeys([key]);
+  else KV_USAGE.record('eval(versioned-set)', key, 1, serialized.length);
   const result = parseVersionedResult<T>(await r.eval(VERSIONED_SET_LUA, [key], [serialized, baseVersion ?? 0]));
   if (result.ok && result.row) MEM_STORE.set(key, JSON.stringify(result.row));
   return result;
@@ -360,13 +492,13 @@ export async function kvSetVersioned<T extends VersionedValue>(key: string, valu
 /** Durable write: always sent and acknowledged (never skipped, never cached). */
 export async function kvSetDurable(key: string, value: any, ttlSeconds?: number): Promise<void> {
   const serialized = typeof value === 'string' ? value : JSON.stringify(value);
-  if (typeof serialized !== 'string' || requestBytesOf(serialized) > KV_REMOTE_MAX_BYTES) {   // zzz1147: the size as sent
+  if (typeof serialized !== 'string' || requestBytesOf(serialized) > remoteMaxBytes()) {   // zzz1147: the size as sent
     throw new Error('Durable KV value exceeds the storage limit or is not serializable');
   }
   const r = getRedis();
   if (!r) throw new Error('Durable storage is unavailable; save was not confirmed');
   READ_CACHE.invalidate(key); LAST_WRITE.delete(key);
-  KV_USAGE.record('set(durable)', key, 1, serialized.length);
+  if (!onPg()) KV_USAGE.record('set(durable)', key, 1, serialized.length);
   const result = ttlSeconds ? await r.set(key, value, { ex: ttlSeconds }) : await r.set(key, value);
   if (result !== 'OK') throw new Error('Durable storage did not acknowledge the save');
   MEM_STORE.set(key, serialized, ttlSeconds);
@@ -408,7 +540,7 @@ export async function kvSet(key: string, value: any, ttlSeconds?: number): Promi
     let packed: { __mc_gz: 1; d: string } | null = null;
     try { packed = packLarge(serialized); } catch { packed = null; }
     const packedBytes = packed ? packed.d.length + 20 : Infinity;
-    if (!packed || packedBytes > KV_REMOTE_MAX_BYTES) {
+    if (!packed || packedBytes > remoteMaxBytes()) {
       console.warn(`[KV] Skipping remote SET for ${key} — payload ${(wireBytes / 1048576).toFixed(1)} MB on the wire > ${(KV_REMOTE_MAX_BYTES / 1048576).toFixed(0)} MB safety cap even compressed. (Memory cache still populated.)`);
       READ_CACHE.invalidate(key); LAST_WRITE.delete(key);
       return;
@@ -419,7 +551,7 @@ export async function kvSet(key: string, value: any, ttlSeconds?: number): Promi
   const r = getRedis();
   if (r) {
     try {
-      KV_USAGE.record('set', key, 1, Math.min(serializedBytes, KV_REMOTE_MAX_BYTES));
+      if (!onPg()) KV_USAGE.record('set', key, 1, Math.min(serializedBytes, KV_REMOTE_MAX_BYTES));
       if (ttlSeconds) {
         await r.set(key, value, { ex: ttlSeconds });
       } else {
@@ -432,7 +564,7 @@ export async function kvSet(key: string, value: any, ttlSeconds?: number): Promi
       }
     } catch (e) {
       READ_CACHE.invalidate(key); LAST_WRITE.delete(key);
-      console.error(`[KV] Redis SET failed for ${key}:`, e);
+      console.error(`[KV] ${onPg() ? 'Postgres' : 'Redis'} SET failed for ${key}:`, (e as any)?.message || e);
     }
   } else {
     READ_CACHE.invalidate(key);
@@ -448,9 +580,11 @@ export async function kvDel(key: string): Promise<void> {
   READ_CACHE.invalidate(key); LAST_WRITE.delete(key);
   const r = getRedis();
   if (r) {
-    KV_USAGE.record('del', key);
-    try { await r.del(key); } catch (e) { console.error(`[KV] Redis DEL failed for ${key}:`, e); }
+    if (!onPg()) KV_USAGE.record('del', key);
+    try { await r.del(key); } catch (e) { console.error(`[KV] DEL failed for ${key}:`, e); }
   }
+  // while copying from Upstash, its copy must go too, or a later read would bring the deleted value back
+  if (onPg() && await kvMigrating()) { MIG.seen.add(key); await upstashPipeline([['DEL', key]], 'del(migrate)'); }
 }
 
 /**
@@ -463,7 +597,8 @@ export async function kvSetNX(key: string, value: any, ttlSeconds: number): Prom
   const r = getRedis();
   if (r) {
     try {
-      KV_USAGE.record('setnx', key);
+      if (onPg()) await migrateKeys([key]);   // a lock / send-once marker held in Upstash must still hold here
+      else KV_USAGE.record('setnx', key);
       const result = await r.set(key, value, { nx: true, ex: ttlSeconds });
       return result === 'OK';
     } catch (e) {
@@ -483,7 +618,8 @@ export async function kvIncrByFloat(key: string, by: number, ttlSeconds?: number
   if (!r || !Number.isFinite(by)) return null;
   READ_CACHE.markUncacheable(key); LAST_WRITE.delete(key);
   try {
-    KV_USAGE.record('incrbyfloat', key, ttlSeconds ? 2 : 1);
+    if (onPg()) await migrateKeys([key]);   // a spend counter must continue from its Upstash total
+    else KV_USAGE.record('incrbyfloat', key, ttlSeconds ? 2 : 1);
     const v = await r.incrbyfloat(key, by);
     if (ttlSeconds) await r.expire(key, ttlSeconds).catch(() => {});
     return Number(v);
@@ -496,7 +632,8 @@ export async function kvEvalDurable(script: string, keys: string[], args: Array<
   if (!r) return null;
   for (const key of keys) { READ_CACHE.markUncacheable(key); LAST_WRITE.delete(key); }
   try {
-    KV_USAGE.record('eval(accounting)', keys[0] || 'accounting', 1);
+    if (onPg()) await migrateKeys(keys);
+    else KV_USAGE.record('eval(accounting)', keys[0] || 'accounting', 1);
     return await r.eval(script, keys, args);
   } catch { return null; }
 }
@@ -505,7 +642,7 @@ export async function kvSAdd(key: string, member: string, ttlSeconds?: number): 
   const r = getRedis();
   if (!r) return false;
   READ_CACHE.markUncacheable(key);
-  KV_USAGE.record('sadd', key, ttlSeconds ? 2 : 1);
+  if (!onPg()) KV_USAGE.record('sadd', key, ttlSeconds ? 2 : 1);
   try { await r.sadd(key, member); if (ttlSeconds) await r.expire(key, ttlSeconds).catch(() => {}); return true; } catch { return false; }
 }
 
@@ -519,7 +656,7 @@ export async function kvSwap(tempKey: string, prodKey: string, ttlSeconds?: numb
   if (r) {
     try {
       // Read temp value and write to prod in two ops (Upstash REST doesn't support RENAME)
-      KV_USAGE.record('swap', prodKey, 3);
+      if (!onPg()) KV_USAGE.record('swap', prodKey, 3);
       const val = await r.get(tempKey);
       if (val === null) return false;
       if (ttlSeconds) {
@@ -563,6 +700,22 @@ export function isRedisAvailable(): boolean {
  */
 export async function kvExistsMany(keys: string[]): Promise<boolean[] | null> {
   if (keys.length === 0) return [];
+  const pg = pgStore();
+  if (pg) {
+    try {
+      const have = await pg.existsMany(keys);
+      if (have.some((h) => !h) && await kvMigrating()) {
+        const idx = have.map((h, i) => (h ? -1 : i)).filter((i) => i >= 0);
+        for (let i = 0; i < idx.length; i += 500) {
+          const part = idx.slice(i, i + 500);
+          const res = await upstashPipeline(part.map((j) => ['EXISTS', keys[j]]), 'exists(migrate)');
+          if (!res) return null;
+          part.forEach((j, n) => { if (Number(res[n]?.result) > 0) have[j] = true; });
+        }
+      }
+      return have;
+    } catch { return null; }
+  }
   const creds = restCreds();
   if (!creds) return null;
   const out: Array<boolean | null> = keys.map((k) => {
@@ -595,4 +748,42 @@ export async function kvExistsMany(keys: string[]): Promise<boolean[] | null> {
     } catch { return null; }
   }
   return out as boolean[];
+}
+
+
+/** zzz1230 — a read that tells "missing" (null) from "could not ask" (throws). Never served from the memory cache. */
+export async function kvGetStrict<T = any>(key: string): Promise<T | null> {
+  const r = await kvGetFromStore<T>(key);
+  if (r.failed) throw new Error('KV read failed');
+  return r.value;
+}
+
+/** zzz1230 — the stored text exactly as written (for the Upstash-compatible relay that external collectors use). */
+export async function kvGetRaw(key: string): Promise<string | null> {
+  const pg = pgStore();
+  if (pg) {
+    const raw = await pg.getRaw(key);
+    if (raw !== null) return raw;
+    if (await kvMigrating()) return (await copyFromUpstash([key])).get(key) ?? null;
+    return null;
+  }
+  const c = upstashCreds();
+  if (!c) { const m = MEM_STORE.get(key); return m ?? null; }
+  KV_USAGE.record('get(rest)', key);
+  const resp = await fetch(`${c.url}/get/${encodeURIComponent(key)}`, { headers: { Authorization: `Bearer ${c.token}` }, cache: 'no-store', signal: AbortSignal.timeout(15_000) });
+  if (!resp.ok) throw new Error(`KV HTTP ${resp.status}`);
+  const j: any = await resp.json();
+  const raw = j?.result;
+  return raw === null || raw === undefined ? null : typeof raw === 'string' ? raw : JSON.stringify(raw);
+}
+
+/** zzz1230 — store size + copy progress for /api/v1/system-status. */
+export async function kvBackendStatus(): Promise<Record<string, unknown>> {
+  const out: Record<string, unknown> = { backend: kvBackend(), upstashConfigured: !!upstashCreds() };
+  const pg = pgStore();
+  if (pg) {
+    try { out.postgres = await pg.stats(); } catch (e: any) { out.postgres = { error: String(e?.message || e).slice(0, 160) }; }
+    try { out.migration = await pg.metaGet(UPSTASH_MIGRATION_META); } catch { /* none */ }
+  }
+  return out;
 }

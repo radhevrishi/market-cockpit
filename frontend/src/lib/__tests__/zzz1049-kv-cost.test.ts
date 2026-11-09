@@ -160,8 +160,8 @@ function runKv(body: string) {
         async mget(...ks) { globalThis.calls.push('mget'); return ks.map((k) => globalThis.store.has(k) ? JSON.parse(globalThis.store.get(k)) : null); }
       }`);
     const source = readFileSync(fileURLToPath(new URL('../kv.ts', import.meta.url)), 'utf8');
-    writeFileSync(join(root, 'kv.ts'), source.replace("from './kv-memory'", "from './kv-memory.ts'").replace("from './kv-versioned'", "from './kv-versioned.ts'").replace("from './kv-read-cache'", "from './kv-read-cache.ts'"));
-    for (const f of ['kv-memory.ts', 'kv-versioned.ts', 'kv-read-cache.ts']) copyFileSync(fileURLToPath(new URL(`../${f}`, import.meta.url)), join(root, f));
+    writeFileSync(join(root, 'kv.ts'), source.replace("from './kv-memory'", "from './kv-memory.ts'").replace("from './kv-versioned'", "from './kv-versioned.ts'").replace("from './kv-read-cache'", "from './kv-read-cache.ts'").replace("from './kv-pg'", "from './kv-pg.ts'"));
+    for (const f of ['kv-memory.ts', 'kv-versioned.ts', 'kv-read-cache.ts', 'kv-pg.ts']) copyFileSync(fileURLToPath(new URL(`../${f}`, import.meta.url)), join(root, f));
     writeFileSync(join(root, 'run.mjs'), `import assert from 'node:assert/strict';
 globalThis.calls = []; globalThis.store = new Map();
 globalThis.fetch = async (url, init) => {
@@ -175,7 +175,7 @@ const kv = await import('./kv.ts');
 const n = (p) => globalThis.calls.filter((c) => c.startsWith(p)).length;
 ${body}\n`);
     const env = { ...process.env };
-    for (const k of ['UPSTASH_REDIS_REST_URL', 'UPSTASH_REDIS_REST_TOKEN', 'KV_REST_API_URL', 'KV_REST_API_TOKEN', 'KV_READ_CACHE']) delete env[k];
+    for (const k of ['UPSTASH_REDIS_REST_URL', 'UPSTASH_REDIS_REST_TOKEN', 'KV_REST_API_URL', 'KV_REST_API_TOKEN', 'KV_READ_CACHE', 'DATABASE_URL', 'POSTGRES_URL', 'PG_URL']) delete env[k];
     env.UPSTASH_REDIS_REST_URL = 'https://example.invalid'; env.UPSTASH_REDIS_REST_TOKEN = 'test-only';
     const r = spawnSync(process.execPath, ['--experimental-strip-types', join(root, 'run.mjs')], { env, encoding: 'utf8', timeout: 15000 });
     assert.equal(r.status, 0, String(r.stdout) + String(r.stderr));

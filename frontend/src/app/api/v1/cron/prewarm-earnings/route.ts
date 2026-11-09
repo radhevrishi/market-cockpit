@@ -79,26 +79,9 @@ const RECHECK_LOCK_S = 20 * 3600;
 // zzz865: results filed in the last 3 days are retried every ~5 hours (four schedule runs a day), older dates keep the 20 hour lock
 const RECHECK_LOCK_RECENT_S = 5 * 3600;
 
-/** EXISTS for many keys in one Upstash pipeline call (never reads payloads).
- *  Null when the REST backend is not configured. */
+/** EXISTS for many keys (lib/kv: Postgres, or one Upstash pipeline call). Null when the store cannot be asked. */
 async function kvExistsMany(keys: string[]): Promise<boolean[] | null> {
-  if (keys.length === 0) return [];
-  const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
-  if (!url || !token) return null;
-  try {
-    (await import('@/lib/kv')).kvCountExternal('exists', keys[0], keys.length);   // zzz1049: each EXISTS is one billed command
-    const r = await fetch(`${url.replace(/\/+$/, '')}/pipeline`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(keys.map((k) => ['EXISTS', k])),
-      cache: 'no-store', signal: AbortSignal.timeout(15_000),
-    });
-    if (!r.ok) return null;
-    const j: any = await r.json();
-    if (!Array.isArray(j) || j.length !== keys.length) return null;
-    return j.map((x: any) => Number(x?.result) > 0);
-  } catch { return null; }
+  return (await import('@/lib/kv')).kvExistsMany(keys);
 }
 
 function tierTotal(g: any): number {

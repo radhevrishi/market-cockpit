@@ -166,8 +166,9 @@ describe('route wiring', () => {
     assert.match(bench, /SCAN_DEADLINE_MS = 45_000/);
   });
   test('prewarm-earnings has no fixed 110/120/180 s timeouts outside the budget and a cursor', () => {
-    // the only literal timeout left is the 15 s EXISTS pipeline helper
-    assert.equal((pre.match(/AbortSignal\.timeout\(\d/g) || []).length, 1);
+    // zzz1230: the EXISTS helper now delegates to lib/kv (Postgres or Upstash), so no literal timeout is left here
+    assert.equal((pre.match(/AbortSignal\.timeout\(\d/g) || []).length, 0);
+    assert.match(pre, /kvExistsMany\(keys\)/);
     assert.match(pre, /new Budget\(start\)/);
     assert.match(pre, /CURSOR_KEY/);
   });

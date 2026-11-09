@@ -93,7 +93,7 @@ test('Upstash: batched queue scan, "who has a PDF record" list, enrich + extract
 test('India: whole-percent OPM rounding is not a margin fall (Mold-Tek: 19% → 18% shown, operating profit +30.8% on sales +30.5%)', async () => {
   const { gradeIndiaRow } = await import('../india-grade');
   const { marginView } = await import('../india-eo-card-data');
-  const base = { ticker: 'MOLDTKPAC', company: 'Mold-Tek Packaging Limited', filing_date: '2026-11-02', quarter: 'Q2 FY27', sales_curr_cr: 274, sales_prev_cr: 210, sales_yoy_pct: 30.5,
+  const base = { ticker: 'MOLDTKPAC', company: 'Mold-Tek Packaging Limited', filing_date: '2026-11-02', announce_date_iso: '2026-11-02', quarter: 'Q2 FY27', sales_curr_cr: 274, sales_prev_cr: 210, sales_yoy_pct: 30.5,
     pat_curr_cr: 21, pat_prev_cr: 15, eps_curr: 3.17, eps_prev: 2.33, eps_yoy_pct: 36.1, opm_pct: 18, opm_prev_pct: 19, op_profit_yoy_pct: 30.8, ocf_to_pat_ratio: 1.71, market_cap_cr: 1941 };
   const g: any = gradeIndiaRow(base);
   assert.ok(g);
