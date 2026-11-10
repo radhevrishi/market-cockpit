@@ -44,10 +44,40 @@ const thL: React.CSSProperties = { ...th, textAlign: 'left' };
 const td: React.CSSProperties = { textAlign: 'right', padding: '6px 8px', fontSize: 12.5, whiteSpace: 'nowrap', borderBottom: `1px solid ${C.line}` };
 const tdL: React.CSSProperties = { ...td, textAlign: 'left' };
 
+/**
+ * zzz1245 — time-weighted return of the book from the first day of `view`: each day's change in value with that day's buys and
+ * sells taken out (money put in is not a gain), chained. Days that start from almost nothing are left flat (no huge % on ₹1,000).
+ */
+function twrSeries(view: TradebookAnalytics['growth']): number[] {
+  const out = [0];
+  let cum = 0;
+  for (let i = 1; i < view.length; i++) {
+    const prev = view[i - 1].value, flow = view[i].net - view[i - 1].net;
+    const r = prev >= 10_000 ? (view[i].value - flow) / prev - 1 : 0;
+    cum = (1 + cum) * (1 + (Number.isFinite(r) ? Math.max(-0.5, Math.min(0.5, r)) : 0)) - 1;
+    out.push(cum);
+  }
+  return out;
+}
+const pctTxt = (v: number | null | undefined, d = 1) => (v == null || !Number.isFinite(v) ? '—' : `${v >= 0 ? '+' : ''}${(v * 100).toFixed(d)}%`);
+
+function TipRow({ color, label, value, sub, bold, dashed }: { color?: string; label: string; value: string; sub?: string; bold?: boolean; dashed?: boolean }) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '12px 1fr auto', alignItems: 'center', gap: 8, padding: '2px 0' }}>
+      <span style={{ width: 10, height: dashed ? 0 : 10, borderRadius: 3, background: dashed ? 'transparent' : color, borderTop: dashed ? `2px dashed ${color}` : undefined }} />
+      <span style={{ color: 'var(--mc-text-3)' }}>{label}</span>
+      <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: bold ? 900 : 700, color: 'var(--mc-text-1)' }}>{value}{sub && <span style={{ display: 'block', fontSize: 10.5, fontWeight: 700 }}>{sub}</span>}</span>
+    </div>
+  );
+}
+
 // zzz1242 — day-by-day chart with periods (3M … Max), a hover read-out, value vs cost of the holdings, and the index line.
+// zzz1245 — Value / % switch: in % the book is a time-weighted return from the period start (buys and sells taken out),
+// against the index's own % move; the read-out is a card with colour keys, the gap to the index and the change in the period.
 const RANGES = [['3M', 91], ['6M', 182], ['YTD', -1], ['1Y', 365], ['3Y', 1095], ['5Y', 1826], ['Max', 0]] as const;
 function GrowthChart({ pts }: { pts: TradebookAnalytics['growth'] }) {
   const [range, setRange] = useState<string>('1Y');
+  const [mode, setMode] = useState<'value' | 'pct'>('value');
   const [hover, setHover] = useState<number | null>(null);
   const [showBench, setShowBench] = useState(true);
   const view = useMemo(() => {
@@ -57,70 +87,126 @@ function GrowthChart({ pts }: { pts: TradebookAnalytics['growth'] }) {
     const from = r[1] === 0 ? -Infinity : r[1] === -1 ? Date.UTC(new Date(last).getUTCFullYear(), 0, 1) : last - r[1] * 86_400_000;
     return pts.filter((p) => Date.parse(p.d) >= from);
   }, [pts, range]);
+  const twr = useMemo(() => twrSeries(view), [view]);
   if (pts.length < 2) return null;
   if (view.length < 2) return <div style={{ fontSize: 12, color: C.mute }}>Not enough days in this period.</div>;
-  const W = 1000, H = 300, L = 70, R = 12, T = 12, B = 26;
+  const pct = mode === 'pct';
+  const W = 1000, H = 320, L = 74, R = 14, T = 14, B = 28;
   // the index line for THIS period: the book's value on its first day put in the index, plus the same buys and sells after
   const i0 = view[0].ix, u0 = view[0].bench != null && i0 ? view[0].bench / i0 : null;
-  const benchAdj = view.map((p) => (showBench && p.bench != null && p.ix && i0 && u0 != null ? p.ix * (view[0].value / i0 + p.bench / p.ix - u0) : null));
-  const cost = (p: typeof view[number]) => p.cost;
-  const vals = view.flatMap((p, i) => [p.value, cost(p), ...(benchAdj[i] != null ? [benchAdj[i] as number] : [])]).filter((v) => v > 0);
+  const benchVal = view.map((p) => (p.bench != null && p.ix && i0 && u0 != null ? p.ix * (view[0].value / i0 + p.bench / p.ix - u0) : null));
+  const benchPct = view.map((p) => (p.ix && i0 ? p.ix / i0 - 1 : null));
+  const series = {
+    main: (i: number) => (pct ? twr[i] : view[i].value),
+    bench: (i: number) => (!showBench ? null : pct ? benchPct[i] : benchVal[i]),
+    cost: (i: number) => (pct ? null : view[i].cost),
+  };
+  const vals: number[] = [];
+  view.forEach((_, i) => { for (const f of [series.main, series.bench, series.cost]) { const v = f(i); if (v != null && Number.isFinite(v)) vals.push(v); } });
   let max = Math.max(...vals), min = Math.min(...vals);
-  const pad = (max - min) * 0.08 || max * 0.05; max += pad; min = Math.max(0, min - pad);
+  if (pct) { max = Math.max(max, 0); min = Math.min(min, 0); }
+  const pad = (max - min) * 0.08 || Math.abs(max) * 0.05 || 0.01; max += pad; min = pct ? min - pad : Math.max(0, min - pad);
   const x = (i: number) => L + (i / (view.length - 1)) * (W - L - R);
   const y = (v: number) => T + (1 - (v - min) / (max - min || 1)) * (H - T - B);
   const line = (get: (i: number) => number | null) => view.map((_, i) => { const v = get(i); return v == null ? '' : `${i && get(i - 1) != null ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`; }).join(' ');
-  const area = `${line((i) => view[i].value)} L${x(view.length - 1).toFixed(1)},${(H - B).toFixed(1)} L${x(0).toFixed(1)},${(H - B).toFixed(1)} Z`;
+  const base = pct ? y(0) : H - B;
+  const area = `${line(series.main)} L${x(view.length - 1).toFixed(1)},${base.toFixed(1)} L${x(0).toFixed(1)},${base.toFixed(1)} Z`;
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((k) => min + k * (max - min));
-  const first = view[0], last = view[view.length - 1];
+  const fmtY = (v: number) => (pct ? pctTxt(v, Math.abs(max - min) < 0.2 ? 1 : 0) : inr(v));
+  const first = view[0], last = view[view.length - 1], n = view.length - 1;
   const gain = last.value - first.value - (last.net - first.net);
   const putIn = last.net - first.net;
+  const bookP = twr[n], idxP = benchPct[n];
   const fmtD = (d: string) => new Date(d + 'T00:00:00Z').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit', timeZone: 'UTC' });
-  const labelIdx = [0, Math.round((view.length - 1) / 4), Math.round((view.length - 1) / 2), Math.round((3 * (view.length - 1)) / 4), view.length - 1];
+  const labelIdx = [0, Math.round(n / 4), Math.round(n / 2), Math.round((3 * n) / 4), n];
   const h = hover != null ? view[hover] : null;
   const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const px = ((e.clientX - rect.left) / rect.width) * W;
-    const i = Math.round(((px - L) / (W - L - R)) * (view.length - 1));
-    setHover(Math.max(0, Math.min(view.length - 1, i)));
+    setHover(Math.max(0, Math.min(n, Math.round(((px - L) / (W - L - R)) * n))));
   };
+  const seg = (on: boolean) => ({ padding: '4px 12px', fontSize: 11.5, fontWeight: 800, border: 'none', cursor: 'pointer', background: on ? C.blue : 'transparent', color: on ? '#fff' : C.mute } as const);
+  const tipLeft = hover != null ? (x(hover) / W) * 100 : 0;
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 10, marginBottom: 6 }}>
-        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 11.5, color: C.mute, alignItems: 'center' }}>
-          <span><span style={{ display: 'inline-block', width: 14, height: 3, background: C.blue, verticalAlign: 'middle', marginRight: 5 }} />Value</span>
-          <span><span style={{ display: 'inline-block', width: 14, borderTop: '2px dashed #94A3B8', verticalAlign: 'middle', marginRight: 5 }} />Invested (cost of the shares held)</span>
-          <label style={{ cursor: 'pointer' }}><input type="checkbox" checked={showBench} onChange={(e) => setShowBench(e.target.checked)} style={{ verticalAlign: 'middle' }} /> <span style={{ color: C.violet }}>Same money in Nifty Smallcap 100</span></label>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 10, marginBottom: 8 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={{ display: 'flex', border: `1px solid ${C.line}`, borderRadius: 8, overflow: 'hidden' }}>
+            <button onClick={() => setMode('value')} style={seg(!pct)}>₹ Value</button>
+            <button onClick={() => setMode('pct')} style={seg(pct)}>% Return</button>
+          </div>
+          <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+            {RANGES.map(([k]) => <button key={k} onClick={() => { setRange(k); setHover(null); }} style={{ padding: '4px 10px', fontSize: 11.5, fontWeight: 800, borderRadius: 6, cursor: 'pointer', border: `1px solid ${range === k ? C.blue : C.line}`, background: range === k ? `${C.blue}22` : 'transparent', color: range === k ? C.blue : C.mute }}>{k}</button>)}
+          </div>
         </div>
         <div style={{ textAlign: 'right' }}>
-          <div style={{ fontSize: 20, fontWeight: 900, color: tone(gain) }}>{gain >= 0 ? '+' : ''}{inr(gain)}</div>
-          <div style={{ fontSize: 11, color: C.mute }}>over {range === 'Max' ? 'all years' : range} · {putIn >= 0 ? `${inr(putIn)} put in` : `${inr(-putIn)} taken out`}</div>
+          {pct ? (
+            <>
+              <div style={{ fontSize: 22, fontWeight: 900, color: tone(bookP) }}>{pctTxt(bookP)}</div>
+              <div style={{ fontSize: 11.5, color: C.mute }}>your book over {range === 'Max' ? 'all years' : range} · <span style={{ color: C.violet }}>index {pctTxt(idxP)}</span>{idxP != null ? <> · <b style={{ color: tone(bookP - idxP) }}>{bookP - idxP >= 0 ? 'ahead' : 'behind'} by {Math.abs((bookP - idxP) * 100).toFixed(1)} pts</b></> : null}</div>
+            </>
+          ) : (
+            <>
+              <div style={{ fontSize: 22, fontWeight: 900, color: tone(gain) }}>{gain >= 0 ? '+' : ''}{inr(gain)}</div>
+              <div style={{ fontSize: 11.5, color: C.mute }}>gain over {range === 'Max' ? 'all years' : range} · {putIn >= 0 ? `${inr(putIn)} put in` : `${inr(-putIn)} taken out`} · return {pctTxt(bookP)}</div>
+            </>
+          )}
         </div>
       </div>
-      <div style={{ display: 'flex', gap: 4, marginBottom: 6, flexWrap: 'wrap' }}>
-        {RANGES.map(([k]) => <button key={k} onClick={() => { setRange(k); setHover(null); }} style={{ padding: '3px 10px', fontSize: 11.5, fontWeight: 800, borderRadius: 6, cursor: 'pointer', border: `1px solid ${range === k ? C.blue : C.line}`, background: range === k ? `${C.blue}22` : 'transparent', color: range === k ? C.blue : C.mute }}>{k}</button>)}
+      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 11.5, color: C.mute, alignItems: 'center', marginBottom: 4 }}>
+        <span><span style={{ display: 'inline-block', width: 14, height: 3, background: C.blue, verticalAlign: 'middle', marginRight: 5, borderRadius: 2 }} />{pct ? 'Your book (time-weighted — buys and sells taken out)' : 'Value'}</span>
+        {!pct && <span><span style={{ display: 'inline-block', width: 14, borderTop: '2px dashed #94A3B8', verticalAlign: 'middle', marginRight: 5 }} />Invested (cost of the shares held)</span>}
+        <label style={{ cursor: 'pointer' }}><input type="checkbox" checked={showBench} onChange={(e) => setShowBench(e.target.checked)} style={{ verticalAlign: 'middle' }} /> <span style={{ color: C.violet }}>{pct ? 'Nifty Smallcap 100' : 'Same money in Nifty Smallcap 100'}</span></label>
       </div>
       <div style={{ position: 'relative' }}>
-        <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', display: 'block' }} onMouseMove={onMove} onMouseLeave={() => setHover(null)} role="img" aria-label="Book value and invested amount over time">
-          <defs><linearGradient id="tbg" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor={C.blue} stopOpacity={0.22} /><stop offset="100%" stopColor={C.blue} stopOpacity={0.02} /></linearGradient></defs>
-          {ticks.map((v, i) => (<g key={i}><line x1={L} x2={W - R} y1={y(v)} y2={y(v)} stroke="var(--mc-border-2)" strokeWidth={0.6} /><text x={L - 8} y={y(v) + 4} fontSize={11} textAnchor="end" fill="var(--mc-text-3)">{inr(v)}</text></g>))}
+        <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', display: 'block' }} onMouseMove={onMove} onMouseLeave={() => setHover(null)} role="img" aria-label={pct ? 'Book return in % against the index' : 'Book value and invested amount over time'}>
+          <defs>
+            <linearGradient id="tbg" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor={C.blue} stopOpacity={0.24} /><stop offset="100%" stopColor={C.blue} stopOpacity={0.02} /></linearGradient>
+          </defs>
+          {ticks.map((v, i) => (<g key={i}><line x1={L} x2={W - R} y1={y(v)} y2={y(v)} stroke="var(--mc-border-2)" strokeWidth={0.6} /><text x={L - 8} y={y(v) + 4} fontSize={11} textAnchor="end" fill="var(--mc-text-3)">{fmtY(v)}</text></g>))}
+          {pct && <line x1={L} x2={W - R} y1={y(0)} y2={y(0)} stroke="var(--mc-text-4)" strokeWidth={1} />}
           <path d={area} fill="url(#tbg)" stroke="none" />
-          <path d={line((i) => view[i].cost)} fill="none" stroke="#94A3B8" strokeWidth={1.4} strokeDasharray="5 4" />
-          {showBench && <path d={line((i) => benchAdj[i])} fill="none" stroke={C.violet} strokeWidth={1.5} />}
-          <path d={line((i) => view[i].value)} fill="none" stroke={C.blue} strokeWidth={2} />
-          {labelIdx.map((i, k) => <text key={k} x={x(i)} y={H - 6} fontSize={11} textAnchor={k === 0 ? 'start' : k === 4 ? 'end' : 'middle'} fill="var(--mc-text-3)">{fmtD(view[i].d)}</text>)}
-          {hover != null && <line x1={x(hover)} x2={x(hover)} y1={T} y2={H - B} stroke="var(--mc-text-4)" strokeDasharray="3 3" />}
-          {hover != null && <circle cx={x(hover)} cy={y(view[hover].value)} r={4} fill={C.blue} />}
+          {!pct && <path d={line(series.cost)} fill="none" stroke="#94A3B8" strokeWidth={1.4} strokeDasharray="5 4" />}
+          {showBench && <path d={line(series.bench)} fill="none" stroke={C.violet} strokeWidth={1.6} />}
+          <path d={line(series.main)} fill="none" stroke={C.blue} strokeWidth={2.2} strokeLinejoin="round" />
+          {labelIdx.map((i, k) => <text key={k} x={x(i)} y={H - 8} fontSize={11} textAnchor={k === 0 ? 'start' : k === 4 ? 'end' : 'middle'} fill="var(--mc-text-3)">{fmtD(view[i].d)}</text>)}
+          {hover != null && (
+            <g>
+              <line x1={x(hover)} x2={x(hover)} y1={T} y2={H - B} stroke="var(--mc-text-4)" strokeDasharray="3 3" />
+              {series.cost(hover) != null && <circle cx={x(hover)} cy={y(series.cost(hover)!)} r={3.5} fill="#94A3B8" stroke="var(--mc-bg-1)" strokeWidth={1.5} />}
+              {series.bench(hover) != null && <circle cx={x(hover)} cy={y(series.bench(hover)!)} r={3.5} fill={C.violet} stroke="var(--mc-bg-1)" strokeWidth={1.5} />}
+              <circle cx={x(hover)} cy={y(series.main(hover))} r={4.5} fill={C.blue} stroke="var(--mc-bg-1)" strokeWidth={2} />
+            </g>
+          )}
         </svg>
-        {h && hover != null && (
-          <div style={{ position: 'absolute', top: 8, left: `${Math.min(78, Math.max(2, (x(hover) / W) * 100 - (hover > view.length / 2 ? 22 : -2)))}%`, background: 'var(--mc-bg-0)', border: `1px solid ${C.line}`, borderRadius: 8, padding: '7px 10px', fontSize: 12, color: C.txt, pointerEvents: 'none', minWidth: 180, boxShadow: '0 4px 14px rgba(0,0,0,.25)' }}>
-            <div style={{ color: C.mute, fontSize: 11, marginBottom: 3 }}>{new Date(h.d + 'T00:00:00Z').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })}</div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}><span style={{ color: C.blue }}>Value</span><b>{inr(h.value)}</b></div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}><span style={{ color: '#94A3B8' }}>Invested</span><b>{inr(h.cost)}</b></div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}><span>Unrealised</span><b style={{ color: tone(h.value - h.cost) }}>{inr(h.value - h.cost)}</b></div>
-            {showBench && benchAdj[hover] != null && <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}><span style={{ color: C.violet }}>Index, same money</span><b>{inr(benchAdj[hover])}</b></div>}
-          </div>
-        )}
+        {h && hover != null && (() => {
+          const unreal = h.value - h.cost, bv = benchVal[hover], bp = benchPct[hover], mp = twr[hover];
+          const chg = h.value - first.value - (h.net - first.net);
+          return (
+            <div style={{ position: 'absolute', top: 10, ...(tipLeft > 55 ? { right: `${Math.max(1, 100 - tipLeft + 2)}%` } : { left: `${tipLeft + 2}%` }), background: 'var(--mc-bg-0)', border: `1px solid ${C.line}`, borderRadius: 10, padding: '9px 12px', fontSize: 12, pointerEvents: 'none', minWidth: 230, boxShadow: '0 8px 24px rgba(0,0,0,.28)' }}>
+              <div style={{ color: C.txt, fontWeight: 800, fontSize: 12, marginBottom: 5 }}>{new Date(h.d + 'T00:00:00Z').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })}</div>
+              {pct ? (
+                <>
+                  <TipRow color={C.blue} label="Your book" value={pctTxt(mp)} bold />
+                  {showBench && <TipRow color={C.violet} label="Nifty Smallcap 100" value={pctTxt(bp)} />}
+                  {showBench && bp != null && <div style={{ borderTop: `1px solid ${C.line}`, marginTop: 5, paddingTop: 5 }}><TipRow label={mp - bp >= 0 ? 'Ahead of index' : 'Behind index'} value={`${Math.abs((mp - bp) * 100).toFixed(1)} pts`} /></div>}
+                  <div style={{ fontSize: 10.5, color: C.dim, marginTop: 4 }}>From {fmtD(first.d)} · value {inr(h.value)}</div>
+                </>
+              ) : (
+                <>
+                  <TipRow color={C.blue} label="Value" value={inr(h.value)} bold />
+                  <TipRow color="#94A3B8" dashed label="Invested" value={inr(h.cost)} />
+                  <TipRow label="Unrealised" value={`${unreal >= 0 ? '+' : ''}${inr(unreal)}`} sub={h.cost > 0 ? pctTxt(unreal / h.cost) : undefined} />
+                  {showBench && bv != null && <TipRow color={C.violet} label="Same money in index" value={inr(bv)} />}
+                  <div style={{ borderTop: `1px solid ${C.line}`, marginTop: 5, paddingTop: 5 }}>
+                    <TipRow label={`Gain since ${fmtD(first.d)}`} value={`${chg >= 0 ? '+' : ''}${inr(chg)}`} sub={pctTxt(mp)} />
+                    {showBench && bv != null && <TipRow label={h.value - bv >= 0 ? 'Ahead of index' : 'Behind index'} value={inr(Math.abs(h.value - bv))} />}
+                  </div>
+                </>
+              )}
+            </div>
+          );
+        })()}
       </div>
     </div>
   );

@@ -4022,3 +4022,7 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   each industry has `us` (US-listed suppliers, $ million caps, > $10 B = large) + `usQueries`; one news pass builds both maps
   (KEY inflection-radar:v4:IN / :US, `?market=US`). One company's results headlines are not industry signals
   (`isCompanyResultsHeadline`); the AI "transformer model" is not grid equipment.
+- zzz1245 (10 Nov): tradebook Performance chart — "₹ Value / % Return" switch. % = time-weighted return of the book from the
+  period start (`twrSeries` in TradebookTab: each day's buys/sells taken out, days starting under ₹10,000 left flat) against the
+  index's own % move, 0% line, header shows "ahead/behind by N pts". Value mode as before plus return %. Hover card redone
+  (`TipRow`: colour keys, unrealised ₹ + %, gain since period start, gap to the index).
