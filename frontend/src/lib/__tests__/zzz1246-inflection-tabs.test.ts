@@ -39,3 +39,9 @@ test('each tab has industries of its own', () => {
 test('company results headline stays out', () => {
   assert.ok(isCompanyResultsHeadline('RBC Bearings Q2 2027: Earnings Beat, $2.4B Backlog, and Stronger Half Ahead - 24/7 Wall St.'));
 });
+
+test('an Indian order won by a US company is Indian demand; "posts higher Q3 sales" is company results', () => {
+  assert.ok(!fits('rail', 'US', 'Wabtec Wins Rs. 8.39 bn Vande Bharat Sleeper Train Order - Construction World'));
+  assert.ok(isCompanyResultsHeadline('Honeywell Aerospace Posts Higher Q3 Sales and Profit as Mechanical Parts Demand Grows'));
+  assert.ok(!isCompanyResultsHeadline('Machine tool demand hits record high'));
+});

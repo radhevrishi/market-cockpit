@@ -420,9 +420,11 @@ const NAMES: Record<'IN' | 'US', RegExp | null> = (() => {
 /** zzz1246 — the places a headline is about (empty = global). Names of mapped companies count for their market. */
 export function geoOf(text: string): Geo[] {
   const g = new Set<Geo>();
-  if (IN_TEXT.test(text) || IN_OUTLET.test(text) || NAMES.IN?.test(text)) g.add('IN');
-  if (US_TEXT_CS.test(text) || US_TEXT.test(text) || NAMES.US?.test(text)) g.add('US');
+  if (IN_TEXT.test(text) || IN_OUTLET.test(text)) g.add('IN');
+  if (US_TEXT_CS.test(text) || US_TEXT.test(text)) g.add('US');
   if (EU_TEXT_CS.test(text) || EU_TEXT.test(text)) g.add('EU');
+  // a company's name places a headline only when the text names no place ("Wabtec wins Vande Bharat order" is Indian demand)
+  if (!g.size) { if (NAMES.IN?.test(text)) g.add('IN'); if (NAMES.US?.test(text)) g.add('US'); }
   return Array.from(g);
 }
 /** zzz1246 — whether an industry is on a tab at all, and whether a headline placed `geos` counts for it there. */
@@ -578,4 +580,4 @@ export function dedupeSignals<T extends { headline: string }>(best: ReadonlyArra
 
 /** zzz1244 — one company's quarterly results are company news, not an industry signal (Timken India's Q2 had topped bearings). */
 export const isCompanyResultsHeadline = (t: string) =>
-  /\b(?:Q[1-4]|first|second|third|fourth)[- ]?(?:quarter|qtr)?\s*(?:FY\s*)?'?(?:\d{2,4}\s*)?:?\s*(?:results?|earnings)\b|\bearnings beat\b|\bresults?:|\b(?:net )?profit (?:jumps|rises|falls|surges|up|down|grows)|\bPAT (?:jumps|rises|up|falls|grows)|\bbeats? (?:estimates|expectations)\b/i.test(t);
+  /\b(?:Q[1-4]|first|second|third|fourth)[- ]?(?:quarter|qtr)?\s*(?:FY\s*)?'?(?:\d{2,4}\s*)?:?\s*(?:results?|earnings)\b|\bearnings beat\b|\bresults?:|\b(?:net )?profit (?:jumps|rises|falls|surges|up|down|grows)|\bPAT (?:jumps|rises|up|falls|grows)|\bbeats? (?:estimates|expectations)\b|\b(?:posts?|reports?|delivers?|logs?)\b.{0,30}\b(?:Q[1-4]|quarterly)\b.{0,25}\b(?:sales|revenue|profit|earnings)\b|\bQ[1-4]\s+(?:sales|revenue|profit|earnings)\b/i.test(t);

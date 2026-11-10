@@ -36,10 +36,13 @@ async function buildBothNow(): Promise<Record<RadarMarket, RadarData>> {
   // 1. the archive (90 days) + 2. targeted industry searches
   const archive = await loadNews(90).catch(() => []);
   const searched: Array<{ title: string; url: string | null; source: string | null; at: string; industry: string }> = [];
-  const queries = INDUSTRIES.flatMap((i) => [...i.queries, ...(i.usQueries || [])].map((q) => ({ q, id: i.id })));
+  // zzz1246 — taken in turns across industries (the industries at the end of the table had been cut off by the time limit)
+  const lists = INDUSTRIES.map((i) => [...i.queries, ...(i.usQueries || [])].map((q) => ({ q, id: i.id })));
+  const queries: Array<{ q: string; id: string }> = [];
+  for (let k = 0; lists.some((l) => k < l.length); k++) for (const l of lists) if (k < l.length) queries.push(l[k]);
   let qi = 0;
-  const deadline = Date.now() + 60_000;
-  await Promise.all(Array.from({ length: 4 }, async () => {
+  const deadline = Date.now() + 90_000;
+  await Promise.all(Array.from({ length: 6 }, async () => {
     while (qi < queries.length && Date.now() < deadline) {
       const { q, id } = queries[qi++];
       const items = await fetchGoogleNewsRSS(q).catch(() => []);
