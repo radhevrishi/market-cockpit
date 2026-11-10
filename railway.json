@@ -4,6 +4,8 @@
     "healthcheckPath": "/api/healthz",
     "healthcheckTimeout": 300,
     "overlapSeconds": 45,
-    "drainingSeconds": 30
+    "drainingSeconds": 30,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 10
   }
 }

@@ -4037,3 +4037,9 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   the same item), anything else = this device's edit; the replaced server copy stays in server history and in
   `mc:vault:backup:server:<key>`. If it cannot settle now the key pauses quietly and is retried every 10 min. VaultSyncNotice
   shows only the list-limit recovery notice. Radar: USA wording for advanced packaging + bearings; "1 industry" plural.
+- zzz1248 (10 Nov): every scheduled heavy job stopped from ~22:00 UTC 9 Nov to 16:00 UTC 10 Nov — heap stuck at 2.7–2.8 GB
+  with nothing running, so the heap guard (1800 MB) deferred everything (no India gainers sweep → no 10 Nov India session on
+  Transformational Gainers; no calendar, alerts, briefs). Now `shouldSelfRestart`: guard blocking ≥ 20 min, no heavy job running,
+  no self-restart in 3 h → record `ops:self-restart:v1` and exit(1); railway.json restartPolicy ON_FAILURE. gainers-in-backup
+  slots 11:41 / 14:41 / 17:41 UTC (the research counts the session as today only until midnight IST). The root cause of the
+  retained heap is NOT found yet. GitHub daily-research (gainers-in) still gets HTTP 401 — GitHub's CRON_SECRET is stale (zzz1210).

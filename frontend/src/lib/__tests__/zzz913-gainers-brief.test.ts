@@ -126,7 +126,7 @@ test('scheduler: both jobs registered at the end, odd minutes, lock shorter than
   assert.equal(isFinalBriefSlot(at('2026-10-06T13:31:00Z')), true);
   assert.equal(isFinalBriefSlot(at('2026-10-06T11:57:00Z')), false);
   // the backup runs after GitHub's 10:50 sweep, and the brief's first slot after the backup
-  assert.equal(APP_JOBS.find((j) => j.name === 'gainers-in-backup')!.crons[0], '41 11 * * 1-5');
+  assert.equal(APP_JOBS.find((j) => j.name === 'gainers-in-backup')!.crons[0], '41 11,14,17 * * 1-5');   // zzz1248 — + 20:11 / 23:11 IST
 });
 
 function fakeCtx(slot: Date, answer: (p: string, o: any) => { status: number; json?: any }) {

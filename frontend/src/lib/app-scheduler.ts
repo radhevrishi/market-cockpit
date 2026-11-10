@@ -513,7 +513,9 @@ export const APP_JOBS: readonly AppJob[] = [
   { name: 'transformational-archive', crons: ['17 3 * * 2-6', '23 12 * * 1-5', '43 13 * * 1-5', '27 17 * * 1-5', '47 23 * * 1-5'],   // zzz1188/1189 — + 17:53 / 19:13 / 22:57 IST: today's India gainers (swept from 16:20 IST, sometimes finishing late evening) reach the board the same day
     timeoutMs: 12 * MIN, workflow: 'daily-research.yml', does: 'GET /api/v1/ai-gainers/research?archive=1&lite=1 for the stored sessions of the last 14 days (IN + US), then POST /api/v1/transformational/ai {auto} per market', run: transformationalJob },
   // zzz913 — Daily Gainers Brief (was a Claude scheduled task). Logic in lib/gainers-brief.ts (loaded lazily: no import edit here).
-  { name: 'gainers-in-backup', crons: ['41 11 * * 1-5'], timeoutMs: 40 * MIN, workflow: 'daily-research.yml', does: 'GET /api/v1/ai-gainers/research?market=IN; only when GitHub’s gainers-in sweep is missing or stalled: GET /api/v1/ai-gainers?market=IN, POST /api/v1/ai-gainers/research rounds (no re-process)', run: async (ctx) => (await import('./gainers-brief')).gainersInBackupJob(ctx) },
+  // zzz1248 — + 14:41 / 17:41 UTC (20:11 / 23:11 IST; the research treats the session as today only until midnight IST):
+  // one missed slot no longer loses the day
+  { name: 'gainers-in-backup', crons: ['41 11,14,17 * * 1-5'], timeoutMs: 40 * MIN, workflow: 'daily-research.yml', does: 'GET /api/v1/ai-gainers/research?market=IN; only when GitHub’s gainers-in sweep is missing or stalled: GET /api/v1/ai-gainers?market=IN, POST /api/v1/ai-gainers/research rounds (no re-process)', run: async (ctx) => (await import('./gainers-brief')).gainersInBackupJob(ctx) },
   { name: 'gainers-brief-in', crons: ['57 11 * * 1-5', '37 12 * * 1-5', '31 13 * * 1-5'], timeoutMs: 4 * MIN, workflow: 'gainers-brief.yml', does: 'POST /api/v1/cron/gainers-brief?final=0 (sends when the sweep is complete); the 13:31 slot sends with final=1 (PARTIAL when incomplete)', run: async (ctx) => (await import('./gainers-brief')).gainersBriefJob(ctx) },
   // zzz1055 — FII / DII flows: NSE provisional every 15 min 13:00–15:30 UTC until today's row is in (no NSE call after that),
   // NSDL confirmed figure + new fortnight sector report at 15:30 / 17:45 / 04:20 UTC, history backfill in small chunks.
@@ -715,6 +717,18 @@ const running = new Set<string>();
 /** slot (ISO minute) per job that this process knows is settled (done here, done elsewhere, or succeeded) */
 const settled = new Map<string, string>();
 let lastHeapGuardWarningAt = 0;
+/** zzz1248 — when the heap guard started blocking heavy jobs (0 = not blocking) */
+let heapBlockedSince = 0;
+/** zzz1248 — the guard blocked every heavy job from ~22:00 UTC 9 Nov to 16:00 UTC 10 Nov (heap stuck at 2.7–2.8 GB with no job
+ *  running): 18 hours without the India gainers sweep, earnings calendar, alerts or briefs. A heap that stays above the guard this
+ *  long with nothing running is retained memory that will not come back; restarting is the only cure. Pure. */
+export const HEAP_STUCK_RESTART_MIN = 20;
+export const SELF_RESTART_GAP_MIN = 180;
+export function shouldSelfRestart(blockedSinceMs: number, nowMs: number, heavyRunning: number, lastRestartMs: number | null): boolean {
+  return blockedSinceMs > 0 && nowMs - blockedSinceMs >= HEAP_STUCK_RESTART_MIN * MIN && heavyRunning === 0
+    && (lastRestartMs == null || nowMs - lastRestartMs >= SELF_RESTART_GAP_MIN * MIN);
+}
+const SELF_RESTART_KEY = 'ops:self-restart:v1';
 
 async function postHeartbeat(base: string, name: string, out: JobOutcome): Promise<void> {
   await fetch(`${base}/api/v1/cron/heartbeat`, {
@@ -788,7 +802,21 @@ async function tick(base: string, secret: string): Promise<void> {
   // to its V8 heap ceiling. Leave the slot unclaimed so it can run on a later tick.
   // Minute-level price alerts and delivery above still execute normally.
   const heapUsedBytes = process.memoryUsage().heapUsed;
+  if (!shouldDeferHeavyJob(heapUsedBytes)) heapBlockedSince = 0;
+  else if (!heapBlockedSince) heapBlockedSince = Date.now();
   if (shouldDeferHeavyJob(heapUsedBytes)) {
+    // zzz1248 — stuck above the guard with nothing running: restart the process (Railway starts it again) so jobs run again
+    const heavyRunning = [...running].filter((n) => !LIGHT_JOBS.some((l) => l.name === n)).length;
+    const last = await kvGet<{ at?: string }>(SELF_RESTART_KEY).catch(() => null);
+    const lastMs = last?.at ? Date.parse(last.at) : null;
+    if (shouldSelfRestart(heapBlockedSince, Date.now(), heavyRunning, Number.isFinite(lastMs as number) ? lastMs : null)) {
+      const mb = Math.round(heapUsedBytes / 1048576);
+      console.error(`[app-scheduler] heap stuck at ${mb} MB for ${Math.round((Date.now() - heapBlockedSince) / MIN)} min with no job running — restarting the process so scheduled jobs can run`);
+      const { kvSet } = await import('./kv');
+      await kvSet(SELF_RESTART_KEY, { at: new Date().toISOString(), heapMb: mb, blockedMin: Math.round((Date.now() - heapBlockedSince) / MIN) }, 30 * 86_400).catch(() => {});
+      setTimeout(() => process.exit(1), 2_000);
+      return;
+    }
     if (Date.now() - lastHeapGuardWarningAt >= 10 * MIN) {
       lastHeapGuardWarningAt = Date.now();
       console.warn(`[app-scheduler] memory guard: deferring heavy jobs at ${Math.round(heapUsedBytes / 1048576)} MB heap (limit ${HEAVY_JOB_HEAP_GUARD_MB} MB); light alert jobs remain active`);
