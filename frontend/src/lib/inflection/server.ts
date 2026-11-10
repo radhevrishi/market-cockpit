@@ -4,9 +4,9 @@ import { kvGet, kvSet } from '../kv';
 import { fetchGoogleNewsRSS } from '../indian-news-rss';
 import { loadNews } from '../news/archive';
 import { getSnapshot } from '../screener/snapshot-cache';
-import { INDUSTRIES, dedupeSignals, isCompanyResultsHeadline, industriesOf, industryScore, isSyntheticHeadline, neglectFromPrices, readSignal, recencyWeight, scoreBand, scoreSignal, type ScoredSignal } from './core';
+import { INDUSTRIES, dedupeSignals, geoOf, industryOnTab, newsFitsTab, isCompanyResultsHeadline, industriesOf, industryScore, isSyntheticHeadline, neglectFromPrices, readSignal, recencyWeight, scoreBand, scoreSignal, type ScoredSignal } from './core';
 
-const KEY = 'inflection-radar:v4';   // zzz1244 — one news pass, an India map and a USA map (…:IN / …:US)
+const KEY = 'inflection-radar:v5';   // zzz1244 — one news pass, an India map and a USA map (…:IN / …:US); zzz1246 v5 — news placed per tab
 export type RadarMarket = 'IN' | 'US';
 const TTL_S = 3 * 3600;
 
@@ -46,14 +46,14 @@ async function buildBothNow(): Promise<Record<RadarMarket, RadarData>> {
       for (const it of items.slice(0, 25)) searched.push({ title: it.title, url: it.url, source: (it as any).publisher || it.source || null, at: it.published_at, industry: id });
     }
   }));
-  const since = Date.now() - 120 * 86_400_000;
-  const pool = new Map<string, { title: string; url: string | null; source: string | null; at: string; ids: Set<string> }>();
+  const since = Date.now() - 90 * 86_400_000;   // zzz1246 — was 120 days while the notes said 90 (112-day-old news was shown)
+  const pool = new Map<string, { title: string; url: string | null; source: string | null; at: string; ids: Set<string>; geos: ReturnType<typeof geoOf> }>();
   const add = (title: string, url: string | null, source: string | null, at: string, ids: string[]) => {
     if (!title || !ids.length || !(Date.parse(at) >= since) || isSyntheticHeadline(title) || isCompanyResultsHeadline(title)) return;
     const k = title.toLowerCase().replace(/\s*-\s*[^-]{2,40}$/, '').replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 120);
     const x = pool.get(k);
     if (x) { ids.forEach((i) => x.ids.add(i)); return; }
-    pool.set(k, { title, url, source, at, ids: new Set(ids) });
+    pool.set(k, { title, url, source, at, ids: new Set(ids), geos: geoOf(`${title}${source && !title.includes(source) ? ` - ${source}` : ''}`) });
   };
   for (const a of archive) add(a.title, a.url, a.source, a.publishedAt, industriesOf(`${a.title} ${a.summary || ''}`));
   for (const s of searched) { const ids = industriesOf(s.title); add(s.title, s.url, s.source, s.at, ids.length ? ids : []); }
@@ -63,7 +63,7 @@ async function buildBothNow(): Promise<Record<RadarMarket, RadarData>> {
   const snap = await getSnapshot(market).catch(() => null);
   const byT = new Map<string, any>((snap?.rows || []).map((r: any) => [String(r.t).toUpperCase(), r]));
   const largeCap = market === 'IN' ? 30000 : 10000;   // ₹ crore / $ million
-  const industries: RadarIndustry[] = INDUSTRIES.map((ind) => {
+  const industries: RadarIndustry[] = INDUSTRIES.filter((ind) => industryOnTab(ind, market)).map((ind) => {
     const companies = (market === 'IN' ? ind.beneficiaries : ind.us || []).map((b) => {
       const r = byT.get(b.ticker);
       return {
@@ -77,7 +77,7 @@ async function buildBothNow(): Promise<Record<RadarMarket, RadarData>> {
     });
     const small = companies.filter((c) => !c.large);
     const neglect = neglectFromPrices(small.map((c) => c.perf3M));
-    const news = Array.from(pool.values()).filter((p) => p.ids.has(ind.id));
+    const news = Array.from(pool.values()).filter((p) => p.ids.has(ind.id) && newsFitsTab(ind, market, p.geos));
     const signals: RadarIndustry['signals'] = [];
     const now = Date.now();
     for (const n of news) {
@@ -92,7 +92,7 @@ async function buildBothNow(): Promise<Record<RadarMarket, RadarData>> {
     signals.sort((a, b) => b.score - a.score || b.at.localeCompare(a.at));
     const stories = dedupeSignals(signals);   // zzz1241 — one story reported twice is one signal, not a confirmation
     const { top, confirmations } = industryScore(stories);
-    return { id: ind.id, name: ind.name, why: ind.why, top, confirmations, band: scoreBand(top), signals: stories.slice(0, 15), companies, newsCount: news.length };
+    return { id: ind.id, name: market === 'US' && ind.usName ? ind.usName : ind.name, why: market === 'US' && ind.usWhy ? ind.usWhy : ind.why, top, confirmations, band: scoreBand(top), signals: stories.slice(0, 15), companies, newsCount: news.length };
   }).sort((a, b) => b.top - a.top);
 
   const data: RadarData = {
@@ -102,7 +102,8 @@ async function buildBothNow(): Promise<Record<RadarMarket, RadarData>> {
       'The same story from several outlets is one signal (shown as ×N sources). Industry score = its best signal (older news counts less: full weight for 14 days, 60% after 60 days) + 3 points for each other recent signal that confirms it (up to 12). Our own alert lines are not counted as news; chip "packaging" is kept out of packaging.',
       'A score is research priority (framework weights: magnitude 20, acceleration 15, duration 15, EPS impact 20, market neglect 15, bottleneck 15) — not a buy.',
       market === 'IN' ? 'The company map is a research lead, not proof of revenue linkage: verify product fit, customer, utilisation and materiality.'
-        : 'USA map: US-listed suppliers per industry (market caps in $ million; over $10 billion counts as large). The same industry news drives both tabs — a research lead, not proof of revenue linkage.',
+        : 'USA map: US-listed suppliers per industry (market caps in $ million; over $10 billion counts as large) — a research lead, not proof of revenue linkage.',
+      'Each tab uses global news plus news about its own country: Indian orders and Indian policy never count on the USA tab, US orders never on the India tab (except where Indian suppliers sell into that market, e.g. US truck builds). Some industries are only on one tab.',
       'Company results headlines (one company\'s quarter) are not counted as industry signals.',
     ],
   };

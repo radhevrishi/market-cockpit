@@ -20,5 +20,6 @@ test('grid and packaging news are caught; falling news is not a signal', () => {
   assert.equal(scoreSignal(readSignal('Class 8 orders fall 20% as fleets cancel'), { neglect: 5, smallCount: 5 }), null);
   assert.equal(neglectFromPrices([-20, -15, 5]), 9);
   assert.equal(epsSensitivity(500, 10)[1].pat, 500 * 0.1 * 0.2 * 0.75);
-  assert.ok(INDUSTRIES.every((i) => i.beneficiaries.length >= 3 && i.queries.length >= 2));
+  // zzz1246 — USA-only industries have no Indian map and only US searches
+  assert.ok(INDUSTRIES.every((i) => (i.beneficiaries.length >= 3 && i.queries.length >= 2) || (!i.beneficiaries.length && (i.us || []).length >= 3 && (i.usQueries || []).length >= 2)));
 });

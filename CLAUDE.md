@@ -4026,3 +4026,9 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   period start (`twrSeries` in TradebookTab: each day's buys/sells taken out, days starting under ₹10,000 left flat) against the
   index's own % move, 0% line, header shows "ahead/behind by N pts". Value mode as before plus return %. Hover card redone
   (`TipRow`: colour keys, unrealised ₹ + %, gain since period start, gap to the index).
+- zzz1246 (10 Nov): Inflection Radar India and USA tabs had the same industries AND the same headlines (one industry list, one
+  news pool). Now `geoOf(headline)` places news (India / US / Europe; none = global, Indian outlets + mapped company names count)
+  and `newsFitsTab` lets a tab take global news plus its own places (`Industry.geo`; class 8 trucks also count US news on the
+  India tab, European defence = India tab only). An industry is on a tab only if it has companies for it (`industryOnTab`).
+  New India-only: defence-india, ems-india. New USA-only: dc-power-us, nuclear-us, defence-us, optical-us. News window
+  90 days (was 120 while the notes said 90). KEY inflection-radar:v5.

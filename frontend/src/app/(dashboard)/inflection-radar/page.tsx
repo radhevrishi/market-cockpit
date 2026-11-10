@@ -103,7 +103,7 @@ function IndustryCard({ x, open, onToggle, smallOnly, us }: { x: RadarIndustry; 
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>
           <ScoreBar v={x.top} c={col} w={140} />
           {classes.map((k) => <Chip key={k} c={CLASS_COL[k]} title={SIGNAL_WORD[k]}>{CLASS_SHORT[k]}</Chip>)}
-          <span style={{ fontSize: 11.5, color: C.dim }}>{x.signals.length} signal{x.signals.length === 1 ? '' : 's'} · {x.confirmations} confirming · {x.newsCount} headlines · {companies.length} {us ? 'US' : 'Indian'} names</span>
+          <span style={{ fontSize: 11.5, color: C.dim }}>{x.signals.length} signal{x.signals.length === 1 ? '' : 's'} · {x.confirmations} confirming · {x.newsCount} headlines · {companies.length} {us ? 'US' : 'Indian'} name{companies.length === 1 ? '' : 's'}</span>
         </div>
         {top && (
           <div style={{ marginTop: 10, padding: '8px 10px', borderRadius: 9, background: tint(col, 7), border: `1px solid ${tint(col, 22)}`, fontSize: 12.5, color: C.txt }}>

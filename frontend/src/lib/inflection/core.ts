@@ -44,7 +44,16 @@ export interface Industry {
   beneficiaries: Beneficiary[];
   us?: Beneficiary[];         // zzz1244 — US-listed suppliers (USA tab)
   usQueries?: string[];       // zzz1244 — extra searches for US news
+  /**
+   * zzz1246 — WHERE the news must be for each tab. The two tabs had shown the same industries with the same headlines
+   * (Indian wagon orders on the USA tab, NATO ammunition on both). A headline is placed (`geoOf`): India / US / Europe, or
+   * global when it names none. A tab takes global news plus its own places; default India tab ['IN'], USA tab ['US'].
+   * An industry with no companies for a market is not on that tab.
+   */
+  geo?: Partial<Record<'IN' | 'US', Geo[]>>;
+  usName?: string; usWhy?: string;   // zzz1246 — wording for the USA tab when it differs
 }
+export type Geo = 'IN' | 'US' | 'EU';
 
 const B = (ticker: string, name: string, bucket: string, verify: string, large = false): Beneficiary => ({ ticker, name, bucket, verify, large });
 
@@ -62,6 +71,7 @@ export const INDUSTRIES: Industry[] = [
       B('CMI', 'Cummins', 'Engines (large)', 'On-highway engine volumes', true),
     ],
     usQueries: ['Class 8 truck build backlog', 'heavy duty truck production US'],
+    geo: { IN: ['US', 'IN'], US: ['US'] },   // Indian forgers export into US truck builds
     beneficiaries: [
       B('BHARATFORG', 'Bharat Forge', 'Forged components', 'Current North American CV revenue, Class 8 share, plant utilisation', true),
       B('MMFL', 'MM Forgings', 'Forged components', 'North American schedules, export mix, utilisation, incremental margin'),
@@ -153,17 +163,10 @@ export const INDUSTRIES: Industry[] = [
     ],
   },
   {
-    id: 'defence-europe', name: 'European defence procurement', why: 'Europe re-arming creates export orders for qualified Indian suppliers.',
+    id: 'defence-europe', name: 'European defence demand for Indian exporters', why: 'Europe re-arming creates export orders for qualified Indian suppliers.',
     queries: ['European defence spending orders', 'NATO ammunition shortage', 'Europe defence procurement India exports'],
     match: /(?:europe|nato|eu)\b.{0,40}(?:defen[cs]e|ammunition|artillery|rearm)|ammunition shortage|defen[cs]e exports? India/i,
-    us: [
-      B('KTOS', 'Kratos', 'Drones / defence systems', 'Contract awards, production ramp'),
-      B('AVAV', 'AeroVironment', 'Drones / loitering munitions', 'Orders, backlog'),
-      B('MRCY', 'Mercury Systems', 'Defence electronics', 'Bookings, margins'),
-      B('BWXT', 'BWX Technologies', 'Naval nuclear (large)', 'Backlog', true),
-      B('NOC', 'Northrop Grumman', 'Prime (large)', 'Munitions programmes', true),
-    ],
-    usQueries: ['Pentagon munitions production contract', 'NATO drone orders'],
+    geo: { IN: ['EU', 'IN'] },   // India tab only: European demand for Indian exporters
     beneficiaries: [
       B('DATAPATTNS', 'Data Patterns', 'Defence electronics', 'Export orders, execution'),
       B('ASTRAMICRO', 'Astra Microwave', 'Defence electronics', 'Order book, exports'),
@@ -195,7 +198,8 @@ export const INDUSTRIES: Industry[] = [
   {
     id: 'rail', name: 'Railway components and wagons', why: 'Rail capex and component replacement cycles drive wagon, wheel and forging orders.',
     queries: ['railway wagon orders India', 'Vande Bharat orders suppliers', 'railway component replacement demand'],
-    match: /wagon|rolling stock|railway (?:component|order|capex)|vande bharat|locomotive orders?/i,
+    match: /wagon|rolling stock|railway (?:component|order|capex)|vande bharat|locomotive orders?|railcars?\b/i,
+    usName: 'Railcars and rail equipment', usWhy: 'Railcar orders and replacement cycles fill builders\' backlogs and lift rail-product suppliers.',
     us: [
       B('GBX', 'Greenbrier', 'Railcars', 'Orders, backlog, margins'),
       B('TRN', 'Trinity Industries', 'Railcars / leasing', 'Orders, lease rates'),
@@ -303,7 +307,133 @@ export const INDUSTRIES: Industry[] = [
       B('MTARTECH', 'MTAR Technologies', 'Specialised engineering', 'Project content'),
     ],
   },
+  // ── zzz1246 — India-only industries ─────────────────────────────────────────
+  {
+    id: 'defence-india', name: 'Indian defence orders and indigenisation', why: 'Ministry of Defence approvals and contracts move into Indian suppliers\' order books; import bans favour local makers.',
+    queries: ['Ministry of Defence contract signed India', 'Defence Acquisition Council approves procurement', 'defence order India company crore', 'emergency procurement Indian Army'],
+    match: /(?:ministry of defen[cs]e|defen[cs]e ministry|\bmod\b|\bdac\b|defen[cs]e acquisition council|\bdrdo\b|indian (?:army|navy|air force)|\biaf\b).{0,70}(?:contracts?|orders?|approv\w*|procure\w*|clears?|signs?)|defen[cs]e (?:orders?|contracts?).{0,50}(?:₹|rs\.?|crore|india)|emergency procurement|positive indigeni[sz]ation list/i,
+    geo: { IN: ['IN'] },
+    beneficiaries: [
+      B('DATAPATTNS', 'Data Patterns', 'Defence electronics', 'Firm orders, execution'),
+      B('ASTRAMICRO', 'Astra Microwave', 'Radar / microwave', 'Order book, margins'),
+      B('ZENTEC', 'Zen Technologies', 'Training / anti-drone', 'Order inflow'),
+      B('APOLLO', 'Apollo Micro Systems', 'Defence electronics', 'Orders, capacity'),
+      B('PARAS', 'Paras Defence', 'Optics / electronics', 'Orders and margins'),
+      B('DCXINDIA', 'DCX Systems', 'Cables / electronics', 'Orders, execution'),
+      B('MIDHANI', 'Mishra Dhatu Nigam', 'Special alloys', 'Order book, utilisation'),
+      B('BEML', 'BEML', 'Defence / rail vehicles', 'Defence order share'),
+    ],
+  },
+  {
+    id: 'ems-india', name: 'Electronics manufacturing (EMS, components scheme)', why: 'Component-scheme approvals and export programmes give EMS makers multi-year volume and mix gains.',
+    queries: ['electronics component manufacturing scheme approval', 'ECMS approval India', 'EMS company order India', 'electronics exports India record', 'smartphone exports India'],
+    match: /\becms\b|electronics component(?:s)? manufacturing|electronics manufacturing (?:services|scheme|cluster)|\bems\b (?:compan|player|maker|order)|electronics exports?|(?:mobile|smartphone|iphone) (?:phone )?exports?|pcb (?:plant|capacity|manufactur)/i,
+    geo: { IN: ['IN'] },
+    beneficiaries: [
+      B('KAYNES', 'Kaynes Technology', 'EMS / OSAT', 'Order book, component-scheme projects'),
+      B('SYRMA', 'Syrma SGS', 'EMS', 'Export mix, margins'),
+      B('AVALON', 'Avalon Technologies', 'EMS', 'US customer orders'),
+      B('CYIENTDLM', 'Cyient DLM', 'EMS (aerospace / medical)', 'Order book, margins'),
+      B('PGEL', 'PG Electroplast', 'EMS / appliances', 'Volumes, capacity'),
+      B('AMBER', 'Amber Enterprises', 'EMS / components', 'Electronics division growth'),
+      B('DIXON', 'Dixon Technologies', 'EMS (large)', 'Mobile volumes, component JVs', true),
+    ],
+  },
+  // ── zzz1246 — USA-only industries ───────────────────────────────────────────
+  {
+    id: 'dc-power-us', name: 'AI data-centre power and cooling', why: 'Data-centre power demand runs into switchgear, cooling and turbine capacity — lead times and pricing move first.',
+    queries: [],
+    usQueries: ['data center power equipment shortage', 'data center liquid cooling demand', 'gas turbine shortage data center', 'data center electricity demand utilities gigawatt'],
+    match: /data[- ]cent(?:er|re)s?.{0,60}(?:power|cooling|electricity|gas turbines?|megawatts?|gigawatts?|\bgw\b|\bmw\b)|liquid cooling|gas turbines? (?:shortage|backlog|orders?|lead times?)/i,
+    exclude: /transformer (?:model|architecture|network|neural)|\bLLMs?\b|language model/i,
+    geo: { US: ['US'] },
+    us: [
+      B('MOD', 'Modine', 'Data-centre cooling', 'Data-centre share of sales, capacity'),
+      B('AAON', 'AAON', 'HVAC / liquid cooling', 'Data-centre orders, backlog'),
+      B('POWL', 'Powell Industries', 'Switchgear', 'Data-centre backlog'),
+      B('AMSC', 'American Superconductor', 'Grid / power electronics', 'Orders, margins'),
+      B('PRIM', 'Primoris', 'Power / utility EPC', 'Data-centre power work'),
+    ],
+    beneficiaries: [],
+  },
+  {
+    id: 'nuclear-us', name: 'Nuclear fuel, enrichment and small reactors', why: 'Reactor restarts, data-centre power deals and enrichment shortfalls lift fuel and SMR suppliers.',
+    queries: [],
+    usQueries: ['uranium enrichment capacity HALEU', 'small modular reactor agreement', 'nuclear power purchase agreement data center', 'uranium price rises'],
+    match: /\buranium\b|enrichment capacity|\bhaleu\b|small modular reactors?|\bsmrs?\b|nuclear (?:power|plant|reactor|fuel|restart|deal|agreement)/i,
+    exclude: /\biran\b|north korea|weapons?/i,
+    geo: { US: ['US'] },
+    us: [
+      B('LEU', 'Centrus Energy', 'Enrichment / HALEU', 'Contracts, capacity build'),
+      B('SMR', 'NuScale Power', 'Small reactors', 'Firm orders'),
+      B('OKLO', 'Oklo', 'Small reactors', 'Licensing, power deals'),
+      B('UEC', 'Uranium Energy', 'Uranium mining', 'Production ramp, price'),
+      B('NNE', 'Nano Nuclear', 'Micro reactors', 'Milestones'),
+      B('BWXT', 'BWX Technologies', 'Nuclear components (large)', 'Backlog', true),
+    ],
+    beneficiaries: [],
+  },
+  {
+    id: 'defence-us', name: 'US drones and munitions', why: 'Pentagon production ramps for drones and munitions fill smaller suppliers\' backlogs.',
+    queries: [],
+    usQueries: ['Pentagon munitions production contract', 'Army drone contract awarded', 'loitering munition order', 'counter-drone contract Pentagon'],
+    match: /(?:pentagon|\bdod\b|department of (?:defense|war)|\bus (?:army|navy|air force|marine)|u\.s\. (?:army|navy|air force)|army|navy|air force).{0,70}(?:contracts?|orders?|award\w*|production)|(?:munitions?|drones?|loitering munitions?|counter[- ]drone|uas)\b.{0,40}(?:contracts?|orders?|award\w*|production (?:ramp|increase))/i,
+    geo: { US: ['US'] },
+    us: [
+      B('KTOS', 'Kratos', 'Drones / defence systems', 'Contract awards, production ramp'),
+      B('AVAV', 'AeroVironment', 'Drones / loitering munitions', 'Orders, backlog'),
+      B('RCAT', 'Red Cat', 'Small drones', 'Army programme orders'),
+      B('ONDS', 'Ondas', 'Drones / counter-drone', 'Orders'),
+      B('MRCY', 'Mercury Systems', 'Defence electronics', 'Bookings, margins'),
+    ],
+    beneficiaries: [],
+  },
+  {
+    id: 'optical-us', name: 'AI optical interconnect (transceivers, lasers)', why: 'AI clusters need far more optical links; laser and transceiver capacity is tight.',
+    queries: [],
+    usQueries: ['800G transceiver demand', 'optical transceiver shortage AI', 'co-packaged optics adoption', 'indium phosphide laser shortage'],
+    match: /transceivers?|\b(?:800g|1\.6t)\b|co-packaged optics|optical (?:interconnect|modules?|networking|components?)|indium phosphide|\beml lasers?/i,
+    geo: { US: ['US'] },
+    us: [
+      B('AAOI', 'Applied Optoelectronics', 'Transceivers / lasers', 'Hyperscaler orders, capacity'),
+      B('FN', 'Fabrinet', 'Optical manufacturing (large)', 'Customer concentration', true),
+      B('LITE', 'Lumentum', 'Lasers (large)', 'Laser capacity', true),
+      B('COHR', 'Coherent', 'Transceivers (large)', 'Datacom growth', true),
+    ],
+    beneficiaries: [],
+  },
 ];
+
+// ── zzz1246 — where a headline is ────────────────────────────────────────────
+const IN_OUTLET = /\s[-|–]\s*(?:the economic times|economic times|et ?[a-z]*world|etauto|et infra|moneycontrol|business standard|mint|livemint|financial express|the hindu(?: businessline)?|businessline|ndtv profit|cnbc[- ]?tv18|zee business|business today|machine maker|indian express|times of india|construction world|swarajya|rediff|india today|the print|theprint|bizz buzz|odisha|deccan herald|tribune india)\b[^-|–]*$/i;
+const IN_TEXT = /\bindia(?:n|'s)?\b|₹|\brs\.?\s?\d|\bcrores?\b|\blakhs?\b|\b(?:nse|bse|sebi)\b|vande bharat|\bongc\b|\bbhel\b|\bntpc\b|\bdrdo\b|\bhal\b|\bdac\b|gujarat|maharashtra|tamil nadu|karnataka|telangana|andhra|odisha|rajasthan|uttar pradesh|delhi|mumbai|chennai|bengaluru|hyderabad|pune|kolkata/i;
+const US_TEXT_CS = /\bU\.S\.|\bUS\b|\bUSA\b/;
+const US_TEXT = /united states|\bamerica(?:n|'s)?\b|north america|\bpentagon\b|\bnasdaq\b|\bnyse\b|\bferc\b|\bnrc\b|department of (?:energy|defense|war)|\btexas\b|california|ohio|virginia|arizona|georgia|pennsylvania|louisiana|wall st|wall street/i;
+const EU_TEXT_CS = /\bEU\b|\bUK\b|\bNATO\b/;
+const EU_TEXT = /\beurope(?:an)?\b|\bnato\b|germany|german|france|french|poland|polish|ukrain|britain|british|rheinmetall|nordic|baltic states/i;
+const COMMON_NAME = /^(?:coherent|noble|dana|marine electricals|skipper|ace|matson)$/i;   // names that are ordinary words
+const NAMES: Record<'IN' | 'US', RegExp | null> = (() => {
+  const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const of = (list: Beneficiary[]) => { const n = Array.from(new Set(list.map((b) => b.name.replace(/\s*\(.*$/, '').trim()).filter((x) => x.length >= 4 && !COMMON_NAME.test(x)))); return n.length ? new RegExp(`\\b(?:${n.map(esc).join('|')})\\b`, 'i') : null; };
+  return { IN: of(INDUSTRIES.flatMap((i) => i.beneficiaries)), US: of(INDUSTRIES.flatMap((i) => i.us || [])) };
+})();
+/** zzz1246 — the places a headline is about (empty = global). Names of mapped companies count for their market. */
+export function geoOf(text: string): Geo[] {
+  const g = new Set<Geo>();
+  if (IN_TEXT.test(text) || IN_OUTLET.test(text) || NAMES.IN?.test(text)) g.add('IN');
+  if (US_TEXT_CS.test(text) || US_TEXT.test(text) || NAMES.US?.test(text)) g.add('US');
+  if (EU_TEXT_CS.test(text) || EU_TEXT.test(text)) g.add('EU');
+  return Array.from(g);
+}
+/** zzz1246 — whether an industry is on a tab at all, and whether a headline placed `geos` counts for it there. */
+export function industryOnTab(ind: Industry, market: 'IN' | 'US'): boolean {
+  return market === 'IN' ? ind.beneficiaries.length > 0 : (ind.us || []).length > 0;
+}
+export function newsFitsTab(ind: Industry, market: 'IN' | 'US', geos: ReadonlyArray<Geo>): boolean {
+  if (!geos.length) return true;   // global news counts on both tabs
+  const ok = ind.geo?.[market] ?? [market];
+  return geos.some((g) => ok.includes(g));
+}
 
 // ── reading one headline ─────────────────────────────────────────────────────
 
