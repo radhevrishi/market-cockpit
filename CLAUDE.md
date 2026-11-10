@@ -4016,3 +4016,9 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   `outdated` (ANALYTICS_VERSION changed) and the tab says when it was computed. Split reading is per TRADING DAY (quantity-weighted
   price ÷ close): SHARDACROP's two buys at the open of a −20% day had been read as a 1:4 bonus and left a phantom 22-share holding
   ("add SHARDACROP"). Levels only fall over time; a small step (1.25 / 1.33) needs the old level on ≥ 2 days and the new one to hold.
+- zzz1244 (10 Nov): (a) portfolio symbols with an NSE series suffix (MTARTECH-BE, IFBAGRO-BE) match the tradebook company
+  (`baseSym` in tradebook/core) — both were sold in Aug 2026 per the files, so "Update portfolio from tradebook" now offers to
+  remove them; the owner's other 53 holdings match the tradebook exactly (qty + avg cost). (b) Hidden Inflection Radar USA tab:
+  each industry has `us` (US-listed suppliers, $ million caps, > $10 B = large) + `usQueries`; one news pass builds both maps
+  (KEY inflection-radar:v4:IN / :US, `?market=US`). One company's results headlines are not industry signals
+  (`isCompanyResultsHeadline`); the AI "transformer model" is not grid equipment.

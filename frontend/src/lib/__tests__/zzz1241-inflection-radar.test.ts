@@ -26,3 +26,18 @@ test('mapped tickers are NSE symbols (Shilchar = SHILCTECH, Hitachi Energy = POW
   assert.ok(all.includes('SHILCTECH') && all.includes('POWERINDIA'));
   for (const bad of ['SHILCHAR', 'HITACHIEN', 'JOSTS']) assert.ok(!all.includes(bad), bad);
 });
+
+// zzz1244 — USA tab + cleaner signals
+import { isCompanyResultsHeadline } from '../inflection/core';
+test('one company\'s results are not an industry signal; the AI "transformer" is not grid equipment', () => {
+  assert.equal(isCompanyResultsHeadline('TIMKEN INDIA Q2 RESULTS: PAT JUMPS 30% YOY TO ₹116 CR; REVENUE UP 25%'), true);
+  assert.equal(isCompanyResultsHeadline('Machine tool demand hits record high'), false);
+  assert.ok(!industriesOf('New transformer model architecture cuts LLM costs').includes('grid'));
+  assert.ok(industriesOf('Transformer lead times stretch to four years').includes('grid'));
+});
+test('every industry has a USA supplier map with small / mid names', () => {
+  for (const i of INDUSTRIES) {
+    assert.ok((i.us || []).length >= 3, i.id);
+    assert.ok((i.us || []).some((b) => !b.large), i.id);
+  }
+});

@@ -8,7 +8,7 @@ export const maxDuration = 120;
 
 export async function GET(req: NextRequest) {
   try {
-    return NextResponse.json({ ok: true, ...(await inflectionRadar(new URL(req.url).searchParams.get('force') === '1')) }, { headers: { 'Cache-Control': 'private, max-age=300' } });
+    return NextResponse.json({ ok: true, ...(await inflectionRadar(new URL(req.url).searchParams.get('force') === '1', new URL(req.url).searchParams.get('market') === 'US' ? 'US' : 'IN')) }, { headers: { 'Cache-Control': 'private, max-age=300' } });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 });
   }

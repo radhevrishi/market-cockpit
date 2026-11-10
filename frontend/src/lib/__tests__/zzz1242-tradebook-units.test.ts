@@ -80,3 +80,11 @@ test('the stored result is served on a visit; only Recompute or an upload works 
   assert.match(src, /if \(!force\) \{\s*const hit = _cache \?\? \(await kvGet/);
   assert.doesNotMatch(src, /3 \* 3600_000/);
 });
+
+test('a portfolio symbol with a series suffix (MTARTECH-BE) is the sold-out tradebook company — offered for removal', async () => {
+  const { holdingsDiff, reconcilePortfolio } = await import('../tradebook/core');
+  const l = { positions: [], unmatchedIsins: [], tradedSymbols: [{ symbol: 'MTARTECH', isin: 'INE864I01' }] };
+  const cur = [{ symbol: 'MTARTECH-BE', quantity: 21, entryPrice: 5194 }];
+  assert.deepEqual(holdingsDiff(l, cur).map((d) => [d.symbol, d.action]), [['MTARTECH-BE', 'remove']]);
+  assert.match(reconcilePortfolio(l, cur).rows[0].note, /sold out/);
+});

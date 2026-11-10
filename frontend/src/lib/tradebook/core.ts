@@ -753,6 +753,9 @@ export function lotsTurningLongTerm(l: Ledger, now: number, days = 60): Array<{ 
 
 // ── holdings for the portfolio page ─────────────────────────────────────────
 
+/** zzz1243 — a portfolio symbol with an NSE series suffix (MTARTECH-BE, IFBAGRO-BE) is the same company as the tradebook's symbol. */
+export const baseSym = (s: string) => String(s).toUpperCase().replace(/-(?:BE|BZ|EQ|SM|ST|XT|IT)$/, '');
+
 export interface HoldingChange { symbol: string; action: 'add' | 'update' | 'remove' | 'keep'; quantity: number; entryPrice: number; before?: { quantity: number; entryPrice: number } | null; note?: string }
 
 /**
@@ -775,7 +778,7 @@ export function holdingsDiff(l: DiffInput, current: Array<{ symbol: string; quan
   for (const p of l.positions) {
     const sym = p.symbol.toUpperCase();
     // the portfolio may hold it under an older symbol of the same ISIN
-    const old = cur.has(sym) ? sym : Array.from(cur.keys()).find((k) => isinOfSym.get(k) === p.isin) || sym;
+    const old = cur.has(sym) ? sym : Array.from(cur.keys()).find((k) => (isinOfSym.get(k) ?? isinOfSym.get(baseSym(k))) === p.isin || baseSym(k) === sym) || sym;
     seen.add(old); seen.add(sym);
     const before = cur.get(old) || null;
     const quantity = Math.round(p.qty), entryPrice = r2(p.avgCost);
@@ -786,7 +789,7 @@ export function holdingsDiff(l: DiffInput, current: Array<{ symbol: string; quan
   }
   for (const [sym, h] of cur) {
     if (seen.has(sym)) continue;
-    const isin = isinOfSym.get(sym);
+    const isin = isinOfSym.get(sym) ?? isinOfSym.get(baseSym(sym));
     if (!isin || heldIsins.has(isin)) continue;   // never traded in these files — not touched
     if (unmatchedIsins.has(isin)) { out.push({ symbol: sym, action: 'keep', quantity: h.quantity, entryPrice: h.entryPrice, before: { quantity: h.quantity, entryPrice: h.entryPrice }, note: 'sold with shares from before the first file — check by hand' }); continue; }
     out.push({ symbol: sym, action: 'remove', quantity: 0, entryPrice: h.entryPrice, before: { quantity: h.quantity, entryPrice: h.entryPrice } });
@@ -828,7 +831,7 @@ export function reconcilePortfolio(l: DiffInput, current: Array<{ symbol: string
   for (const h of current) {
     const sym = String(h.symbol).toUpperCase();
     const q = Number(h.quantity) || 0, cost = q * (Number(h.entryPrice) || 0);
-    const isin = isinOfSym.get(sym) ?? l.positions.find((p) => p.symbol.toUpperCase() === sym)?.isin;
+    const isin = isinOfSym.get(sym) ?? isinOfSym.get(baseSym(sym)) ?? l.positions.find((p) => p.symbol.toUpperCase() === sym || p.symbol.toUpperCase() === baseSym(sym))?.isin;
     const p = isin ? posByIsin.get(isin) : undefined;
     if (!isin) { rows.push({ symbol: sym, kind: 'only-portfolio', portfolioQty: q, portfolioCost: cost, tradebookQty: 0, tradebookCost: 0, note: 'never traded in the uploaded files (another broker, a gift, an IPO allotment, or a name the files do not cover)' }); continue; }
     if (!p) { rows.push({ symbol: sym, kind: 'only-portfolio', portfolioQty: q, portfolioCost: cost, tradebookQty: 0, tradebookCost: 0, note: l.unmatchedIsins.includes(isin) ? 'sold with shares from before the first file — check by hand' : 'sold out in the tradebook — still in the portfolio' }); continue; }

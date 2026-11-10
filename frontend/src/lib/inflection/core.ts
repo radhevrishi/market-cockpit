@@ -42,6 +42,8 @@ export interface Industry {
   match: RegExp;              // a headline is about this industry
   exclude?: RegExp;           // zzz1238 — …unless it is really about this (e.g. chip "packaging" is not packaging)
   beneficiaries: Beneficiary[];
+  us?: Beneficiary[];         // zzz1244 — US-listed suppliers (USA tab)
+  usQueries?: string[];       // zzz1244 — extra searches for US news
 }
 
 const B = (ticker: string, name: string, bucket: string, verify: string, large = false): Beneficiary => ({ ticker, name, bucket, verify, large });
@@ -51,6 +53,15 @@ export const INDUSTRIES: Industry[] = [
     id: 'class8-trucks', name: 'North American Class 8 trucks', why: 'Truck orders lead OEM builds, component schedules and supplier revenue by 2–4 quarters.',
     queries: ['Class 8 truck orders', 'Class 8 net orders FTR', 'ACT Research Class 8', 'heavy truck orders North America'],
     match: /\bclass\s*8\b|heavy[- ]duty truck|heavy truck orders|(?:ftr|act research).{0,40}(?:orders|builds|backlog)|truck (?:build|order)s?\b.{0,30}(?:north america|us)/i,
+    us: [
+      B('ALSN', 'Allison Transmission', 'Transmissions', 'Class 8 share of revenue, North America on-highway'),
+      B('WNC', 'Wabash', 'Trailers', 'Trailer orders and backlog'),
+      B('CVGI', 'Commercial Vehicle Group', 'Cab systems / seating', 'Class 8 build exposure'),
+      B('DAN', 'Dana', 'Axles / drivetrain', 'Commercial-vehicle share of sales'),
+      B('PCAR', 'PACCAR', 'Truck OEM (large)', 'Orders and builds', true),
+      B('CMI', 'Cummins', 'Engines (large)', 'On-highway engine volumes', true),
+    ],
+    usQueries: ['Class 8 truck build backlog', 'heavy duty truck production US'],
     beneficiaries: [
       B('BHARATFORG', 'Bharat Forge', 'Forged components', 'Current North American CV revenue, Class 8 share, plant utilisation', true),
       B('MMFL', 'MM Forgings', 'Forged components', 'North American schedules, export mix, utilisation, incremental margin'),
@@ -69,6 +80,17 @@ export const INDUSTRIES: Industry[] = [
     id: 'grid', name: 'Power grid: transformers, switchgear, cables', why: 'Grid capex and data-centre power meet scarce transformer and switchgear capacity — lead times and prices rise.',
     queries: ['transformer shortage lead times', 'grid transformer demand India', 'switchgear backlog', 'power transmission capex India', 'data center power transformer demand'],
     match: /transformer|switchgear|substation|transmission line|grid (?:capex|investment|equipment|upgrade|congestion)|\bhvdc\b|power equipment|lead times?.{0,30}(?:transformer|grid|switchgear)/i,
+    exclude: /transformer (?:model|architecture|network|neural)|\bLLMs?\b|language model|Transformers (?:movie|film|franchise|toys?)/i,   // zzz1244 — the AI model, not the machine
+    us: [
+      B('POWL', 'Powell Industries', 'Switchgear / power systems', 'Backlog, data-centre and utility mix'),
+      B('MYRG', 'MYR Group', 'Transmission & distribution contractor', 'Backlog, margins'),
+      B('AZZ', 'AZZ', 'Galvanizing / grid metal coatings', 'Utility volumes'),
+      B('PRIM', 'Primoris', 'Utility / power EPC', 'Backlog by segment'),
+      B('PWR', 'Quanta Services', 'Grid EPC (large)', 'Backlog', true),
+      B('GEV', 'GE Vernova', 'Grid equipment (large)', 'Electrification orders', true),
+      B('HUBB', 'Hubbell', 'Utility products (large)', 'Utility orders', true),
+    ],
+    usQueries: ['US transformer shortage utilities', 'switchgear lead times data center', 'grid equipment backlog US'],
     beneficiaries: [
       B('TARIL', 'Transformers & Rectifiers', 'Transformers', 'Order book, capacity additions, pricing, working capital'),
       B('SHILCTECH', 'Shilchar Technologies', 'Transformers', 'Export orders, capacity, margins'),
@@ -88,6 +110,15 @@ export const INDUSTRIES: Industry[] = [
     queries: ['packaging demand India', 'corrugated box prices', 'kraft paper prices India', 'flexible packaging film prices', 'glass packaging capacity India'],
     match: /packaging|corrugated|kraft paper|containerboard|\bboxboard\b|duplex board|bopet|bopp|flexible film|glass bottle|aluminium can|beverage can|paperboard/i,
     exclude: /semiconductor|\bchips?\b|cowos|\bosat\b|advanced packaging|wafer|\bhbm\b|substrate|tsmc|nvidia|\bintel\b|amkor|chiplet|foundry/i,
+    us: [
+      B('SON', 'Sonoco', 'Consumer / industrial packaging', 'Volumes and price'),
+      B('GPK', 'Graphic Packaging', 'Paperboard packaging', 'Volumes and price'),
+      B('GEF', 'Greif', 'Industrial packaging', 'Volumes, price'),
+      B('OI', 'O-I Glass', 'Glass containers', 'Volumes, capacity'),
+      B('SLGN', 'Silgan', 'Cans / closures', 'Volumes'),
+      B('PKG', 'Packaging Corp of America', 'Containerboard (large)', 'Box shipments, price', true),
+    ],
+    usQueries: ['containerboard prices US', 'packaging demand US volumes'],
     beneficiaries: [
       B('TCPLPACK', 'TCPL Packaging', 'Paperboard cartons', 'Volumes, capacity, export mix'),
       B('MOLDTKPAC', 'Mold-Tek Packaging', 'Rigid plastic packaging', 'Customer additions, utilisation, margins'),
@@ -105,6 +136,14 @@ export const INDUSTRIES: Industry[] = [
     id: 'aerospace', name: 'Aerospace components', why: 'Aircraft build-rate ramps and component shortages favour qualified suppliers with capacity.',
     queries: ['aerospace component shortage', 'Airbus production rate increase', 'Boeing production rate suppliers', 'aerospace supply chain India'],
     match: /aerospace|aero[- ]?engine|airbus.{0,30}(?:rate|production|deliveries)|boeing.{0,30}(?:rate|production|deliveries)|aircraft (?:parts|components|production)/i,
+    us: [
+      B('DCO', 'Ducommun', 'Aerostructures / electronics', 'Commercial build exposure'),
+      B('ATRO', 'Astronics', 'Aircraft electrical systems', 'Orders, margins'),
+      B('HXL', 'Hexcel', 'Composites', 'Build-rate exposure'),
+      B('HWM', 'Howmet', 'Engine parts (large)', 'Engine spares, build rates', true),
+      B('TDG', 'TransDigm', 'Components (large)', 'Aftermarket mix', true),
+    ],
+    usQueries: ['aerospace supplier shortage US', 'Boeing 737 production rate suppliers'],
     beneficiaries: [
       B('AZAD', 'Azad Engineering', 'Turbine / aero-engine parts', 'Programme qualification, orders, capacity'),
       B('MTARTECH', 'MTAR Technologies', 'Precision engineering', 'Aerospace orders, delivery ramp'),
@@ -117,6 +156,14 @@ export const INDUSTRIES: Industry[] = [
     id: 'defence-europe', name: 'European defence procurement', why: 'Europe re-arming creates export orders for qualified Indian suppliers.',
     queries: ['European defence spending orders', 'NATO ammunition shortage', 'Europe defence procurement India exports'],
     match: /(?:europe|nato|eu)\b.{0,40}(?:defen[cs]e|ammunition|artillery|rearm)|ammunition shortage|defen[cs]e exports? India/i,
+    us: [
+      B('KTOS', 'Kratos', 'Drones / defence systems', 'Contract awards, production ramp'),
+      B('AVAV', 'AeroVironment', 'Drones / loitering munitions', 'Orders, backlog'),
+      B('MRCY', 'Mercury Systems', 'Defence electronics', 'Bookings, margins'),
+      B('BWXT', 'BWX Technologies', 'Naval nuclear (large)', 'Backlog', true),
+      B('NOC', 'Northrop Grumman', 'Prime (large)', 'Munitions programmes', true),
+    ],
+    usQueries: ['Pentagon munitions production contract', 'NATO drone orders'],
     beneficiaries: [
       B('DATAPATTNS', 'Data Patterns', 'Defence electronics', 'Export orders, execution'),
       B('ASTRAMICRO', 'Astra Microwave', 'Defence electronics', 'Order book, exports'),
@@ -130,6 +177,14 @@ export const INDUSTRIES: Industry[] = [
     id: 'semis-packaging', name: 'Semiconductor packaging (OSAT)', why: 'Packaging capacity is a bottleneck; qualified Indian assembly and test entrants can get first orders.',
     queries: ['semiconductor packaging capacity', 'OSAT India plant', 'advanced packaging shortage CoWoS'],
     match: /\bosat\b|chip packaging|semiconductor (?:packaging|assembly)|advanced packaging|cowos/i,
+    us: [
+      B('AMKR', 'Amkor', 'OSAT', 'Advanced packaging revenue, utilisation'),
+      B('KLIC', 'Kulicke & Soffa', 'Bonding equipment', 'Orders for advanced packaging'),
+      B('ONTO', 'Onto Innovation', 'Inspection / lithography', 'Packaging-related orders'),
+      B('CAMT', 'Camtek', 'Inspection', 'HBM / CoWoS orders'),
+      B('FORM', 'FormFactor', 'Probe cards', 'HBM / advanced packaging demand'),
+    ],
+    usQueries: ['advanced packaging capacity US', 'CoWoS capacity equipment orders'],
     beneficiaries: [
       B('KAYNES', 'Kaynes Technology', 'OSAT / EMS', 'Commercial production, customers, yields', true),
       B('CGPOWER', 'CG Power', 'OSAT JV', 'Approved products, revenue', true),
@@ -141,6 +196,14 @@ export const INDUSTRIES: Industry[] = [
     id: 'rail', name: 'Railway components and wagons', why: 'Rail capex and component replacement cycles drive wagon, wheel and forging orders.',
     queries: ['railway wagon orders India', 'Vande Bharat orders suppliers', 'railway component replacement demand'],
     match: /wagon|rolling stock|railway (?:component|order|capex)|vande bharat|locomotive orders?/i,
+    us: [
+      B('GBX', 'Greenbrier', 'Railcars', 'Orders, backlog, margins'),
+      B('TRN', 'Trinity Industries', 'Railcars / leasing', 'Orders, lease rates'),
+      B('FSTR', 'L.B. Foster', 'Rail products', 'Rail segment orders'),
+      B('RAIL', 'FreightCar America', 'Railcars', 'Orders, capacity'),
+      B('WAB', 'Wabtec', 'Rail equipment (large)', 'Backlog', true),
+    ],
+    usQueries: ['railcar orders backlog North America', 'railcar deliveries US'],
     beneficiaries: [
       B('RKFORGE', 'Ramkrishna Forgings', 'Wheels / forgings', 'Rail contracts and delivery'),
       B('TITAGARH', 'Titagarh Rail Systems', 'Wagons / coaches', 'Order execution, margins'),
@@ -152,6 +215,14 @@ export const INDUSTRIES: Industry[] = [
     id: 'automation', name: 'Industrial automation and machine tools', why: 'Capex upcycles fill machine-tool order books; operating leverage follows utilisation.',
     queries: ['machine tool orders India', 'CNC machine demand India', 'industrial automation demand'],
     match: /machine tools?|cnc machines?|industrial automation|factory automation|robotics orders/i,
+    us: [
+      B('HURC', 'Hurco', 'Machine tools', 'Orders, utilisation'),
+      B('KMT', 'Kennametal', 'Tooling', 'Industrial volumes'),
+      B('CGNX', 'Cognex', 'Machine vision', 'Orders by end market'),
+      B('SYM', 'Symbotic', 'Warehouse automation (large)', 'Backlog', true),
+      B('ROK', 'Rockwell Automation', 'Automation (large)', 'Orders', true),
+    ],
+    usQueries: ['machine tool orders US USMTO', 'factory automation orders US'],
     beneficiaries: [
       B('JYOTICNC', 'Jyoti CNC Automation', 'CNC machines', 'Order intake, utilisation, margin'),
       B('LMW', 'Lakshmi Machine Works', 'Textile machinery / machine tools', 'Order book, capex cycle'),
@@ -162,6 +233,14 @@ export const INDUSTRIES: Industry[] = [
     id: 'water', name: 'Water treatment and desalination', why: 'Municipal and industrial water capex lifts EPC and membrane suppliers.',
     queries: ['desalination plant order India', 'water treatment capex India'],
     match: /desalination|water treatment|wastewater|sewage treatment|\bstp\b/i,
+    us: [
+      B('ERII', 'Energy Recovery', 'Desalination devices', 'Mega-project orders'),
+      B('MWA', 'Mueller Water', 'Water infrastructure', 'Volumes, pricing'),
+      B('BMI', 'Badger Meter', 'Smart water meters', 'Utility orders'),
+      B('WTS', 'Watts Water', 'Water products (large)', 'Volumes', true),
+      B('XYL', 'Xylem', 'Water technology (large)', 'Orders', true),
+    ],
+    usQueries: ['desalination contract US', 'water infrastructure spending US'],
     beneficiaries: [
       B('WABAG', 'VA Tech Wabag', 'Water EPC', 'Order quality, margins, cash conversion'),
       B('IONEXCHANG', 'Ion Exchange', 'Water treatment / chemicals', 'Orders and margins'),
@@ -174,6 +253,12 @@ export const INDUSTRIES: Industry[] = [
     queries: ['bearing demand India exports', 'precision bearings shortage', 'bearings industry India', 'NRB Bearings', 'SKF India bearings', 'Timken India', 'bearing manufacturer capacity India'],
     match: /\bbearings\b(?!.{0,6}\bon\b)|\bbearing (?:maker|manufacturer|industry|demand|exports?|plant|capacity|business|segment)s?\b|\b(?:NRB|SKF|Timken|Schaeffler)\b/i,
     exclude: /\bbearing the brunt\b|\b(?:has|have|had) (?:a|no|any) bearing\b|\bbearings? (?:of|on) (?:the|this|that)\b/i,
+    us: [
+      B('TKR', 'Timken', 'Bearings / power transmission', 'Industrial demand, pricing'),
+      B('NNBR', 'NN Inc', 'Precision components', 'Orders, margins'),
+      B('RBC', 'RBC Bearings', 'Bearings (large)', 'Aerospace / industrial mix', true),
+    ],
+    usQueries: ['bearings demand US industrial', 'RBC Bearings orders'],
     beneficiaries: [
       B('NRBBEARING', 'NRB Bearings', 'Bearings', 'End-market mix, exports, margins'),
       B('SKFINDIA', 'SKF India', 'Bearings', 'Industrial demand (large)', true),
@@ -184,6 +269,16 @@ export const INDUSTRIES: Industry[] = [
     id: 'shipping', name: 'Shipping and freight rates', why: 'Freight rates move ship-owner and port earnings fast; sustained rates change economics.',
     queries: ['tanker rates surge', 'container freight rates rise', 'dry bulk rates Baltic index'],
     match: /freight rates?|tanker rates?|baltic dry|container rates?|charter rates?|shipping rates?/i,
+    us: [
+      B('ZIM', 'ZIM', 'Container shipping', 'Spot-rate exposure'),
+      B('DAC', 'Danaos', 'Container ship leasing', 'Charter rates'),
+      B('GSL', 'Global Ship Lease', 'Container ship leasing', 'Charter cover'),
+      B('STNG', 'Scorpio Tankers', 'Product tankers', 'Rate exposure'),
+      B('INSW', 'International Seaways', 'Tankers', 'Rate exposure'),
+      B('SBLK', 'Star Bulk', 'Dry bulk', 'Rate exposure'),
+      B('MATX', 'Matson', 'Shipping / logistics', 'Rates and volumes'),
+    ],
+    usQueries: ['container shipping rates US', 'tanker rates record'],
     beneficiaries: [
       B('GESHIP', 'Great Eastern Shipping', 'Tankers / dry bulk', 'Rate exposure, fleet'),
       B('SCI', 'Shipping Corp of India', 'Shipping', 'Fleet and charters'),
@@ -194,6 +289,14 @@ export const INDUSTRIES: Industry[] = [
     id: 'oil-gas-capex', name: 'Offshore oil & gas capex', why: 'Offshore project awards fill drilling, gas-compression and specialised engineering order books.',
     queries: ['offshore oil gas capex awards', 'ONGC drilling contract awarded', 'gas compression contract India'],
     match: /offshore (?:drilling|rig|project|capex)|drilling contract|rig rates?|gas compression|upstream capex/i,
+    us: [
+      B('RIG', 'Transocean', 'Offshore drilling', 'Day rates, backlog'),
+      B('VAL', 'Valaris', 'Offshore drilling', 'Contracts, utilisation'),
+      B('NE', 'Noble', 'Offshore drilling', 'Contracts'),
+      B('TDW', 'Tidewater', 'Offshore vessels', 'Day rates'),
+      B('OII', 'Oceaneering', 'Subsea services', 'Backlog'),
+    ],
+    usQueries: ['offshore rig day rates', 'offshore drilling contract awarded'],
     beneficiaries: [
       B('DEEPINDS', 'Deep Industries', 'Gas compression / drilling', 'Contracts, rig utilisation'),
       B('JINDRILL', 'Jindal Drilling', 'Offshore rigs', 'Day rates, contracts'),
@@ -342,3 +445,7 @@ export function dedupeSignals<T extends { headline: string }>(best: ReadonlyArra
   }
   return out;
 }
+
+/** zzz1244 — one company's quarterly results are company news, not an industry signal (Timken India's Q2 had topped bearings). */
+export const isCompanyResultsHeadline = (t: string) =>
+  /\b(?:Q[1-4]|first|second|third|fourth)[- ]?(?:quarter|qtr)?\s*(?:FY\d{2,4}\s*)?(?:results?|earnings)\b|\bresults?:|\b(?:net )?profit (?:jumps|rises|falls|surges|up|down|grows)|\bPAT (?:jumps|rises|up|falls|grows)|\bbeats? (?:estimates|expectations)\b/i.test(t);

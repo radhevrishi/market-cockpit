@@ -42,7 +42,8 @@ function Tile({ label, value, sub, c }: { label: string; value: React.ReactNode;
   );
 }
 
-function Sens({ companies }: { companies: RadarIndustry['companies'] }) {
+function Sens({ companies, us }: { companies: RadarIndustry['companies']; us: boolean }) {
+  const cur = us ? '$' : '₹', unit = us ? 'M' : 'Cr';
   const usable = companies.filter((c) => c.salesCr && c.sharesCr);
   const [pick, setPick] = useState<string>(usable[0]?.ticker ?? '');
   const [share, setShare] = useState(30);
@@ -53,7 +54,7 @@ function Sens({ companies }: { companies: RadarIndustry['companies'] }) {
     setPick(t); const c = usable.find((x) => x.ticker === t);
     if (c) { setRev(Math.round((c.salesCr! * s) / 100)); setSh(c.sharesCr!); }
   };
-  const rows = useMemo(() => epsSensitivity(rev, sh), [rev, sh]);
+  const rows = useMemo(() => epsSensitivity(rev, sh, us ? 0.21 : 0.25), [rev, sh, us]);
   const inp = { padding: '4px 6px', borderRadius: 6, border: `1px solid ${C.line}`, background: C.base, color: C.txt, fontSize: 12 } as const;
   const caseCol = { Bear: C.red, Base: C.blue, Bull: C.green } as const;
   return (
@@ -63,16 +64,16 @@ function Sens({ companies }: { companies: RadarIndustry['companies'] }) {
           <label>Company <select value={pick} onChange={(e) => choose(e.target.value)} style={inp}>{usable.map((c) => <option key={c.ticker} value={c.ticker}>{c.ticker}</option>)}</select></label>
         )}
         {co && <label>Share of sales from this end market <input type="number" value={share} min={1} max={100} onChange={(e) => { const s = parseFloat(e.target.value) || 0; setShare(s); setRev(Math.round((co.salesCr! * s) / 100)); }} style={{ ...inp, width: 60 }} /> %</label>}
-        <label>Linked revenue <input type="number" value={rev} onChange={(e) => setRev(parseFloat(e.target.value) || 0)} style={{ ...inp, width: 90 }} /> ₹ Cr</label>
-        <label>Shares <input type="number" value={sh} onChange={(e) => setSh(parseFloat(e.target.value) || 0)} style={{ ...inp, width: 70 }} /> Cr</label>
+        <label>Linked revenue <input type="number" value={rev} onChange={(e) => setRev(parseFloat(e.target.value) || 0)} style={{ ...inp, width: 90 }} /> {cur} {unit}</label>
+        <label>Shares <input type="number" value={sh} onChange={(e) => setSh(parseFloat(e.target.value) || 0)} style={{ ...inp, width: 70 }} /> {us ? 'M' : 'Cr'}</label>
       </div>
-      {co && <div style={{ fontSize: 11.5, color: C.dim, marginBottom: 6 }}>{co.ticker}: sales ₹{co.salesCr!.toLocaleString('en-IN')} Cr (last 12 months) · {co.sharesCr} Cr shares. The {share}% share is your assumption — check it in the annual report.</div>}
+      {co && <div style={{ fontSize: 11.5, color: C.dim, marginBottom: 6 }}>{co.ticker}: sales {cur}{co.salesCr!.toLocaleString('en-IN')} {unit} (last 12 months) · {co.sharesCr} {us ? 'M' : 'Cr'} shares. The {share}% share is your assumption — check it in the annual report.</div>}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8 }}>
         {rows.map((r) => (
           <div key={r.case} style={{ background: tint(caseCol[r.case], 9), border: `1px solid ${tint(caseCol[r.case], 35)}`, borderRadius: 10, padding: '8px 10px' }}>
             <div style={{ fontSize: 11, fontWeight: 900, color: caseCol[r.case] }}>{r.case.toUpperCase()}</div>
-            <div style={{ fontSize: 18, fontWeight: 900, color: C.txt }}>{r.eps != null ? `₹${r.eps.toFixed(2)}` : '—'} <span style={{ fontSize: 11, color: C.mute, fontWeight: 600 }}>extra EPS</span></div>
-            <div style={{ fontSize: 11, color: C.mute }}>growth {(r.growth * 100).toFixed(0)}% · margin {(r.margin * 100).toFixed(0)}% · profit ₹{r.pat.toFixed(1)} Cr</div>
+            <div style={{ fontSize: 18, fontWeight: 900, color: C.txt }}>{r.eps != null ? `${cur}${r.eps.toFixed(2)}` : '—'} <span style={{ fontSize: 11, color: C.mute, fontWeight: 600 }}>extra EPS</span></div>
+            <div style={{ fontSize: 11, color: C.mute }}>growth {(r.growth * 100).toFixed(0)}% · margin {(r.margin * 100).toFixed(0)}% · profit {cur}{r.pat.toFixed(1)} {unit}</div>
           </div>
         ))}
       </div>
@@ -81,7 +82,7 @@ function Sens({ companies }: { companies: RadarIndustry['companies'] }) {
   );
 }
 
-function IndustryCard({ x, open, onToggle, smallOnly }: { x: RadarIndustry; open: boolean; onToggle: () => void; smallOnly: boolean }) {
+function IndustryCard({ x, open, onToggle, smallOnly, us }: { x: RadarIndustry; open: boolean; onToggle: () => void; smallOnly: boolean; us: boolean }) {
   const companies = x.companies.filter((c) => !smallOnly || !c.large);
   const col = bandCol(x.top);
   const classes = Array.from(new Set(x.signals.flatMap((s) => s.read.classes as SignalClass[])));
@@ -102,7 +103,7 @@ function IndustryCard({ x, open, onToggle, smallOnly }: { x: RadarIndustry; open
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>
           <ScoreBar v={x.top} c={col} w={140} />
           {classes.map((k) => <Chip key={k} c={CLASS_COL[k]} title={SIGNAL_WORD[k]}>{CLASS_SHORT[k]}</Chip>)}
-          <span style={{ fontSize: 11.5, color: C.dim }}>{x.signals.length} signal{x.signals.length === 1 ? '' : 's'} · {x.confirmations} confirming · {x.newsCount} headlines · {companies.length} Indian names</span>
+          <span style={{ fontSize: 11.5, color: C.dim }}>{x.signals.length} signal{x.signals.length === 1 ? '' : 's'} · {x.confirmations} confirming · {x.newsCount} headlines · {companies.length} {us ? 'US' : 'Indian'} names</span>
         </div>
         {top && (
           <div style={{ marginTop: 10, padding: '8px 10px', borderRadius: 9, background: tint(col, 7), border: `1px solid ${tint(col, 22)}`, fontSize: 12.5, color: C.txt }}>
@@ -143,17 +144,17 @@ function IndustryCard({ x, open, onToggle, smallOnly }: { x: RadarIndustry; open
           </div>
           <div style={{ display: 'grid', gap: 14, alignContent: 'start', minWidth: 0 }}>
             <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, padding: 12, overflowX: 'auto' }}>
-              <div style={{ fontSize: 11, fontWeight: 900, color: C.dim, letterSpacing: 0.4, marginBottom: 6 }}>INDIAN SUPPLY-CHAIN MAP <span style={{ fontWeight: 600 }}>— research leads, not proof</span></div>
+              <div style={{ fontSize: 11, fontWeight: 900, color: C.dim, letterSpacing: 0.4, marginBottom: 6 }}>{us ? 'US' : 'INDIAN'} SUPPLY-CHAIN MAP <span style={{ fontWeight: 600 }}>— research leads, not proof</span></div>
               <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: 12.5 }}>
-                <thead><tr>{['Company', 'M-cap ₹Cr', 'Sales Q', 'EPS Q', 'OPM', '3M', '1Y', 'P/E', 'Stage'].map((h, i) => <th key={h} style={{ textAlign: i ? 'right' : 'left', padding: '5px 8px', color: C.dim, fontSize: 10.5, fontWeight: 800, borderBottom: `1px solid ${C.line}`, whiteSpace: 'nowrap' }}>{h}</th>)}</tr></thead>
+                <thead><tr>{['Company', us ? 'M-cap $M' : 'M-cap ₹Cr', 'Sales Q', 'EPS Q', 'OPM', '3M', '1Y', 'P/E', 'Stage'].map((h, i) => <th key={h} style={{ textAlign: i ? 'right' : 'left', padding: '5px 8px', color: C.dim, fontSize: 10.5, fontWeight: 800, borderBottom: `1px solid ${C.line}`, whiteSpace: 'nowrap' }}>{h}</th>)}</tr></thead>
                 <tbody>{companies.map((c) => (
                   <tr key={c.ticker} title={`Verify: ${c.verify}`}>
                     <td style={{ padding: '6px 8px', borderBottom: `1px solid ${C.line}`, minWidth: 170 }}>
-                      <a href={`/charts?ticker=${encodeURIComponent(c.ticker)}&market=IN`} style={{ color: C.txt, fontWeight: 900, textDecoration: 'none' }}>{c.ticker}</a>
+                      <a href={`/charts?ticker=${encodeURIComponent(c.ticker)}&market=${us ? 'US' : 'IN'}`} style={{ color: C.txt, fontWeight: 900, textDecoration: 'none' }}>{c.ticker}</a>
                       {c.large && <span style={{ marginLeft: 5 }}><Chip c={C.slate}>large</Chip></span>}
                       <div style={{ fontSize: 10.5, color: C.dim }}>{c.name} · <span style={{ color: C.violet }}>{c.bucket}</span></div>
                       <div style={{ fontSize: 10.5, color: C.mute }}>Verify: {c.verify}</div>
-                      {!c.inUniverse && <div style={{ fontSize: 10.5, color: C.amber }}>Not in our NSE data (BSE-only or not listed) — check figures on BSE.</div>}
+                      {!c.inUniverse && <div style={{ fontSize: 10.5, color: C.amber }}>{us ? 'Not in our US data — check figures elsewhere.' : 'Not in our NSE data (BSE-only or not listed) — check figures on BSE.'}</div>}
                     </td>
                     <td style={{ padding: '6px 8px', borderBottom: `1px solid ${C.line}`, textAlign: 'right' }}>{c.mc != null ? Math.round(c.mc).toLocaleString('en-IN') : '—'}</td>
                     {[c.revQYoY, c.epsQYoY].map((v, i) => <td key={i} style={{ padding: '6px 8px', borderBottom: `1px solid ${C.line}`, textAlign: 'right', color: tone(v), background: heat(v), fontWeight: 700 }}>{pc(v)}</td>)}
@@ -168,7 +169,7 @@ function IndustryCard({ x, open, onToggle, smallOnly }: { x: RadarIndustry; open
             </div>
             <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, padding: 12 }}>
               <div style={{ fontSize: 11, fontWeight: 900, color: C.dim, letterSpacing: 0.4, marginBottom: 6 }}>INCREMENTAL EPS · SENSITIVITY</div>
-              <Sens key={x.id} companies={companies} />
+              <Sens key={x.id} companies={companies} us={us} />
             </div>
           </div>
         </div>
@@ -184,12 +185,14 @@ export default function InflectionRadarPage() {
   const [open, setOpen] = useState<string | null>(null);
   const [smallOnly, setSmallOnly] = useState(true);
   const [showQuiet, setShowQuiet] = useState(false);
-  const load = async (force = false) => {
+  const [market, setMarket] = useState<'IN' | 'US'>('IN');
+  const us = market === 'US';
+  const load = async (force = false, m = market) => {
     setBusy(true); setErr(null);
-    try { const j = await fetch(`/api/v1/inflection-radar${force ? '?force=1' : ''}`, { cache: 'no-store', signal: AbortSignal.timeout(150_000) }).then((r) => r.json()); if (!j?.ok) throw new Error(j?.error || 'failed'); setD(j); }
+    try { const j = await fetch(`/api/v1/inflection-radar?market=${m}${force ? '&force=1' : ''}`, { cache: 'no-store', signal: AbortSignal.timeout(150_000) }).then((r) => r.json()); if (!j?.ok) throw new Error(j?.error || 'failed'); setD(j); }
     catch (e: any) { setErr(String(e?.message || e)); } finally { setBusy(false); }
   };
-  useEffect(() => { void load(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setD(null); setOpen(null); void load(false, market); }, [market]);   // eslint-disable-line react-hooks/exhaustive-deps
   const active = d?.industries.filter((x) => x.signals.length > 0) ?? [];
   const quiet = d?.industries.filter((x) => x.signals.length === 0) ?? [];
   const strong = active.filter((x) => x.top >= 70);
@@ -202,10 +205,15 @@ export default function InflectionRadarPage() {
           <div style={{ maxWidth: 900 }}>
             <h1 style={{ fontSize: 24, fontWeight: 900, color: C.txt, margin: 0 }}>📡 Hidden Inflection Radar</h1>
             <p style={{ fontSize: 13, color: C.mute, margin: '4px 0 0' }}>
-              Abnormal change in an industry — orders, shortages, utilisation, approvals, rules, technology — found from industry news every 6 hours, scored with your framework, and traced to the Indian suppliers whose earnings could move most. A theme is not an investment: verify product fit, customer, utilisation and materiality.
+              Abnormal change in an industry — orders, shortages, utilisation, approvals, rules, technology — found from industry news every 6 hours, scored with your framework, and traced to the {us ? 'US-listed' : 'Indian'} suppliers whose earnings could move most. A theme is not an investment: verify product fit, customer, utilisation and materiality.
             </p>
           </div>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', borderRadius: 9, overflow: 'hidden', border: `1px solid ${C.line}` }}>
+              {([['IN', '🇮🇳 India'], ['US', '🇺🇸 USA']] as const).map(([k, l]) => (
+                <button key={k} onClick={() => setMarket(k)} disabled={busy} style={{ padding: '7px 14px', fontSize: 12.5, fontWeight: 800, border: 'none', cursor: 'pointer', background: market === k ? C.violet : C.panel, color: market === k ? '#fff' : C.mute }}>{l}</button>
+              ))}
+            </div>
             <label style={{ fontSize: 12, color: C.txt, display: 'flex', gap: 6, alignItems: 'center', padding: '6px 10px', borderRadius: 8, background: C.panel, border: `1px solid ${C.line}` }}><input type="checkbox" checked={smallOnly} onChange={(e) => setSmallOnly(e.target.checked)} /> Small and mid caps only</label>
             <button onClick={() => load(true)} disabled={busy} style={{ fontSize: 12, fontWeight: 800, padding: '7px 14px', borderRadius: 8, border: 'none', color: '#fff', background: C.blue, cursor: busy ? 'wait' : 'pointer', opacity: busy ? 0.7 : 1 }}>{busy ? 'Searching industry news…' : '↻ Search the news now'}</button>
             {d && <span style={{ fontSize: 11.5, color: C.mute }}>as of {d.builtAt.slice(0, 16).replace('T', ' ')} UTC</span>}
@@ -223,7 +231,7 @@ export default function InflectionRadarPage() {
             <Tile label="Strong (70+)" value={strong.length} sub={strong.length ? strong.map((x) => x.name).slice(0, 2).join(', ') : 'none yet — map and monitor'} c={C.blue} />
             <Tile label="Top industry" value={best ? best.top : '—'} sub={best ? best.name : 'no signal yet'} c={best ? bandCol(best.top) : C.slate} />
             <Tile label="Signals" value={active.reduce((s, x) => s + x.signals.length, 0)} sub={`${active.reduce((s, x) => s + x.confirmations, 0)} confirming others`} c={C.teal} />
-            <Tile label="Indian names mapped" value={d.industries.reduce((s, x) => s + x.companies.filter((c) => !smallOnly || !c.large).length, 0)} sub={smallOnly ? 'small and mid caps' : 'all sizes'} c={C.green} />
+            <Tile label={us ? 'US names mapped' : 'Indian names mapped'} value={d.industries.reduce((s, x) => s + x.companies.filter((c) => !smallOnly || !c.large).length, 0)} sub={smallOnly ? 'small and mid caps' : 'all sizes'} c={C.green} />
           </div>
 
           <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 14, padding: '12px 14px', marginBottom: 14 }}>
@@ -245,7 +253,7 @@ export default function InflectionRadarPage() {
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 560px), 1fr))', gap: 14 }}>
-            {active.map((x) => <IndustryCard key={x.id} x={x} open={open === x.id} onToggle={() => setOpen(open === x.id ? null : x.id)} smallOnly={smallOnly} />)}
+            {active.map((x) => <IndustryCard key={x.id} x={x} open={open === x.id} onToggle={() => setOpen(open === x.id ? null : x.id)} smallOnly={smallOnly} us={us} />)}
           </div>
 
           {quiet.length > 0 && (
@@ -257,7 +265,7 @@ export default function InflectionRadarPage() {
                 {quiet.map((x) => <span key={x.id} title={x.why} style={{ fontSize: 11.5, padding: '3px 9px', borderRadius: 999, border: `1px solid ${C.line}`, color: C.mute }}>{x.name}{x.newsCount ? ` · ${x.newsCount} headlines, none abnormal` : ''}</span>)}
               </div>
               {showQuiet && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 560px), 1fr))', gap: 14, marginTop: 12 }}>
-                {quiet.map((x) => <IndustryCard key={x.id} x={x} open={open === x.id} onToggle={() => setOpen(open === x.id ? null : x.id)} smallOnly={smallOnly} />)}
+                {quiet.map((x) => <IndustryCard key={x.id} x={x} open={open === x.id} onToggle={() => setOpen(open === x.id ? null : x.id)} smallOnly={smallOnly} us={us} />)}
               </div>}
             </div>
           )}
