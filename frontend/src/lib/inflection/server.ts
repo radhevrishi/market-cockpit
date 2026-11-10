@@ -4,17 +4,17 @@ import { kvGet, kvSet } from '../kv';
 import { fetchGoogleNewsRSS } from '../indian-news-rss';
 import { loadNews } from '../news/archive';
 import { getSnapshot } from '../screener/snapshot-cache';
-import { INDUSTRIES, industriesOf, industryScore, isSyntheticHeadline, neglectFromPrices, readSignal, recencyWeight, scoreBand, scoreSignal, type ScoredSignal } from './core';
+import { INDUSTRIES, dedupeSignals, industriesOf, industryScore, isSyntheticHeadline, neglectFromPrices, readSignal, recencyWeight, scoreBand, scoreSignal, type ScoredSignal } from './core';
 
-const KEY = 'inflection-radar:v2';   // zzz1238 — recency, confirmations, cleaner matching
+const KEY = 'inflection-radar:v3';   // zzz1241 — one signal per story, sales + shares for the EPS sensitivity
 const TTL_S = 3 * 3600;
 
 export interface RadarIndustry {
   id: string; name: string; why: string;
   top: number; band: { label: string; action: string };
   confirmations: number;   // zzz1238 — other recent signals backing the best one
-  signals: Array<ScoredSignal & { ageDays: number; rawScore: number }>;
-  companies: Array<{ ticker: string; name: string; bucket: string; verify: string; large: boolean; mc: number | null; revQYoY: number | null; epsQYoY: number | null; opm: number | null; perf3M: number | null; perf1Y: number | null; pe: number | null; stage: number | null; inUniverse: boolean }>;
+  signals: Array<ScoredSignal & { ageDays: number; rawScore: number; sources?: number }>;
+  companies: Array<{ ticker: string; name: string; bucket: string; verify: string; large: boolean; mc: number | null; revQYoY: number | null; epsQYoY: number | null; opm: number | null; perf3M: number | null; perf1Y: number | null; pe: number | null; stage: number | null; inUniverse: boolean; salesCr?: number | null; sharesCr?: number | null }>;
   newsCount: number;
 }
 export interface RadarData { builtAt: string; industries: RadarIndustry[]; notes: string[] }
@@ -55,6 +55,9 @@ export async function inflectionRadar(force = false): Promise<RadarData> {
         ticker: b.ticker, name: r?.n || b.name, bucket: b.bucket, verify: b.verify, large: !!b.large || (typeof r?.mc === 'number' && r.mc > 30000),
         mc: r?.mc ?? null, revQYoY: r?.revQYoY ?? null, epsQYoY: r?.epsQYoY ?? null, opm: r?.opmTTM ?? null, perf3M: r?.perf3M ?? null, perf1Y: r?.perf1Y ?? null, pe: r?.pe ?? null,
         stage: r?.twSt ?? null, inUniverse: !!r,
+        // zzz1241 — for the EPS sensitivity: TTM sales = market cap ÷ P/S, shares = market cap ÷ price (both ₹ crore / crore)
+        salesCr: typeof r?.mc === 'number' && typeof r?.ps === 'number' && r.ps > 0 ? Math.round(r.mc / r.ps) : null,
+        sharesCr: typeof r?.mc === 'number' && typeof r?.px === 'number' && r.px > 0 ? +(r.mc / r.px).toFixed(2) : null,
       };
     });
     const small = companies.filter((c) => !c.large);
@@ -72,15 +75,16 @@ export async function inflectionRadar(force = false): Promise<RadarData> {
       signals.push({ industry: ind.id, headline: n.title, url: n.url, source: n.source, at: n.at, read, ...s, reasons, score: Math.round(s.score * w), rawScore: s.score, ageDays: Math.round(ageDays) });
     }
     signals.sort((a, b) => b.score - a.score || b.at.localeCompare(a.at));
-    const { top, confirmations } = industryScore(signals);
-    return { id: ind.id, name: ind.name, why: ind.why, top, confirmations, band: scoreBand(top), signals: signals.slice(0, 15), companies, newsCount: news.length };
+    const stories = dedupeSignals(signals);   // zzz1241 — one story reported twice is one signal, not a confirmation
+    const { top, confirmations } = industryScore(stories);
+    return { id: ind.id, name: ind.name, why: ind.why, top, confirmations, band: scoreBand(top), signals: stories.slice(0, 15), companies, newsCount: news.length };
   }).sort((a, b) => b.top - a.top);
 
   const data: RadarData = {
     builtAt: new Date().toISOString(), industries,
     notes: [
       `${searched.length} industry headlines searched today + ${archive.length} from our news archive (90 days).`,
-      'Industry score = its best signal (older news counts less: full weight for 14 days, 60% after 60 days) + 3 points for each other recent signal that confirms it (up to 12). Our own alert lines are not counted as news; chip "packaging" is kept out of packaging.',
+      'The same story from several outlets is one signal (shown as ×N sources). Industry score = its best signal (older news counts less: full weight for 14 days, 60% after 60 days) + 3 points for each other recent signal that confirms it (up to 12). Our own alert lines are not counted as news; chip "packaging" is kept out of packaging.',
       'A score is research priority (framework weights: magnitude 20, acceleration 15, duration 15, EPS impact 20, market neglect 15, bottleneck 15) — not a buy.',
       'The company map is a research lead, not proof of revenue linkage: verify product fit, customer, utilisation and materiality.',
     ],

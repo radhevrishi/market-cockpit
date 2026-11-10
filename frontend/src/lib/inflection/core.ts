@@ -62,7 +62,6 @@ export const INDUSTRIES: Industry[] = [
       B('UNIPARTS', 'Uniparts India', 'Castings / machined', 'Whether products go into Class 8 platforms'),
       B('ROLEXRINGS', 'Rolex Rings', 'Castings / machined', 'Truck exposure versus other end markets'),
       B('KALYANIFRG', 'Kalyani Forge', 'Castings / machined', 'Product fit and customer proof'),
-      B('JOSTS', 'JOST India', 'Adjacent truck systems', 'Truck / trailer exposure and geographic mix'),
       B('AUTOAXLES', 'Automotive Axles', 'Adjacent truck systems', 'Order conversion, exports'),
     ],
   },
@@ -72,12 +71,12 @@ export const INDUSTRIES: Industry[] = [
     match: /transformer|switchgear|substation|transmission line|grid (?:capex|investment|equipment|upgrade|congestion)|\bhvdc\b|power equipment|lead times?.{0,30}(?:transformer|grid|switchgear)/i,
     beneficiaries: [
       B('TARIL', 'Transformers & Rectifiers', 'Transformers', 'Order book, capacity additions, pricing, working capital'),
-      B('SHILCHAR', 'Shilchar Technologies', 'Transformers', 'Export orders, capacity, margins'),
+      B('SHILCTECH', 'Shilchar Technologies', 'Transformers', 'Export orders, capacity, margins'),
       B('VOLTAMP', 'Voltamp Transformers', 'Transformers', 'Utilisation, order inflow, pricing'),
       B('INDOTECH', 'Indo Tech Transformers', 'Transformers', 'Order book, capacity ramp'),
       B('MARINE', 'Marine Electricals', 'Switchgear / protection', 'Backlog, capacity, execution'),
       B('QPOWER', 'Quality Power Electrical', 'HVDC / grid equipment', 'Firm orders, execution, margins'),
-      B('HITACHIEN', 'Hitachi Energy India', 'Transformers / HVDC', 'Order book and margin (large)', true),
+      B('POWERINDIA', 'Hitachi Energy India', 'Transformers / HVDC', 'Order book and margin (large)', true),
       B('GVT&D', 'GE Vernova T&D India', 'Transformers / switchgear', 'Order book and margin (large)', true),
       B('APARINDS', 'Apar Industries', 'Conductors / cables', 'Conductor volumes, exports, margins', true),
       B('KEC', 'KEC International', 'Transmission EPC', 'Order inflow, execution, margins', true),
@@ -171,8 +170,10 @@ export const INDUSTRIES: Industry[] = [
   },
   {
     id: 'bearings', name: 'Precision bearings', why: 'Industrial and EV demand plus import substitution favour domestic bearing makers.',
-    queries: ['bearing demand India exports', 'precision bearings shortage'],
-    match: /\bbearings?\b.{0,40}(?:demand|exports?|shortage|capacity|prices)/i,
+    // zzz1241 — the two narrow searches found nothing in 90 days: search the industry and its makers by name.
+    queries: ['bearing demand India exports', 'precision bearings shortage', 'bearings industry India', 'NRB Bearings', 'SKF India bearings', 'Timken India', 'bearing manufacturer capacity India'],
+    match: /\bbearings\b(?!.{0,6}\bon\b)|\bbearing (?:maker|manufacturer|industry|demand|exports?|plant|capacity|business|segment)s?\b|\b(?:NRB|SKF|Timken|Schaeffler)\b/i,
+    exclude: /\bbearing the brunt\b|\b(?:has|have|had) (?:a|no|any) bearing\b|\bbearings? (?:of|on) (?:the|this|that)\b/i,
     beneficiaries: [
       B('NRBBEARING', 'NRB Bearings', 'Bearings', 'End-market mix, exports, margins'),
       B('SKFINDIA', 'SKF India', 'Bearings', 'Industrial demand (large)', true),
@@ -314,4 +315,30 @@ export function epsSensitivity(exposedRevenue: number, sharesCr: number | null, 
     const pat = exposedRevenue * g * m * (1 - tax);
     return { case: c, growth: g, margin: m, pat, eps: sharesCr && sharesCr > 0 ? pat / sharesCr : null };
   });
+}
+
+/**
+ * zzz1241 — near-identical headlines (the same story from several outlets, e.g. two Zetwerk pieces) are ONE signal.
+ * Word sets of the headline (outlet suffix removed) with Jaccard ≥ 0.55, or one containing ≥ 80% of the shorter one's
+ * words, merge; the highest-scoring copy is kept and `sources` counts the copies. Input best first.
+ */
+export function headlineWords(h: string): Set<string> {
+  const STOP = new Set(['the', 'a', 'an', 'of', 'to', 'in', 'on', 'for', 'and', 'as', 'at', 'by', 'with', 'from', 'is', 'its', 'it', 'be', 'are', 'has', 'have', 'will', 'says', 'said']);
+  return new Set(h.toLowerCase().replace(/\s+[-|–]\s+[^-|–]{2,40}$/, '').replace(/[^a-z0-9%]+/g, ' ').split(' ').filter((w) => w.length > 1 && !STOP.has(w)));
+}
+export function sameStory(a: Set<string>, b: Set<string>): boolean {
+  if (!a.size || !b.size) return false;
+  let both = 0; for (const w of a) if (b.has(w)) both++;
+  const union = a.size + b.size - both;
+  return both / union >= 0.55 || (Math.min(a.size, b.size) >= 4 && both / Math.min(a.size, b.size) >= 0.8);
+}
+export function dedupeSignals<T extends { headline: string }>(best: ReadonlyArray<T>): Array<T & { sources: number }> {
+  const out: Array<T & { sources: number }> = []; const words: Set<string>[] = [];
+  for (const s of best) {
+    const w = headlineWords(s.headline);
+    const i = words.findIndex((x) => sameStory(x, w));
+    if (i >= 0) { out[i].sources++; continue; }
+    out.push({ ...s, sources: 1 }); words.push(w);
+  }
+  return out;
 }

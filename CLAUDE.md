@@ -3994,3 +3994,10 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   (`annualised: false`), not an annual rate; merger / split fractions leave the value history too (not just holdings); windows name
   the holdings valued at last trade price. Holdings tab: `reconcilePortfolio` card — why the portfolio's invested value differs from
   the tradebook cost (outside the files / sold out / quantity / price), row by row.
+- zzz1241 (10 Nov): Hidden Inflection Radar fixes + redesign. `dedupeSignals` (core): the same story from several outlets
+  (word sets Jaccard ≥ 0.55 or ≥ 80% of the shorter one) is ONE signal with `sources` = copies — no longer a "confirmation".
+  Tickers: SHILCHAR → SHILCTECH, HITACHIEN → POWERINDIA, JOSTS removed (JOST India is not listed); names missing from our
+  NSE data show "check on BSE". Bearings searched by industry + makers (had 0 headlines in 90 days). Companies carry
+  salesCr (mc ÷ P/S) + sharesCr (mc ÷ price) so the EPS sensitivity is prefilled from a chosen company and a share-of-sales
+  %. KEY inflection-radar:v3. Page: full width, overview tiles, a score bar per industry, two-column cards tinted by score
+  band, signal-type chips, score parts as bars, heat-coloured growth / return cells, quiet industries folded at the end.
