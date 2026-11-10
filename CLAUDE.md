@@ -4011,3 +4011,8 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   include estimated dividends (`windowReturn(..., divFlows)`, `dividends` column). Each period row opens its 8 largest holdings
   at the end (`top`). Performance chart: day-by-day `dailySeries` (value, cost of shares held from `Ledger.costChanges`, net,
   index units × close `ix`), periods 3M–Max, hover read-out, index line restarted at each period's start value.
+- zzz1243 (10 Nov): tradebook result is STORED (`tradebook:analytics:v1`, 2 years) and served on every visit; prices / returns are
+  worked out again only on ↻ Recompute (force) or an upload with new trades. Served results carry `stale` (trades changed) /
+  `outdated` (ANALYTICS_VERSION changed) and the tab says when it was computed. Split reading is per TRADING DAY (quantity-weighted
+  price ÷ close): SHARDACROP's two buys at the open of a −20% day had been read as a 1:4 bonus and left a phantom 22-share holding
+  ("add SHARDACROP"). Levels only fall over time; a small step (1.25 / 1.33) needs the old level on ≥ 2 days and the new one to hold.

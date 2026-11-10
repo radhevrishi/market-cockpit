@@ -239,48 +239,67 @@ export function splitLevel(r: number, tol = 0.12): number | null {
 type TradeLite = Pick<Trade, 'date' | 'price' | 'qty' | 'side'>;
 
 /**
- * Does `splits` fail to explain the priced trades? A trade whose price ÷ adjusted close ÷ split factor is still ≥ 1.5×
- * (or ≤ 1 / 1.5×) away from 1 is a unit mismatch — an intraday move or a bad print does not do that. Smaller levels
- * (1.25, 1.33 — a 1:4 or 1:3 bonus) count only when at least two trades and 10% of the priced trades show them.
+ * zzz1243 — one reading per trading day: the day's quantity-weighted trade price ÷ that day's adjusted close ÷ the split
+ * factor, as a split level (null when it is not near one). A single trade at the open of a day the stock fell 20%
+ * (SHARDACROP: ₹1,080 at the open, close ₹958) is not a 1:4 bonus — the day's average (₹963) is ≈ 1.
  */
-export function splitsMismatch(trades: ReadonlyArray<TradeLite>, closeOn: (t: number) => number | null, splits: Split[] | undefined): boolean | null {
-  let n = 0, small = 0;
-  for (const t of trades) {
-    const c = closeOn(dayMs(t.date));
-    if (!c || !(c > 0) || !(t.price > 0)) continue;
-    n++;
-    const r = t.price / c / splitFactor(t.date, splits);
-    const up = splitLevel(r), down = splitLevel(1 / r);
-    const lvl = Math.max(up ?? 1, down ?? 1);
-    if (lvl >= 1.5) return true;
-    if (lvl > 1) small++;
+function dayLevels(trades: ReadonlyArray<TradeLite>, closeOn: (t: number) => number | null, splits?: Split[]): Array<{ t: number; lvl: number | null; inv: number | null }> {
+  const by = new Map<string, { q: number; v: number }>();
+  for (const t of trades) { if (!(t.price > 0) || !(t.qty > 0)) continue; const x = by.get(t.date) || { q: 0, v: 0 }; x.q += t.qty; x.v += t.qty * t.price; by.set(t.date, x); }
+  const out: Array<{ t: number; lvl: number | null; inv: number | null }> = [];
+  for (const d of Array.from(by.keys()).sort()) {
+    const c = closeOn(dayMs(d));
+    if (!c || !(c > 0)) continue;
+    const r = by.get(d)!.v / by.get(d)!.q / c / splitFactor(d, splits);
+    out.push({ t: dayMs(d), lvl: splitLevel(r), inv: splitLevel(1 / r) });
   }
-  if (!n) return null;
-  return small >= 2 && small >= 0.1 * n;
+  return out;
 }
 
 /**
- * Splits of ONE instrument read from its trades and the adjusted closes (`closeOn(t)`, null before the history starts):
- * each priced trade's level; a step down of ≥ 20% between trades is a split, dated the first trade in the new units
- * (or the price source's own date for it, when it lists one in between); a level still above 1 at the last trade is a
- * split after it. Null when no trade has a close.
+ * Does `splits` fail to explain the priced trades? A trading day whose average price ÷ adjusted close ÷ split factor is
+ * still ≥ 1.5× (or ≤ 1 / 1.5×) away from 1 is a unit mismatch — an intraday move does not do that. Smaller levels
+ * (1.25, 1.33 — a 1:4 or 1:3 bonus) count only on at least two trading days and 10% of them.
+ */
+export function splitsMismatch(trades: ReadonlyArray<TradeLite>, closeOn: (t: number) => number | null, splits: Split[] | undefined): boolean | null {
+  const days = dayLevels(trades, closeOn, splits);
+  if (!days.length) return null;
+  let small = 0;
+  for (const d of days) {
+    const lvl = Math.max(d.lvl ?? 1, d.inv ?? 1);
+    if (lvl >= 1.5) return true;
+    if (lvl > 1) small++;
+  }
+  return small >= 2 && small >= 0.1 * days.length;
+}
+
+/**
+ * Splits of ONE instrument read from its trades and the adjusted closes (`closeOn(t)`, null before the history starts),
+ * one reading per trading day. Levels can only fall over time (a split adds shares), so a reading above the current level
+ * is noise. A fall is a split when it is ≥ 1.5×, or — for 1.25 / 1.33 — when the old level was seen on at least two days
+ * and the new one holds on the next reading too. Dated the first day in the new units (or the price source's own date when
+ * it lists one in between). A level still above 1 at the last reading is a split after it. Null when no trade has a close.
  */
 export function splitsFromPrices(trades: ReadonlyArray<TradeLite>, closeOn: (t: number) => number | null, events?: Split[]): { splits: Split[]; firstPricedT: number } | null {
-  const sorted = trades.slice().sort((a, b) => a.date.localeCompare(b.date));
+  const days = dayLevels(trades, closeOn).filter((d) => d.lvl != null) as Array<{ t: number; lvl: number }>;
+  if (!days.length) return null;
   const evDate = (from: number, to: number, ratio: number) => (events || []).find((s) => s.t > from && s.t <= to && Math.abs(Math.log(s.ratio / ratio)) < 0.12)?.t;
   const out: Split[] = [];
-  let prev: { f: number; t: number } | null = null, first: number | null = null;
-  for (const t of sorted) {
-    const c = closeOn(dayMs(t.date));
-    if (!c || !(c > 0) || !(t.price > 0)) continue;
-    const f = splitLevel(t.price / c) ?? 1;
-    if (first == null) first = dayMs(t.date);
-    if (prev && f !== prev.f && prev.f / f > 1.2) { const r = splitLevel(prev.f / f) ?? prev.f / f; out.push({ t: evDate(prev.t, dayMs(t.date), r) ?? dayMs(t.date), ratio: r }); }
-    prev = { f, t: dayMs(t.date) };
+  let cur = days[0].lvl, curT = days[0].t, seen = 1;
+  for (let i = 1; i < days.length; i++) {
+    const d = days[i];
+    if (Math.abs(d.lvl - cur) < 1e-9) { curT = d.t; seen++; continue; }
+    if (d.lvl > cur) continue;   // noise: units never go back up
+    const r = splitLevel(cur / d.lvl, 0.02) ?? cur / d.lvl;
+    const next = days[i + 1];
+    const holds = !next || next.lvl <= d.lvl + 1e-9;
+    if (r < 1.5 && (seen < 2 || !holds)) continue;
+    if (r >= 1.5 && !holds && next && next.lvl >= cur - 1e-9) continue;   // one odd day between two normal ones
+    out.push({ t: evDate(curT, d.t, r) ?? d.t, ratio: r });
+    cur = d.lvl; curT = d.t; seen = 1;
   }
-  if (first == null || !prev) return null;
-  if (prev.f > 1.2) out.push({ t: evDate(prev.t, Infinity, prev.f) ?? prev.t + DAY, ratio: prev.f });
-  return { splits: out, firstPricedT: first };
+  if (cur > 1.2 && (cur >= 1.5 || seen >= 2)) out.push({ t: evDate(curT, Infinity, cur) ?? curT + DAY, ratio: cur });
+  return { splits: out, firstPricedT: days[0].t };
 }
 
 /**

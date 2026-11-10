@@ -175,7 +175,7 @@ export default function TradebookTab({ holdings, onApply }: { holdings: H[]; onA
   const [applied, setApplied] = useState<{ changes: HoldingChange[]; before: H[] } | null>(null);
 
   const load = useCallback(async (force = false) => {
-    setBusy(force ? 'Recomputing with fresh prices…' : 'Working out returns (prices for every instrument — up to a minute the first time)…'); setErr(null);
+    setBusy(force ? 'Recomputing with fresh prices… (about a minute)' : 'Loading your last result…'); setErr(null);
     try {
       const r = await fetch(`/api/v1/tradebook?analytics=1${force ? '&force=1' : ''}`, { signal: AbortSignal.timeout(280_000) });
       const j = await r.json();
@@ -257,6 +257,12 @@ export default function TradebookTab({ holdings, onApply }: { holdings: H[]; onA
   return (
     <div data-testid="tradebook-tab">
       <Card title="📒 Tradebook — upload your Zerodha equity tradebooks" right={data && <button onClick={() => load(true)} disabled={!!busy} style={{ fontSize: 11.5, padding: '5px 10px', borderRadius: 6, border: `1px solid ${C.line}`, background: 'transparent', color: C.mute, cursor: 'pointer' }}>↻ Recompute with latest prices</button>}>
+        {data && (
+          <div style={{ fontSize: 11.5, color: (data as any).stale || (data as any).outdated ? C.amber : C.dim, marginBottom: 8 }}>
+            Last computed {new Date(data.builtAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} with prices of {data.priceDate}. It is kept as it is — it recomputes only when you press ↻ Recompute or upload new trades.
+            {(data as any).stale ? ' Trades have changed since then — press ↻ Recompute.' : (data as any).outdated ? ' The site\'s calculation has been improved since — press ↻ Recompute to apply it.' : ''}
+          </div>
+        )}
         <label style={{ display: 'block', border: `1.5px dashed ${C.line}`, borderRadius: 10, padding: 18, textAlign: 'center', cursor: busy ? 'wait' : 'pointer', color: C.mute, fontSize: 13 }}>
           <input type="file" accept=".xlsx,.xls,.csv" multiple disabled={!!busy} style={{ display: 'none' }} onChange={(e) => { const picked = Array.from(e.target.files || []); e.currentTarget.value = ''; void onFiles(picked); }} />
           <b style={{ color: C.txt }}>Choose tradebook files</b> (Console → Reports → Tradebook → Equity, one file per year is fine).<br />

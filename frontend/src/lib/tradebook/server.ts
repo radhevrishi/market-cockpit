@@ -1,5 +1,6 @@
 // zzz1231 — tradebook storage (Postgres) + the analytics run (prices from the chart data cache, Yahoo). Server only.
 import { dbQuery } from '../db';
+import { kvDel, kvGet, kvSet } from '../kv';
 import { ensureSchema } from '../db-migrate';
 import { getDailySeries, type DailySeries } from '../chart-data';
 import { ensureIndexHistory, indexCloses } from '../index-history';
@@ -57,6 +58,7 @@ export async function clearTradebook(): Promise<void> {
   await dbQuery(`DELETE FROM tradebook_trade`);
   await dbQuery(`DELETE FROM tradebook_file`);
   _cache = null;
+  await kvDel(STORE_KEY).catch(() => undefined);
 }
 
 // ── prices ─────────────────────────────────────────────────────────────────────
@@ -124,15 +126,32 @@ export interface TradebookAnalytics {
   tradedSymbols: Array<{ symbol: string; isin: string }>;
 }
 
-let _cache: { sig: string; at: number; data: TradebookAnalytics } | null = null;
+// zzz1243 — the last result is STORED (key-value store, kept 2 years) and served as it is on every visit. Prices and returns
+// are worked out again only when the owner asks (↻ Recompute → force) or uploads new trades (the upload asks with force).
+// A stored result built from fewer trades or by an older version is still served, marked `stale` / `outdated`.
+const STORE_KEY = 'tradebook:analytics:v1';
+export const ANALYTICS_VERSION = 'zzz1243';
+type Stored = { sig: string; version: string; data: TradebookAnalytics };
+let _cache: Stored | null = null;
 let _running: Promise<TradebookAnalytics> | null = null;
 
-export async function tradebookAnalytics(force = false): Promise<TradebookAnalytics> {
+export async function tradebookAnalytics(force = false): Promise<TradebookAnalytics & { stale?: boolean; outdated?: boolean }> {
   const trades = await loadTrades();
   const sig = `${trades.length}|${trades.reduce((m, t) => (t.date > m ? t.date : m), '')}`;
-  if (!force && _cache && _cache.sig === sig && Date.now() - _cache.at < 3 * 3600_000) return _cache.data;
+  if (!force) {
+    const hit = _cache ?? (await kvGet<Stored>(STORE_KEY).catch(() => null));
+    if (hit?.data?.ok) {
+      _cache = hit;
+      const files = await tradebookFiles().catch(() => hit.data.files);
+      return { ...hit.data, files, stale: hit.sig !== sig, outdated: hit.version !== ANALYTICS_VERSION };
+    }
+  }
   if (_running) return _running;
-  _running = build(trades).then((data) => { _cache = { sig, at: Date.now(), data }; return data; }).finally(() => { _running = null; });
+  _running = build(trades).then(async (data) => {
+    _cache = { sig, version: ANALYTICS_VERSION, data };
+    await kvSet(STORE_KEY, _cache, 730 * 86_400).catch(() => undefined);
+    return data;
+  }).finally(() => { _running = null; });
   return _running;
 }
 

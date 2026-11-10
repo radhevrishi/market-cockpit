@@ -61,3 +61,22 @@ test('dividends are in a period\'s gain; the series carries the cost of the shar
   assert.equal(s[1].cost, 5000);
   assert.equal(s[1].value, 5500);
 });
+
+// zzz1243 — SHARDACROP: two buys at the open of a day it fell 20% are not a 1:4 bonus; the position is sold out.
+test('an intraday fall is not read as a bonus (SHARDACROP stays sold out)', () => {
+  const D = (d: string) => dayMs(d);
+  const close = (t: number) => (t >= D('2026-05-14') ? 958.5 : 1189.7);
+  const tr = [T('2026-05-13', 'buy', 89, 1168.4, 'INE221J01'), T('2026-05-14', 'buy', 6, 1080, 'INE221J01'), T('2026-05-14', 'buy', 7, 1081.9, 'INE221J01'),
+    T('2026-05-14', 'buy', 25, 964.4, 'INE221J01'), T('2026-05-14', 'sell', 127, 951.8, 'INE221J01')];
+  assert.equal(splitsMismatch(tr, close, undefined), false);
+  const r = splitsForInstrument(tr, close, undefined, undefined);
+  assert.equal(r.splits, undefined);
+  const l = buildLedger(tr, () => r.splits);
+  assert.equal(l.positions.length, 0);
+});
+
+test('the stored result is served on a visit; only Recompute or an upload works it out again', async () => {
+  const src = (await import('node:fs')).readFileSync(new URL('../tradebook/server.ts', import.meta.url), 'utf8');
+  assert.match(src, /if \(!force\) \{\s*const hit = _cache \?\? \(await kvGet/);
+  assert.doesNotMatch(src, /3 \* 3600_000/);
+});
