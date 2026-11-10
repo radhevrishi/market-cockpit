@@ -4032,3 +4032,8 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   India tab, European defence = India tab only). An industry is on a tab only if it has companies for it (`industryOnTab`).
   New India-only: defence-india, ems-india. New USA-only: dc-power-us, nuclear-us, defence-us, optical-us. News window
   90 days (was 120 while the notes said 90). KEY inflection-radar:v5.
+- zzz1247 (10 Nov): the "Another device saved a newer copy" banner is gone (owner: never useful). A save conflict (409) is settled
+  automatically by `autoResolveConflict` (lib/user-vault-client): objects are combined (both devices' items kept, this device wins on
+  the same item), anything else = this device's edit; the replaced server copy stays in server history and in
+  `mc:vault:backup:server:<key>`. If it cannot settle now the key pauses quietly and is retried every 10 min. VaultSyncNotice
+  shows only the list-limit recovery notice. Radar: USA wording for advanced packaging + bearings; "1 industry" plural.

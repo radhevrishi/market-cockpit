@@ -13,29 +13,52 @@ function browser() {
 const key = 'mc:decisions:v1';
 const wrapped = (value: unknown) => ({ __raw: JSON.stringify(value), parsed: value });
 
-test('409 preserves local changes, does not advance sync metadata, and emits a visible conflict', async () => {
+// zzz1247 — the owner found the conflict banner useless: a 409 is now settled automatically (no banner, no event).
+test('409 is settled automatically: both devices\' items kept, this device wins on the same item, no conflict event', async () => {
+  const b = browser();
+  try {
+    b.values.set(key, JSON.stringify({ AAA: 'mine', BBB: 'my edit' }));
+    const last = { [key]: { hash: quickHash(JSON.stringify(wrapped({ AAA: 'mine' }))), version: 1 } };
+    b.values.set('mc:vault:meta:v1', JSON.stringify(last));
+    const puts: any[] = [];
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      if (url.includes('list=1')) return Response.json({ keys: [{ key, version: 2, hash: 'newer' }] });
+      if (!init?.method) return Response.json({ ok: true, found: true, version: 2, value: wrapped({ BBB: 'their edit', CCC: 'theirs' }) });
+      const body = JSON.parse(String(init.body)); puts.push(body);
+      if (puts.length === 1) return Response.json({ conflict: true, version: 2 }, { status: 409 });
+      return Response.json({ ok: true, version: 3 });
+    }) as typeof fetch;
+    const result = await syncVaultOnce();
+    assert.equal(puts.length, 2);
+    assert.equal(puts[1].baseVersion, 2);
+    assert.deepEqual(JSON.parse(b.values.get(key)!), { BBB: 'my edit', CCC: 'theirs', AAA: 'mine' });
+    assert.deepEqual(result.pushed, [key]);
+    assert.equal(JSON.parse(b.values.get('mc:vault:meta:v1')!)[key].version, 3);
+    assert.ok(!b.events.some(e => e.type === 'mc:vault:conflict'));
+    assert.notEqual(b.values.get(`mc:vault:conflict-paused:${key}`), '1');
+    assert.ok(b.values.get(`mc:vault:backup:server:${key}`));
+  } finally { b.close(); }
+});
+
+test('409 that cannot be settled now pauses quietly and is retried later, not on every poll', async () => {
   const b = browser();
   try {
     b.values.set(key, JSON.stringify(['local edit']));
     const last = { [key]: { hash: quickHash(JSON.stringify(wrapped(['prior']))), version: 1 } };
     b.values.set('mc:vault:meta:v1', JSON.stringify(last));
     let puts = 0;
-    globalThis.fetch = (async (url: string) => {
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
       if (url.includes('list=1')) return Response.json({ keys: [{ key, version: 2, hash: 'newer' }] });
+      if (!init?.method) return new Response('down', { status: 503 });
       puts++; return Response.json({ conflict: true, version: 2 }, { status: 409 });
     }) as typeof fetch;
     const result = await syncVaultOnce();
-    assert.equal(puts, 1); assert.deepEqual(result.pushed, []); assert.match(result.error!, /conflict/);
+    assert.equal(puts, 1); assert.match(result.error!, /conflict/);
     assert.equal(b.values.get(key), JSON.stringify(['local edit']));
-    assert.deepEqual(JSON.parse(b.values.get('mc:vault:meta:v1')!), last);
-    assert.equal(JSON.parse(b.values.get(`mc:vault:conflict:${key}`)!).value.__raw, JSON.stringify(['local edit']));
-    assert.ok(b.events.some(e => e.type === 'mc:vault:conflict'));
     assert.equal(b.values.get(`mc:vault:conflict-paused:${key}`), '1');
-    // Subsequent polls can read metadata, but must not repeat an impossible
-    // version-checked PUT or consume CPU/network indefinitely.
-    const again = await syncVaultOnce();
-    assert.equal(puts, 1);
-    assert.deepEqual(again.pushed, []);
+    assert.ok(!b.events.some(e => e.type === 'mc:vault:conflict'));
+    await syncVaultOnce();
+    assert.equal(puts, 1);   // within 10 minutes: not tried again
   } finally { b.close(); }
 });
 

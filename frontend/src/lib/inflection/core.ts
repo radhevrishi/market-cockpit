@@ -178,6 +178,7 @@ export const INDUSTRIES: Industry[] = [
   },
   {
     id: 'semis-packaging', name: 'Semiconductor packaging (OSAT)', why: 'Packaging capacity is a bottleneck; qualified Indian assembly and test entrants can get first orders.',
+    usName: 'Semiconductor advanced packaging', usWhy: 'Advanced-packaging capacity (CoWoS, HBM) is the AI chip bottleneck; packaging, bonding and inspection suppliers get the orders.',
     queries: ['semiconductor packaging capacity', 'OSAT India plant', 'advanced packaging shortage CoWoS'],
     match: /\bosat\b|chip packaging|semiconductor (?:packaging|assembly)|advanced packaging|cowos/i,
     us: [
@@ -253,6 +254,7 @@ export const INDUSTRIES: Industry[] = [
   },
   {
     id: 'bearings', name: 'Precision bearings', why: 'Industrial and EV demand plus import substitution favour domestic bearing makers.',
+    usWhy: 'Aerospace and industrial demand with long lead times favour precision-bearing makers with qualified capacity.',
     // zzz1241 — the two narrow searches found nothing in 90 days: search the industry and its makers by name.
     queries: ['bearing demand India exports', 'precision bearings shortage', 'bearings industry India', 'NRB Bearings', 'SKF India bearings', 'Timken India', 'bearing manufacturer capacity India'],
     match: /\bbearings\b(?!.{0,6}\bon\b)|\bbearing (?:maker|manufacturer|industry|demand|exports?|plant|capacity|business|segment)s?\b|\b(?:NRB|SKF|Timken|Schaeffler)\b/i,

@@ -103,7 +103,14 @@ export async function syncVaultOnce(): Promise<{ pushed: string[]; pulled: strin
     for (const key of USER_STATE_KEYS_CLIENT) {
       // Never auto-overwrite either side while the owner has a pending conflict.
       // Independent keys can still sync; the banner survives tab reloads.
-      if (localStorage.getItem(CONFLICT_PAUSED_PREFIX + key) === '1') continue;
+      // zzz1247 — a paused key is settled automatically (no banner): tried again at most every 10 minutes
+      if (localStorage.getItem(CONFLICT_PAUSED_PREFIX + key) === '1') {
+        const lastTry = Number(localStorage.getItem(CONFLICT_TRY_PREFIX + key) || 0);
+        if (Date.now() - lastTry < 10 * 60_000) continue;
+        localStorage.setItem(CONFLICT_TRY_PREFIX + key, String(Date.now()));
+        if (await autoResolveConflict(key, meta, device)) pushed.push(key);
+        continue;
+      }
       const local = readLocal(key); const lh = localHashOf(local);
       // zzz944: merged keys — when the server holds a copy this device has not merged yet, combine both instead of letting one
       // replace the other (first contact used to hand the server copy the win and wiped this device's chart drawings)
@@ -144,11 +151,14 @@ export async function syncVaultOnce(): Promise<{ pushed: string[]; pulled: strin
       if (plan.kind === 'push' && local != null) {
         const p = await fetch('/api/v1/user-state', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, value: local, baseVersion: meta[key]?.version ?? null, device }), signal: AbortSignal.timeout(20_000) });
         if (p.status === 409) {
-          // Keep both versions: local edit stays active; a recovery copy is explicit.
+          // zzz1247 — the owner found the "Another device saved a newer copy" banner useless: both copies are combined
+          // automatically (this device's edit wins on the same item; the server keeps every earlier version in its history).
           localStorage.setItem(`mc:vault:conflict:${key}`, JSON.stringify({ at: new Date().toISOString(), value: local }));
+          if (await autoResolveConflict(key, meta, device)) { pushed.push(key); continue; }
+          // could not settle now (network / edited meanwhile): pause this key quietly, the next syncs try again
           localStorage.setItem(CONFLICT_PAUSED_PREFIX + key, '1');
-          window.dispatchEvent(new CustomEvent('mc:vault:conflict', { detail: { key } }));
-          return { pushed, pulled, error: `Sync conflict for ${key}; local edits preserved` };
+          localStorage.setItem(CONFLICT_TRY_PREFIX + key, String(Date.now()));
+          return { pushed, pulled, error: `Sync conflict for ${key}; local edits preserved, will retry` };
         }
         if (!p.ok) return { pushed, pulled, error: `save HTTP ${p.status}` };
         const pj = await p.json();
@@ -176,6 +186,51 @@ export async function syncVaultOnce(): Promise<{ pushed: string[]; pulled: strin
   } catch (e: any) {
     return { pushed, pulled, error: String(e?.message || e) };
   } finally { running = false; }
+}
+
+const CONFLICT_TRY_PREFIX = 'mc:vault:conflict-try:';
+const isPlainObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+/**
+ * zzz1247 — settle a save conflict without asking. Objects (lists keyed by ticker / id) are combined: items from both devices are
+ * kept and this device's version wins on the same item. Anything else: this device's edit wins. The replaced server copy stays in
+ * the server's version history and in a local backup (mc:vault:backup:server:<key>). Returns false when it could not settle now.
+ */
+export async function autoResolveConflict(key: string, meta: Record<string, VaultMetaEntry>, device: string | null): Promise<boolean> {
+  try {
+    const local = readLocal(key); if (local == null) return false;
+    const lh = localHashOf(local);
+    const g = await fetch(`/api/v1/user-state?key=${encodeURIComponent(key)}`, { cache: 'no-store', signal: AbortSignal.timeout(20_000) });
+    if (!g.ok) return false;
+    const gj = await g.json();
+    let changedLocal = false;
+    if (gj.found) {
+      try { localStorage.setItem(`mc:vault:backup:server:${key}`, JSON.stringify({ at: new Date().toISOString(), version: gj.version, value: gj.value })); } catch { /* quota */ }
+      if (localHashOf(readLocal(key)) !== lh) return false;   // edited while reading: next sync
+      if (key === NOTES_BUNDLE) {
+        const before = JSON.stringify(local);
+        writeLocal(key, gj.value);   // adds only notes this device does not have
+        changedLocal = JSON.stringify(readLocal(key)) !== before;
+      } else {
+        const lv = unwrapVaultValue(local), sv = unwrapVaultValue(gj.value);
+        if (isPlainObject(lv) && isPlainObject(sv)) {
+          const merged = { ...sv, ...lv };
+          if (JSON.stringify(merged) !== JSON.stringify(lv)) { writeLocal(key, { __raw: JSON.stringify(merged) }); changedLocal = true; }
+        }
+      }
+    }
+    const now = readLocal(key); if (now == null) return false;
+    const p = await fetch('/api/v1/user-state', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, value: now, baseVersion: gj.found ? Number(gj.version) : null, device }), signal: AbortSignal.timeout(20_000) });
+    if (!p.ok) return false;
+    const pj = await p.json();
+    if (!pj.ok) return false;
+    meta[key] = { hash: localHashOf(now)!, version: Number(pj.version) };
+    localStorage.setItem(META_KEY, JSON.stringify(meta));
+    rememberBase(key, now);
+    localStorage.setItem(CONFLICT_PAUSED_PREFIX + key, '0');
+    if (changedLocal) window.dispatchEvent(new CustomEvent('mc:vault:restored', { detail: { keys: [key] } }));
+    return true;
+  } catch { return false; }
 }
 
 /** Explicit resolution from the conflict notice; every server write remains version checked. */

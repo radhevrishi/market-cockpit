@@ -1,23 +1,15 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { resolveVaultConflict, pendingVaultConflicts } from '@/lib/user-vault-client';
 import { pendingOverflows, dismissOverflow, deleteOverflow, OVERFLOW_PREFIX, type OverflowNotice } from '@/lib/vault-overflow';
 
-/** A conflict must be visible; neither device's saved copy is silently replaced. */
+/** zzz1247 — only the list-limit recovery notice; save conflicts are settled automatically (lib/user-vault-client). */
 export default function VaultSyncNotice() {
-  const [key, setKey] = useState('');
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
   // zzz1078 (B03) — a merge that reached a list limit: what did not fit, with the recovery copy to download
   // zzz1093 (R2) — every unresolved recovery record in this browser, read on mount (survives reload / another page)
   const [overflows, setOverflows] = useState<(OverflowNotice & { kept?: boolean })[]>([]);
   const reread = () => { try { setOverflows(pendingOverflows(localStorage)); } catch { setOverflows([]); } };
   useEffect(() => {
     reread();
-    // The earlier notice disappeared on reload despite a conflict being
-    // unresolved; restore it without another doomed PUT to the server.
-    setKey(pendingVaultConflicts()[0] || '');
-    const onConflict = (event: Event) => setKey((event as CustomEvent<{ key: string }>).detail.key);
     const onOverflow = (event: Event) => {
       const d = (event as CustomEvent<{ key: string; message: string; kept?: boolean }>).detail;
       let list: (OverflowNotice & { kept?: boolean })[] = [];
@@ -28,11 +20,10 @@ export default function VaultSyncNotice() {
     };
     const onStorage = (e: StorageEvent) => { if (!e.key || e.key.startsWith(OVERFLOW_PREFIX)) reread(); };
     window.addEventListener('storage', onStorage);
-    window.addEventListener('mc:vault:conflict', onConflict);
     window.addEventListener('mc:vault:overflow', onOverflow);
-    return () => { window.removeEventListener('mc:vault:conflict', onConflict); window.removeEventListener('mc:vault:overflow', onOverflow); window.removeEventListener('storage', onStorage); };
+    return () => { window.removeEventListener('mc:vault:overflow', onOverflow); window.removeEventListener('storage', onStorage); };
   }, []);
-  if (!key && overflows.length) {
+  if (overflows.length) {
     const dl = (k: string) => {
       const value = localStorage.getItem(`${OVERFLOW_PREFIX}${k}`);
       if (!value) return;
@@ -52,25 +43,7 @@ export default function VaultSyncNotice() {
       ))}
     </div>;
   }
-  if (!key) return null;
-  const resolve = async (choice: 'local' | 'server') => {
-    setBusy(true); setError('');
-    try { await resolveVaultConflict(key, choice); setKey(pendingVaultConflicts()[0] || ''); }
-    catch (e) { setError(e instanceof Error ? e.message : 'Resolution failed'); }
-    finally { setBusy(false); }
-  };
-  const download = () => {
-    const value = localStorage.getItem(`mc:vault:conflict:${key}`);
-    if (!value) return;
-    const url = URL.createObjectURL(new Blob([value], { type: 'application/json' }));
-    const a = document.createElement('a'); a.href = url; a.download = 'market-cockpit-local-edit.json'; a.click(); URL.revokeObjectURL(url);
-  };
-  return <div role="alert" style={{ padding: '10px 16px', background: 'var(--mc-bg-2)', color: 'var(--mc-text-1)', borderBottom: '1px solid var(--mc-bg-4)' }}>
-    Another device saved a newer copy. Your local edits are preserved, but have not synced.
-    {' '}<button onClick={download}>Download local edits</button>
-    {' '}<button disabled={busy} onClick={() => void resolve('local')}>Keep this device’s edits</button>
-    {' '}<button disabled={busy} onClick={() => void resolve('server')}>Use saved server copy</button>
-    {' '}<button onClick={() => setKey('')}>Dismiss</button>
-    {error && <span> {error}</span>}
-  </div>;
+  // zzz1247 — no "Another device saved a newer copy" banner any more: save conflicts are settled automatically in
+  // lib/user-vault-client (autoResolveConflict). Only the list-limit recovery notice above remains.
+  return null;
 }

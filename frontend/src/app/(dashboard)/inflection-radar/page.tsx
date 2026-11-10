@@ -259,7 +259,7 @@ export default function InflectionRadarPage() {
           {quiet.length > 0 && (
             <div style={{ marginTop: 14, background: C.panel, border: `1px dashed ${C.line}`, borderRadius: 14, padding: '12px 14px' }}>
               <button onClick={() => setShowQuiet(!showQuiet)} style={{ all: 'unset', cursor: 'pointer', fontSize: 12.5, fontWeight: 800, color: C.mute }}>
-                {showQuiet ? '▾' : '▸'} {quiet.length} industries watched with no signal in the news yet
+                {showQuiet ? '▾' : '▸'} {quiet.length} {quiet.length === 1 ? 'industry' : 'industries'} watched with no signal in the news yet
               </button>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
                 {quiet.map((x) => <span key={x.id} title={x.why} style={{ fontSize: 11.5, padding: '3px 9px', borderRadius: 999, border: `1px solid ${C.line}`, color: C.mute }}>{x.name}{x.newsCount ? ` · ${x.newsCount} headlines, none abnormal` : ''}</span>)}
