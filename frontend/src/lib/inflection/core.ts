@@ -448,4 +448,4 @@ export function dedupeSignals<T extends { headline: string }>(best: ReadonlyArra
 
 /** zzz1244 — one company's quarterly results are company news, not an industry signal (Timken India's Q2 had topped bearings). */
 export const isCompanyResultsHeadline = (t: string) =>
-  /\b(?:Q[1-4]|first|second|third|fourth)[- ]?(?:quarter|qtr)?\s*(?:FY\d{2,4}\s*)?(?:results?|earnings)\b|\bresults?:|\b(?:net )?profit (?:jumps|rises|falls|surges|up|down|grows)|\bPAT (?:jumps|rises|up|falls|grows)|\bbeats? (?:estimates|expectations)\b/i.test(t);
+  /\b(?:Q[1-4]|first|second|third|fourth)[- ]?(?:quarter|qtr)?\s*(?:FY\s*)?'?(?:\d{2,4}\s*)?:?\s*(?:results?|earnings)\b|\bearnings beat\b|\bresults?:|\b(?:net )?profit (?:jumps|rises|falls|surges|up|down|grows)|\bPAT (?:jumps|rises|up|falls|grows)|\bbeats? (?:estimates|expectations)\b/i.test(t);

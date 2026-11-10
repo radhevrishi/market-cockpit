@@ -41,3 +41,6 @@ test('every industry has a USA supplier map with small / mid names', () => {
     assert.ok((i.us || []).some((b) => !b.large), i.id);
   }
 });
+test('"RBC Bearings Q2 2027: Earnings Beat" is company results', () => {
+  assert.equal(isCompanyResultsHeadline('RBC Bearings Q2 2027: Earnings Beat, $2.4B Backlog, and Stronger Half Ahead'), true);
+});
