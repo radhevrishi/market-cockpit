@@ -216,6 +216,130 @@ export function inferIsinSplits(raw: Trade[]): Map<string, Split[]> {
   return out;
 }
 
+// ── zzz1242 — splits checked against the price history ──────────────────────
+//
+// The book is valued with the price source's closes, which are already adjusted for every split and bonus. A trade's
+// price ÷ that day's adjusted close is therefore the number of today's shares one traded share became — 1 after the
+// last split, 2 before a 1:1 bonus, 4.5 before a 1:2 bonus followed by a 1:2 split … When the price source's split list
+// does not explain that (a split missing, listed twice, on the wrong day or with the wrong ratio), quantity × price no
+// longer equals the money paid and the book's value at a year end goes wrong while the totals still agree (the owner's
+// FY25 showed +₹5.3 L, FY26 −₹4.6 L, against ≈ +₹2.1 L and −₹0.5 L in another tool). Then the units are read from
+// the trades themselves.
+
+/** Split / bonus ratios (and the usual pairs, e.g. 1:2 bonus then 1:2 split = 4.5). */
+export const SPLIT_LEVELS = [1, 1.25, 4 / 3, 1.5, 2, 2.5, 3, 4, 4.5, 5, 6, 10, 20];
+/** The split level a price ratio stands for, or null when it is not within 12% of one (an intraday move, a bad print). */
+export function splitLevel(r: number, tol = 0.12): number | null {
+  if (!(r > 0) || !Number.isFinite(r)) return null;
+  let best: number | null = null, e = tol;
+  for (const n of SPLIT_LEVELS) { const d = Math.abs(Math.log(r / n)); if (d <= e) { e = d; best = n; } }
+  return best;
+}
+
+type TradeLite = Pick<Trade, 'date' | 'price' | 'qty' | 'side'>;
+
+/**
+ * Does `splits` fail to explain the priced trades? A trade whose price ÷ adjusted close ÷ split factor is still ≥ 1.5×
+ * (or ≤ 1 / 1.5×) away from 1 is a unit mismatch — an intraday move or a bad print does not do that. Smaller levels
+ * (1.25, 1.33 — a 1:4 or 1:3 bonus) count only when at least two trades and 10% of the priced trades show them.
+ */
+export function splitsMismatch(trades: ReadonlyArray<TradeLite>, closeOn: (t: number) => number | null, splits: Split[] | undefined): boolean | null {
+  let n = 0, small = 0;
+  for (const t of trades) {
+    const c = closeOn(dayMs(t.date));
+    if (!c || !(c > 0) || !(t.price > 0)) continue;
+    n++;
+    const r = t.price / c / splitFactor(t.date, splits);
+    const up = splitLevel(r), down = splitLevel(1 / r);
+    const lvl = Math.max(up ?? 1, down ?? 1);
+    if (lvl >= 1.5) return true;
+    if (lvl > 1) small++;
+  }
+  if (!n) return null;
+  return small >= 2 && small >= 0.1 * n;
+}
+
+/**
+ * Splits of ONE instrument read from its trades and the adjusted closes (`closeOn(t)`, null before the history starts):
+ * each priced trade's level; a step down of ≥ 20% between trades is a split, dated the first trade in the new units
+ * (or the price source's own date for it, when it lists one in between); a level still above 1 at the last trade is a
+ * split after it. Null when no trade has a close.
+ */
+export function splitsFromPrices(trades: ReadonlyArray<TradeLite>, closeOn: (t: number) => number | null, events?: Split[]): { splits: Split[]; firstPricedT: number } | null {
+  const sorted = trades.slice().sort((a, b) => a.date.localeCompare(b.date));
+  const evDate = (from: number, to: number, ratio: number) => (events || []).find((s) => s.t > from && s.t <= to && Math.abs(Math.log(s.ratio / ratio)) < 0.12)?.t;
+  const out: Split[] = [];
+  let prev: { f: number; t: number } | null = null, first: number | null = null;
+  for (const t of sorted) {
+    const c = closeOn(dayMs(t.date));
+    if (!c || !(c > 0) || !(t.price > 0)) continue;
+    const f = splitLevel(t.price / c) ?? 1;
+    if (first == null) first = dayMs(t.date);
+    if (prev && f !== prev.f && prev.f / f > 1.2) { const r = splitLevel(prev.f / f) ?? prev.f / f; out.push({ t: evDate(prev.t, dayMs(t.date), r) ?? dayMs(t.date), ratio: r }); }
+    prev = { f, t: dayMs(t.date) };
+  }
+  if (first == null || !prev) return null;
+  if (prev.f > 1.2) out.push({ t: evDate(prev.t, Infinity, prev.f) ?? prev.t + DAY, ratio: prev.f });
+  return { splits: out, firstPricedT: first };
+}
+
+/**
+ * A split read from the trade prices alone, for days with no price history (a company listed on NSE only later): the
+ * price falls to about 1 / ratio between two trades (≤ 60 days apart, ratio ≥ 1.5) while shares are held, AND without the
+ * split the later sells would exceed what was bought. SIKA: 23 held at ₹2,505, then 115 sold at ₹520–536 (a 1:5 split).
+ */
+export function splitsFromTradeGaps(trades: ReadonlyArray<TradeLite>): Split[] {
+  const days = new Map<string, { bq: number; sq: number; v: number; q: number }>();
+  for (const t of trades) { const x = days.get(t.date) || { bq: 0, sq: 0, v: 0, q: 0 }; if (t.side === 'buy') x.bq += t.qty; else x.sq += t.qty; x.v += t.qty * t.price; x.q += t.qty; days.set(t.date, x); }
+  const ds = Array.from(days.keys()).sort();
+  const out: Split[] = [];
+  let held = 0;
+  for (let i = 0; i < ds.length; i++) {
+    const d = days.get(ds[i])!;
+    if (i > 0 && held > 1e-9 && d.q > 0) {
+      const p = days.get(ds[i - 1])!;
+      const pr = p.q > 0 ? (p.v / p.q) / (d.v / d.q) : 0;
+      if (pr >= 1.35 && splitLevel(pr, 0.15) && dayMs(ds[i]) - dayMs(ds[i - 1]) <= 60 * DAY) {
+        // the deepest the holding would go below zero without a split → the ratio the quantities need
+        let run = held, low = held;
+        for (let j = i; j < ds.length; j++) { const x = days.get(ds[j])!; run += x.bq - x.sq; low = Math.min(low, run); }
+        if (low < -0.5) {
+          const need = (held - low) / held;
+          // the split level nearest to what the quantities need, among those the price fall allows
+          const cands = SPLIT_LEVELS.filter((n) => n >= 1.5 && Math.abs(Math.log(pr / n)) <= 0.25);
+          const r = cands.sort((a, b) => Math.abs(Math.log(need / a)) - Math.abs(Math.log(need / b)))[0];
+          if (r) { out.push({ t: dayMs(ds[i]), ratio: r }); held *= r; }
+        }
+      }
+    }
+    held = Math.max(0, held + d.bq - d.sq);
+  }
+  return out;
+}
+
+/**
+ * zzz1242 — the splits used for one instrument. The price source's list (plus splits read from an ISIN change) is kept
+ * when it explains the priced trades (`splitsMismatch`). Otherwise, from the first priced trade on, the splits are read from the
+ * prices; before it, the price source's list, ISIN changes and price gaps in the trades are used. `source` says which.
+ */
+export function splitsForInstrument(trades: ReadonlyArray<TradeLite>, closeOn: (t: number) => number | null, events: Split[] | undefined, isinSplits: Split[] | undefined): { splits: Split[] | undefined; source: 'price-source' | 'trades' } {
+  const listed: Split[] = [...(events || [])];
+  for (const s of isinSplits || []) if (!listed.some((x) => Math.abs(x.t - s.t) <= 45 * DAY)) listed.push(s);
+  listed.sort((a, b) => a.t - b.t);
+  const pr = splitsMismatch(trades, closeOn, listed) ? splitsFromPrices(trades, closeOn, events) : null;
+  if (!pr) {
+    // no price for any trade, or the list fits: keep it, plus gaps on the unpriced days
+    const extra = splitsFromTradeGaps(trades.filter((t) => { const c = closeOn(dayMs(t.date)); return !c; })).filter((s) => !listed.some((x) => Math.abs(x.t - s.t) <= 45 * DAY));
+    const all = [...listed, ...extra].sort((a, b) => a.t - b.t);
+    return { splits: all.length ? all : undefined, source: 'price-source' };
+  }
+  const early = trades.filter((t) => dayMs(t.date) < pr.firstPricedT);
+  const older = [...listed];
+  for (const s of splitsFromTradeGaps(early)) if (!older.some((x) => Math.abs(x.t - s.t) <= 45 * DAY)) older.push(s);
+  const all = [...older.filter((s) => s.t <= pr.firstPricedT), ...pr.splits].sort((a, b) => a.t - b.t);
+  return { splits: all.length ? all : undefined, source: 'trades' };
+}
+
 /** Same trade in two files (or twice in one) → once. */
 export function dedupeTrades(trades: Trade[]): Trade[] {
   const m = new Map<string, Trade>();
@@ -252,6 +376,7 @@ export interface Ledger {
   symbolOf: Map<string, string>;
   unmatched: Array<{ isin: string; symbol: string; date: string; qty: number }>;
   demerged: Array<{ symbol: string; parent: string; qty: number; date: string }>;
+  costChanges: Array<{ t: number; d: number }>;   // zzz1242 — cost of the shares held: + on a buy, − the sold lots' cost
   firstDate: string | null; lastDate: string | null;
   tradeCount: number;
 }
@@ -288,6 +413,7 @@ export function buildLedger(tradesIn: Trade[], splitsOf: (isin: string) => Split
   const qtyChanges = new Map<string, Array<{ t: number; dq: number }>>();
   const lastPx = new Map<string, Array<{ t: number; px: number }>>();
   const unmatched: Ledger['unmatched'] = [];
+  const costCh: Array<{ t: number; d: number }> = [];
   for (const [isin, days] of byIsin) {
     const symbol = symbolOf.get(isin) || isin;
     const lots: Lot[] = [];
@@ -304,7 +430,7 @@ export function buildLedger(tradesIn: Trade[], splitsOf: (isin: string) => Split
       const iq = Math.min(d.bq, d.sq);
       if (iq > 1e-9) realized.push({ isin, symbol, buyDate: date, sellDate: date, qty: r2(iq), buyPx: bpx, sellPx: spx, pnl: iq * (spx - bpx), days: 0, kind: 'INTRADAY' });
       const netBuy = d.bq - iq, netSell = d.sq - iq;
-      if (netBuy > 1e-9) { lots.push({ date, qty: netBuy, px: bpx }); ch.push({ t: dayMs(date), dq: netBuy }); }
+      if (netBuy > 1e-9) { lots.push({ date, qty: netBuy, px: bpx }); ch.push({ t: dayMs(date), dq: netBuy }); costCh.push({ t: dayMs(date), d: netBuy * bpx }); }
       if (netSell > 1e-9) {
         // 2. delivery sell — oldest lots first
         let left = netSell, sold = 0;
@@ -316,7 +442,7 @@ export function buildLedger(tradesIn: Trade[], splitsOf: (isin: string) => Split
             isin, symbol, buyDate: lot.date, sellDate: date, qty: q, buyPx: lot.px, sellPx: spx, pnl: q * (spx - lot.px),
             days: Math.round((dayMs(date) - dayMs(lot.date)) / DAY), kind: lt ? 'LTCG' : 'STCG',
           });
-          lot.qty -= q; left -= q; sold += q;
+          lot.qty -= q; left -= q; sold += q; costCh.push({ t: dayMs(date), d: -q * lot.px });
           if (lot.qty <= 1e-9) lots.shift();
         }
         if (sold > 0) ch.push({ t: dayMs(date), dq: -sold });
@@ -340,6 +466,7 @@ export function buildLedger(tradesIn: Trade[], splitsOf: (isin: string) => Split
           const opx = op && op.px > 0 ? op.px : spx;
           ch.push({ t: ot, dq: left }, { t: dayMs(date), dq: -left });
           opening.push({ t: ot, amt: -left * opx });
+          costCh.push({ t: ot, d: left * opx }, { t: dayMs(date), d: -left * opx });
           px.push({ t: ot, px: opx });   // a price for the days before its first trade in the files
         }
       }
@@ -355,7 +482,7 @@ export function buildLedger(tradesIn: Trade[], splitsOf: (isin: string) => Split
       const lastT = Math.max(...Array.from(days.keys()).map(dayMs));
       ch.push({ t: lastT, dq: -dust });   // zzz1240 — and out of the book's value history, not only the holdings list
       ch.sort((a, b) => a.t - b.t);
-      let d = dust; for (let i = lots.length - 1; i >= 0 && d > 1e-9; i--) { const q = Math.min(lots[i].qty, d); lots[i].qty -= q; d -= q; if (lots[i].qty <= 1e-9) lots.splice(i, 1); } }
+      let d = dust; for (let i = lots.length - 1; i >= 0 && d > 1e-9; i--) { const q = Math.min(lots[i].qty, d); costCh.push({ t: lastT, d: -q * lots[i].px }); lots[i].qty -= q; d -= q; if (lots[i].qty <= 1e-9) lots.splice(i, 1); } }
     const qty = lots.reduce((s, l) => s + l.qty, 0);
     if (qty > 1e-6) {
       const cost = lots.reduce((s, l) => s + l.qty * l.px, 0);
@@ -366,7 +493,7 @@ export function buildLedger(tradesIn: Trade[], splitsOf: (isin: string) => Split
   const flows = Array.from(flowsByDay.entries()).map(([d, amt]) => ({ t: dayMs(d), amt })).sort((a, b) => a.t - b.t);
   positions.sort((a, b) => b.cost - a.cost);
   return {
-    positions, realized, flows, qtyChanges, lastPx, symbolOf, unmatched, demerged,
+    positions, realized, flows, qtyChanges, lastPx, symbolOf, unmatched, demerged, costChanges: costCh.sort((a, b) => a.t - b.t),
     firstDate: trades[0]?.date ?? null, lastDate: trades[trades.length - 1]?.date ?? null, tradeCount: trades.length,
   };
 }
@@ -420,10 +547,56 @@ export function valueAt(l: Ledger, t: number, priceAt: PriceAt): { value: number
   return { value, estimated, estimatedSymbols };
 }
 
+/** zzz1242 — the largest holdings at the end of day t (what a period's end value is made of). */
+export function holdingsAt(l: Ledger, t: number, priceAt: PriceAt, n = 8): WindowReturn['top'] {
+  const out: WindowReturn['top'] = [];
+  for (const isin of l.qtyChanges.keys()) {
+    const q = qtyAt(l, isin, t);
+    if (!q) continue;
+    let p = priceAt(isin, t), estimated = false;
+    if (p == null || !(p > 0)) { const tp = (l.lastPx.get(isin) || []).filter((x) => x.t <= t && x.px > 0); p = tp.length ? tp[tp.length - 1].px : null; estimated = true; }
+    out.push({ symbol: l.symbolOf.get(isin) || isin, qty: Math.round(q * 100) / 100, price: p, value: p ? q * p : 0, estimated });
+  }
+  return out.sort((a, b) => b.value - a.value).slice(0, n);
+}
+
+/**
+ * zzz1242 — the book day by day (weekdays): value, cost of the shares held, net money put in, and the same money in the
+ * index. One pass, so ~1,200 days × the holdings of each day.
+ */
+export function dailySeries(l: Ledger, days: number[], priceAt: PriceAt, benchAt?: (t: number) => number | null): Array<{ d: string; value: number; cost: number; net: number; bench: number | null; ix: number | null }> {
+  const isins = Array.from(l.qtyChanges.keys());
+  const ptr = new Map<string, number>(), qty = new Map<string, number>();
+  let ci = 0, cost = 0, fi = 0, net = 0, units = 0;
+  const out: Array<{ d: string; value: number; cost: number; net: number; bench: number | null; ix: number | null }> = [];
+  for (const t of days) {
+    for (const isin of isins) {
+      const ch = l.qtyChanges.get(isin)!;
+      let i = ptr.get(isin) ?? 0, q = qty.get(isin) ?? 0;
+      while (i < ch.length && ch[i].t <= t) { q += ch[i].dq; i++; }
+      ptr.set(isin, i); qty.set(isin, q);
+    }
+    for (; ci < l.costChanges.length && l.costChanges[ci].t <= t; ci++) cost += l.costChanges[ci].d;
+    for (; fi < l.flows.length && l.flows[fi].t <= t; fi++) { const f = l.flows[fi]; net -= f.amt; const ix = benchAt?.(f.t); if (ix) units += -f.amt / ix; }
+    let value = 0;
+    for (const [isin, q] of qty) {
+      if (!(q > 1e-9)) continue;
+      let p = priceAt(isin, t);
+      if (p == null || !(p > 0)) { const tp = l.lastPx.get(isin) || []; let k = -1; for (let j = 0; j < tp.length && tp[j].t <= t; j++) if (tp[j].px > 0) k = j; p = k >= 0 ? tp[k].px : null; }
+      if (p) value += q * p;
+    }
+    const ix = benchAt?.(t);
+    out.push({ d: isoDay(t), value: Math.round(value), cost: Math.round(Math.max(0, cost)), net: Math.round(net), bench: ix ? Math.round(units * ix) : null, ix: ix ?? null });
+  }
+  return out;
+}
+
 export interface WindowReturn {
   label: string; from: string; to: string;
   startValue: number; endValue: number; invested: number; withdrawn: number;
-  gain: number;                // end + withdrawn − start − invested
+  gain: number;                // end + withdrawn + dividends − start − invested
+  dividends: number;           // zzz1242 — estimated cash dividends received inside the window (in the gain and the XIRR)
+  top: Array<{ symbol: string; qty: number; price: number | null; value: number; estimated: boolean }>;   // zzz1242 — largest holdings at the end
   xirr: number | null;         // annual
   simple: number | null;       // Modified Dietz, for the window (not annualised)
   bench: { xirr: number | null; endValue: number; gain: number } | null;
@@ -433,13 +606,15 @@ export interface WindowReturn {
 }
 
 /** Returns over [from, to]: the book at the close before `from`, the trade flows inside, the book at `to`. */
-export function windowReturn(l: Ledger, label: string, from: number, to: number, priceAt: PriceAt, benchAt?: (t: number) => number | null): WindowReturn {
+export function windowReturn(l: Ledger, label: string, from: number, to: number, priceAt: PriceAt, benchAt?: (t: number) => number | null, divs?: Flow[]): WindowReturn {
   const start = valueAt(l, from - DAY, priceAt), end = valueAt(l, to, priceAt);
+  const divIn = (divs || []).filter((f) => f.t >= from && f.t <= to && f.amt > 0);
+  const dividends = divIn.reduce((s, f) => s + f.amt, 0);
   const inside = l.flows.filter((f) => f.t >= from && f.t <= to);
   const invested = -inside.filter((f) => f.amt < 0).reduce((s, f) => s + f.amt, 0);
   const withdrawn = inside.filter((f) => f.amt > 0).reduce((s, f) => s + f.amt, 0);
-  const gain = end.value + withdrawn - start.value - invested;
-  const flows: Flow[] = [...(start.value > 0 ? [{ t: from, amt: -start.value }] : []), ...inside, ...(end.value > 0 ? [{ t: to, amt: end.value }] : [])];
+  const gain = end.value + withdrawn + dividends - start.value - invested;
+  const flows: Flow[] = [...(start.value > 0 ? [{ t: from, amt: -start.value }] : []), ...inside, ...divIn, ...(end.value > 0 ? [{ t: to, amt: end.value }] : [])];
   const span = Math.max(1, to - from);
   // zzz1239 — an annual rate over a few days is meaningless (2 days of FY22 showed +1149% a year): under 60 days, none
   const shortWindow = to - from < 60 * DAY;
@@ -460,7 +635,7 @@ export function windowReturn(l: Ledger, label: string, from: number, to: number,
     }
   }
   return {
-    label, from: isoDay(from), to: isoDay(to), startValue: start.value, endValue: end.value, invested, withdrawn, gain,
+    label, from: isoDay(from), to: isoDay(to), startValue: start.value, endValue: end.value, invested, withdrawn, gain, dividends, top: holdingsAt(l, to, priceAt, 8),
     xirr: shortWindow ? null : perWindow(xirr(flows)), simple: weighted > 0 ? gain / weighted : null, bench, estimated: Math.max(start.estimated, end.estimated),
     estimatedSymbols: Array.from(new Set([...start.estimatedSymbols, ...end.estimatedSymbols])), annualised,
   };

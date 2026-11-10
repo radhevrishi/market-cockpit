@@ -4001,3 +4001,13 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   salesCr (mc ÷ P/S) + sharesCr (mc ÷ price) so the EPS sensitivity is prefilled from a chosen company and a share-of-sales
   %. KEY inflection-radar:v3. Page: full width, overview tiles, a score bar per industry, two-column cards tinted by score
   band, signal-type chips, score parts as bars, heat-coloured growth / return cells, quiet industries folded at the end.
+- zzz1242 (10 Nov): tradebook vs another tool (owner's FY25 +₹5.3 L / FY26 −₹4.6 L vs ≈ +₹2.1 L / −₹0.5 L there; totals agreed).
+  A local rebuild from his files (prices from /api/v1/chart) matched production at every year end EXCEPT 31 Mar 2025 (+₹4 L in
+  production) — a unit problem from the price source's split list. Now `splitsForInstrument` (core): Yahoo's list (+ ISIN-change
+  splits) is kept only while every priced trade's price ÷ that day's adjusted close ÷ split factor is ≈ 1 (`splitsMismatch`:
+  a ≥ 1.5× level is a mismatch; 1.25 / 1.33 only on ≥ 2 trades and ≥ 10%); otherwise the units are read from the trades
+  (`splitsFromPrices`, sparse SPLIT_LEVELS incl. 4.5, Yahoo's date used when it lies in between). Unpriced days: price-gap
+  splits sized by the quantities (`splitsFromTradeGaps`, SIKA 1:5). A note lists names read from the trades. Gains / XIRR now
+  include estimated dividends (`windowReturn(..., divFlows)`, `dividends` column). Each period row opens its 8 largest holdings
+  at the end (`top`). Performance chart: day-by-day `dailySeries` (value, cost of shares held from `Ledger.costChanges`, net,
+  index units × close `ix`), periods 3M–Max, hover read-out, index line restarted at each period's start value.

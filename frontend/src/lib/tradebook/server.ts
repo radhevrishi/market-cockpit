@@ -5,7 +5,7 @@ import { getDailySeries, type DailySeries } from '../chart-data';
 import { ensureIndexHistory, indexCloses } from '../index-history';
 import { nseEquityIsins } from '../screener/in-build';
 import {
-  buildLedger, companyKey, inferIsinSplits, normalizeTrades, MERGERS, dayMs, dividendsByFy, isoDay, lotsTurningLongTerm, pnlByFy, pnlStats, qtyAt, valueAt, windowReturn, xirr, fyOf,
+  buildLedger, companyKey, dailySeries, inferIsinSplits, splitsForInstrument, normalizeTrades, MERGERS, dayMs, dividendsByFy, isoDay, lotsTurningLongTerm, pnlByFy, pnlStats, qtyAt, valueAt, windowReturn, xirr, fyOf,
   type Flow, type Ledger, type Split, type Trade, type WindowReturn,
 } from './core';
 
@@ -110,7 +110,7 @@ export interface TradebookAnalytics {
   trailing: WindowReturn[];
   byFy: WindowReturn[];
   byYear: WindowReturn[];
-  growth: Array<{ d: string; value: number; bench: number | null; net: number }>;
+  growth: Array<{ d: string; value: number; cost: number; bench: number | null; net: number; ix: number | null }>;
   holdings: Array<{ isin: string; symbol: string; qty: number; avgCost: number; cost: number; price: number | null; value: number | null; pnl: number | null; pnlPct: number | null; weight: number | null; firstBuy: string | null; daysHeld: number | null; ltcgPct: number }>;
   pnl: ReturnType<typeof pnlStats>;
   pnlByFy: ReturnType<typeof pnlByFy>;
@@ -145,7 +145,8 @@ async function build(rawTrades: Trade[]): Promise<TradebookAnalytics> {
   for (const [sym, isin] of Object.entries(nseIsin)) nowSymbol.set(companyKey(isin), sym);
   const notes: string[] = [
     'Brokerage, STT and other charges are not in a tradebook — gains here are before charges and tax.',
-    'Splits and bonus issues are applied from Yahoo\'s records, so quantities are in today\'s share units.',
+    'Splits and bonus issues are applied from Yahoo\'s records, checked against your own trade prices, so quantities are in today\'s share units.',
+    'Gains and XIRR include estimated cash dividends (shares held before each ex-date × dividend per share). Nifty Smallcap 100 is a price index — its dividends are not in it, so the comparison slightly favours the book.',
   ];
   // first pass without splits, only to know the instruments and their latest symbols
   const pre = buildLedger(trades);
@@ -177,12 +178,18 @@ async function build(rawTrades: Trade[]): Promise<TradebookAnalytics> {
     return c ? { t: startT, px: c } : null;
   };
   // zzz1239 — the price source's splits, plus splits read from an ISIN change in the files when it has none near that date
+  // zzz1242 — and checked against the trades: price ÷ adjusted close must be the split factor. Where the price source's list
+  // does not explain the trades, the units are read from the trades themselves (see splitsForInstrument).
   const inferred = inferIsinSplits(rawTrades);
-  const splitsOf = (isin: string): Split[] | undefined => {
-    const y = px.get(isin)?.splits || [];
-    const extra = (inferred.get(isin) || []).filter((s) => !y.some((x) => Math.abs(x.t - s.t) <= 45 * DAY));
-    return y.length || extra.length ? [...y, ...extra] : undefined;
-  };
+  const splitMap = new Map<string, Split[] | undefined>();
+  const fromTrades: string[] = [];
+  for (const [isin, ts] of symsOf) {
+    const r = splitsForInstrument(ts, (t) => closeAt(px.get(isin), t), px.get(isin)?.splits, inferred.get(isin));
+    splitMap.set(isin, r.splits);
+    if (r.source === 'trades') fromTrades.push(`${nowSymbol.get(isin) ?? pre.symbolOf.get(isin) ?? isin} (${(r.splits || []).map((x) => `${isoDay(x.t)} ×${+x.ratio.toFixed(2)}`).join(', ') || 'none'})`);
+  }
+  const splitsOf = (isin: string): Split[] | undefined => splitMap.get(isin);
+  if (fromTrades.length) notes.push(`Split / bonus records that did not match your trade prices were read from the trades instead (price ÷ that day's adjusted close): ${fromTrades.slice(0, 20).join('; ')}${fromTrades.length > 20 ? ' …' : ''}.`);
   const l: Ledger = buildLedger(trades, splitsOf, openAt);
   const benchAt = bench ? (t: number) => closeAt(bench, t) : undefined;
   if (missing.length) notes.push(`No price history for ${missing.length} instrument${missing.length === 1 ? '' : 's'} (renamed, merged or delisted) — valued at their last trade price: ${missing.slice(0, 12).join(', ')}${missing.length > 12 ? ' …' : ''}.`);
@@ -211,54 +218,41 @@ async function build(rawTrades: Trade[]): Promise<TradebookAnalytics> {
 
   const invested = l.positions.reduce((s, p) => s + p.cost, 0);
   const pnlAll = pnlStats(l.realized);
-  const allFlows: Flow[] = [...l.flows, { t: asOf, amt: cur.value }];
   const netInvested = -l.flows.reduce((s, f) => s + f.amt, 0);
   const divs = dividendsByFy(l, (isin) => px.get(isin)?.divs);
   const divTotal = divs.byFy.reduce((s, x) => s + x.amount, 0);
+  // zzz1242 — estimated dividends are cash received: in every period's gain and XIRR
+  const divFlows: Flow[] = divs.items.map((d) => ({ t: dayMs(d.exDate), amt: d.amount }));
+  const allFlows: Flow[] = [...l.flows, ...divFlows, { t: asOf, amt: cur.value }];
 
   // windows
   const yr = new Date(asOf).getUTCFullYear();
   const fyStartYear = new Date(asOf).getUTCMonth() >= 3 ? yr : yr - 1;
-  const ytd = windowReturn(l, `${yr} so far`, Date.UTC(yr, 0, 1), asOf, priceAt, benchAt);
-  const fytd = windowReturn(l, `${fyOf(isoDay(asOf))} so far`, Date.UTC(fyStartYear, 3, 1), asOf, priceAt, benchAt);
-  const sinceStart = windowReturn(l, 'Since start', first, asOf, priceAt, benchAt);
+  const ytd = windowReturn(l, `${yr} so far`, Date.UTC(yr, 0, 1), asOf, priceAt, benchAt, divFlows);
+  const fytd = windowReturn(l, `${fyOf(isoDay(asOf))} so far`, Date.UTC(fyStartYear, 3, 1), asOf, priceAt, benchAt, divFlows);
+  const sinceStart = windowReturn(l, 'Since start', first, asOf, priceAt, benchAt, divFlows);
   const trailing: WindowReturn[] = [];
   for (const [label, yrs] of [['1 year', 1], ['3 years', 3]] as const) {
     const from = Date.UTC(new Date(asOf).getUTCFullYear() - yrs, new Date(asOf).getUTCMonth(), new Date(asOf).getUTCDate()) + DAY;
-    if (from >= first) trailing.push(windowReturn(l, label, from, asOf, priceAt, benchAt));
+    if (from >= first) trailing.push(windowReturn(l, label, from, asOf, priceAt, benchAt, divFlows));
   }
   trailing.push(sinceStart);
   const byFy: WindowReturn[] = [];
   for (let y = new Date(first).getUTCMonth() >= 3 ? new Date(first).getUTCFullYear() : new Date(first).getUTCFullYear() - 1; y <= fyStartYear; y++) {
     const from = Math.max(first, Date.UTC(y, 3, 1)), to = Math.min(asOf, Date.UTC(y + 1, 2, 31));
-    byFy.push(windowReturn(l, fyOf(isoDay(Date.UTC(y, 3, 1))) + (to === asOf ? ' (so far)' : ''), from, to, priceAt, benchAt));
+    byFy.push(windowReturn(l, fyOf(isoDay(Date.UTC(y, 3, 1))) + (to === asOf ? ' (so far)' : ''), from, to, priceAt, benchAt, divFlows));
   }
   const byYear: WindowReturn[] = [];
   for (let y = new Date(first).getUTCFullYear(); y <= yr; y++) {
     const from = Math.max(first, Date.UTC(y, 0, 1)), to = Math.min(asOf, Date.UTC(y, 11, 31));
-    byYear.push(windowReturn(l, String(y) + (to === asOf ? ' (so far)' : ''), from, to, priceAt, benchAt));
+    byYear.push(windowReturn(l, String(y) + (to === asOf ? ' (so far)' : ''), from, to, priceAt, benchAt, divFlows));
   }
 
-  // growth: month ends, the book vs the same money in the index
-  const growth: TradebookAnalytics['growth'] = [];
-  let units = 0, net = 0, fi = 0;
-  const pts: number[] = [];
-  for (let d = new Date(first); ; ) {
-    const t = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0);
-    if (t >= asOf) { pts.push(asOf); break; }
-    pts.push(t);
-    d = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1));
-  }
-  for (const t of pts) {
-    for (; fi < l.flows.length && l.flows[fi].t <= t; fi++) {
-      const f = l.flows[fi];
-      net += -f.amt;
-      const ix = benchAt?.(f.t);
-      if (ix) units += -f.amt / ix;
-    }
-    const ix = benchAt?.(t);
-    growth.push({ d: isoDay(t), value: Math.round(valueAt(l, t, priceAt).value), bench: ix ? Math.round(units * ix) : null, net: Math.round(net) });
-  }
+  // zzz1242 — growth day by day (weekdays): value, cost of the shares held, net money put in, and the same money in the index
+  const days: number[] = [];
+  for (let t = first; t <= asOf; t += DAY) { const wd = new Date(t).getUTCDay(); if (wd !== 0 && wd !== 6) days.push(t); }
+  if (days[days.length - 1] !== asOf) days.push(asOf);
+  const growth: TradebookAnalytics['growth'] = dailySeries(l, days, priceAt, benchAt);
 
   const bySym = new Map<string, { realized: number; trades: number }>();
   for (const r of l.realized) { const x = bySym.get(r.symbol) || { realized: 0, trades: 0 }; x.realized += r.pnl; x.trades++; bySym.set(r.symbol, x); }
@@ -274,7 +268,7 @@ async function build(rawTrades: Trade[]): Promise<TradebookAnalytics> {
     summary: {
       invested, value: cur.value, unrealized: cur.value - invested, realized: pnlAll.total, dividends: divTotal,
       xirrAll: xirr(allFlows), xirrYtd: ytd.xirr, xirrFytd: fytd.xirr, benchXirrAll: benchAll,
-      totalGain: cur.value - netInvested, netInvested,
+      totalGain: cur.value + divTotal - netInvested, netInvested,
     },
     trailing, byFy, byYear, growth, holdings,
     pnl: pnlAll, pnlByFy: pnlByFy(l.realized),
