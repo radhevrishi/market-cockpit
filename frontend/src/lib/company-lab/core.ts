@@ -59,7 +59,7 @@ export function yearPoints(rows: AnnualRow[], sharesNow: number | null, priceAt?
       label: r.label, end: r.end, revenue: r.revenue, eps: r.eps, netIncome: r.netIncome, fcf: r.fcf,
       revG: p ? growthPct(r.revenue, p.revenue) : null,
       epsG: p ? growthPct(r.eps, p.eps) : null,
-      fcfG: p ? growthPct(r.fcf, p.fcf) : null,
+      fcfG: p && fin(p.fcf) && p.fcf > 0 ? growthPct(r.fcf, p.fcf) : null,   // zzz1256: growth from a zero or negative base is not a growth rate (−2 → −20 printed "−900%")
       fcfM: fin(r.fcf) && fin(r.revenue) && r.revenue > 0 ? r1((r.fcf / r.revenue) * 100) : null,
       fcfPs: fin(r.fcf) && sh ? Math.round((r.fcf / sh) * 100) / 100 : null,
       fcfYield: fin(r.fcf) && mv ? r1((r.fcf / mv) * 100) : null,
@@ -127,13 +127,16 @@ export function fcfReport(rowsIn: AnnualRow[], mcap: number | null, fcfBasis: st
   const p5 = pts.slice(-5);
   const avg = (f: (y: YearPoint) => number | null) => { const xs = p5.map(f).filter(fin); return xs.length ? r1(mean(xs)!) : null; };
   const yAvg = avg((y) => y.fcfYield), cxAvg = avg((y) => y.capexToFcf), dAvg = avg((y) => y.debtToFcf);
+  // zzz1256 — an average over the years that HAVE a figure says how many that is (debt ÷ FCF "2.1×" was one year of five)
+  const nOf = (f: (y: YearPoint) => number | null) => p5.map(f).filter(fin).length;
+  const ofYears = (k: number) => (k > 0 && k < p5.length ? ` (${k} of ${p5.length} yrs with positive FCF)` : '');
   const metrics = [
     { label: `FCF growth a year (${n >= 1 ? n : '—'} yrs)`, value: pct(fcfC) },
     { label: 'Revenue growth a year', value: pct(revC) },
     { label: 'FCF margin, average', value: pct(avgM == null ? null : r1(avgM)) },
     { label: 'FCF yield, average (each year\'s price)', value: pct(yAvg) },
-    { label: 'Capex ÷ FCF, average', value: pct(cxAvg) },
-    { label: 'Debt ÷ FCF, average', value: times(dAvg) },
+    { label: `Capex ÷ FCF, average${ofYears(nOf((y) => y.capexToFcf))}`, value: pct(cxAvg) },
+    { label: `Debt ÷ FCF, average${ofYears(nOf((y) => y.debtToFcf))}`, value: times(dAvg) },
   ];
   return { checks: C, passed, known, metrics, fcfBasis };
 }

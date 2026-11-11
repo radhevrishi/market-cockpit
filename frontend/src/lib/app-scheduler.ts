@@ -431,6 +431,30 @@ async function portfolioJob(ctx: JobCtx, days = 7): Promise<JobOutcome> {
   return { ok: true, status: 200 };
 }
 
+/**
+ * zzz1256 — US Portfolio Catalysts never moved: every US ledger said "last updated 2026-09-24" on 11 Nov. Cause: nothing looked for
+ * new SEC filings unless someone clicked "Check for new evidence" in the browser (/api/v1/us-thesis/check-all existed but no job called
+ * it). This is that check, on a schedule: EDGAR is asked for 10-Q / 10-K / 8-K 2.02 filings not yet on file for every US book + bench
+ * name, in resumable batches. DISCOVERY ONLY — no model is called, no AI money is spent; a name with a new filing turns NEW EVIDENCE
+ * AVAILABLE on the page. Reading it (the Haiku summary) stays one click, as before.
+ */
+export async function usEvidenceCheckJob(ctx: JobCtx): Promise<JobOutcome> {
+  let offset = 0, checked = 0, failed = 0, rounds = 0;
+  const withNew: string[] = [];
+  while (rounds < 12 && ctx.deadline - Date.now() > 90_000) {
+    rounds++;
+    const r = await ctx.call(`/api/v1/us-thesis/check-all?offset=${offset}&limit=60`, { timeoutMs: Math.min(270_000, ctx.deadline - Date.now() - 5_000), retry: false });
+    if (!r.ok || !r.json?.ok) return rounds === 1 ? fail(r, 'us-thesis/check-all') : { ok: failed < checked, status: r.status || 0, error: 'a later batch failed' };
+    checked += Number(r.json.checked) || 0;
+    failed += Number(r.json.failed) || 0;
+    withNew.push(...(Array.isArray(r.json.with_new_evidence) ? r.json.with_new_evidence : []));
+    if (r.json.next_offset == null || r.json.next_offset <= offset) break;
+    offset = r.json.next_offset;
+  }
+  ctx.log(`${checked} US names checked · ${failed} could not be checked · new SEC evidence: ${withNew.length ? withNew.join(', ') : 'none'}`);
+  return { ok: checked > 0 && failed <= Math.ceil(checked / 2), status: 200, error: checked === 0 ? 'no names checked' : null };
+}
+
 // ── the job list (schedules copied from the workflows; keep docs/SCHEDULING.md in step) ─────────────────────────
 
 const BRIDGE = 'vercel-cron-bridge.yml';
@@ -498,6 +522,7 @@ export const APP_JOBS: readonly AppJob[] = [
   // zzz912 — was two Claude scheduled tasks (US hours every 2 h, late after-close sweep 20:00–22:00 ET). Rules only, no AI.
   { name: 'us-earnings-watch', crons: ['7 11-23/2 * * 1-5', '7 0-2 * * 2-6'], timeoutMs: 27 * MIN, workflow: 'us-earnings-watch.yml', does: 'GET /api/v1/cron/us-earnings-watch (graded-us → US Quality Preset, under $30B → one ranked alert of new names)', run: http('GET', '/api/v1/cron/us-earnings-watch', 12 * MIN) },
   // zzz963 — lowered-outlook check on US BLOCKBUSTER/STRONG rows (filing text free; AI web search ≤ US_GUIDE_CHECK_DAILY_USD a day).
+  { name: 'us-evidence-check', crons: ['23 13 * * 1-5', '37 21 * * 1-5', '17 23 * * 1-5'], timeoutMs: 20 * MIN, workflow: BRIDGE, does: 'GET /api/v1/us-thesis/check-all (EDGAR discovery for every US book + bench name, no model; new 10-Q / 10-K / 8-K 2.02 → NEW EVIDENCE AVAILABLE)', run: usEvidenceCheckJob },   // zzz1256 — before the US open, after the close (10-Q / releases land 20:00–22:00 UTC) and late
   { name: 'us-guide-check', crons: ['37 13-23/2 * * 1-5', '37 1 * * 2-6'], timeoutMs: 6 * MIN, workflow: 'us-earnings-watch.yml', does: 'in-process: lib/us-guide-check runUsGuideChecks (top-tier US rows of the last 6 sessions; filing text, then AI web search within the daily ceiling)', run: async () => {
     const r = await (await import('./us-guide-check')).runUsGuideChecks({ budgetMs: 5 * MIN });
     console.log('[us-guide-check]', JSON.stringify(r));

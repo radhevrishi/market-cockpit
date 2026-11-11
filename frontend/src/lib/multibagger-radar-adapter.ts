@@ -17,7 +17,7 @@ import { buildFeedCountModel, type FeedCountModel } from './special-sit-qa';
 import { normName } from './special-sit-numbers';
 import {
   NOT_IDENTIFIED, MONEY_NAME_DEAL_RE, canonicalEventKey, classifyForm10, contentHints, decodeHtmlEntities, eventFamily, identifySubject, is13e3Text, isForm10Title, isFundRepurchaseOffer, isSecSource,
-  legalBoilerplatePercents, nonEarningsNumberSpans, parseSecFilingTitle, priceReactionSpans, publisherFamily, sameCanonicalEvent, sameEvent, secAccession,
+  entityTokens, keyNumbers, legalBoilerplatePercents, nonEarningsNumberSpans, parseSecFilingTitle, priceReactionSpans, publisherFamily, sameCanonicalEvent, sameEvent, secAccession,
   stripLegalBoilerplatePercents, subjectFromHeadline, subtypeHint, summariseHeldBack, FEED_QUARANTINE_LABEL,
   type FeedQuarantineReason, type HeldBackSummary,
 } from './special-sit-feed-quality';
@@ -342,33 +342,69 @@ export function secChainKey(ev: RadarFeedEvent): string | null {
   return null;
 }
 
+/**
+ * zzz1255 — everything the pair test below needs from ONE event, worked out once. The old loop re-parsed every kept event's
+ * headline (secChainKey, canonicalEventKey, sameEvent: dozens of regexes) for every new event: ~6,000 events = tens of millions
+ * of parses, a ~12 s block of the whole server on each Special Situations refresh (11 Nov 12:01 UTC, two health probes aborted
+ * at the same 12,137 ms). Same rules, same order, same answers; only the repeated work is gone.
+ */
+interface DedupeFeat {
+  t: string; reg: string; hold: string | null; acc: string | null; ck: ReturnType<typeof canonicalEventKey>;
+  chain?: string | null; fam?: ReturnType<typeof eventFamily>; ent?: Set<string>; nums?: Set<string>;
+}
+/** sameEvent() on two events' cached features (identical rule: same family, shared entities and / or key numbers). */
+function sameEventFeat(a: RadarFeedEvent, fa: DedupeFeat, b: RadarFeedEvent, fb: DedupeFeat): boolean {
+  fa.fam ??= eventFamily(fa.t, a.event_type); fb.fam ??= eventFamily(fb.t, b.event_type);
+  if (fa.fam !== fb.fam || fa.fam === 'OTHER') return false;
+  fa.ent ??= entityTokens(fa.t); fb.ent ??= entityTokens(fb.t);
+  const minSize = Math.min(fa.ent.size, fb.ent.size);
+  if (!minSize) return false;
+  let shared = 0;
+  fa.ent.forEach((x) => { if (fb.ent!.has(x)) shared += 1; });
+  fa.nums ??= keyNumbers(fa.t); fb.nums ??= keyNumbers(fb.t);
+  let sharedNum = 0;
+  fa.nums.forEach((x) => { if (fb.nums!.has(x)) sharedNum += 1; });
+  if (sharedNum > 0 && shared >= 1) return true;
+  return shared >= 2 && shared / minSize >= 0.6;
+}
+
 /** Merges the same event shown on several cards. Returns the kept events and the number merged away. */
 export function dedupeFeedEvents(events: ReadonlyArray<RadarFeedEvent>): { events: RadarFeedEvent[]; merged: number; mergedInto: Map<string, string> } {
   const kept: RadarFeedEvent[] = [];
   let merged = 0;
+  const feats = new WeakMap<RadarFeedEvent, DedupeFeat>();
+  const featOf = (e: RadarFeedEvent): DedupeFeat => {
+    let f = feats.get(e);
+    if (!f) {
+      const t = clean(e.primary_filing?.title);
+      f = { t, reg: e.region || e.primary_filing?.region || 'GLOBAL', hold: e.quarantine_reason || null, acc: secAccession(e.primary_filing?.link),
+        ck: canonicalEventKey({ title: t, eventType: e.event_type, pubDate: e.primary_filing?.pub_date }) };
+      feats.set(e, f);
+    }
+    return f;
+  };
+  const chainOf = (e: RadarFeedEvent): string | null => { const f = featOf(e); if (f.chain === undefined) f.chain = secChainKey(e); return f.chain; };
   // zzz1066: which event each merged copy went into (loser id -> the kept event's id), so the route can flag merged copies
   // in the raw list instead of letting a view show them as separate events.
   const absorbed = new Map<RadarFeedEvent, RadarFeedEvent[]>();
   const extra = new Map<RadarFeedEvent, RadarFeedItem[]>();
   for (const ev of events) {
-    const t = clean(ev.primary_filing?.title);
-    const reg = (ev.region || ev.primary_filing?.region || 'GLOBAL');
+    const fe = featOf(ev);
+    const t = fe.t, reg = fe.reg;
     const h = contentHints(t);
-    const acc = secAccession(ev.primary_filing?.link);
-    const ck = canonicalEventKey({ title: t, eventType: ev.event_type, pubDate: ev.primary_filing?.pub_date });
-    const chain = secChainKey(ev);
+    const acc = fe.acc, ck = fe.ck;
+    const chain = chainOf(ev);
     // zzz854: a held-back event (route reason / verification gate) never merges into a shown one, or the reverse.
-    const sameHold = (k: RadarFeedEvent) => (k.quarantine_reason || null) === (ev.quarantine_reason || null);
-    const hit = (h.isRegistration || isForm10Title(t)) ? (chain ? kept.find((k) => sameHold(k) && (k.region || k.primary_filing?.region || 'GLOBAL') === reg && secChainKey(k) === chain) : undefined) : kept.find((k) => {
+    const sameHold = (k: RadarFeedEvent) => featOf(k).hold === fe.hold;
+    const hit = (h.isRegistration || isForm10Title(t)) ? (chain ? kept.find((k) => sameHold(k) && featOf(k).reg === reg && chainOf(k) === chain) : undefined) : kept.find((k) => {
       if (!sameHold(k)) return false;
-      if ((k.region || k.primary_filing?.region || 'GLOBAL') !== reg) return false;
+      const fk = featOf(k);
+      if (fk.reg !== reg) return false;
       // same SEC chain (original + amendments of one deal for one subject) = one event
-      if (chain && secChainKey(k) === chain) return true;
+      if (chain && chainOf(k) === chain) return true;
       // same SEC accession = the same filing listed once per party (subject / filed-by)
-      if (acc && secAccession(k.primary_filing?.link) === acc) return true;
-      const kt = clean(k.primary_filing?.title);
-      return sameCanonicalEvent(canonicalEventKey({ title: kt, eventType: k.event_type, pubDate: k.primary_filing?.pub_date }), ck)
-        || sameEvent({ title: kt, eventType: k.event_type }, { title: t, eventType: ev.event_type });
+      if (acc && fk.acc === acc) return true;
+      return sameCanonicalEvent(fk.ck, ck) || sameEventFeat(k, fk, ev, fe);
     });
     if (!hit) { kept.push(ev); continue; }
     merged += 1;

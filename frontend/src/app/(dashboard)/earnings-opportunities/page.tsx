@@ -144,6 +144,8 @@ export default function EarningsOpportunitiesPage() {
   // PATCH 0498 (previous): initialized to '' so walk-back fired on load — reverted.
   const [filterDate, setFilterDate] = useState<string>(() => {
     if (typeof window === 'undefined') return '';  // SSR safety
+    // zzz1256 — ?d=YYYY-MM-DD opens that filing day (Company Lab's "Earnings" link: the company's own result day, not today's page)
+    try { const d = new URLSearchParams(window.location.search).get('d'); if (d && /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(Date.parse(d + 'T00:00:00Z'))) return d; } catch {}
     // PATCH zzz98 — persist filterDate to LS so Hard Refresh keeps the selected date
     // Prefer the user's last-picked date over the yesterday-weekday default,
     // but only when it's a valid YYYY-MM-DD within the last 30 days (so a

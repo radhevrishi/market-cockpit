@@ -214,6 +214,8 @@ export default function UsEarningsOpportunitiesPage() {
     // A remembered date that was "today" when saved reopens on TODAY — the page
     // used to reopen on whatever day it was last looked at, hiding every name
     // that had reported since.
+    // zzz1256 — ?d=YYYY-MM-DD opens that filing day (Company Lab's "Earnings" link)
+    try { const d = new URLSearchParams(window.location.search).get('d'); if (d && /^\d{4}-\d{2}-\d{2}$/.test(d) && d <= today) return d; } catch { /* fall through */ }
     try { return restoreSelectedDate(getItemSync(LS_DATE), today); } catch { return today; }
   });
   // zzz703 — A/B/F/G pattern filter; independent of tier.

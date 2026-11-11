@@ -177,7 +177,11 @@ function takeCapexDebt(y: LabCard['years'], india: boolean): string {
   const d = last?.debtToFcf, c = last?.capexToFcf;
   const parts = [c != null ? `capex took ${c.toFixed(0)}% of free cash flow (under 50% is good)` : india ? null : null,
     d != null ? `debt equals ${d.toFixed(1)} years of free cash flow (under 3 is good)` : null].filter(Boolean);
-  return parts.length ? `${last!.label}: ${parts.join('; ')}.${india ? ' India: no capex line on screener.in, so only debt is shown.' : ''}` : 'Shown only in years when free cash flow was positive.';
+  // zzz1256 — say what the NEWEST year is first: with negative free cash flow now, an old year's "2.1 years" is not the answer
+  const newest = y[y.length - 1];
+  const newestNeg = !!newest && last != null && newest.label !== last.label && newest.fcf != null && newest.fcf <= 0;
+  const lead = newestNeg ? `${newest.label}: free cash flow was negative, so years-to-repay cannot be worked out. Last year it could: ` : '';
+  return parts.length ? `${lead}${last!.label}: ${parts.join('; ')}.${india ? ' India: no capex line on screener.in, so only debt is shown.' : ''}` : 'Shown only in years when free cash flow was positive.';
 }
 
 function Card({ c, onRemove }: { c: LabCard; onRemove: () => void }) {
@@ -197,7 +201,8 @@ function Card({ c, onRemove }: { c: LabCard; onRemove: () => void }) {
   const sym = c.ticker;
   const links: Array<[string, string]> = [
     ['📈 Chart', `/charts?m=${c.market}&t=${encodeURIComponent(sym)}`],
-    ['📅 Earnings', c.market === 'US' ? `/us-earnings-opportunities?q=${encodeURIComponent(sym)}` : `/earnings-opportunities?q=${encodeURIComponent(sym)}`],
+    // zzz1256 — open the company's OWN result day (?d=), not today's page with a search box
+    ['📅 Earnings', `${c.market === 'US' ? '/us-earnings-opportunities' : '/earnings-opportunities'}?q=${encodeURIComponent(sym)}${c.record?.resultDate && /^\d{4}-\d{2}-\d{2}$/.test(c.record.resultDate) ? `&d=${c.record.resultDate}` : ''}`],
     ['📈 Guidance', `/guidance-upgrades?q=${encodeURIComponent(sym)}`],
     ['🏆 Conviction', c.market === 'US' ? `/us-conviction-beats?q=${encodeURIComponent(sym)}` : `/watchlists?tab=conviction&q=${encodeURIComponent(sym)}`],
     ['📒 Decisions', '/decisions'],
