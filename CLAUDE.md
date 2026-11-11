@@ -4115,3 +4115,6 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   once the page was read on a later day or a past session was re-scored. Labels now say "filed on the scan day" / "Nd before the scan"
   (`rankReasonOf` in research-view.ts, ai-gainers/page.tsx). Numbers unchanged. Still open: US "documents could not be read" (15 names),
   Guidance Upgrades + Multibagger review, `search:idx:v3` leftover.
+- zzz1261 (11 Nov): US thesis document reads (`lib/us-thesis/sec-docs.ts` `secFetch`) now try up to 3 times on network error / 429 / 5xx
+  (back-off 0.7 s, 2.5 s for 429; 5/s spacing kept per try). Before, one EDGAR blip became "could not be downloaded" and the name sat in the
+  unreadable list. Which of the 15 names were real failures (not-an-SEC-filer, image-only exhibit) needs the live `document_outcomes` — check after deploy.

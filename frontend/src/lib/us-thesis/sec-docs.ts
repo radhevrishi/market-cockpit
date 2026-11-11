@@ -25,12 +25,21 @@ const SPACING_MS = 200;
 let last = 0;
 
 async function secFetch(url: string, timeoutMs = 15_000): Promise<Response | null> {
-  const wait = last + SPACING_MS - Date.now();
-  last = Math.max(Date.now(), last + SPACING_MS);
-  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-  try {
-    return await fetch(url, { headers: { 'User-Agent': SEC_UA, Accept: '*/*', 'Accept-Encoding': 'gzip, deflate' }, cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) });
-  } catch { return null; }
+  // zzz1260: one try turned every EDGAR 429 / 5xx / network blip into "could not be
+  // downloaded" (the unreadable-document list). Up to 3 tries with a short back-off;
+  // 404 and other 4xx answers are final. Each try keeps the 5/s spacing.
+  let res: Response | null = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const wait = last + SPACING_MS - Date.now();
+    last = Math.max(Date.now(), last + SPACING_MS);
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    try {
+      res = await fetch(url, { headers: { 'User-Agent': SEC_UA, Accept: '*/*', 'Accept-Encoding': 'gzip, deflate' }, cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) });
+    } catch { res = null; }
+    if (res && res.status !== 429 && res.status < 500) return res;
+    if (attempt < 2) await new Promise((r) => setTimeout(r, (res?.status === 429 ? 2500 : 700) * (attempt + 1)));
+  }
+  return res;
 }
 
 export interface UsReadDoc {
