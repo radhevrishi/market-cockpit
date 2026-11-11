@@ -1975,7 +1975,7 @@ const MAT_WORD = ['small vs size', 'size unresolved', 'material vs size'];
 export function rankReasonOf(it: Pick<ResearchItem, 'rankParts' | 'ageDays'>): string {
   const r = it.rankParts;
   if (!r) return '';
-  const age = typeof it.ageDays === 'number' && Number.isFinite(it.ageDays) ? (it.ageDays <= 0 ? 'filed today' : `filed ${Math.round(it.ageDays)}d ago`) : 'filing age unknown';
+  const age = typeof it.ageDays === 'number' && Number.isFinite(it.ageDays) ? (it.ageDays <= 0 ? 'filed on the scan day' : `filed ${Math.round(it.ageDays)}d before the scan`) : 'filing age unknown';
   const bits = [
     `evidence ${r.evidence}/3 (${EVIDENCE_WORD[r.evidence] || '—'})`,
     `mechanism ${r.mechanism}/2 (${MECH_WORD[r.mechanism] || '—'})`,

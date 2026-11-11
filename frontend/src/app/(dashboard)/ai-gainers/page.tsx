@@ -925,7 +925,7 @@ function ResearchLevel({ research, sweeping, market, onResume, onRescore, onRetr
             {f.valueStated != null
               ? <span style={pill(C.cyan)}>{money(f.valueStated, market)}{f.valuePctMcap != null ? ` · ${f.valuePctMcap.toFixed(1)}% of mcap` : ''}</span>
               : <span style={pill(C.faint)}>NO VALUE STATED</span>}
-            <span style={{ fontSize: 12, color: C.faint }}>{f.ageDays != null ? (f.ageDays === 0 ? 'filed today' : `${f.ageDays}d ago`) : ''}</span>
+            <span style={{ fontSize: 12, color: C.faint }}>{f.ageDays != null ? (f.ageDays === 0 ? 'filed on the scan day' : `${f.ageDays}d before the scan`) : ''}</span>
             <Src f={f} />
           </div>
           {f.evidenceQuote && (

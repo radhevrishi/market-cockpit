@@ -4111,3 +4111,7 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   chip with the reason; all-rewarded industries say so). Row RS is not stored per company yet, so the RS leg is not wired on those pages.
   Outside lib/thesis on purpose (no-price rule). (3) `choke-themes-weekly` (Sun 05:10 UTC): runChoke, skipped if the report is < 4 days
   old, ≤ 2 attempts per ISO week, failed runs keep the last good report (`lib/choke-themes/weekly.ts`).
+- zzz1260 (11 Nov): AI Gainers filing-age wording. Age is measured against the SCAN instant's exchange date, so "filed today" was wrong
+  once the page was read on a later day or a past session was re-scored. Labels now say "filed on the scan day" / "Nd before the scan"
+  (`rankReasonOf` in research-view.ts, ai-gainers/page.tsx). Numbers unchanged. Still open: US "documents could not be read" (15 names),
+  Guidance Upgrades + Multibagger review, `search:idx:v3` leftover.
