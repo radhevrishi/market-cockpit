@@ -25,6 +25,8 @@ export const GRADED_LOOKBACK_BUSINESS_DAYS = 120;
 export interface GradedRow {
   t: string; c: string; fd: string; tier: GradedTier;
   sec: string | null; mc: number | null; q: string | null; cs: number | null; p: number | null; bse: string | null;
+  /** zzz1264 — the card carries result figures (false = a filed-but-not-yet-read placeholder) */
+  fig?: boolean;
 }
 /** A row with how many sessions (calendar days) back its session is (0 = today). */
 export type GradedEntry = GradedRow & { db: number };
@@ -77,6 +79,7 @@ export function compactGradedRows(payload: any, d: string): GradedRow[] {
         q: e.quarter || null, cs: typeof e.composite_score === 'number' ? e.composite_score : null,
         p: typeof e.pead_score === 'number' ? e.pead_score : null,
         bse: e.bse_code != null ? String(e.bse_code) : e.scrip_code != null ? String(e.scrip_code) : null,
+        fig: typeof e.sales_yoy_pct === 'number' || typeof e.net_profit_yoy_pct === 'number' || typeof e.sales_curr_cr === 'number' || typeof e.pat_curr_cr === 'number',
       });
     }
   }

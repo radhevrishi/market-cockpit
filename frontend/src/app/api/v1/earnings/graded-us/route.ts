@@ -903,7 +903,9 @@ async function withSessionDedupeInner(payload: any, date: string, days: number, 
       if (date < etToday()) void kvSet(US_SESSION_INDEX_KEY(date), own, US_SESSION_INDEX_TTL_S).catch(() => {});
     }
     const prior = priorSessions(date);
-    const idx = await Promise.all(prior.map((d) => sessionIndexFor(d).catch(() => null)));
+    // 8 at a time: a session without a stored index is rebuilt from its whole payload, and 40 of those at once is a memory spike
+    const idx: Array<string[] | null> = [];
+    for (let i = 0; i < prior.length; i += 8) idx.push(...await Promise.all(prior.slice(i, i + 8).map((d) => sessionIndexFor(d).catch(() => null))));
     return dropShownEarlier(payload, prior.map((d, i) => ({ date: d, index: idx[i] || [] })));
   } catch {
     return payload;                                   // never let the check break the page

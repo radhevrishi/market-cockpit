@@ -18,7 +18,9 @@
 import { normalizeUsTicker } from './us-earnings-dates';
 
 export const US_SESSION_DEDUPE_VERSION = 1;
-export const US_SESSION_LOOKBACK = 7;
+// zzz1264 — was 7 sessions: a company that re-files the same quarter two or three weeks later (a 10-Q after the 8-K, an amended
+// filing) came back as a new card. 40 weekday sessions (~8 weeks) covers a whole results season; each session is one small index key.
+export const US_SESSION_LOOKBACK = 40;
 export const US_SESSION_INDEX_KEY = (date: string) => `us-graded:session-index:v1:${date}`;
 export const US_SESSION_INDEX_TTL_S = 120 * 86_400;
 

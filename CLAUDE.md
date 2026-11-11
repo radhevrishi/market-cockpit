@@ -4155,3 +4155,9 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
     Multibagger India and the Guidance focus list.
   · Conviction Beats tab ↔ Portfolio Catalysts: checked live in the owner's browser — "Matches name for name: 24 (+11 marked Rejected)".
     A tab copy older than 6 h (`CB_TAB_COPY_MAX_AGE_H`) is now said to be old and NOT reported as "⚠ Differs".
+- zzz1264 (11 Nov night): "companies that reported earlier show as reporting today" (owner). India zzz878 checked only the previous
+  7 days: AEQUS (Q2 FY27 graded 27 Oct) was a new card again on 11 Nov. `lib/india-shown-earlier.ts`: every session of the last 100
+  days (shared graded-session reader, weekends included); the EARLIEST day that showed the quarter WITH figures keeps the card, a later
+  day lists it under "graded on another day"; a figure-less earlier placeholder never blocks a later card with figures. Applied at
+  build AND on every served day (`moveShownEarlier` in gradedOverlayGET), so stored days are corrected. Compact graded rows carry `fig`.
+  USA: `US_SESSION_LOOKBACK` 7 → 40 weekday sessions (index reads 8 at a time).

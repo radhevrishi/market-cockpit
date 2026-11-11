@@ -31,6 +31,7 @@ import { regradeIndiaDayPayload, versionOfGradedKey } from '@/lib/india-regrade'
 import { gradeIndiaRow as gradeRow, gradeIndiaRowExplained, deriveQuarterLabel } from '@/lib/india-grade';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import { overlayInGuideLines, prewarmInGuideIndex } from '@/lib/in-guide-check';   // zzz975
+import { shownEarlierIndex, moveShownEarlier } from '@/lib/india-shown-earlier';   // zzz1264
 import { cachedRoute, defaultCacheable, forgetCachedRoute } from '@/lib/server-memo';   // zzz1053
 import { serverTiming } from '@/lib/server-timing';
 // zzz1053 — the guidance documents index is read when this route is first loaded, not inside the first request (it waited up to 4 s)
@@ -1294,21 +1295,11 @@ async function gradedLegacyGET(req: Request) {
   // zzz878 — one card per company per quarter: if the same ticker + quarter was already graded on one of the previous 7 days, that
   // earlier day keeps it and this day lists it as "already shown" (MOLBIO 5 & 8 Sep, LUMINO 21 & 22 Sep, HTEL, SKYWAYS … appeared twice:
   // once on the board-meeting day, once on the filing day).
+  // zzz1264 — every session of the last 100 days (was the previous 7: AEQUS, graded 27 Oct, was a new card again on 11 Nov),
+  // read through the shared graded-session reader. Only an earlier card WITH figures keeps the quarter.
   const shownEarlier = new Map<string, string>();
   if (isRedisAvailable()) {
-    try {
-      const base = Date.parse(`${date}T00:00:00Z`);
-      for (let i = 1; i <= 7 && Number.isFinite(base); i++) {
-        const d = new Date(base - i * 86_400_000).toISOString().slice(0, 10);
-        for (const k of gradedKeyCandidates(d)) {
-          const p: any = await kvGet<any>(k).catch(() => null);
-          const rs: any[] = p?.by_tier ? (Object.values(p.by_tier) as any[][]).flatMap((v) => (Array.isArray(v) ? v : [])) : [];
-          if (!rs.length) continue;
-          for (const r of rs) { const key = `${String(r?.ticker || '').toUpperCase()}|${String(r?.quarter || '').toUpperCase()}`; if (r?.ticker && r?.quarter && !shownEarlier.has(key)) shownEarlier.set(key, d); }
-          break;
-        }
-      }
-    } catch { /* best effort */ }
+    try { for (const [k, d] of (await shownEarlierIndex(date)).withFigures) shownEarlier.set(k, d); } catch { /* best effort */ }
   }
   // zzz800 — every candidate that does not become a card is recorded with the
   // reason, and travels in the payload. "Why is X missing?" is answered by the
@@ -1641,7 +1632,9 @@ async function gradedOverlayGET(req: Request): Promise<Response> {
     if (res.status !== 200 || !/json/i.test(res.headers.get('content-type') || '')) return res;
     const body = await res.clone().json().catch(() => null);
     if (!body?.by_tier) return res;
-    const out = await overlayInGuideLines(body);
+    let out = await overlayInGuideLines(body);
+    // zzz1264 — one card per company per quarter, also on days stored before the rule covered the whole season
+    try { const d = new URL(req.url).searchParams.get('date') || ''; if (/^\d{4}-\d{2}-\d{2}$/.test(d)) out = moveShownEarlier(out, await shownEarlierIndex(d)); } catch { /* the day is served as stored */ }
     const headers = new Headers(res.headers);
     headers.delete('content-length');
     return NextResponse.json(out, { status: res.status, headers });
