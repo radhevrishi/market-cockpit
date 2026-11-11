@@ -135,7 +135,7 @@ export interface TradebookAnalytics {
 // are worked out again only when the owner asks (↻ Recompute → force) or uploads new trades (the upload asks with force).
 // A stored result built from fewer trades or by an older version is still served, marked `stale` / `outdated`.
 const STORE_KEY = 'tradebook:analytics:v1';
-export const ANALYTICS_VERSION = 'zzz1249';
+export const ANALYTICS_VERSION = 'zzz1250';
 type Stored = { sig: string; version: string; data: TradebookAnalytics };
 let _cache: Stored | null = null;
 let _running: Promise<TradebookAnalytics> | null = null;
@@ -299,7 +299,7 @@ async function build(rawTrades: Trade[]): Promise<TradebookAnalytics> {
     bySymbol: Array.from(bySym.entries()).map(([symbol, v]) => ({ symbol, ...v })).sort((a, b) => b.realized - a.realized),
     dividends: { byFy: divs.byFy, items: divs.items.slice(0, 400) },
     turningLongTerm: lotsTurningLongTerm(l, asOf, 60),
-    stocks: stockScorecard(trades, l.realized, holdings, divs.items, showSym),
+    stocks: stockScorecard(trades, l.realized, holdings, divs.items, showSym, l.positions.flatMap((p) => p.lots.map((lot) => ({ isin: p.isin, date: lot.date, cost: lot.qty * lot.px })))),
     holdBuckets: holdBuckets(l.realized),
     afterSale: afterSale(l.realized, new Set(l.positions.map((p) => p.isin)), (isin) => priceAt(isin, asOf), showSym).sort((a, b) => b.amount - a.amount),
     unmatched: { count: l.unmatched.length, symbols: Array.from(new Set(l.unmatched.map((u) => u.symbol))).slice(0, 60) },

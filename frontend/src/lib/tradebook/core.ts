@@ -850,30 +850,62 @@ export function reconcilePortfolio(l: DiffInput, current: Array<{ symbol: string
 
 export interface StockScore {
   isin: string; symbol: string; status: 'HELD' | 'EXITED' | 'PART_SOLD';
-  bought: number; sold: number;            // gross ₹ of all buys / sells in the files
+  bought: number; sold: number;            // gross ₹ of all buys / sells in the files (turnover)
   realized: number; unrealized: number; dividends: number; total: number;
-  pct: number | null;                      // total ÷ money put into buys
+  /** zzz1250 — the most money that was in this stock at one time (cost of the shares held, at its highest). */
+  peak: number;
+  /** zzz1250 — total ÷ peak money in it. (Total ÷ gross buys understated names traded in and out many times.) */
+  pct: number | null;
+  /** total ÷ gross money put into buys (turnover), shown as a second figure */
+  pctTurnover: number | null;
   first: string; last: string; trades: number; wins: number; losses: number;
+  /** zzz1250 — a liquid / money-market fund used to park cash: left out of the gainers / losers and hit rate */
+  cash?: boolean;
+  /** zzz1250 — demerged companies whose shares are counted in this row (their cost stayed with this company) */
+  includes?: string[];
 }
-/** One row per company: realised + unrealised + estimated dividends, against the money put into its buys. Pure. */
+
+/** zzz1250 — a liquid / money-market ETF used to park cash (not a stock pick). */
+export const isCashFund = (symbol: string) => /LIQUID|OVERNIGHT|MONEYMARKET|MONEYMKT|^GILT|^LIQ/.test(String(symbol || '').toUpperCase());
+
+/** Highest running total of open cost from + / − events (same day: buys first, then sells). Pure. */
+export function peakOpenCost(events: Array<{ date: string; d: number }>): number {
+  const ev = events.slice().sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : b.d - a.d));
+  let run = 0, peak = 0;
+  for (const e of ev) { run += e.d; if (run > peak) peak = run; }
+  return peak;
+}
+
+/**
+ * One row per company: realised + unrealised + estimated dividends. Return is measured on the most money that was in the
+ * stock at one time (peak cost of the shares held), not on gross buys, which counts the same money again on every round
+ * trip. Shares received in a demerger are counted in the parent's row (their cost stays with the parent). Pure.
+ */
 export function stockScorecard(
   trades: Trade[], realized: Realized[], holdings: Array<{ isin: string; pnl: number | null; qty: number }>,
   divs: Array<{ isin?: string; amount: number }>, symbolOf: (isin: string, fallback: string) => string,
+  openLots?: Array<{ isin: string; date: string; cost: number }>,
 ): StockScore[] {
-  const m = new Map<string, StockScore>();
+  const m = new Map<string, StockScore & { ev: Array<{ date: string; d: number }>; tradeSyms: Set<string> }>();
   const get = (isin: string, sym: string) => {
     let x = m.get(isin);
-    if (!x) m.set(isin, (x = { isin, symbol: symbolOf(isin, sym), status: 'EXITED', bought: 0, sold: 0, realized: 0, unrealized: 0, dividends: 0, total: 0, pct: null, first: '9999', last: '', trades: 0, wins: 0, losses: 0 }));
+    if (!x) m.set(isin, (x = { isin, symbol: symbolOf(isin, sym), status: 'EXITED', bought: 0, sold: 0, realized: 0, unrealized: 0, dividends: 0, total: 0, peak: 0, pct: null, pctTurnover: null, first: '9999', last: '', trades: 0, wins: 0, losses: 0, ev: [], tradeSyms: new Set() }));
     return x;
   };
   for (const t of trades) {
     const x = get(t.isin, t.symbol);
     if (t.side === 'buy') x.bought += t.qty * t.price; else x.sold += t.qty * t.price;
-    x.trades++;
+    x.trades++; x.tradeSyms.add(t.symbol);
     if (t.date < x.first) x.first = t.date;
     if (t.date > x.last) x.last = t.date;
   }
-  for (const r of realized) get(r.isin, r.symbol).realized += r.pnl;
+  for (const r of realized) {
+    const x = get(r.isin, r.symbol);
+    x.realized += r.pnl;
+    const c = r.qty * r.buyPx;
+    if (c > 0) x.ev.push({ date: r.buyDate, d: c }, { date: r.sellDate, d: -c });
+  }
+  for (const l of openLots ?? []) if (l.cost > 0) get(l.isin, '').ev.push({ date: l.date, d: l.cost });
   for (const c of closedTrades(realized)) { const x = get(c.isin, c.symbol); if (c.pnl > 0) x.wins++; else if (c.pnl < 0) x.losses++; }
   for (const h of holdings) {
     const x = m.get(h.isin); if (!x) continue;
@@ -881,9 +913,32 @@ export function stockScorecard(
     x.status = x.sold > 0 ? 'PART_SOLD' : 'HELD';
   }
   for (const d of divs) if (d.isin && m.has(d.isin)) m.get(d.isin)!.dividends += d.amount;
-  return Array.from(m.values()).map((x) => {
+  // demerged shares → the parent company's row
+  const isinOfSym = new Map<string, string>();
+  for (const x of m.values()) for (const s of x.tradeSyms) if (!isinOfSym.has(s)) isinOfSym.set(s, x.isin);
+  for (const x of Array.from(m.values())) {
+    const childSym = Array.from(x.tradeSyms).find((s) => DEMERGERS[s]);
+    if (!childSym) continue;
+    const pi = isinOfSym.get(DEMERGERS[childSym].parent);
+    const p = pi && pi !== x.isin ? m.get(pi) : undefined;
+    if (!p) continue;
+    p.bought += x.bought; p.sold += x.sold; p.realized += x.realized; p.unrealized += x.unrealized; p.dividends += x.dividends;
+    p.trades += x.trades; p.wins += x.wins; p.losses += x.losses; p.ev.push(...x.ev);
+    if (x.first < p.first) p.first = x.first;
+    if (x.last > p.last) p.last = x.last;
+    if (x.status !== 'EXITED') p.status = p.sold > 0 || x.sold > 0 ? 'PART_SOLD' : 'HELD';
+    p.includes = [...(p.includes ?? []), x.symbol];
+    m.delete(x.isin);
+  }
+  return Array.from(m.values()).map(({ ev, tradeSyms, ...x }) => {
     const total = x.realized + x.unrealized + x.dividends;
-    return { ...x, first: x.first === '9999' ? '' : x.first, total, pct: x.bought > 0 ? total / x.bought : null };
+    const peak = peakOpenCost(ev);
+    const cash = isCashFund(x.symbol) || Array.from(tradeSyms).some(isCashFund);
+    return {
+      ...x, first: x.first === '9999' ? '' : x.first, total, peak,
+      pct: peak > 0 ? total / peak : null, pctTurnover: x.bought > 0 ? total / x.bought : null,
+      ...(cash ? { cash: true } : {}),
+    };
   });
 }
 
@@ -908,23 +963,33 @@ export function holdBuckets(realized: Realized[]): HoldBucket[] {
 
 export interface AfterSale { isin: string; symbol: string; lastSell: string; qtySold: number; avgSellPx: number; priceNow: number; movePct: number; amount: number }
 /**
- * Fully sold companies: what the shares sold would be worth at today's price. amount > 0 = gain left on the table,
- * < 0 = loss avoided. Sell prices and quantities come from the realised lots (today's share units). Pure.
+ * Fully sold companies: what the shares of the LAST exit would be worth at today's price. amount > 0 = gain left on the
+ * table, < 0 = loss avoided. zzz1250 — only the final holding period counts (from the buy that started it to the last
+ * sell); averaging every sell since 2022 compared old cheap sells with today's price (BSE showed an average sell of
+ * ₹1,217 when the last exit was at ₹3,298). Units are today's (realised lots). Cash funds are left out. Pure.
  */
 export function afterSale(realized: Realized[], heldIsins: Set<string>, priceNow: (isin: string) => number | null, symbolOf: (isin: string, fallback: string) => string): AfterSale[] {
-  const m = new Map<string, { symbol: string; q: number; v: number; last: string }>();
+  const by = new Map<string, Realized[]>();
   for (const r of realized) {
-    if (heldIsins.has(r.isin) || r.kind === 'INTRADAY' || !(r.qty > 0) || !(r.sellPx > 0)) continue;
-    const x = m.get(r.isin) || { symbol: r.symbol, q: 0, v: 0, last: '' };
-    x.q += r.qty; x.v += r.qty * r.sellPx; if (r.sellDate > x.last) x.last = r.sellDate;
-    m.set(r.isin, x);
+    if (heldIsins.has(r.isin) || r.kind === 'INTRADAY' || r.demerged || !(r.qty > 0) || !(r.sellPx > 0) || isCashFund(r.symbol)) continue;
+    const a = by.get(r.isin) ?? []; a.push(r); by.set(r.isin, a);
   }
   const out: AfterSale[] = [];
-  for (const [isin, x] of m) {
+  for (const [isin, lots] of by) {
+    // holding periods = overlapping [buy, sell] spans; keep the last one
+    const sorted = lots.slice().sort((a, b) => (a.buyDate < b.buyDate ? -1 : a.buyDate > b.buyDate ? 1 : 0));
+    let group: Realized[] = [], end = '';
+    for (const r of sorted) {
+      if (group.length && r.buyDate > end) { group = []; end = ''; }
+      group.push(r);
+      if (r.sellDate > end) end = r.sellDate;
+    }
+    const q = group.reduce((s, r) => s + r.qty, 0), v = group.reduce((s, r) => s + r.qty * r.sellPx, 0);
+    const last = group.reduce((s, r) => (r.sellDate > s ? r.sellDate : s), '');
     const p = priceNow(isin);
-    if (p == null || !(p > 0) || !(x.q > 0)) continue;
-    const avg = x.v / x.q;
-    out.push({ isin, symbol: symbolOf(isin, x.symbol), lastSell: x.last, qtySold: r2(x.q), avgSellPx: avg, priceNow: p, movePct: p / avg - 1, amount: (p - avg) * x.q });
+    if (p == null || !(p > 0) || !(q > 0)) continue;
+    const avg = v / q;
+    out.push({ isin, symbol: symbolOf(isin, group[0].symbol), lastSell: last, qtySold: r2(q), avgSellPx: avg, priceNow: p, movePct: p / avg - 1, amount: (p - avg) * q });
   }
   return out;
 }

@@ -11,7 +11,7 @@ const r = (isin: string, symbol: string, buyDate: string, sellDate: string, qty:
 test('scorecard adds realised, unrealised and dividends per company; return on money bought', () => {
   const trades = [t('A', 'AAA', '2024-01-01', 'buy', 10, 100), t('A', 'AAA', '2024-06-01', 'sell', 5, 150), t('B', 'BBB', '2024-02-01', 'buy', 10, 50), t('B', 'BBB', '2024-03-01', 'sell', 10, 40)];
   const realized = [r('A', 'AAA', '2024-01-01', '2024-06-01', 5, 100, 150, 152), r('B', 'BBB', '2024-02-01', '2024-03-01', 10, 50, 40, 29)];
-  const s = stockScorecard(trades, realized, [{ isin: 'A', pnl: 300, qty: 5 }], [{ isin: 'A', amount: 20 }], (_i, f) => f);
+  const s = stockScorecard(trades, realized, [{ isin: 'A', pnl: 300, qty: 5 }], [{ isin: 'A', amount: 20 }], (_i, f) => f, [{ isin: 'A', date: '2024-01-01', cost: 500 }]);
   const a = s.find((x) => x.isin === 'A')!, b = s.find((x) => x.isin === 'B')!;
   assert.equal(a.status, 'PART_SOLD'); assert.equal(a.total, 250 + 300 + 20); assert.equal(a.bought, 1000); assert.ok(Math.abs(a.pct! - 0.57) < 1e-9);
   assert.equal(b.status, 'EXITED'); assert.equal(b.total, -100); assert.equal(b.losses, 1);

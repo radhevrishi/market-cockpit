@@ -4051,3 +4051,9 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   list uses it (+ Cost column). Portfolio Analytics + Regime views also appear inside the tradebook ("Portfolio analytics" tab,
   `portfolioAnalytics` prop). Shared styles moved to `tb-ui.tsx`. ANALYTICS_VERSION zzz1249 (stored result marked outdated until
   ↻ Recompute; the new tab says so).
+- zzz1250 (11 Nov): tradebook stock returns fixed. Return = total ÷ PEAK money in the stock at one time (`peakOpenCost` over realised
+  lots + open lots, `StockScore.peak`); total ÷ gross buys is kept as `pctTurnover` ("On all buys") — gross buys counted the same money
+  again on every round trip (NETWEB 7.8% → 36%). Demerged shares join the parent's row (`includes`, TMCV in TMPV, ATL/TREL in ALLCARGO).
+  Liquid funds (`isCashFund`, LIQUIDCASE) are left out of the top lists / KPIs. After-sale uses only the LAST holding period
+  (overlapping buy→sell spans), not every sell since 2022 (BSE showed avg sell ₹1,217 vs a last exit at ₹3,298); 20 rows each with
+  "Sold for". Top lists are SortTables, gainers biggest first, losers biggest loss first. ANALYTICS_VERSION zzz1250.

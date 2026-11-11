@@ -10,7 +10,7 @@ import { C, inr, pct, tone, Card, Kpi, th, thL, td, tdL } from './tb-ui';
 export interface Col<T> {
   key: string; label: string; title?: string; left?: boolean;
   sort?: (r: T) => number | string | null | undefined;
-  cell: (r: T) => React.ReactNode;
+  cell: (r: T, i: number) => React.ReactNode;
 }
 
 /** A table whose headers sort it (click again to flip). Empty values always go last. */
@@ -44,7 +44,7 @@ export function SortTable<T>({ rows, cols, initial, desc: initialDesc = true, ro
             </th>
           );
         })}</tr></thead>
-        <tbody>{shown.map((r, i) => <tr key={rowKey(r, i)}>{cols.map((c) => <td key={c.key} style={c.left ? tdL : td}>{c.cell(r)}</td>)}</tr>)}</tbody>
+        <tbody>{shown.map((r, i) => <tr key={rowKey(r, i)}>{cols.map((c) => <td key={c.key} style={c.left ? tdL : td}>{c.cell(r, i)}</td>)}</tr>)}</tbody>
       </table>
     </div>
   );
@@ -61,25 +61,22 @@ function Bar({ v, max }: { v: number; max: number }) {
   return <div style={{ width: 90, height: 8, background: 'var(--mc-bg-2, rgba(127,127,127,.12))', borderRadius: 4, overflow: 'hidden', display: 'inline-block', verticalAlign: 'middle' }}><div style={{ width: `${w}%`, height: '100%', background: v >= 0 ? C.green : C.red }} /></div>;
 }
 
-function TopList({ title, rows, by }: { title: string; rows: StockScore[]; by: 'rs' | 'pct' }) {
+/**
+ * zzz1250 — one top list, sorted on open: gainers biggest first, losers biggest loss first. Every column sorts on click;
+ * the # column always counts the rows as shown.
+ */
+function TopList({ title, rows, by, gain }: { title: string; rows: StockScore[]; by: 'rs' | 'pct'; gain: boolean }) {
   const max = Math.max(0, ...rows.map((r) => Math.abs(by === 'rs' ? r.total : (r.pct ?? 0))));
   return (
     <Card title={title}>
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-        <thead><tr><th style={thL}>#</th><th style={thL}>Stock</th><th style={th}>Total P&amp;L</th><th style={th}>Return</th><th style={th} title="Realised + unrealised + estimated dividends">Of which</th><th style={th}></th></tr></thead>
-        <tbody>{rows.map((r, i) => (
-          <tr key={r.isin}>
-            <td style={{ ...tdL, color: C.dim }}>{i + 1}</td>
-            <td style={tdL}><b>{r.symbol}</b> <Pill s={r.status} /></td>
-            <td style={{ ...td, color: tone(r.total), fontWeight: 800 }}>{inr(r.total)}</td>
-            <td style={{ ...td, color: tone(r.pct) }}>{pct(r.pct)}</td>
-            <td style={{ ...td, color: C.mute, fontSize: 11 }} title={`Realised ${inr(r.realized)} · Unrealised ${inr(r.unrealized)} · Dividends ${inr(r.dividends)}`}>
-              {r.realized ? `R ${inr(r.realized)}` : ''}{r.realized && r.unrealized ? ' · ' : ''}{r.unrealized ? `U ${inr(r.unrealized)}` : ''}
-            </td>
-            <td style={td}><Bar v={by === 'rs' ? r.total : (r.pct ?? 0)} max={max} /></td>
-          </tr>
-        ))}</tbody>
-      </table>
+      <SortTable key={`${by}-${gain}`} rows={rows} rowKey={(r) => r.isin} initial={by === 'rs' ? 'total' : 'pct'} desc={gain} cols={[
+        { key: 'n', label: '#', left: true, cell: (_r, i) => <span style={{ color: C.dim }}>{i + 1}</span> },
+        { key: 'sym', label: 'Stock', left: true, sort: (r) => r.symbol, cell: (r) => <><b>{r.symbol}</b> <Pill s={r.status} />{r.includes?.length ? <span style={{ fontSize: 10.5, color: C.dim }} title="Shares received in a demerger; their cost stayed with this company"> + {r.includes.join(', ')}</span> : null}</> },
+        { key: 'total', label: 'Total P&L', sort: (r) => r.total, cell: (r) => <span style={{ color: tone(r.total), fontWeight: 800 }} title={`Realised ${inr(r.realized)} · Unrealised ${inr(r.unrealized)} · Dividends ${inr(r.dividends)}`}>{inr(r.total)}</span> },
+        { key: 'pct', label: 'Return', title: 'Total P&L ÷ the most money you had in this stock at one time', sort: (r) => r.pct, cell: (r) => <span style={{ color: tone(r.pct), fontWeight: 700 }} title={r.pctTurnover != null ? `${pct(r.pctTurnover)} of all money put into its buys (${inr(r.bought)}, counted again on every round trip)` : undefined}>{pct(r.pct)}</span> },
+        { key: 'peak', label: 'Most in it', title: 'The most money you had in this stock at one time (cost of the shares held)', sort: (r) => r.peak, cell: (r) => <span style={{ color: C.mute }}>{inr(r.peak)}</span> },
+        { key: 'bar', label: '', cell: (r) => <Bar v={by === 'rs' ? r.total : (r.pct ?? 0)} max={max} /> },
+      ]} />
     </Card>
   );
 }
@@ -91,11 +88,13 @@ export function StockAnalytics({ data }: { data: TradebookAnalytics }) {
   const st = useMemo(() => {
     if (!stocks?.length) return null;
     // a % ranking needs real money behind it — at least ₹10,000 bought
-    const pool = by === 'rs' ? stocks : stocks.filter((s) => s.bought >= 10_000 && s.pct != null);
+    // cash parked in liquid funds is not a stock pick; a % ranking needs real money behind it — at least ₹10,000 in it at once
+    const picks = stocks.filter((s) => !s.cash);
+    const pool = by === 'rs' ? picks : picks.filter((s) => s.peak >= 10_000 && s.pct != null);
     const key = (s: StockScore) => (by === 'rs' ? s.total : (s.pct ?? 0));
     const gainers = pool.filter((s) => key(s) > 0).sort((a, b) => key(b) - key(a)).slice(0, 20);
     const losers = pool.filter((s) => key(s) < 0).sort((a, b) => key(a) - key(b)).slice(0, 20);
-    const up = stocks.filter((s) => s.total > 0), down = stocks.filter((s) => s.total < 0);
+    const up = picks.filter((s) => s.total > 0), down = picks.filter((s) => s.total < 0);
     const grossUp = up.reduce((s, x) => s + x.total, 0), grossDown = -down.reduce((s, x) => s + x.total, 0);
     const byTotal = up.slice().sort((a, b) => b.total - a.total);
     const top5 = byTotal.slice(0, 5).reduce((s, x) => s + x.total, 0);
@@ -103,7 +102,7 @@ export function StockAnalytics({ data }: { data: TradebookAnalytics }) {
     // how many of the best names it took to make the whole net result
     let run = 0, needed = 0;
     for (const x of byTotal) { if (run >= net) break; run += x.total; needed++; }
-    return { gainers, losers, up: up.length, down: down.length, grossUp, grossDown, net, top5, needed, total: stocks.length };
+    return { gainers, losers, up: up.length, down: down.length, grossUp, grossDown, net, top5, needed, total: picks.length, cash: stocks.length - picks.length };
   }, [stocks, by]);
 
   if (!stocks?.length || !st) return <Card title="Stock analytics"><div style={{ fontSize: 12.5, color: C.mute }}>Press ↻ Recompute once — these figures are new and are not in the last stored result.</div></Card>;
@@ -111,15 +110,15 @@ export function StockAnalytics({ data }: { data: TradebookAnalytics }) {
   const seg = (on: boolean) => ({ padding: '4px 12px', fontSize: 11.5, fontWeight: 800, border: 'none', cursor: 'pointer', background: on ? C.blue : 'transparent', color: on ? '#fff' : C.mute } as const);
   const stuck = data.holdings.filter((h) => (h.pnlPct ?? 0) <= -0.2 && (h.daysHeld ?? 0) >= 180).sort((a, b) => (a.pnl ?? 0) - (b.pnl ?? 0));
   const after = data.afterSale ?? [];
-  const early = after.filter((a) => a.amount > 0 && a.movePct >= 0.1).slice(0, 10);
-  const good = after.filter((a) => a.amount < 0 && a.movePct <= -0.1).sort((a, b) => a.amount - b.amount).slice(0, 10);
+  const early = after.filter((a) => a.amount > 0 && a.movePct >= 0.1).slice(0, 20);
+  const good = after.filter((a) => a.amount < 0 && a.movePct <= -0.1).sort((a, b) => a.amount - b.amount).slice(0, 20);
   const leftOnTable = early.reduce((s, a) => s + a.amount, 0), avoided = -good.reduce((s, a) => s + a.amount, 0);
   const rows = status === 'all' ? stocks : stocks.filter((s) => s.status === status);
 
   return (
     <>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
-        <Kpi label="STOCKS TRADED" value={String(st.total)} sub={`${st.up} made money · ${st.down} lost money`} />
+        <Kpi label="STOCKS TRADED" value={String(st.total)} sub={`${st.up} made money · ${st.down} lost money${st.cash ? ` · ${st.cash} cash fund left out` : ''}`} />
         <Kpi label="STOCK HIT RATE" value={st.up + st.down ? `${Math.round((st.up / (st.up + st.down)) * 100)}%` : '—'} sub="share of stocks with a positive total" />
         <Kpi label="WINNERS MADE" value={inr(st.grossUp)} color={C.green} sub={`losers cost ${inr(-st.grossDown)}`} />
         <Kpi label="TOP 5 STOCKS" value={st.grossUp > 0 ? `${Math.round((st.top5 / st.grossUp) * 100)}%` : '—'} sub="of all money made by winners" />
@@ -132,12 +131,12 @@ export function StockAnalytics({ data }: { data: TradebookAnalytics }) {
           <button onClick={() => setBy('pct')} style={seg(by === 'pct')}>By % return</button>
         </div>}>
         <div style={{ fontSize: 11.5, color: C.mute, marginBottom: 8 }}>
-          Total P&amp;L per stock = realised (sold) + unrealised (still held, at {data.priceDate} prices) + estimated dividends. Return = total ÷ money put into its buys.
-          {by === 'pct' ? ' The % list leaves out stocks with less than ₹10,000 bought.' : ''} Before charges and tax.
+          Total P&amp;L per stock = realised (sold) + unrealised (still held, at {data.priceDate} prices) + estimated dividends. Return = total ÷ the most money you had in that stock at one time (hover a return for the figure on all money put into its buys, which counts the same money again on every round trip).
+          {by === 'pct' ? ' The % list leaves out stocks that never had ₹10,000 in them.' : ''} Liquid funds used to park cash are left out. Demerged shares are counted with the parent company. Before charges and tax. Click any column to sort.
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(440px, 1fr))', gap: 14 }}>
-          <TopList title={`▲ Top ${st.gainers.length} gainers`} rows={st.gainers} by={by} />
-          <TopList title={`▼ Top ${st.losers.length} losers`} rows={st.losers} by={by} />
+          <TopList title={`▲ Top ${st.gainers.length} gainers`} rows={st.gainers} by={by} gain />
+          <TopList title={`▼ Top ${st.losers.length} losers`} rows={st.losers} by={by} gain={false} />
         </div>
       </Card>
 
@@ -155,11 +154,12 @@ export function StockAnalytics({ data }: { data: TradebookAnalytics }) {
 
       {(early.length > 0 || good.length > 0) && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(440px, 1fr))', gap: 14 }}>
-          {([[`Sold, then it kept rising — ${inr(leftOnTable)} left on the table`, early, 'up'], [`Good exits — it fell after you sold (${inr(avoided)} avoided)`, good, 'down']] as const).map(([t, list, k]) => (
+          {([[`Sold, then it kept rising — ${inr(leftOnTable)} left on the table (last exit of each stock, top 20)`, early, 'up'], [`Good exits — it fell after you sold (${inr(avoided)} avoided · last exit of each stock, top 20)`, good, 'down']] as const).map(([t, list, k]) => (
             <Card key={k} title={t}>
               {list.length ? <SortTable rows={list} rowKey={(r) => r.isin} initial="amt" desc={k === 'up'} cols={[
                 { key: 'sym', label: 'Stock', left: true, sort: (r) => r.symbol, cell: (r) => <b>{r.symbol}</b> },
                 { key: 'last', label: 'Last sold', sort: (r) => r.lastSell, cell: (r) => r.lastSell },
+                { key: 'val', label: 'Sold for', title: 'Money you got for the shares of the last exit', sort: (r) => r.qtySold * r.avgSellPx, cell: (r) => inr(r.qtySold * r.avgSellPx) },
                 { key: 'sell', label: 'Avg sell', sort: (r) => r.avgSellPx, cell: (r) => r.avgSellPx.toFixed(2) },
                 { key: 'now', label: 'Now', sort: (r) => r.priceNow, cell: (r) => r.priceNow.toFixed(2) },
                 { key: 'mv', label: 'Since', sort: (r) => r.movePct, cell: (r) => <span style={{ color: tone(r.movePct), fontWeight: 700 }}>{pct(r.movePct)}</span> },
@@ -191,7 +191,7 @@ export function StockAnalytics({ data }: { data: TradebookAnalytics }) {
           ))}
         </div>}>
         <SortTable rows={rows} rowKey={(r) => r.isin} initial="total" cols={[
-          { key: 'sym', label: 'Stock', left: true, sort: (r) => r.symbol, cell: (r) => <b>{r.symbol}</b> },
+          { key: 'sym', label: 'Stock', left: true, sort: (r) => r.symbol, cell: (r) => <><b>{r.symbol}</b>{r.includes?.length ? <span style={{ fontSize: 10.5, color: C.dim }}> + {r.includes.join(', ')}</span> : null}{r.cash ? <span style={{ fontSize: 10, color: C.dim }}> · cash fund</span> : null}</> },
           { key: 'st', label: 'Status', sort: (r) => r.status, cell: (r) => <Pill s={r.status} /> },
           { key: 'buy', label: 'Bought ₹', sort: (r) => r.bought, cell: (r) => inr(r.bought) },
           { key: 'sold', label: 'Sold ₹', sort: (r) => r.sold, cell: (r) => inr(r.sold) },
@@ -199,7 +199,9 @@ export function StockAnalytics({ data }: { data: TradebookAnalytics }) {
           { key: 'unr', label: 'Unrealised', sort: (r) => r.unrealized, cell: (r) => <span style={{ color: tone(r.unrealized) }}>{r.status === 'EXITED' ? '—' : inr(r.unrealized)}</span> },
           { key: 'div', label: 'Dividends', sort: (r) => r.dividends, cell: (r) => (r.dividends ? inr(r.dividends) : '—') },
           { key: 'total', label: 'Total P&L', sort: (r) => r.total, cell: (r) => <span style={{ color: tone(r.total), fontWeight: 800 }}>{inr(r.total)}</span> },
-          { key: 'pct', label: 'Return', title: 'Total ÷ money put into buys', sort: (r) => r.pct, cell: (r) => <span style={{ color: tone(r.pct) }}>{pct(r.pct)}</span> },
+          { key: 'peak', label: 'Most in it', title: 'The most money you had in this stock at one time', sort: (r) => r.peak, cell: (r) => inr(r.peak) },
+          { key: 'pct', label: 'Return', title: 'Total ÷ the most money you had in it at one time', sort: (r) => r.pct, cell: (r) => <span style={{ color: tone(r.pct) }}>{pct(r.pct)}</span> },
+          { key: 'pctT', label: 'On all buys', title: 'Total ÷ all money put into its buys (counts the same money again on every round trip)', sort: (r) => r.pctTurnover, cell: (r) => <span style={{ color: C.mute }}>{pct(r.pctTurnover)}</span> },
           { key: 'wl', label: 'Won / lost', title: 'Closed trades that made / lost money', sort: (r) => r.wins - r.losses, cell: (r) => (r.wins + r.losses ? `${r.wins} / ${r.losses}` : '—') },
           { key: 'n', label: 'Trades', sort: (r) => r.trades, cell: (r) => r.trades },
           { key: 'first', label: 'First trade', sort: (r) => r.first, cell: (r) => r.first },
