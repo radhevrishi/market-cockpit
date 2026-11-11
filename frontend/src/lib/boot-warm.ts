@@ -27,5 +27,8 @@ async function run(): Promise<void> {
     step('snapshot IN', () => snap.getSnapshot('IN')),
     step('guidance index', async () => (await import('./in-guide-check')).prewarmInGuideIndex()),
   ]);
+  // zzz1265 — the guidance universe took ~19 s on the first Guidance Upgrades visit after every deploy; build it now
+  // (after the snapshots, one thing at a time) so the first visit reads the kept bundle
+  await step('guidance universe', async () => { await (await import('./guidance-universe-service')).getUniverseBundle(Date.now(), false); });
   console.log(`[boot-warm] ${done.join(', ') || 'nothing'} ready in ${Date.now() - t0} ms`);
 }

@@ -4161,3 +4161,15 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   day lists it under "graded on another day"; a figure-less earlier placeholder never blocks a later card with figures. Applied at
   build AND on every served day (`moveShownEarlier` in gradedOverlayGET), so stored days are corrected. Compact graded rows carry `fig`.
   USA: `US_SESSION_LOOKBACK` 7 → 40 weekday sessions (index reads 8 at a time).
+- zzz1265 (11 Nov night): Guidance Upgrades check (live data audited by a Sonnet helper, fixes by Fable).
+  · `growthLabelHold(sourceMetricLabel, family)` (guidance-prior-match): a figure whose source label is a margin, a share / mix, one
+    site / plant / segment / division, or pro forma is never ranked as company growth — it goes to "Not used as company growth" with
+    the reason (Kontoor gross margin in bps ranked #1 as "EBITDA +350–370%"; V2 Retail, Clean Science, Dhanuka, AAR).
+  · One sentence filed as this year's growth AND as a multi-year rate (NPST) is listed once (the yearly row keeps it).
+  · Speed: `/api/v1/guidance-universe` list answers are memoised 30 s (stale-while-rebuild 10 min), pre-compressed, with ETag/304
+    (was ~1.1 s of rebuild + 7 MB serialise on every request); the universe bundle is built at boot (first visit after a deploy was ~19 s).
+    `force=1` and `entity=` bypass the memo.
+  · Known, NOT fixed yet (from the audit): universe records marked RAISED where old and new are different kinds (EXLS "$28–32M → +16–17%",
+    ASTRAMICRO, ADANIPORTS amount → percent); 5 records the server itself flags RAISE_FROM_REITERATION still shown as RAISED (ITW, EW, R,
+    COLM, SLDE); a "raise" to a smaller decline shown with a minus (PNR, UTMD); DTE listed under DTE and DTB; 611 US FY26 records carry a
+    placeholder period end 2027-03-01; table text used as the statement (CGNX, DAVE, XPRO, HLMN); 136 DERIVED_NO_BASIS invariants.

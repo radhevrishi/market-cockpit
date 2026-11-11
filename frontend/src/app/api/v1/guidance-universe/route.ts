@@ -28,6 +28,8 @@ import { auditDerived } from '@/lib/guidance-derived-audit';
 import { promoteConfirmed } from '@/lib/guidance-promote';
 import { loadPipelineEvidence, pipelineView } from '@/lib/guidance-pipeline-service';
 import { leanUniverseBody, findUniverseRow } from '@/lib/gu-lean';
+import { cachedRoute } from '@/lib/server-memo';
+import { serverTiming } from '@/lib/server-timing';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -35,7 +37,17 @@ export const maxDuration = 30;
 
 const METRICS: GgMetric[] = ['REVENUE', 'PAT', 'EPS', 'EBITDA', 'FCF'];
 
+// zzz1265 — the list answer (7 MB of JSON before compression) was built, serialised and compressed again on EVERY request
+// (~1.1 s warm), with no validator. A plain list read is now kept for 30 s and served stale-while-rebuilding for 10 min
+// (one rebuild at a time), pre-compressed, with an ETag so an unchanged revisit is a 304. `force=1` and `entity=` bypass it.
 export async function GET(req: NextRequest) {
+  const sp = new URL(req.url).searchParams;
+  if (sp.get('force') === '1' || sp.get('entity')) return universeGET(req);
+  const key = `gu-universe|${['market', 'metric', 'threshold', 'view', 'lean'].map((k) => String(sp.get(k) || '').toUpperCase()).join('|')}`;
+  return cachedRoute(req, { key, freshMs: 30_000, staleMs: 10 * 60_000, handler: () => universeGET(req), cacheable: (a) => a.status === 200, cacheControl: 'no-store', timing: serverTiming() });
+}
+
+async function universeGET(req: NextRequest): Promise<Response> {
   const t0 = Date.now();
   const sp = new URL(req.url).searchParams;
   const mk = String(sp.get('market') || 'ALL').toUpperCase();

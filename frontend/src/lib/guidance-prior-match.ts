@@ -110,6 +110,23 @@ export function growthStatementHold(statement: string | null | undefined, family
   return null;
 }
 
+/**
+ * zzz1265 — the SOURCE LABEL of a figure says what it measures, and it can disagree with the family the row was filed under.
+ * Live cases (11 Nov): Kontoor "Adjusted gross margin from continuing operations" filed as EBITDA growth +350–370% (basis
+ * points read as percent — it ranked first); V2 Retail "Gross margin" filed as revenue +50%; Clean Science "HALS share of
+ * company revenue"; Dhanuka "Dahej_site_revenue_guidance"; AAR "sales pro forma increase". A margin, a share, one site /
+ * segment or a pro-forma figure is never ranked as company growth. Pure.
+ */
+export function growthLabelHold(label: string | null | undefined, family: string): string | null {
+  const l = String(label || '').replace(/[_]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!l) return null;
+  if (/\bmargins?\b/i.test(l) && !/\bgrowth\b/i.test(l)) return `the source figure is a margin (“${l.slice(0, 60)}”), not ${family === 'REVENUE' ? 'revenue' : 'profit'} growth`;
+  if (/\bshare of\b|\bmix\b|\bcontribution\b/i.test(l)) return `the source figure is a share of the business (“${l.slice(0, 60)}”), not growth`;
+  if (/\b(?:site|plant|segment|division|vertical|subsidiary)\b/i.test(l) && !/\b(?:company|consolidated|group|total|overall)\b/i.test(l)) return `one part of the company (“${l.slice(0, 60)}”), not the whole company`;
+  if (/\bpro[ -]?forma\b/i.test(l)) return 'a pro-forma figure (includes a deal), not the same business growing';
+  return null;
+}
+
 export function growthScopeIssue(statement: string | null | undefined, family: string, company?: string | null): string | null {
   const t = String(statement || '');
   if (!t) return null;
