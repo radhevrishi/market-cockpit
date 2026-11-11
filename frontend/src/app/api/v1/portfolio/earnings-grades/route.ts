@@ -211,7 +211,8 @@ export async function GET(req: NextRequest) {
       tier,
       sector: graded?.sec || null,
       market_cap_cr: graded?.mc ?? null,
-      quarter: scanQuarter || graded?.q || null,
+      // zzz1252 — a fallback graded entry keeps ITS quarter (its tier / date / score belong to it), never the scan's newer one
+      quarter: gradedQ ? (scanQuarter || gradedQ.q || null) : graded ? (graded.q || null) : scanQuarter,
       composite_score,
       pead_score, // zzz299 — real PEAD from graded pipeline
       revenue_yoy: c && typeof c.revenueYoY === 'number' ? c.revenueYoY : null,

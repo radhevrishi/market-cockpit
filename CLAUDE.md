@@ -4061,3 +4061,9 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   `rounds` (`holdingRounds`: overlapping buy→sell spans = one holding period; money in / got back / P&L / return, open round
   carries the unrealised P&L) shown when a row is clicked, plus "Best hold" (`bestRoundPct`). AEGISLOG +85% is right: ₹1.30 L in,
   ₹2.41 L back — 35 shares sold near cost first; the last 154 shares made +103% on their own. ANALYTICS_VERSION zzz1251.
+- zzz1252 (11 Nov): Portfolio Earnings tab (watchlists/PortfolioEarningsTab.tsx) showed ~40 of the owner's holdings as NO FILING:
+  the earnings scan was one call for the whole list (the route reads at most 50 symbols, ~40 s), so a failed / cut call left only
+  the graded-pipeline names. Now batches of 12, three at a time, each retried once; sector / name fall back to the stock-screener
+  slim rows; names without results are looked up again after 30 min (was 6 h); cache key mc:portfolio-earnings-tab:v2 (readers
+  fall back to v1). Quarters are never mixed: a graded entry keeps its own quarter; when the scan has a newer quarter the row shows
+  that quarter with a tier estimated from its revenue / profit growth (≈ TIER, "not graded yet", R x% · P y%). Cache key v3.

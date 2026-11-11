@@ -75,15 +75,39 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
       const stripSuffix = (t: string) => t.replace(/-(BE|BZ|BL|EQ|SM|T)$/i, '');
       const normTickers = tickers.map(stripSuffix);
       const csv = encodeURIComponent(normTickers.join(','));
-      const [gradesRes, scanRes] = await Promise.all([
+      // zzz1252 — the scan reads at most 50 symbols and a 50-name call takes ~40 s, so one failed or cut call left most of
+      // the portfolio as "NO FILING". Now: small batches (12), three at a time, each retried once; one bad batch only
+      // costs its own names. Sector / name come from our own stock-screener rows when the graded pipeline has none.
+      const scanBatch = async (syms: string[]): Promise<any[]> => {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            const r = await fetch(`/api/market/earnings-scan?symbols=${encodeURIComponent(syms.join(','))}`, { cache: 'no-store', signal: AbortSignal.timeout(50_000) });
+            if (r.ok) { const j: any = await r.json(); if (Array.isArray(j?.cards)) return j.cards; }
+          } catch {}
+        }
+        return [];
+      };
+      const batches: string[][] = [];
+      for (let i = 0; i < normTickers.length; i += 12) batches.push(normTickers.slice(i, i + 12));
+      const scanCards: any[] = [];
+      const scanAll = (async () => {
+        for (let i = 0; i < batches.length; i += 3) {
+          const res = await Promise.all(batches.slice(i, i + 3).map(scanBatch));
+          for (const r of res) scanCards.push(...r);
+        }
+      })();
+      const [gradesRes, slimRes] = await Promise.all([
         fetch(`/api/v1/portfolio/earnings-grades?tickers=${csv}`, { cache: 'no-store' }),
-        fetch(`/api/market/earnings-scan?symbols=${csv}`, { cache: 'no-store' }),
+        fetch(`/api/v1/stock-screener?market=IN&tickers=${csv}`, { cache: 'no-store' }).catch(() => null),
+        scanAll,
       ]);
       const gradesJson: any = gradesRes.ok ? await gradesRes.json() : { results: {} };
-      const scanJson: any = scanRes.ok ? await scanRes.json() : { cards: [] };
+      const slimJson: any = slimRes && slimRes.ok ? await slimRes.json().catch(() => null) : null;
+      const slimBy: Record<string, any> = {};
+      for (const r of (slimJson?.rows || [])) if (r?.t) slimBy[String(r.t).toUpperCase()] = r;
       const gradedResults: Record<string, any> = gradesJson.results || {};
       const scanByTicker: Record<string, any> = {};
-      for (const c of (scanJson.cards || [])) {
+      for (const c of scanCards) {
         const sym = String(c?.symbol || '').toUpperCase();
         if (sym) scanByTicker[sym] = c;
       }
@@ -158,29 +182,39 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
             const ageDays = (Date.now() - d.getTime()) / (86400 * 1000);
             return ageDays > 180;
           })();
-          if (isMissing || isZeroStub || (isStale && !gradedEntry)) {
-            merged[t] = gradedEntry ?? null;
-          } else {
-            const graded2 = gradedEntry && gradedEntry.quarter === scanQ ? gradedEntry : null;
-            // zzz328 — Prefer ANY graded tier over scan heuristic even if quarter mismatch.
-            // Graded pipeline is the source of truth (matches EO individual card). Scan tier
-            // is a fallback for tickers with NO graded entry at all. Eliminates DREDGECORP-style
-            // discrepancy where Portfolio Earnings showed STRONG (scan=74) but EO card showed MIXED.
-            const gradedAnyQuarter = gradedEntry?.tier as Tier | undefined;
+          // zzz1252 — never mix quarters. The graded tier / date / score belong to the quarter they were graded for; when the
+          // scan has a NEWER quarter than the graded entry, the row shows the new quarter with a tier estimated from its own
+          // revenue / profit growth (marked ≈, "not graded yet") instead of last quarter's tier under this quarter's label.
+          const qRank = (q?: string | null) => { const m = /Q(\d)\s+FY(\d+)/.exec(q || ''); return m ? parseInt(m[2]) * 10 + parseInt(m[1]) : 0; };
+          const gq = gradedEntry?.quarter ?? null;
+          const scanUsable = !(isMissing || isZeroStub || isStale) && !!scanQ;
+          if (gradedEntry && (!scanUsable || qRank(gq) >= qRank(scanQ))) {
+            merged[t] = { ...gradedEntry, sector: gradedEntry.sector || slimBy[t.replace(/-(BE|BZ|BL|EQ|SM|T)$/i, '')]?.sec || null } as any;
+          } else if (scanUsable) {
+            const rev = typeof scanCard.revenueYoY === 'number' ? scanCard.revenueYoY : null;
+            const pat = typeof scanCard.patYoY === 'number' ? scanCard.patYoY : null;
+            const estTier: Tier = rev == null || pat == null ? scanToTier(scanCard.grade, scanScore ?? undefined)
+              : rev >= 25 && pat >= 40 ? 'BLOCKBUSTER'
+              : rev >= 12 && pat >= 15 ? 'STRONG'
+              : rev < 0 && pat < 0 ? 'AVOID'
+              : pat < -10 ? 'AVOID' : 'MIXED';
+            const base = t.replace(/-(BE|BZ|BL|EQ|SM|T)$/i, '');
             merged[t] = {
               ticker: t,
-              company: String(scanCard.company || t),
-              filing_date: filingDate,
-              tier: gradedAnyQuarter || scanToTier(scanCard.grade, scanScore ?? undefined),
-              sector: graded2?.sector || null,
-              market_cap_cr: graded2?.market_cap_cr ?? null,
-              quarter: scanQ || graded2?.quarter || null,
-              composite_score: gradedEntry?.composite_score ?? graded2?.composite_score ?? scanScore,
-              // zzz299 — real PEAD from graded pipeline (server portfolio-grades). scan.priceScore is a stub-50.
-              pead_score: (gradedEntry as any)?.pead_score ?? null,
-              // zzz302 — proxy PEAD from scan fundamentalsScore when real is missing.
-              pead_proxy: (gradedEntry as any)?.pead_score == null && typeof scanCard.fundamentalsScore === 'number' ? scanCard.fundamentalsScore : null,
+              company: String(scanCard.company && scanCard.company !== t ? scanCard.company : (slimBy[base]?.n || scanCard.company || t)),
+              filing_date: '',
+              tier: estTier,
+              sector: slimBy[base]?.sec || gradedEntry?.sector || null,
+              market_cap_cr: null,
+              quarter: scanQ,
+              composite_score: null,
+              pead_score: null,
+              estimated: true,
+              rev_yoy: rev, pat_yoy: pat,
+              prev: gradedEntry ? `${gradedEntry.tier} in ${gq || 'an earlier quarter'}` : null,
             } as any;
+          } else {
+            merged[t] = gradedEntry ?? null;
           }
         } else {
           merged[t] = gradedEntry;
@@ -191,7 +225,7 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
       setRefreshedAt(ts);
       try {
         // zzz295 — persist so next visit shows cached data instantly
-        localStorage.setItem('mc:portfolio-earnings-tab:v1', JSON.stringify({ ts, grades: merged, tickers }));
+        localStorage.setItem('mc:portfolio-earnings-tab:v3', JSON.stringify({ ts, grades: merged, tickers }));
       } catch {}
     } catch {}
     setLoading(false);
@@ -207,7 +241,7 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
     let hasCache = false;
     let staleNulls = false;
     try {
-      const raw = localStorage.getItem('mc:portfolio-earnings-tab:v1');
+      const raw = localStorage.getItem('mc:portfolio-earnings-tab:v3');
       if (raw) {
         const cached = JSON.parse(raw);
         if (cached?.grades) {
@@ -215,7 +249,8 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
           setRefreshedAt(cached.ts || null);
           hasCache = true;
           const ageMs = Date.now() - (cached.ts || 0);
-          const SIX_HOURS = 6 * 60 * 60 * 1000;
+          // zzz1252 — names without results are looked up again after 30 minutes (was 6 hours)
+          const SIX_HOURS = 30 * 60 * 1000;
           if (ageMs > SIX_HOURS) {
             for (const t of tickers) {
               if (!cached.grades[t]) { staleNulls = true; break; }
@@ -449,18 +484,18 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
                 </div>
                 <div>
                   {grade && style ? (
-                    <button onClick={() => openInEO(grade.ticker, grade.filing_date)} title="Open card in Earnings Opportunities" style={{
+                    <button onClick={() => openInEO(grade.ticker, grade.filing_date)} title={(grade as any).estimated ? `Not graded yet — estimated from the ${grade.quarter} figures: revenue ${(grade as any).rev_yoy != null ? `${(grade as any).rev_yoy > 0 ? '+' : ''}${(grade as any).rev_yoy}%` : '—'}, profit ${(grade as any).pat_yoy != null ? `${(grade as any).pat_yoy > 0 ? '+' : ''}${(grade as any).pat_yoy}%` : '—'} vs a year ago.${(grade as any).prev ? ` Last graded: ${(grade as any).prev}.` : ''}` : 'Open card in Earnings Opportunities'} style={{
                       background: style.bg, border: `1px solid ${style.border}`, color: style.fg,
                       padding: '4px 10px', borderRadius: 4, fontSize: 10, fontWeight: 800,
                       cursor: 'pointer', letterSpacing: '0.4px',
-                    }}>{style.label}</button>
+                    }}>{(grade as any).estimated ? `≈ ${style.label}` : style.label}</button>
                   ) : (
                     <span style={{ color: 'var(--mc-text-4)', fontSize: 10, fontWeight: 700 }}>NO FILING</span>
                   )}
                 </div>
-                <div style={{ color: 'var(--mc-text-3)', fontSize: 11 }}>{grade?.filing_date || '—'}</div>
+                <div style={{ color: 'var(--mc-text-3)', fontSize: 11 }}>{grade?.filing_date || ((grade as any)?.estimated ? <span style={{ fontStyle: 'italic' }} title="Results are out but this day has not been graded yet">not graded yet</span> : '—')}</div>
                 <div style={{ color: 'var(--mc-text-3)', fontSize: 11 }}>{grade?.quarter || '—'}</div>
-                <div style={{ textAlign: 'right', color: 'var(--mc-text-2)', fontWeight: 700 }}>{grade?.composite_score ?? '—'}</div>
+                <div style={{ textAlign: 'right', color: 'var(--mc-text-2)', fontWeight: 700 }}>{grade?.composite_score ?? ((grade as any)?.estimated ? <span style={{ fontSize: 10, fontWeight: 500, color: 'var(--mc-text-4)' }}>{(grade as any).rev_yoy != null ? `R ${Math.round((grade as any).rev_yoy)}% · P ${Math.round((grade as any).pat_yoy ?? 0)}%` : '—'}</span> : '—')}</div>
                 <div style={{ textAlign: 'right', fontWeight: 700, fontSize: 11 }}>{(() => {
                   const real = (grade as any)?.pead_score;
                   const proxy = (grade as any)?.pead_proxy;
