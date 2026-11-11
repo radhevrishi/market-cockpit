@@ -801,7 +801,17 @@ async function tick(base: string, secret: string): Promise<void> {
   // Do not start another PDF / AI / full-feed task when the web process is close
   // to its V8 heap ceiling. Leave the slot unclaimed so it can run on a later tick.
   // Minute-level price alerts and delivery above still execute normally.
-  const heapUsedBytes = process.memoryUsage().heapUsed;
+  let heapUsedBytes = process.memoryUsage().heapUsed;
+  // zzz1255 — heapUsed counts dead objects until V8 collects; an idle process may not collect for a long time.
+  // Collect first (at most every 5 min) so the guard only holds jobs for memory that is really kept.
+  if (shouldDeferHeavyJob(heapUsedBytes)) {
+    const { forceFullGc } = await import('./force-gc');
+    const g = forceFullGc();
+    if (g) {
+      console.log(`[app-scheduler] memory guard: full collection ${g.beforeMb} MB → ${g.afterMb} MB`);
+      heapUsedBytes = process.memoryUsage().heapUsed;
+    }
+  }
   if (!shouldDeferHeavyJob(heapUsedBytes)) heapBlockedSince = 0;
   else if (!heapBlockedSince) heapBlockedSince = Date.now();
   if (shouldDeferHeavyJob(heapUsedBytes)) {

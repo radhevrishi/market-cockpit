@@ -4080,3 +4080,9 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   `/api/v1/portfolio/earnings-grades` now looks the requested tickers up directly (`lookupGraded`: newest session first, groups of 6
   via kvMGet, each group retried once, unread sessions reported as `unread_sessions`); latest = newest quarter then newest session;
   a graded quarter newer than the scan's wins. The search route and bse-map still use search:idx:v3. Tab cache key v4.
+- zzz1255 (11 Nov): the 12:23 UTC transformational-archive slot was held by the heap guard (2.3–2.4 GB heap, nothing running,
+  0.5 h after a deploy). heapUsed counts dead objects until V8 collects, and an idle process may not collect for a long time.
+  `lib/force-gc.ts` (`forceFullGc`: --expose-gc set at run time, gc taken from a new vm context, at most every 5 min) runs
+  before the guard holds a job; the guard then judges the heap after collection (log line "full collection X MB → Y MB").
+  Portfolio earnings-grades `lookupGraded` keeps compact per-session rows in memory (`SESSION_MEMO`, today 5 min, older
+  30 min) instead of reading and parsing 120 whole graded payloads on every call.

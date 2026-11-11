@@ -102,52 +102,82 @@ async function buildIndex(): Promise<IndexEntry[]> {
  * looked up directly, newest session first, with the same batched read the Earnings Opportunities window uses; a session
  * that cannot be read is retried once and, if it still fails, reported in `unread` (never silently treated as "no filing").
  */
+// zzz1255 — per-session compact rows kept in memory (today 5 min, older sessions 30 min) so a page reload does not read and
+// parse 120 whole graded payloads again (each read of the full window allocated well over 1 GB of short-lived objects).
+type CompactRow = Omit<IndexEntry, 'db'>;
+const SESSION_MEMO = new Map<string, { at: number; rows: CompactRow[] }>();
+const memoTtl = (d: string, today: string) => (d === today ? 5 : 30) * 60_000;
+function compactOf(payload: any, d: string): CompactRow[] {
+  const rows: CompactRow[] = [];
+  for (const tier of TIERS) {
+    const arr = payload?.by_tier?.[tier];
+    if (!Array.isArray(arr)) continue;
+    for (const e of arr) {
+      const ticker = String(e?.ticker || '').toUpperCase();
+      if (!ticker) continue;
+      rows.push({
+        t: ticker, c: String(e.company || ticker), fd: String(e.filing_date || d), tier,
+        sec: e.sector || null, mc: typeof e.market_cap_cr === 'number' ? e.market_cap_cr : null,
+        q: e.quarter || null, cs: typeof e.composite_score === 'number' ? e.composite_score : null,
+        p: typeof e.pead_score === 'number' ? e.pead_score : null,
+      });
+    }
+  }
+  return rows;
+}
+
 async function lookupGraded(tickers: string[]): Promise<{ entries: IndexEntry[]; unread: string[] }> {
   const want = new Set(tickers);
   const dates = businessDaysBack(LOOKBACK_BUSINESS_DAYS);
+  const today = dates[0];
   const entries: IndexEntry[] = [];
   const seen = new Set<string>();
   const unread: string[] = [];
   const GROUP = 6;
-  const readGroup = async (group: string[]): Promise<Array<{ d: string; payload: any }>> => {
+  const readGroup = async (group: string[]): Promise<Array<{ d: string; rows: CompactRow[] }>> => {
+    const now = Date.now();
+    const out: Array<{ d: string; rows: CompactRow[] }> = [];
+    const missing: string[] = [];
+    for (const d of group) {
+      const m = SESSION_MEMO.get(d);
+      if (m && now - m.at < memoTtl(d, today)) out.push({ d, rows: m.rows }); else missing.push(d);
+    }
+    if (!missing.length) return out;
     const keys: string[] = []; const owner: string[] = [];
-    for (const d of group) for (const k of gradedKeyCandidates(d)) { keys.push(k); owner.push(d); }
+    for (const d of missing) for (const k of gradedKeyCandidates(d)) { keys.push(k); owner.push(d); }
     let vals: any[] | null = null;
     for (let attempt = 0; attempt < 2 && !vals; attempt++) { try { vals = await kvMGet(keys); } catch { vals = null; } }
-    if (!vals) { unread.push(...group); return []; }
-    const out: Array<{ d: string; payload: any }> = [];
-    for (const d of group) {
+    if (!vals) { unread.push(...missing); return out; }
+    for (const d of missing) {
+      let rows: CompactRow[] = [];
       for (let i = 0; i < keys.length; i++) {
         if (owner[i] !== d) continue;
         const v = vals[i];
-        if (v && v.by_tier) { out.push({ d, payload: withCurrentIndiaRules(v, keys[i]) }); break; }
+        if (v && v.by_tier) { rows = compactOf(withCurrentIndiaRules(v, keys[i]), d); break; }
       }
+      SESSION_MEMO.set(d, { at: now, rows });
+      out.push({ d, rows });
     }
+    vals = null;
     return out;
   };
   for (let i = 0; i < dates.length; i += GROUP) {
     const got = await readGroup(dates.slice(i, i + GROUP));
-    for (const { d, payload } of got) {
+    got.sort((a, b) => dates.indexOf(a.d) - dates.indexOf(b.d));
+    for (const { d, rows } of got) {
       const daysBack = dates.indexOf(d);
-      for (const tier of TIERS) {
-        const arr = payload.by_tier[tier];
-        if (!Array.isArray(arr)) continue;
-        for (const e of arr) {
-          const ticker = String(e?.ticker || '').toUpperCase();
-          if (!ticker || !want.has(ticker)) continue;
-          const dedupKey = `${ticker}@${e.quarter || ''}`;
-          if (seen.has(dedupKey)) continue;   // newest session first — the first sighting is the latest grade of that quarter
-          seen.add(dedupKey);
-          entries.push({
-            t: ticker, c: String(e.company || ticker), fd: String(e.filing_date || d), tier,
-            sec: e.sector || null, mc: typeof e.market_cap_cr === 'number' ? e.market_cap_cr : null,
-            q: e.quarter || null, cs: typeof e.composite_score === 'number' ? e.composite_score : null,
-            p: typeof e.pead_score === 'number' ? e.pead_score : null, db: daysBack,
-          });
-        }
+      for (const r of rows) {
+        if (!want.has(r.t)) continue;
+        const dedupKey = `${r.t}@${r.q || ''}`;
+        if (seen.has(dedupKey)) continue;   // newest session first — the first sighting is the latest grade of that quarter
+        seen.add(dedupKey);
+        entries.push({ ...r, db: daysBack });
       }
     }
   }
+  // drop sessions that left the window
+  const inWindow = new Set(dates);
+  for (const k of SESSION_MEMO.keys()) if (!inWindow.has(k)) SESSION_MEMO.delete(k);
   return { entries, unread };
 }
 
