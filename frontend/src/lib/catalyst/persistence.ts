@@ -993,8 +993,24 @@ export interface DetectInput {
   today?: string;
 }
 
-/** zzz1253 — lending / deposit wording: never capacity, utilisation or production volume. */
-export const LENDING_WORDS = /\b(disburs\w*|loan book|loan growth|loans and advances|gross advances|advances (?:grew|rose|up)|deposits?|AUM|assets under management|net interest|NIM|CASA|NPA|credit cost|collection efficiency|borrowers?|lending)\b/i;
+/**
+ * zzz1253 — lending / deposit wording: never capacity, utilisation or production volume.
+ * zzz1262 — "deposits" alone also matched a miner's "ore deposits" / "mineral deposits" and dropped a real capacity ramp;
+ * a deposit counts as lending wording only when it is not a mineral / resource deposit, and the short codes (AUM, NIM,
+ * CASA, NPA) only in capitals.
+ */
+const LENDING_PLAIN = /\b(disburs\w*|loan book|loan growth|loans and advances|gross advances|advances (?:grew|rose|up)|assets under management|net interest|credit cost|collection efficiency|borrowers?|lending)\b/i;
+const LENDING_CODES = /\b(AUM|NIM|CASA|NPAs?)\b/;
+const DEPOSIT_RE = /\b(?:(\w+)\s+)?deposits?\b/gi;
+const RESOURCE_DEPOSIT = /^(ore|mineral|minerals|coal|bauxite|limestone|lithium|copper|gold|iron|zinc|manganese|graphite|uranium|gas|oil|sand|rare|earth|resource|reserve|proven|rich|security|earnest)$/i;
+export function isLendingWording(text: string | null | undefined): boolean {
+  const t = String(text || '');
+  if (LENDING_PLAIN.test(t) || LENDING_CODES.test(t)) return true;
+  for (const m of t.matchAll(DEPOSIT_RE)) if (!m[1] || !RESOURCE_DEPOSIT.test(m[1])) return true;
+  return false;
+}
+/** kept for callers that used the pattern directly */
+export const LENDING_WORDS = { test: isLendingWording };
 
 export function detectPersistentCatalysts(inp: DetectInput): PersistentCatalyst[] {
   const today = inp.today || new Date().toISOString().slice(0, 10);

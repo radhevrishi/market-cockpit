@@ -2,7 +2,8 @@
 // After the free EDGAR discovery (us-evidence-check) says a name has NEW EVIDENCE AVAILABLE, the summary read
 // (/api/v1/us-thesis/read?mode=incremental, Haiku) runs for it — inside hard limits, because this is paid:
 //   • its own USD ceiling per UTC day (US_AUTO_READ_DAILY_USD, default $0.30); the worst-case cost of a read is RESERVED
-//     before the call (atomic increment) and handed back when the read was skipped or failed;
+//     before the call (atomic increment) and handed back only when the read was skipped or refused (4xx) — a timeout or a
+//     server error keeps it, because the model may already have been paid (zzz1262);
 //   • at most 8 names a run, book names before the rest (the order check-all lists them in);
 //   • a name that fails twice is left for a manual click ("needs manual"), never retried forever;
 //   • one read per name at a time (NX lock — the manual click can race the job);
@@ -39,6 +40,9 @@ export function planAutoRead(withNew: readonly string[], tries: Readonly<Record<
 export function isBudgetRefusal(status: number, error: unknown): boolean {
   return status === 429 || /budget|spend limit|daily limit|cap reached|quota|rate limit/i.test(String(error || ''));
 }
+
+/** may the reserved cost be handed back? Only when the server refused before any model call (4xx). */
+export const refundable = (status: number): boolean => status >= 400 && status < 500;
 
 export interface AutoReadDeps {
   call: (path: string, opts: { timeoutMs: number; retry: false }) => Promise<{ ok: boolean; status: number; json?: any }>;
@@ -78,13 +82,15 @@ export async function runAutoRead(withNew: readonly string[], d: AutoReadDeps): 
         if (j.skipped) { await refund(); out.skipped.push(t); } else { out.read.push(t); out.reservedUsd += AUTO_READ_EST_USD; }
         await d.kv.del(triesKey(t)).catch(() => undefined);
       } else {
-        await refund();
+        // zzz1262 — hand the reservation back only when the answer shows nothing was spent (a 4xx refusal). A timeout
+        // (status 0) or a 5xx can come AFTER the model was paid: that money stays counted against the day's ceiling.
+        if (refundable(r.status)) await refund(); else out.reservedUsd += AUTO_READ_EST_USD;
         if (isBudgetRefusal(r.status, j.error)) { out.stoppedBy = 'budget'; break; }
         out.failed.push(t);
         await d.kv.set(triesKey(t), (tries[t] || 0) + 1, 3 * 86_400).catch(() => undefined);
       }
     } catch (e: any) {
-      await refund();
+      out.reservedUsd += AUTO_READ_EST_USD;   // outcome unknown (the call threw): assume the read was paid for
       out.failed.push(t);
       await d.kv.set(triesKey(t), (tries[t] || 0) + 1, 3 * 86_400).catch(() => undefined);
     } finally { await d.kv.del(lockKey(t)).catch(() => undefined); }

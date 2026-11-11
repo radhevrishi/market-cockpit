@@ -7,9 +7,11 @@ import { readFileSync } from 'node:fs';
 const src = readFileSync(new URL('../../app/api/v1/portfolio/earnings-grades/route.ts', import.meta.url), 'utf8');
 
 test('requested tickers are looked up directly, sessions read in batches and retried', () => {
-  assert.match(src, /const \{ entries: index, unread \} = await lookupGraded\(tickers\);/);
-  assert.match(src, /kvMGet\(keys\)/);
-  assert.match(src, /for \(let attempt = 0; attempt < 2 && !vals; attempt\+\+\)/);
+  // zzz1262 — the reader moved to lib/graded-session-index (shared with the earnings search and the BSE-code map)
+  assert.match(src, /lookupGraded\(tickers\)/);
+  const lib = readFileSync(new URL('../graded-session-index.ts', import.meta.url), 'utf8');
+  assert.match(lib, /deps\.mget\(keys\)/);
+  assert.match(lib, /for \(let attempt = 0; attempt < 2 && !vals; attempt\+\+\)/);
   assert.match(src, /unread_sessions: unread/);
   assert.doesNotMatch(src, /await getIndex\(\)/);
 });

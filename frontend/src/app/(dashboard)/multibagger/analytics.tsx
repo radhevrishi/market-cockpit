@@ -13,6 +13,7 @@ import { USA_SLIM_KEY, USA_STORAGE_KEY, _getUsaRowsMemCache, _setUsaRowsMemCache
 import { mbServerSnapshotLoad } from './storage';
 import { type MbAnalyticsStock, type MbMarketScope } from './types';
 import { MbScreenerChips, MultiConfirmedCard } from './widgets';
+import { useRewardedIndex, demoteRewarded, rewardedKey, type RewardedIndex } from '@/lib/use-rewarded';   // zzz1262
 
 export function MultibaggerAnalytics({
   indiaRows,
@@ -819,7 +820,7 @@ export function MultibaggerAnalytics({
           if (seen.has(key)) continue;
           seen.add(key);
           out.push(c);
-          if (out.length >= 3) break;
+          if (out.length >= 40) break;   // zzz1262 — a pool; the three shown are cut after "already rewarded" names are moved last
         }
         return out;
       })(),
@@ -837,6 +838,27 @@ export function MultibaggerAnalytics({
     // change anywhere in the app re-computes this memo (Decision Bridge,
     // Triple-Confirmed, Decision Coverage %). Was previously cached.
   }, [stocks, convictionSet, indiaRows, usaRows, decisionTick]);
+
+  // zzz1262 — "already rewarded" on the buy lists (owner, 11 Nov: "a lot of these are already rewarded"). Only the names
+  // that can reach a buy list (grade A / A+) are asked about. A rewarded name is moved to the end of STRONG BUY and out of
+  // the top three, with the reason on a chip — never hidden. No 3-month figure = unknown = left where it is.
+  const buyListSyms = React.useMemo(() => {
+    const a: { IN: string[]; US: string[] } = { IN: [], US: [] };
+    for (const s of stocks) if (s.grade === 'A+' || s.grade === 'A') (s.market === 'USA' ? a.US : a.IN).push(s.symbol);
+    return a;
+  }, [stocks]);
+  const rwIn = useRewardedIndex(buyListSyms.IN, 'IN');
+  const rwUs = useRewardedIndex(buyListSyms.US, 'US');
+  const rwOf = (s: { symbol: string; market?: string }) => (s.market === 'USA' ? rwUs : rwIn)[rewardedKey(s.symbol)];
+  const rwBoth: RewardedIndex = { ...rwIn, ...rwUs };
+  const strongBuyShown = stats ? demoteRewarded(stats.strongBuy, (s) => s.symbol, rwBoth) : [];
+  const top3Shown = stats ? demoteRewarded(stats.top3Today || [], (s) => s.symbol, rwBoth).filter((s) => rwOf(s)?.rewarded !== true).slice(0, 3) : [];
+  const RewardedChip = ({ s }: { s: { symbol: string; market?: string } }) => {
+    const r = rwOf(s);
+    if (!r || r.rewarded !== true) return null;
+    return <span title={`Already rewarded: ${r.why.join('; ')}. Moved to the end of the list — the price has already paid for the story.`}
+      style={{ fontSize: 9, fontWeight: 800, padding: '1px 5px', borderRadius: 3, color: 'var(--mc-warn)', background: 'color-mix(in srgb, var(--mc-warn) 14%, transparent)', whiteSpace: 'nowrap' }}>already rewarded · {r.why[0]}</span>;
+  };
 
   // Local num helper for the new memos.
   function num(v: any): number | undefined {
@@ -1108,7 +1130,7 @@ export function MultibaggerAnalytics({
           haven't actioned yet (STRONG BUY ∪ ADD-TO-BENCH minus already
           on Conviction Beats). Sits at the top of analytics so the
           analyst sees the next 3 actions before scrolling. */}
-      {stats.top3Today && stats.top3Today.length > 0 && (
+      {top3Shown.length > 0 && (
         <div style={{
           ...cardStyle,
           borderColor: 'color-mix(in srgb, var(--mc-warn) 44%, transparent)',
@@ -1116,7 +1138,7 @@ export function MultibaggerAnalytics({
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
             <div style={{ fontSize: 14, color: 'var(--mc-warn)', fontWeight: 900, letterSpacing: '0.4px' }}>
-              🚀 TODAY&apos;S TOP {stats.top3Today.length} BUYS
+              🚀 TODAY&apos;S TOP {top3Shown.length} BUYS
             </div>
             <span style={{ fontSize: 10, color: 'var(--mc-warn)', background: 'color-mix(in srgb, var(--mc-warn) 13%, transparent)', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>ACTION-READY</span>
           </div>
@@ -1125,7 +1147,7 @@ export function MultibaggerAnalytics({
             Opportunities to add, or click the company name to open the stock sheet.
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 8 }}>
-            {stats.top3Today.map((s, i) => (
+            {top3Shown.map((s, i) => (
               <a key={s.symbol} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
                 style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '10px 12px', borderRadius: 6,
                   border: '1px solid color-mix(in srgb, var(--mc-warn) 25%, transparent)', background: 'color-mix(in srgb, var(--mc-warn) 6%, transparent)', textDecoration: 'none' }}>
@@ -1157,7 +1179,7 @@ export function MultibaggerAnalytics({
             <div style={{ fontSize: 11, color: 'var(--mc-text-3)', fontStyle: 'italic' }}>No names meet all three gates yet.</div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-              {stats.strongBuy.slice(0, 8).map((s) => (
+              {strongBuyShown.slice(0, 8).map((s) => (
                 <a key={s.symbol} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
                   style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '6px 9px', borderRadius: 4,
                     border: '1px solid color-mix(in srgb, var(--mc-bullish) 19%, transparent)', background: 'color-mix(in srgb, var(--mc-bullish) 3%, transparent)', textDecoration: 'none' }}>
@@ -1172,6 +1194,7 @@ export function MultibaggerAnalytics({
                         fontVariantNumeric: 'tabular-nums',
                       }}>📂 {(s as any)._screeners.length}</span>
                     )}
+                    <RewardedChip s={s} />
                     <span style={{ fontSize: 9, color: 'var(--mc-text-3)', maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sector || '—'}</span>
                   </div>
                   <span style={{ fontSize: 9.5, color: 'color-mix(in srgb, var(--mc-bullish) 80%, transparent)', fontStyle: 'italic', lineHeight: 1.35 }}>

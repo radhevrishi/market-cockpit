@@ -8,6 +8,7 @@ import type { Grade } from '@/lib/multibagger-india-scoring';
 import type { USAResult } from '@/lib/multibagger-usa-scoring';
 import { ACCENT, BORDER, CARD_BG, F, GREEN, MUTED, ORANGE, PURPLE, RED, TEXT, YELLOW } from './constants';
 import { USA_STORAGE_KEY } from './mem-cache';
+import { rewardedWhy } from '@/lib/rewarded';   // zzz1262
 
 export function USAAnalytics() {
   // Live USA dataset — single source of truth read from LS, refreshed on
@@ -161,7 +162,11 @@ export function USAAnalytics() {
       .filter(r => !r.fcfOpDivergence)
       .filter(r => !r.postRunStretched)
       .filter(r => (r.earningsProximityDays ?? 999) > 7)
-      .sort((a, b) => (b.score || 0) - (a.score || 0))
+      // zzz1262 — "already rewarded" (up 40%+ in 3 months and the year is not down — lib/rewarded): such a name stays on
+      // the list but goes below every name that has not run yet; the chip on its row says why.
+      .map(r => ({ r, rewarded: rewardedWhy({ p3m: (r as any).perf3m, p1y: (r as any).perf1y }).rewarded === true }))
+      .sort((a, b) => (Number(a.rewarded) - Number(b.rewarded)) || ((b.r.score || 0) - (a.r.score || 0)))
+      .map(x => x.r)
       .slice(0, 12);
     // PATCH 0876 — AT-RISK shortlist. The user explicitly wants warnings,
     // not just opportunities. Surface every row that has at least one
@@ -220,7 +225,7 @@ export function USAAnalytics() {
         <div style={{ background: CARD_BG, border: `1px solid ${GREEN}40`, borderRadius: 10, padding: 16 }}>
           <div style={{ fontSize: F2.sm, fontWeight: 800, color: GREEN, marginBottom: 4 }}>🎯 TOP BUYS ({stats.topBuys.length})</div>
           <div style={{ fontSize: 10, color: MUTED, marginBottom: 10, lineHeight: 1.5 }}>
-            Grade A+/A · R40 ≥40 · Piotroski ≥6 · clean forensics · earnings &gt;7d away
+            Grade A+/A · R40 ≥40 · Piotroski ≥6 · clean forensics · earnings &gt;7d away · names already up 40%+ in 3 months listed last
           </div>
           {stats.topBuys.length === 0 ? (
             <div style={{ fontSize: 11, color: MUTED, padding: 12, textAlign: 'center', background: '#0a0a0f', borderRadius: 6 }}>
@@ -239,6 +244,7 @@ export function USAAnalytics() {
                     <div style={{ fontSize: 10, color: ACCENT, padding: '2px 6px', background: `${ACCENT}20`, borderRadius: 4, fontWeight: 700, fontFamily: 'ui-monospace,monospace' }} title="Rule of 40">R40 {r.ruleOf40 != null ? r.ruleOf40.toFixed(0) : '—'}</div>
                     <div style={{ width: 36, fontSize: 12, color: TEXT, fontFamily: 'ui-monospace,monospace', fontWeight: 800, textAlign: 'right' }}>{(r.score || 0).toFixed(0)}</div>
                     {d && <span style={{ fontSize: 9, padding: '2px 5px', borderRadius: 4, background: d.status === 'BUY' ? `${GREEN}30` : d.status === 'WATCH' ? `${YELLOW}30` : `${RED}30`, color: d.status === 'BUY' ? GREEN : d.status === 'WATCH' ? YELLOW : RED, fontWeight: 700 }}>{d.status}</span>}
+                    {(() => { const w = rewardedWhy({ p3m: (r as any).perf3m, p1y: (r as any).perf1y }); return w.rewarded === true ? <span title={`Already rewarded: ${w.why.join('; ')} — listed below names that have not run yet`} style={{ fontSize: 9, padding: '2px 5px', borderRadius: 4, background: `${YELLOW}30`, color: YELLOW, fontWeight: 700, whiteSpace: 'nowrap' }}>already rewarded · {w.why[0]}</span> : null; })()}
                     {inCb && <span style={{ fontSize: 9, padding: '2px 5px', borderRadius: 4, background: `${PURPLE}30`, color: PURPLE, fontWeight: 700 }}>CB</span>}
                   </div>
                 );

@@ -252,7 +252,7 @@ describe('5 · a holding saved as a BSE code matches its NSE symbol', () => {
     assert.equal(nseSymbolFromScreenerPage('<link rel="canonical" href="https://www.screener.in/company/ZZALPHA/consolidated/">'), 'ZZALPHA');
     assert.equal(nseSymbolFromScreenerPage('<link rel="canonical" href="https://www.screener.in/company/999002/">'), null, 'a BSE-only scrip has no NSE symbol');
     const route = read('app/api/v1/book/bse-map/route.ts');
-    assert.match(route, /search:idx:v3/); assert.match(route, /screener\.in\/company/);
+    assert.match(route, /gradedIndex\(\)/); assert.match(route, /screener\.in\/company/);   // zzz1262: the graded index itself, not the search route's stored copy
     assert.match(read('lib/thesis/use-book.ts'), /lookupBseCodes\(codes\)/);
   });
 });

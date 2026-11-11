@@ -31,8 +31,10 @@ test('scheduler collects before deferring heavy jobs', () => {
 });
 
 test('portfolio grades keep compact per-session rows', () => {
+  // zzz1262 — the compact per-session memo lives in lib/graded-session-index now (one reader for three routes)
   const src = readFileSync(new URL('../../app/api/v1/portfolio/earnings-grades/route.ts', import.meta.url), 'utf8');
-  assert.match(src, /const SESSION_MEMO = new Map/);
-  assert.match(src, /rows = compactOf\(withCurrentIndiaRules\(v, keys\[i\]\), d\)/);
-  assert.match(src, /if \(!want\.has\(r\.t\)\) continue;/);
+  assert.match(src, /from '@\/lib\/graded-session-index'/);
+  const lib = readFileSync(new URL('../graded-session-index.ts', import.meta.url), 'utf8');
+  assert.match(lib, /shared\.memo\.set\(d, \{ at, rows: compactGradedRows\(deps\.regrade\(v, keys\[i\]\), d\) \}\)/);
+  assert.match(lib, /if \(only && !only\.has\(r\.t\)\) continue;/);
 });

@@ -2,11 +2,14 @@
 // sizes and active jobs; before / after heavy jobs"). Server-only. One sample every 10 minutes, kept in memory (72 h) and written to
 // Redis once per sample (one small key, so the history survives a restart); per-job before / after readings for the last 60 heavy
 // runs. Read by /api/v1/system-status → memory. Never logs personal data.
-export interface MemSample { at: string; rss: number; heapUsed: number; heapTotal: number; external: number; arrayBuffers: number; kvFallbackMb: number; kvFallbackEntries: number; readCacheMb: number; jobs: string[] }
+export interface MemSample { at: string; rss: number; heapUsed: number; heapTotal: number; external: number; arrayBuffers: number; kvFallbackMb: number; kvFallbackEntries: number; readCacheMb: number; jobs: string[];
+  /** zzz1262 — heap in MB right after a full collection (only taken when the heap was large and no heavy job was running) */
+  heapAfterGc?: number }
 export interface JobMem { job: string; at: string; secs: number; rssBefore: number; rssAfter: number; heapBefore: number; heapAfter: number; ok: boolean }
 const KEY = 'ops:mem-samples:v1';
 const MAX_SAMPLES = 432;   // 72 h at 10 min
 const EVERY_MS = 10 * 60_000;
+export const GC_SAMPLE_MIN_HEAP_MB = 700;
 const mb = (v: number) => Math.round(v / 1048576);
 const G = globalThis as any;
 const state: { samples: MemSample[]; jobs: JobMem[]; running: Set<string>; started: boolean } = G.__mcMemSampler || (G.__mcMemSampler = { samples: [], jobs: [], running: new Set<string>(), started: false });
@@ -16,7 +19,16 @@ export function memNow() { const m = process.memoryUsage(); return { rss: mb(m.r
 async function takeSample(): Promise<MemSample> {
   let kvFallbackMb = 0, kvFallbackEntries = 0, readCacheMb = 0;
   try { const kv = await import('./kv'); const s = kv.kvMemStoreSize(); kvFallbackMb = mb(s.bytes); kvFallbackEntries = s.entries; readCacheMb = Math.round(kv.kvUsageSnapshot().readCache.mb); } catch { /* sizes unknown */ }
-  return { at: new Date().toISOString(), ...memNow(), kvFallbackMb, kvFallbackEntries, readCacheMb, jobs: Array.from(state.running) };
+  const before = memNow();
+  // zzz1262 — heapUsed counts dead objects until V8 collects, and an idle server may not collect for hours: the heap sat at
+  // ~1.3 GB after the first heavy job of each run and nobody could tell garbage from memory that is really kept (the open
+  // question since 10 Nov). When the heap is large and no heavy job is running, collect once (rate-limited in force-gc) and
+  // record what is left: that figure is what the process really holds, and the collection hands the rest back.
+  let heapAfterGc: number | undefined;
+  if (state.running.size === 0 && before.heapUsed >= GC_SAMPLE_MIN_HEAP_MB) {
+    try { const g = (await import('./force-gc')).forceFullGc(); if (g) heapAfterGc = g.afterMb; } catch { /* not available */ }
+  }
+  return { at: new Date().toISOString(), ...before, kvFallbackMb, kvFallbackEntries, readCacheMb, jobs: Array.from(state.running), ...(heapAfterGc != null ? { heapAfterGc } : {}) };
 }
 
 /** Starts the 10-minute sampler once per process (instrumentation). */

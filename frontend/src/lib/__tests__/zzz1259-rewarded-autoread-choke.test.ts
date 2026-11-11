@@ -50,7 +50,12 @@ test('auto-read: ceiling stops the run and refunds; failures counted; budget ref
   const r2 = await runAutoRead(['X', 'Y'], { kv: k2.kv, deadline: Date.now() + 3_600_000, log: () => {},
     call: async (p) => (p.includes('ticker=X') ? { ok: false, status: 500, json: { ok: false, error: 'boom' } } : { ok: true, status: 200, json: { ok: true, skipped: 'SKIPPED_NO_NEW_EVIDENCE' } }) });
   assert.deepEqual(r2.failed, ['X']); assert.deepEqual(r2.skipped, ['Y']); assert.equal(k2.m.get(triesKey('X')), 1);
-  assert.ok(Math.abs(Number(k2.m.get(dayKey()))) < 1e-9);                    // failed + skipped reads cost nothing reserved
+  assert.ok(Math.abs(Number(k2.m.get(dayKey())) - 0.03) < 1e-9);             // zzz1262: a 5xx may come after the model was paid — its reservation stays; the skipped one is handed back
+  const k2b = fakeKv();
+  const r2b = await runAutoRead(['T1', 'T2'], { kv: k2b.kv, deadline: Date.now() + 3_600_000, log: () => {},
+    call: async (p) => { if (p.includes('ticker=T1')) throw new Error('timeout'); return { ok: false, status: 400, json: { ok: false, error: 'a valid ticker is required' } }; } });
+  assert.deepEqual(r2b.failed, ['T1', 'T2']);
+  assert.ok(Math.abs(Number(k2b.m.get(dayKey())) - 0.03) < 1e-9);            // thrown call keeps its reservation; a 4xx refusal is handed back
   const k3 = fakeKv();
   const r3 = await runAutoRead(['P', 'Q'], { kv: k3.kv, deadline: Date.now() + 3_600_000, log: () => {}, call: async () => ({ ok: false, status: 429, json: { error: 'x' } }) });
   assert.equal(r3.stoppedBy, 'budget'); assert.equal(r3.failed.length, 0);

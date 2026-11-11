@@ -23,7 +23,8 @@ const SLIM_KEYS = ['t', 'sma50', 'sma200', 'scanPx', 'scanAt', 'de', 'deFY'] as 
 const SLIM_EXTRA = ['ind', 'sec', 'n'] as const;   // zzz1192: industry / sector / name for Conviction Analytics
 const SLIM_STAGE = ['twSt', 'twH', 'twWk', 'twDd', 'stage'] as const;   // zzz1207: Stage Analysis for the Conviction Beats "Stage 2" preset
 // zzz1231: gross profit growth, Rule of 40, ROCE trend and liquidity (float / traded value) for the Conviction Beats cards
-const SLIM_CB = ['gpQYoY', 'gpAYoY', 'revQYoY', 'fcfmTTM', 'fcfmAt', 'fcfmT', 'fcfmTAt', 'roceFY', 'roceP', 'flt', 'prom', 'px', 'mc', 'avgVol30', 'avgVol10'] as const;
+const SLIM_CB = ['gpQYoY', 'gpAYoY', 'revQYoY', 'fcfmTTM', 'fcfmAt', 'fcfmT', 'fcfmTAt', 'roceFY', 'roceP', 'flt', 'prom', 'px', 'mc', 'avgVol30', 'avgVol10',
+  'perf3M', 'perf1Y'] as const;   // zzz1262: 3-month / 1-year price move for the "already rewarded" check (lib/use-rewarded)
 function slim(rows: any[] | undefined, builtAt: string | null | undefined, market: string, tickers: string[]) {
   const want = new Set(tickers);
   const out = (rows || []).filter((r) => r && want.has(String(r.t).toUpperCase())).map((r) => Object.fromEntries([...SLIM_KEYS, ...SLIM_EXTRA, ...SLIM_STAGE, ...SLIM_CB].filter((k) => r[k] != null).map((k) => [k, r[k]])));

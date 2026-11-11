@@ -14,6 +14,7 @@ import { skyGoldScore, guidanceOfRow, type SkyScore } from '@/lib/gu-skygold-sco
 import { useSkyGoldFacts, SkyScoreCell, SkyBreakdownRow } from './GuSkyGold';
 import { fairValue, fvGrowthOf, fvStatus, type FvResult } from '@/lib/gu-fair-value';
 import { sortByReported, reportedLabel } from '@/lib/gu-focus-sort';
+import { useRewardedIndex, rewardedKey, type RewardedIndex } from '@/lib/use-rewarded';   // zzz1262
 import { FvCells, FV_HEAD, FV_COLS } from './GuFairValue';
 import { opportunityScore, type Opportunity } from '@/lib/gu-opportunity';
 import { OppCells, OppHead, OppBreakdownRow, OPP_COLS } from './GuOpportunity';
@@ -45,12 +46,13 @@ function FocusTable({ title, sub, head, colIds, empty, children, tableId }: { ti
     </div>
   );
 }
-function CompanyCell({ r, td }: { r: FocusRow; td: React.CSSProperties }) {
+function CompanyCell({ r, td, rw }: { r: FocusRow; td: React.CSSProperties; rw?: RewardedIndex[string] }) {
   return (
     <td style={td} className="gu-co">
       <b>{cleanCompany(r.company)}</b>
       <div style={{ fontSize: 11.5, color: R.dim }}>{FLAG[r.market]} {r.ticker || ''}{r.capText ? ` · ${r.capText}` : ' · size not known'}</div>
       {r.aiAdded && <div title={r.aiQuote ? `“${r.aiQuote}”` : undefined} style={{ fontSize: 11, fontWeight: 800, color: R.violet }}>🤖 added by AI check</div>}
+      {rw?.rewarded === true && <div title={`Already rewarded: ${rw.why.join('; ')}. In the focus order this row is listed after the names that have not run yet.`} style={{ fontSize: 11, fontWeight: 800, color: R.amber }}>already rewarded · {rw.why[0]}</div>}
     </td>
   );
 }
@@ -232,8 +234,14 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
   const [sortA, setSortA] = useState<SortBy>('rank');
   const [sortB, setSortB] = useState<SortBy>('rank');
   const [openSky, setOpenSky] = useState<string | null>(null);
-  const raisedSorted = sortA === 'score' ? bySky(raisedAll, scores) : sortA === 'opp' ? byOpp(raisedAll, opps) : sortA === 'new' || sortA === 'old' ? sortByReported(raisedAll, (r) => r.raiseDate, sortA) : raisedAll;
-  const growthSorted = sortB === 'score' ? bySky(growthAll, scores) : sortB === 'opp' ? byOpp(growthAll, opps) : sortB === 'new' || sortB === 'old' ? sortByReported(growthAll, (r) => r.growthDate, sortB) : growthAll;
+  // zzz1262 — "already rewarded" (owner, 11 Nov): a name up 40%+ in 3 months with a rising year stays on the list with a
+  // chip, but in the focus order it goes after the names whose price has not moved yet. A chosen sort is left as chosen.
+  const rwTickers = useMemo(() => { const a: { IN: string[]; US: string[] } = { IN: [], US: [] }; for (const r of [...raisedAll, ...growthAll]) if (r.ticker) a[r.market].push(r.ticker); return a; }, [raisedAll, growthAll]);
+  const rwIn = useRewardedIndex(rwTickers.IN, 'IN'), rwUs = useRewardedIndex(rwTickers.US, 'US');
+  const rwOf = (r: FocusRow) => (r.ticker ? (r.market === 'US' ? rwUs : rwIn)[rewardedKey(r.ticker)] : undefined);
+  const lastIfRewarded = (rows: FocusRow[]) => { const a: FocusRow[] = [], b: FocusRow[] = []; for (const r of rows) (rwOf(r)?.rewarded === true ? b : a).push(r); return b.length ? [...a, ...b] : rows; };
+  const raisedSorted = sortA === 'score' ? bySky(raisedAll, scores) : sortA === 'opp' ? byOpp(raisedAll, opps) : sortA === 'new' || sortA === 'old' ? sortByReported(raisedAll, (r) => r.raiseDate, sortA) : lastIfRewarded(raisedAll);
+  const growthSorted = sortB === 'score' ? bySky(growthAll, scores) : sortB === 'opp' ? byOpp(growthAll, opps) : sortB === 'new' || sortB === 'old' ? sortByReported(growthAll, (r) => r.growthDate, sortB) : lastIfRewarded(growthAll);
   const fvCell = (r: FocusRow) => <FvCells fv={fvs.get(r.key) ?? null} waiting={skyLoading || (!skyFailed && !!skyKey(r))} td={td} />;
   const raisedRows = allA ? raisedSorted : raisedSorted.slice(0, FOCUS_STEP);
   const growthRows = allB ? growthSorted : growthSorted.slice(0, FOCUS_STEP);
@@ -345,7 +353,7 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
           {raisedRows.map((r, i) => (<React.Fragment key={r.key}>
             <tr>
               <td style={{ ...td, color: R.dim }}>{i + 1}</td>
-              <CompanyCell r={r} td={td} />
+              <CompanyCell r={r} td={td} rw={rwOf(r)} />
               <td style={td}>
                 <button type="button" onClick={() => r.eventId && onOpen(r.eventId)} title="Open the full check" style={{ all: 'unset', cursor: r.eventId ? 'pointer' : 'default', color: R.text }}>
                   {r.raised}
@@ -366,7 +374,7 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
           {growthRows.map((r, i) => (<React.Fragment key={r.key}>
             <tr>
               <td style={{ ...td, color: R.dim }}>{i + 1}</td>
-              <CompanyCell r={r} td={td} />
+              <CompanyCell r={r} td={td} rw={rwOf(r)} />
               <td style={td}><b style={{ color: r.growthTrust === 'derived' ? R.amber : R.green }}>{r.growth}</b><div style={{ fontSize: 11.5, color: R.dim }}>{r.growthPeriod || ''}{r.growthTrust === 'derived' ? <b style={{ color: R.amber }}> · worked out by us from company numbers — not a stated target</b> : ' · stated by company'}{r.aiAdded ? <span title={r.aiQuote ? `“${r.aiQuote}”` : undefined} style={{ color: R.violet, fontWeight: 700 }}> · read by the AI check (hover for the sentence)</span> : null}</div></td>
               <td data-c="source" style={{ ...td, fontSize: 12 }}>
                 {r.growthSourceUrl && /^https?:\/\//i.test(r.growthSourceUrl) ? <a href={r.growthSourceUrl} target="_blank" rel="noopener noreferrer">{r.growthSource || 'Company document'}</a> : r.growthSource || 'Company document'}

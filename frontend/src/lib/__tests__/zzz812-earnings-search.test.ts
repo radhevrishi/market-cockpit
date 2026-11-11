@@ -209,7 +209,9 @@ describe('zzz812 India server index reads the live graded namespace', () => {
     const src = readFileSync(join(__dirname, '../../app/api/v1/earnings/search/route.ts'), 'utf8')
       .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
     assert.ok(!/['"`]graded:v10:/.test(src), 'dead namespace graded:v10 is back');
-    assert.match(src, /gradedKeyCandidates\(/);
+    // zzz1262 — the per-session read (current namespace first) lives in lib/graded-session-index
+    assert.match(src, /gradedIndex\(\)/);
+    assert.match(readFileSync(join(__dirname, '../graded-session-index.ts'), 'utf8'), /gradedKeyCandidates\(d\)/);
     assert.match(src, /rankMatches\(/);
   });
 });

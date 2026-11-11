@@ -1972,16 +1972,19 @@ const MAT_WORD = ['small vs size', 'size unresolved', 'material vs size'];
 /** The rank of one item as a short line built ONLY from its rank components
  *  (evidence, mechanism, persistence, materiality, recency, penalties). The
  *  size of the move is never a component. (zzz835) */
-export function rankReasonOf(it: Pick<ResearchItem, 'rankParts' | 'ageDays'>): string {
+export function rankReasonOf(it: Pick<ResearchItem, 'rankParts' | 'ageDays'> & { filedDate?: string | null }): string {
   const r = it.rankParts;
   if (!r) return '';
   const age = typeof it.ageDays === 'number' && Number.isFinite(it.ageDays) ? (it.ageDays <= 0 ? 'filed on the scan day' : `filed ${Math.round(it.ageDays)}d before the scan`) : 'filing age unknown';
+  // zzz1262 — the date itself, so the line reads the same on any later day ("filed 2026-11-07, 3d before the scan")
+  const fd = typeof it.filedDate === 'string' && /^\d{4}-\d{2}-\d{2}/.test(it.filedDate) ? it.filedDate.slice(0, 10) : null;
+  const ageText = fd && age !== 'filing age unknown' ? age.replace(/^filed /, `filed ${fd}, `).replace(', on the scan day', ', the scan day') : age;
   const bits = [
     `evidence ${r.evidence}/3 (${EVIDENCE_WORD[r.evidence] || '—'})`,
     `mechanism ${r.mechanism}/2 (${MECH_WORD[r.mechanism] || '—'})`,
     `persistence ${r.persistence}/2 (${PERS_WORD[r.persistence] || '—'})`,
     `materiality ${r.materiality}/2 (${MAT_WORD[r.materiality] || '—'})`,
-    `recency ${r.recency.toFixed(2)} (${age})`,
+    `recency ${r.recency.toFixed(2)} (${ageText})`,
   ];
   if (r.penalties.length) bits.push(`penalty: ${r.penalties.join(', ')}`);
   return `${bits.join(' · ')} · price not used`;

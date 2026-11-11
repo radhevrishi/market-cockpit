@@ -24,20 +24,40 @@ const SEC_UA = process.env.SEC_USER_AGENT || 'market-cockpit research radhev.232
 const SPACING_MS = 200;
 let last = 0;
 
+/** zzz1262 — pure: what to do with one try's answer. `status` null = network error / timeout. */
+export function secRetryDecision(status: number | null, attempt: number, msLeft: number): { retry: boolean; waitMs: number; block: boolean } {
+  if (status === 429) return { retry: false, waitMs: 0, block: true };          // SEC's rate block: asking again only extends it
+  if (status != null && status < 500) return { retry: false, waitMs: 0, block: false };   // an answer (200 / 404 / other 4xx) is final
+  const waitMs = 600 * (attempt + 1);
+  return { retry: attempt < 2 && msLeft - waitMs >= 3_000, waitMs, block: false };
+}
+const SEC_BLOCK_MS = 90_000;
+let blockedUntil = 0;
+
+/**
+ * One EDGAR request. zzz1261 added retries, but each try had the full timeout (3 × 25 s > the caller's 40 s document clock, so a
+ * slow EDGAR became "did not answer within 40 s" anyway) and a 429 was asked again at once (SEC answers 429 for ~10 minutes once
+ * the rate is exceeded; every further request extends it). zzz1262: `timeoutMs` is the budget for ALL tries together; only a network
+ * error or a 5xx is tried again (short back-off, while at least 3 s remain); after a 429 nothing is sent for 90 s.
+ */
 async function secFetch(url: string, timeoutMs = 15_000): Promise<Response | null> {
-  // zzz1260: one try turned every EDGAR 429 / 5xx / network blip into "could not be
-  // downloaded" (the unreadable-document list). Up to 3 tries with a short back-off;
-  // 404 and other 4xx answers are final. Each try keeps the 5/s spacing.
+  const t0 = Date.now();
   let res: Response | null = null;
   for (let attempt = 0; attempt < 3; attempt++) {
+    if (Date.now() < blockedUntil) return null;
     const wait = last + SPACING_MS - Date.now();
     last = Math.max(Date.now(), last + SPACING_MS);
     if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    const left = timeoutMs - (Date.now() - t0);
+    if (left < 1_500) break;
     try {
-      res = await fetch(url, { headers: { 'User-Agent': SEC_UA, Accept: '*/*', 'Accept-Encoding': 'gzip, deflate' }, cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) });
+      res = await fetch(url, { headers: { 'User-Agent': SEC_UA, Accept: '*/*', 'Accept-Encoding': 'gzip, deflate' }, cache: 'no-store', signal: AbortSignal.timeout(left) });
     } catch { res = null; }
-    if (res && res.status !== 429 && res.status < 500) return res;
-    if (attempt < 2) await new Promise((r) => setTimeout(r, (res?.status === 429 ? 2500 : 700) * (attempt + 1)));
+    const d = secRetryDecision(res ? res.status : null, attempt, timeoutMs - (Date.now() - t0));
+    if (d.block) { blockedUntil = Date.now() + SEC_BLOCK_MS; return res; }
+    if (!d.retry) return res;
+    try { await res?.body?.cancel(); } catch { /* nothing to release */ }
+    await new Promise((r) => setTimeout(r, d.waitMs));
   }
   return res;
 }

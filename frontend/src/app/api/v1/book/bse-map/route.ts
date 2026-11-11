@@ -11,6 +11,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
+import { gradedIndex } from '@/lib/graded-session-index';
 import { fetchScreenerHtml } from '@/lib/earnings/screener-fetch';
 import { companyNameFromPage } from '@/lib/ai-gainers/news-context';
 import { nseSymbolFromScreenerPage, matchFromIndex } from '@/lib/thesis/bse-nse-lookup';
@@ -30,7 +31,9 @@ export async function GET(req: NextRequest) {
   const t0 = Date.now();
   const matches: Record<string, BseMatch> = {};
   let index: any[] | null = null;
-  try { const ix = await kvGet<any[]>('search:idx:v3'); index = Array.isArray(ix) ? ix : null; } catch { index = null; }
+  // zzz1262 — the graded index itself (lib/graded-session-index), not the search route's stored copy `search:idx:v3`, which was
+  // only there when someone had searched in the last 15 minutes (otherwise every code went to screener.in).
+  try { index = (await gradedIndex()).index; } catch { index = null; }
   for (const code of codes) {
     try { const hit = await kvGet<BseMatch>(key(code)); if (hit && typeof hit === 'object') { matches[code] = hit; continue; } } catch { /* cold */ }
     let m: BseMatch | null = matchFromIndex(code, index);

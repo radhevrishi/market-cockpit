@@ -352,23 +352,35 @@ interface DedupeFeat {
   t: string; reg: string; hold: string | null; acc: string | null; ck: ReturnType<typeof canonicalEventKey>;
   chain?: string | null; fam?: ReturnType<typeof eventFamily>; ent?: Set<string>; nums?: Set<string>;
 }
-/** sameEvent() on two events' cached features (identical rule: same family, shared entities and / or key numbers). */
-function sameEventFeat(a: RadarFeedEvent, fa: DedupeFeat, b: RadarFeedEvent, fb: DedupeFeat): boolean {
-  fa.fam ??= eventFamily(fa.t, a.event_type); fb.fam ??= eventFamily(fb.t, b.event_type);
-  if (fa.fam !== fb.fam || fa.fam === 'OTHER') return false;
-  fa.ent ??= entityTokens(fa.t); fb.ent ??= entityTokens(fb.t);
-  const minSize = Math.min(fa.ent.size, fb.ent.size);
-  if (!minSize) return false;
-  let shared = 0;
-  fa.ent.forEach((x) => { if (fb.ent!.has(x)) shared += 1; });
-  fa.nums ??= keyNumbers(fa.t); fb.nums ??= keyNumbers(fb.t);
-  let sharedNum = 0;
-  fa.nums.forEach((x) => { if (fb.nums!.has(x)) sharedNum += 1; });
-  if (sharedNum > 0 && shared >= 1) return true;
-  return shared >= 2 && shared / minSize >= 0.6;
+/** Sorted insert / removal on a small ascending list of slot numbers. */
+function slotAdd(list: number[], i: number): void {
+  if (!list.length || list[list.length - 1] < i) { list.push(i); return; }
+  let lo = 0, hi = list.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (list[mid] < i) lo = mid + 1; else hi = mid; }
+  if (list[lo] !== i) list.splice(lo, 0, i);
+}
+function slotDel(list: number[] | undefined, i: number): void {
+  if (!list) return;
+  const at = list.indexOf(i);
+  if (at >= 0) list.splice(at, 1);
 }
 
-/** Merges the same event shown on several cards. Returns the kept events and the number merged away. */
+/**
+ * Merges the same event shown on several cards. Returns the kept events and the number merged away.
+ *
+ * zzz1262 — the pair test is unchanged; what changed is WHICH kept events it is run against. zzz1257 cached each event's
+ * features but still walked every kept event for every new one (n² cheap comparisons; ~6,000 events → up to 18 million).
+ * A new event can only merge with a kept one that is in the same region and hold state AND
+ *   · has the same SEC chain key, or
+ *   · has the same SEC accession, or
+ *   · is in the same event family (never OTHER) and shares the first word of the subject (sameCanonicalEvent compares
+ *     subjects word by word from the first), or an entity word together with a key number, or two entity words
+ *     (the only two ways sameEvent can be true).
+ * Those are kept as look-up tables of slot numbers (the position in `kept`). The two-shared-words rule is answered by
+ * counting, per kept event, how many of the new event's words it has (one walk of each word's slot list), so a word
+ * that thousands of headlines share ("holdings", "industries") costs one counter increment each, not a comparison. The result is the FIRST matching kept event in list order, exactly as before
+ * (checked against the old loop on random and real-shaped feeds: same kept list, same merges, same order).
+ */
 export function dedupeFeedEvents(events: ReadonlyArray<RadarFeedEvent>): { events: RadarFeedEvent[]; merged: number; mergedInto: Map<string, string> } {
   const kept: RadarFeedEvent[] = [];
   let merged = 0;
@@ -384,34 +396,81 @@ export function dedupeFeedEvents(events: ReadonlyArray<RadarFeedEvent>): { event
     return f;
   };
   const chainOf = (e: RadarFeedEvent): string | null => { const f = featOf(e); if (f.chain === undefined) f.chain = secChainKey(e); return f.chain; };
+  // look-up tables: key → ascending slot numbers (the position in `kept`)
+  const byChain = new Map<string, number[]>(), byAcc = new Map<string, number[]>();
+  const bySubj = new Map<string, number[]>(), byWord = new Map<string, number[]>(), byWordNum = new Map<string, number[]>();
+  const scope = (f: DedupeFeat) => `${f.hold ?? ''}\u0001${f.reg}\u0001`;
+  /** scope + family prefix of the fuzzy tables; null for OTHER (the fuzzy tests are never true for it) */
+  const famBase = (f: DedupeFeat): string | null => (f.ck.family === 'OTHER' ? null : `${scope(f)}${f.ck.family}\u0001`);
+  const entOf = (f: DedupeFeat) => (f.ent ??= entityTokens(f.t));
+  const numsOf = (f: DedupeFeat) => (f.nums ??= keyNumbers(f.t));
+  const subjKey = (f: DedupeFeat, base: string): string | null => { const first = f.ck.subject ? f.ck.subject.split(' ')[0] : ''; return first ? `${base}${first}` : null; };
+  let entSize = new Uint16Array(1024), shared = new Uint16Array(1024);   // per slot: entity words of the kept event; shared-word counter (scratch)
+  const put = (m: Map<string, number[]>, k: string, i: number) => { const l = m.get(k); if (l) slotAdd(l, i); else m.set(k, [i]); };
+  const indexSlot = (e: RadarFeedEvent, i: number, add: boolean) => {
+    const f = featOf(e), sc = scope(f), chain = chainOf(e);
+    const each = (m: Map<string, number[]>, k: string) => { if (add) put(m, k, i); else slotDel(m.get(k), i); };
+    if (chain) each(byChain, sc + chain);
+    if (f.acc) each(byAcc, sc + f.acc);
+    const base = famBase(f);
+    if (!base) return;
+    const sk = subjKey(f, base);
+    if (sk) each(bySubj, sk);
+    const ent = entOf(f), nums = numsOf(f);
+    if (i >= entSize.length) { const g = new Uint16Array(entSize.length * 2); g.set(entSize); entSize = g; const h2 = new Uint16Array(g.length); shared = h2; }
+    entSize[i] = add ? Math.min(ent.size, 65535) : 0;
+    ent.forEach((w) => { each(byWord, base + w); nums.forEach((n) => each(byWordNum, `${base}${w}\u0001${n}`)); });
+  };
   // zzz1066: which event each merged copy went into (loser id -> the kept event's id), so the route can flag merged copies
   // in the raw list instead of letting a view show them as separate events.
   const absorbed = new Map<RadarFeedEvent, RadarFeedEvent[]>();
   const extra = new Map<RadarFeedEvent, RadarFeedItem[]>();
   for (const ev of events) {
     const fe = featOf(ev);
-    const t = fe.t, reg = fe.reg;
+    const t = fe.t, sc = scope(fe);
     const h = contentHints(t);
-    const acc = fe.acc, ck = fe.ck;
     const chain = chainOf(ev);
-    // zzz854: a held-back event (route reason / verification gate) never merges into a shown one, or the reverse.
-    const sameHold = (k: RadarFeedEvent) => featOf(k).hold === fe.hold;
-    const hit = (h.isRegistration || isForm10Title(t)) ? (chain ? kept.find((k) => sameHold(k) && featOf(k).reg === reg && chainOf(k) === chain) : undefined) : kept.find((k) => {
-      if (!sameHold(k)) return false;
-      const fk = featOf(k);
-      if (fk.reg !== reg) return false;
-      // same SEC chain (original + amendments of one deal for one subject) = one event
-      if (chain && chainOf(k) === chain) return true;
-      // same SEC accession = the same filing listed once per party (subject / filed-by)
-      if (acc && fk.acc === acc) return true;
-      return sameCanonicalEvent(fk.ck, ck) || sameEventFeat(k, fk, ev, fe);
-    });
-    if (!hit) { kept.push(ev); continue; }
+    // zzz854: a held-back event (route reason / verification gate) never merges into a shown one, or the reverse — the
+    // hold state and the region are part of every look-up key.
+    let slot = -1;
+    const lower = (i: number | undefined) => { if (i !== undefined && (slot < 0 || i < slot)) slot = i; };
+    if (chain) lower(byChain.get(sc + chain)?.[0]);            // same SEC chain (original + amendments of one deal for one subject) = one event
+    if (!(h.isRegistration || isForm10Title(t))) {             // a registration statement merges on its chain only
+      if (fe.acc) lower(byAcc.get(sc + fe.acc)?.[0]);          // same SEC accession = the same filing listed once per party (subject / filed-by)
+      const base = famBase(fe);
+      if (base) {
+        const below = (i: number) => slot < 0 || i < slot;
+        // (1) same subject from its first word on, same family, compatible amount and date (sameCanonicalEvent)
+        const sk = subjKey(fe, base), sl = sk ? bySubj.get(sk) : undefined;
+        if (sl) for (const i of sl) { if (!below(i)) break; if (sameCanonicalEvent(featOf(kept[i]).ck, fe.ck)) { slot = i; break; } }
+        const ent = entOf(fe), nums = numsOf(fe);
+        // (2) one shared entity word together with one shared key number
+        if (nums.size) {
+          let first = -1;
+          ent.forEach((w) => nums.forEach((n) => { const l = byWordNum.get(`${base}${w}\u0001${n}`); if (l && l.length && below(l[0]) && (first < 0 || l[0] < first)) first = l[0]; }));
+          if (first >= 0) slot = first;
+        }
+        // (3) two or more shared entity words covering 60% of the shorter headline's entity words. The shared count per kept
+        // event comes from walking each word's slot list once — no pair of events is compared word by word.
+        if (ent.size >= 2) {
+          const touched: number[] = [];
+          ent.forEach((w) => { const l = byWord.get(base + w); if (l) for (const i of l) { if (!below(i)) break; if (shared[i]++ === 0) touched.push(i); } });
+          let first = -1;
+          for (const i of touched) {
+            const c = shared[i]; shared[i] = 0;
+            if (c >= 2 && c / Math.min(ent.size, entSize[i]) >= 0.6 && (first < 0 || i < first)) first = i;
+          }
+          if (first >= 0) slot = first;
+        }
+      }
+    }
+    const hit = slot >= 0 ? kept[slot] : undefined;
+    if (!hit) { indexSlot(ev, kept.length, true); kept.push(ev); continue; }
     merged += 1;
     const winner = evScore(ev) > evScore(hit) ? ev : hit;
     const loser = winner === ev ? hit : ev;
     const pool = [...(extra.get(hit) || []), ...(extra.get(ev) || []), loser.primary_filing, ...(loser.filings || [])].filter(Boolean) as RadarFeedItem[];
-    if (winner !== hit) kept[kept.indexOf(hit)] = winner;
+    if (winner !== hit) { indexSlot(hit, slot, false); kept[slot] = winner; indexSlot(winner, slot, true); }
     extra.delete(hit);
     extra.set(winner, pool);
     const gone = [...(absorbed.get(hit) || []), ...(absorbed.get(ev) || []), loser];

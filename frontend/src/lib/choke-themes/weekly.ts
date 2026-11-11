@@ -20,12 +20,14 @@ export function chokeWeeklyDecision(generatedAt: string | null | undefined, atte
 }
 
 export async function chokeWeeklyJob(ctx: { log: (m: string) => void }): Promise<{ ok: boolean; status: number; error?: string | null }> {
-  const { kvGet, kvIncrByFloat } = await import('../kv');
+  const { kvGet, kvGetStrict, kvIncrByFloat } = await import('../kv');
   const { CHOKE_KEY, runChoke } = await import('./run');
   const now = new Date();
   const wk = `choke-themes:auto:v1:${isoWeekKey(now)}`;
-  const attempts = Number(await kvGet<number>(wk).catch(() => 0)) || 0;
-  const last = await kvGet<{ generatedAt?: string }>(CHOKE_KEY).catch(() => null);
+  // zzz1262 — a store that cannot be read is not "no report on file": skip (this is a paid run), the next slot tries again
+  let attempts = 0, last: { generatedAt?: string } | null = null;
+  try { attempts = Number(await kvGet<number>(wk)) || 0; last = await kvGetStrict<{ generatedAt?: string }>(CHOKE_KEY); }
+  catch (e: any) { ctx.log(`choke weekly: skipped — the store could not be read (${String(e?.message || e).slice(0, 80)})`); return { ok: false, status: 503, error: 'store unreadable' }; }
   const d = chokeWeeklyDecision(last?.generatedAt, attempts, now);
   if (!d.run) { ctx.log(`choke weekly: skipped — ${d.why}`); return { ok: true, status: 200 }; }
   await kvIncrByFloat(wk, 1, 9 * 86_400).catch(() => null);

@@ -97,7 +97,8 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
         }
       })();
       const [gradesRes, slimRes] = await Promise.all([
-        fetch(`/api/v1/portfolio/earnings-grades?tickers=${csv}`, { cache: 'no-store' }),
+        // zzz1262 — scan=0: this tab runs the scan itself (below, in batches); the route used to run the same scan a second time
+        fetch(`/api/v1/portfolio/earnings-grades?tickers=${csv}&scan=0`, { cache: 'no-store' }),
         fetch(`/api/v1/stock-screener?market=IN&tickers=${csv}`, { cache: 'no-store' }).catch(() => null),
         scanAll,
       ]);

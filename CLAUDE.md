@@ -4118,3 +4118,25 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
 - zzz1261 (11 Nov): US thesis document reads (`lib/us-thesis/sec-docs.ts` `secFetch`) now try up to 3 times on network error / 429 / 5xx
   (back-off 0.7 s, 2.5 s for 429; 5/s spacing kept per try). Before, one EDGAR blip became "could not be downloaded" and the name sat in the
   unreadable list. Which of the 15 names were real failures (not-an-SEC-filer, image-only exhibit) needs the live `document_outcomes` — check after deploy.
+- zzz1262 (11 Nov evening): review of every 11 Nov change (Fable 5.2), fixes shipped together.
+  · ONE reader for India graded sessions: `lib/graded-session-index.ts` (compact rows per session in memory — today 5 min, older 30 min;
+    6 sessions a multi-get, retried once; an unread session is reported, never remembered as empty; concurrent callers share a read).
+    Used by portfolio/earnings-grades, earnings/search and book/bse-map. `search:idx:v3` is no longer read or written anywhere.
+    earnings-grades `?scan=0` = grades only (the Portfolio Earnings tab runs the scan itself — it used to run twice).
+  · Special Situations merge (`dedupeFeedEvents`): look-up tables instead of walking every kept event — SEC chain, accession, first
+    subject word, entity word + key number, and a shared-word COUNT per kept event (no pair comparison). Same output as the old loop
+    (differential check on 60 colliding feeds); 6,000 same-family events 5.7 s → 0.4 s. `sameEventFeat` is gone — the rule lives in the loop.
+  · US SEC downloads (`secFetch`): `timeoutMs` is the budget for ALL tries (zzz1261 gave each try the full timeout: 3 × 25 s > the 40 s
+    document clock); a 429 is never asked again and stops requests for 90 s (asking again extends SEC's block); `secRetryDecision` is pure.
+  · US auto-read: the reserved $0.03 is handed back ONLY on a skip or a 4xx refusal; a timeout / 5xx / thrown call keeps it (the model
+    may already have been paid). `refundable(status)`.
+  · Choke weekly: store read is strict (an unreadable store is not "no report" → no paid run); Monday 05:10 UTC is the second try.
+  · Lending words: `isLendingWording` — "ore / mineral deposits" are not lending; AUM / NIM / CASA / NPA only in capitals.
+  · Memory: the 10-minute sampler runs a full collection when the heap is ≥ 700 MB and no heavy job runs, and records `heapAfterGc`
+    (what is really kept) — the open question since 10 Nov can now be read from /api/v1/system-status → memory.
+  · "Already rewarded" (`lib/use-rewarded.ts`, slim screener `perf3M` / `perf1Y`): Multibagger STRONG BUY + top 3 (rewarded names last /
+    out of the top 3, chip with the reason), USA TOP BUYS, Guidance Upgrades focus list (focus order only; a chosen sort is kept).
+  · AI Gainers filing age names the date ("filed 2026-11-07, 3d before the scan").
+  Not changed after review (correct as shipped): tradebook returns (peak money, holding rounds), Portfolio Catalysts CB figures,
+  heap-guard collection, rewarded rule, US evidence job. Still open: which US names truly cannot be read (check `document_outcomes` live),
+  RS leg of the rewarded rule (no per-row RS), root cause of the retained heap (read `heapAfterGc` after a day).
