@@ -4067,3 +4067,11 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   slim rows; names without results are looked up again after 30 min (was 6 h); cache key mc:portfolio-earnings-tab:v2 (readers
   fall back to v1). Quarters are never mixed: a graded entry keeps its own quarter; when the scan has a newer quarter the row shows
   that quarter with a tier estimated from its revenue / profit growth (≈ TIER, "not graded yet", R x% · P y%). Cache key v3.
+- zzz1253 (11 Nov): Portfolio Catalysts bench = 150 Conviction Beats names vs ~34 on the CB tab. Root cause: use-book applied the
+  CB criteria to BARE list entries — D/E, Rule of 40, liquidity and weekly stage come from the stock-screener slim answer that only
+  the tab laid on (use-debt-equity), and a missing figure passes. Now `withCbFigures(entries, market)` (lib/use-debt-equity, awaited,
+  same caches) runs before `selectIndiaCb`. `filtersMatchSaved` counts 'stage2' as a saved criterion (the Stage 2 choice made every
+  comparison say "your own chips"). The tab ↔ page mismatch line groups names by reason, ≤ 12 names a group. Special Focus:
+  `splitOffLists` also moves bench names that MISS the criteria and capacity-ramp records built from lending words off the lists;
+  `LENDING_WORDS` (persistence) drops disbursement / loan / deposit items from capacity ramps (KARURVYSYA "utilisation 80% ·
+  disbursements up 45%").

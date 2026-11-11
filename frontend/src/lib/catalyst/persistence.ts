@@ -993,6 +993,9 @@ export interface DetectInput {
   today?: string;
 }
 
+/** zzz1253 — lending / deposit wording: never capacity, utilisation or production volume. */
+export const LENDING_WORDS = /\b(disburs\w*|loan book|loan growth|loans and advances|gross advances|advances (?:grew|rose|up)|deposits?|AUM|assets under management|net interest|NIM|CASA|NPA|credit cost|collection efficiency|borrowers?|lending)\b/i;
+
 export function detectPersistentCatalysts(inp: DetectInput): PersistentCatalyst[] {
   const today = inp.today || new Date().toISOString().slice(0, 10);
   const latestPeriod = inp.ledger?.latest_period || null;
@@ -1003,6 +1006,15 @@ export function detectPersistentCatalysts(inp: DetectInput): PersistentCatalyst[
     ...(inp.finding ? itemsFromFinding(inp.finding) : []),
     ...((inp.extraFindings || []).flatMap((f) => itemsFromFinding(f))),
   ]);
+  // zzz1253 — a lender's loan figures are not a capacity ramp: KARURVYSYA (a bank) reached Special Focus as
+  // "Capacity ramp · utilisation 80% · volume: disbursements are up by 45%". Capacity items whose words are
+  // lending words (disbursements, loan book, advances, deposits, AUM …) are dropped.
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    if (it.kind !== 'CAPACITY_RAMP') continue;
+    const words = `${it.text} ${it.metric} ${(it.sources || []).map((x) => x.quote || '').join(' ')}`;
+    if (LENDING_WORDS.test(words)) items.splice(i, 1);
+  }
   const temporary = [
     ...(inp.ledger ? temporarySignalsFromLedger(inp.ledger) : []),
     ...((inp.assessment?.mechanismEvidence || []) as Array<{ text: string }>).filter((d) => TEMPORARY.test(d.text)).map((d) => clip(d.text, 100)),

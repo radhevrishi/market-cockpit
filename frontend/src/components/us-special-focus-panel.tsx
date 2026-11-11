@@ -175,7 +175,7 @@ export function UsSpecialFocusPanel({ rows, lookup, ready, thesisLabel, onJump, 
       </div>
       <div style={{ display: 'flex', gap: 10, marginTop: 6, flexWrap: 'wrap' }}>
         {near.length > 0 && <button onClick={() => setShowNear((v) => !v)} style={{ fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${C.amber}`, background: 'transparent', color: C.amber }}>{showNear ? 'Hide near misses' : focusButtonWords(shown.length, near.length).near}</button>}
-        {offLists.length > 0 && <button data-testid="us-sf-off-lists-button" onClick={() => setShowOff((v) => !v)} style={{ fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px dashed ${C.border}`, background: 'transparent', color: C.faint }}>{showOff ? 'Hide' : `${offLists.length} no longer on your US book or bench (not counted)`}</button>}
+        {offLists.length > 0 && <button data-testid="us-sf-off-lists-button" onClick={() => setShowOff((v) => !v)} style={{ fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px dashed ${C.border}`, background: 'transparent', color: C.faint }}>{showOff ? 'Hide' : `${offLists.length} no longer on your US book or bench, or missing your criteria (not counted)`}</button>}
         {shown.length > 8 && <button onClick={() => setShowAll((v) => !v)} style={{ fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${C.border}`, background: 'transparent', color: C.dim }}>{showAll ? 'Show top 8 Special Focus' : focusButtonWords(shown.length, near.length).all}</button>}
       </div>
       {showOff && offLists.length > 0 && (

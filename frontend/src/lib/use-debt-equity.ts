@@ -49,6 +49,28 @@ function askDe(market: 'IN' | 'US', list: string[]): void {
       });
   }
 }
+/**
+ * zzz1253 — the same figures, awaited (no React): Portfolio Catalysts applied the Conviction Beats criteria to bare
+ * list entries, so debt ÷ equity, Rule of 40, liquidity and the weekly stage were all "missing" — and a missing figure
+ * passes. 150 names met the criteria there against ~34 on the Conviction Beats tab. Ask the snapshot first, then judge.
+ */
+export async function withCbFigures<T extends { ticker?: string }>(entries: T[], market: 'IN' | 'US', timeoutMs = 25_000): Promise<T[]> {
+  const list = Array.from(new Set(entries.map((e) => tick(e.ticker)).filter(Boolean)));
+  const todo = list.filter((t) => !_deAsked[market].has(t));
+  const chunks: string[][] = [];
+  for (let i = 0; i < todo.length; i += CHUNK) chunks.push(todo.slice(i, i + CHUNK));
+  await Promise.all(chunks.map((c) => fetch(`/api/v1/stock-screener?market=${market}&tickers=${encodeURIComponent(c.join(','))}`, { signal: AbortSignal.timeout(timeoutMs) })
+    .then((r) => (r.ok ? r.json() : null)).catch(() => null)
+    .then((j) => {
+      if (!j || !Array.isArray(j.rows)) return;
+      Object.assign(_deCache[market], deIndex(j.rows)); Object.assign(_stCache[market], stageIndex(j.rows)); Object.assign(_xCache[market], extrasIndex(j.rows, market));
+      for (const t of c) _deAsked[market].add(t);
+      _ver++;
+      for (const f of _deListeners) f();
+    })));
+  return withDebtEquity(entries, _deCache[market], _stCache[market], _xCache[market]);
+}
+
 export function useDebtEquityState(tickers: ReadonlyArray<string | undefined | null>, market: 'IN' | 'US'): { idx: DeIndex; answered: ReadonlySet<string> } {
   const [, setTick] = useState(0);
   const key = useMemo(() => Array.from(new Set(tickers.map((t) => tick(t)).filter(Boolean))).sort().join(','), [tickers]);

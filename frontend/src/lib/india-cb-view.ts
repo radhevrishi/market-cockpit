@@ -285,7 +285,7 @@ export interface CbTabSnapshot {
 
 /** Are the tab's live chips the owner's saved criteria (preset on, or everything off)? */
 export function filtersMatchSaved(f: ConvFilters, optedOut: boolean): boolean {
-  if (!optedOut) return isIndiaPresetActive(f) && cbActiveKeys(f).every((k) => ['sales', 'eps', 'pead', 'opmDelta', 'opmMin', 'cfoPatMin', 'mktCapMin', 'mktCapMax', 'pledgedMax', 'verdicts', 'liqOk', 'deMax', 'r40Min'].includes(k));
+  if (!optedOut) return isIndiaPresetActive(f) && cbActiveKeys(f).every((k) => ['sales', 'eps', 'pead', 'opmDelta', 'opmMin', 'cfoPatMin', 'mktCapMin', 'mktCapMax', 'pledgedMax', 'verdicts', 'liqOk', 'deMax', 'r40Min', 'stage2'].includes(k));
   return cbActiveKeys(f).length === 0;
 }
 
@@ -305,6 +305,12 @@ export interface CbReconciliation {
  * `pcLabel(t)` gives Portfolio Catalysts' own label text for a ticker on its
  * list (null when it has no row) — used to say why a tab name is not here.
  */
+function groupNames(xs: Array<{ ticker: string; reason: string }>, side: string): string[] {
+  const by = new Map<string, string[]>();
+  for (const x of xs) { const a = by.get(x.reason) || []; a.push(x.ticker); by.set(x.reason, a); }
+  return [...by.entries()].map(([reason, ts]) => `${ts.length} ${side} (${reason}): ${ts.slice(0, 12).join(', ')}${ts.length > 12 ? ` +${ts.length - 12} more` : ''}`);
+}
+
 export function reconcileCbLists(tab: CbTabSnapshot | null, pcTickers: string[], pcLabel: (t: string) => { state: string; text: string } | null): CbReconciliation {
   if (!tab) {
     return { onlyTab: [], onlyPc: [], line: 'Reconciliation with the Conviction Beats tab: open that tab once in this browser so its list can be compared here.' };
@@ -336,7 +342,8 @@ export function reconcileCbLists(tab: CbTabSnapshot | null, pcTickers: string[],
   const line = !onlyTab.length && !onlyPc.length
     ? `Matches the Conviction Beats tab name for name: ${pcSet.size - markedRejected.length} names (tab list saved ${when}).${rejNote}`
     : `⚠ Differs from the Conviction Beats tab (saved ${when}): ${onlyTab.length} only on the tab, ${onlyPc.length} only here — `
-      + [...onlyTab.map((x) => `${x.ticker} (only on the tab: ${x.reason})`), ...onlyPc.map((x) => `${x.ticker} (only here: ${x.reason})`)].join('; ') + rejNote;
+      // zzz1253 — names grouped by their reason (at most 12 names a group) — 123 names each repeating one reason was unreadable
+      + [...groupNames(onlyTab, 'only on the tab'), ...groupNames(onlyPc, 'only here')].join(' · ') + rejNote;
   return { onlyTab, onlyPc, ...(markedRejected.length ? { markedRejected } : {}), line };
 }
 

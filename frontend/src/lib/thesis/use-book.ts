@@ -53,6 +53,7 @@ import {
 import { evidenceReadLine, changesNote } from './evidence-counts';
 import { provisionalType, isProvisionalFallback, noTypeReason, promotionFromFilings, promotedType, financialProvisionalType, financialKindOf } from './provisional-type';
 import { quickReadQueue, type QuickRowLike } from './quick-read';
+import { withCbFigures } from '@/lib/use-debt-equity';   // zzz1253
 
 export interface BookRow {
   symbol: string;
@@ -544,7 +545,11 @@ export function useBook(opts?: { includeBench?: boolean }) {
         if (cancelled) return;
         const optedOut = readCbPresetOptOut();
         const filters = cbFiltersForOwner(optedOut);
-        const list = mergeCbEntries(cb.local as any, serverBenchToCbEntries(cb.server)).filter((e: any) => !cbIsRemoved(e));   // zzz879
+        const listBare = mergeCbEntries(cb.local as any, serverBenchToCbEntries(cb.server)).filter((e: any) => !cbIsRemoved(e));   // zzz879
+        // zzz1253 — the tab judges each name WITH the screener figures (D/E, Rule of 40, liquidity, weekly stage); a
+        // missing figure passes, so judging bare entries let ~4× the names through. Same figures here, then the same check.
+        const list = await withCbFigures(listBare as any[], 'IN');
+        if (cancelled) return;
         // zzz823: pass / fail / NOT CHECKED — the same shared check the
         // Conviction Beats tab now applies (unknown data is never a fail).
         const sel = selectIndiaCb({

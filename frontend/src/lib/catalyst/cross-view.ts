@@ -15,7 +15,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import type { EventKind } from '@/lib/ai-gainers/structured-facts';
-import { rankOf, type PersistentCatalyst, type PersistKind } from './persistence';
+import { rankOf, LENDING_WORDS, type PersistentCatalyst, type PersistKind } from './persistence';
 
 /** The mechanism kind an event kind feeds (null = no operating mechanism). */
 export function persistKindOfEvent(kind: EventKind | string | null | undefined): PersistKind | null {
@@ -104,8 +104,21 @@ export function specialFocusQueue<R>(
  * current. It is split off into its own collapsed "no longer on your lists"
  * section, kept with its history, never counted in the Special Focus number.
  */
-export function splitOffLists<E extends { row: unknown | null; dismissed: boolean }>(entries: E[]): { onLists: E[]; offLists: E[] } {
-  return { onLists: entries.filter((e) => !!e.row), offLists: entries.filter((e) => !e.row && !e.dismissed) };
+/**
+ * zzz1253 — also off the lists (collapsed, never counted): a bench name that MISSES the Conviction Beats criteria
+ * (its card said "hidden by default" while it sat in Special Focus), and a stored capacity-ramp record built from a
+ * lender's loan figures ("disbursements are up by 45%" read as volume).
+ */
+function offListReason(e: { row: unknown | null; pc?: any }): boolean {
+  const r: any = e.row;
+  if (!r) return true;
+  if (r.origin === 'bench' && r.preset?.state === 'fail') return true;
+  const pc = e.pc;
+  if (pc && pc.kind === 'CAPACITY_RAMP' && LENDING_WORDS.test(`${pc.mechanism || ''} ${pc.runway?.text || ''}`)) return true;
+  return false;
+}
+export function splitOffLists<E extends { row: unknown | null; dismissed: boolean; pc?: any }>(entries: E[]): { onLists: E[]; offLists: E[] } {
+  return { onLists: entries.filter((e) => !offListReason(e)), offLists: entries.filter((e) => offListReason(e) && !e.dismissed) };
 }
 
 export function splitDroppedOut<E extends { dismissed: boolean; decayed: boolean; st: { user: { state: string } | null } | null }>(entries: E[]): { inFocus: E[]; droppedOut: E[] } {
