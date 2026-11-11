@@ -859,10 +859,37 @@ export interface StockScore {
   /** total ÷ gross money put into buys (turnover), shown as a second figure */
   pctTurnover: number | null;
   first: string; last: string; trades: number; wins: number; losses: number;
+  /** zzz1251 — each holding period (from the buy that opened it to the sell that closed it), so the % can be checked */
+  rounds?: StockRound[];
+  /** zzz1251 — the best single holding period's return on its cost */
+  bestRoundPct?: number | null;
   /** zzz1250 — a liquid / money-market fund used to park cash: left out of the gainers / losers and hit rate */
   cash?: boolean;
   /** zzz1250 — demerged companies whose shares are counted in this row (their cost stayed with this company) */
   includes?: string[];
+}
+
+export interface StockRound { from: string; to: string | null; cost: number; proceeds: number; pnl: number; pct: number | null; open: boolean }
+
+/**
+ * zzz1251 — split one company's lots into holding periods: lots whose buy → sell spans overlap belong to the same period.
+ * Open lots run to today. `openPnl` is the unrealised P&L of the shares still held. Intraday and demerged lots are left out.
+ */
+export function holdingRounds(lots: Array<{ buyDate: string; sellDate: string | null; cost: number; proceeds: number; pnl: number }>, openPnl = 0): StockRound[] {
+  const sorted = lots.slice().sort((a, b) => (a.buyDate < b.buyDate ? -1 : a.buyDate > b.buyDate ? 1 : 0));
+  const out: StockRound[] = [];
+  let cur: StockRound | null = null, end = '';
+  for (const l of sorted) {
+    const lEnd = l.sellDate ?? '9999-12-31';
+    if (!cur || l.buyDate > end) { cur = { from: l.buyDate, to: l.sellDate, cost: 0, proceeds: 0, pnl: 0, pct: null, open: false }; out.push(cur); end = ''; }
+    cur.cost += l.cost; cur.proceeds += l.proceeds; cur.pnl += l.pnl;
+    if (l.sellDate == null) cur.open = true;
+    if (lEnd > end) { end = lEnd; cur.to = l.sellDate; }
+  }
+  const last = out[out.length - 1];
+  if (last?.open) { last.pnl += openPnl; last.to = null; }
+  for (const r of out) r.pct = r.cost > 0 ? r.pnl / r.cost : null;
+  return out;
 }
 
 /** zzz1250 — a liquid / money-market ETF used to park cash (not a stock pick). */
@@ -886,10 +913,11 @@ export function stockScorecard(
   divs: Array<{ isin?: string; amount: number }>, symbolOf: (isin: string, fallback: string) => string,
   openLots?: Array<{ isin: string; date: string; cost: number }>,
 ): StockScore[] {
-  const m = new Map<string, StockScore & { ev: Array<{ date: string; d: number }>; tradeSyms: Set<string> }>();
+  type L = { buyDate: string; sellDate: string | null; cost: number; proceeds: number; pnl: number };
+  const m = new Map<string, StockScore & { ev: Array<{ date: string; d: number }>; tradeSyms: Set<string>; lots: L[] }>();
   const get = (isin: string, sym: string) => {
     let x = m.get(isin);
-    if (!x) m.set(isin, (x = { isin, symbol: symbolOf(isin, sym), status: 'EXITED', bought: 0, sold: 0, realized: 0, unrealized: 0, dividends: 0, total: 0, peak: 0, pct: null, pctTurnover: null, first: '9999', last: '', trades: 0, wins: 0, losses: 0, ev: [], tradeSyms: new Set() }));
+    if (!x) m.set(isin, (x = { isin, symbol: symbolOf(isin, sym), status: 'EXITED', bought: 0, sold: 0, realized: 0, unrealized: 0, dividends: 0, total: 0, peak: 0, pct: null, pctTurnover: null, first: '9999', last: '', trades: 0, wins: 0, losses: 0, ev: [], tradeSyms: new Set(), lots: [] }));
     return x;
   };
   for (const t of trades) {
@@ -904,8 +932,9 @@ export function stockScorecard(
     x.realized += r.pnl;
     const c = r.qty * r.buyPx;
     if (c > 0) x.ev.push({ date: r.buyDate, d: c }, { date: r.sellDate, d: -c });
+    if (r.kind !== 'INTRADAY' && !r.demerged && c > 0) x.lots.push({ buyDate: r.buyDate, sellDate: r.sellDate, cost: c, proceeds: r.qty * r.sellPx, pnl: r.pnl });
   }
-  for (const l of openLots ?? []) if (l.cost > 0) get(l.isin, '').ev.push({ date: l.date, d: l.cost });
+  for (const l of openLots ?? []) if (l.cost > 0) { const x = get(l.isin, ''); x.ev.push({ date: l.date, d: l.cost }); x.lots.push({ buyDate: l.date, sellDate: null, cost: l.cost, proceeds: 0, pnl: 0 }); }
   for (const c of closedTrades(realized)) { const x = get(c.isin, c.symbol); if (c.pnl > 0) x.wins++; else if (c.pnl < 0) x.losses++; }
   for (const h of holdings) {
     const x = m.get(h.isin); if (!x) continue;
@@ -923,19 +952,21 @@ export function stockScorecard(
     const p = pi && pi !== x.isin ? m.get(pi) : undefined;
     if (!p) continue;
     p.bought += x.bought; p.sold += x.sold; p.realized += x.realized; p.unrealized += x.unrealized; p.dividends += x.dividends;
-    p.trades += x.trades; p.wins += x.wins; p.losses += x.losses; p.ev.push(...x.ev);
+    p.trades += x.trades; p.wins += x.wins; p.losses += x.losses; p.ev.push(...x.ev); p.lots.push(...x.lots);
     if (x.first < p.first) p.first = x.first;
     if (x.last > p.last) p.last = x.last;
     if (x.status !== 'EXITED') p.status = p.sold > 0 || x.sold > 0 ? 'PART_SOLD' : 'HELD';
     p.includes = [...(p.includes ?? []), x.symbol];
     m.delete(x.isin);
   }
-  return Array.from(m.values()).map(({ ev, tradeSyms, ...x }) => {
+  return Array.from(m.values()).map(({ ev, tradeSyms, lots, ...x }) => {
     const total = x.realized + x.unrealized + x.dividends;
+    const rounds = holdingRounds(lots, x.unrealized);
+    const pcts = rounds.map((r) => r.pct).filter((v): v is number => v != null);
     const peak = peakOpenCost(ev);
     const cash = isCashFund(x.symbol) || Array.from(tradeSyms).some(isCashFund);
     return {
-      ...x, first: x.first === '9999' ? '' : x.first, total, peak,
+      ...x, first: x.first === '9999' ? '' : x.first, total, peak, rounds, bestRoundPct: pcts.length ? Math.max(...pcts) : null,
       pct: peak > 0 ? total / peak : null, pctTurnover: x.bought > 0 ? total / x.bought : null,
       ...(cash ? { cash: true } : {}),
     };

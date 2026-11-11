@@ -135,7 +135,7 @@ export interface TradebookAnalytics {
 // are worked out again only when the owner asks (↻ Recompute → force) or uploads new trades (the upload asks with force).
 // A stored result built from fewer trades or by an older version is still served, marked `stale` / `outdated`.
 const STORE_KEY = 'tradebook:analytics:v1';
-export const ANALYTICS_VERSION = 'zzz1250';
+export const ANALYTICS_VERSION = 'zzz1251';
 type Stored = { sig: string; version: string; data: TradebookAnalytics };
 let _cache: Stored | null = null;
 let _running: Promise<TradebookAnalytics> | null = null;

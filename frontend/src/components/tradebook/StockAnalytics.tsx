@@ -2,7 +2,7 @@
 // zzz1249 — Tradebook stock analytics: top 20 gainers / losers overall (realised + unrealised + dividends), how much of the
 // result came from a few names, results by holding period, what happened after you sold, positions stuck in a loss, and a
 // full sortable scorecard. Plus `SortTable`, a click-to-sort table used by the holdings list too.
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import type { TradebookAnalytics } from '@/lib/tradebook/server';
 import type { StockScore } from '@/lib/tradebook/core';
 import { C, inr, pct, tone, Card, Kpi, th, thL, td, tdL } from './tb-ui';
@@ -14,9 +14,12 @@ export interface Col<T> {
 }
 
 /** A table whose headers sort it (click again to flip). Empty values always go last. */
-export function SortTable<T>({ rows, cols, initial, desc: initialDesc = true, rowKey, limit }: {
+export function SortTable<T>({ rows, cols, initial, desc: initialDesc = true, rowKey, limit, expand }: {
   rows: T[]; cols: Col<T>[]; initial?: string; desc?: boolean; rowKey: (r: T, i: number) => string; limit?: number;
+  /** zzz1251 — click a row to open this under it */
+  expand?: (r: T) => React.ReactNode;
 }) {
+  const [open, setOpen] = useState<string | null>(null);
   const [key, setKey] = useState<string | null>(initial ?? null);
   const [desc, setDesc] = useState(initialDesc);
   const sorted = useMemo(() => {
@@ -44,7 +47,17 @@ export function SortTable<T>({ rows, cols, initial, desc: initialDesc = true, ro
             </th>
           );
         })}</tr></thead>
-        <tbody>{shown.map((r, i) => <tr key={rowKey(r, i)}>{cols.map((c) => <td key={c.key} style={c.left ? tdL : td}>{c.cell(r, i)}</td>)}</tr>)}</tbody>
+        <tbody>{shown.map((r, i) => {
+          const k = rowKey(r, i), on = open === k;
+          return (
+            <Fragment key={k}>
+              <tr onClick={expand ? () => setOpen(on ? null : k) : undefined} style={{ cursor: expand ? 'pointer' : undefined, background: on ? 'rgba(59,130,246,.06)' : undefined }}>
+                {cols.map((c) => <td key={c.key} style={c.left ? tdL : td}>{c.cell(r, i)}</td>)}
+              </tr>
+              {expand && on ? <tr><td colSpan={cols.length} style={{ ...tdL, padding: '6px 10px 12px' }}>{expand(r)}</td></tr> : null}
+            </Fragment>
+          );
+        })}</tbody>
       </table>
     </div>
   );
@@ -61,6 +74,32 @@ function Bar({ v, max }: { v: number; max: number }) {
   return <div style={{ width: 90, height: 8, background: 'var(--mc-bg-2, rgba(127,127,127,.12))', borderRadius: 4, overflow: 'hidden', display: 'inline-block', verticalAlign: 'middle' }}><div style={{ width: `${w}%`, height: '100%', background: v >= 0 ? C.green : C.red }} /></div>;
 }
 
+/** zzz1251 — each holding period of one stock, so the return can be checked by hand. */
+export function Rounds({ s }: { s: StockScore }) {
+  const rs = s.rounds ?? [];
+  if (!rs.length) return <div style={{ fontSize: 11.5, color: C.mute }}>Only intraday trades.</div>;
+  return (
+    <div>
+      <div style={{ fontSize: 11.5, color: C.mute, marginBottom: 6 }}>
+        Each time you held {s.symbol}: money in, money out, result. Return above = total {inr(s.total)} ÷ the most you had in it at once ({inr(s.peak)}).
+        {s.dividends ? ` Total includes ${inr(s.dividends)} of dividends.` : ''}
+      </div>
+      <table style={{ borderCollapse: 'collapse' }}>
+        <thead><tr><th style={thL}>Held</th><th style={th}>Put in</th><th style={th}>Got back</th><th style={th}>P&amp;L</th><th style={th}>Return</th></tr></thead>
+        <tbody>{rs.map((r, i) => (
+          <tr key={i}>
+            <td style={tdL}>{r.from} → {r.open ? <b>still held</b> : r.to}</td>
+            <td style={td}>{inr(r.cost)}</td>
+            <td style={td}>{r.open ? (r.proceeds ? `${inr(r.proceeds)} + shares held` : 'shares held') : inr(r.proceeds)}</td>
+            <td style={{ ...td, color: tone(r.pnl), fontWeight: 700 }}>{inr(r.pnl)}</td>
+            <td style={{ ...td, color: tone(r.pct) }}>{pct(r.pct)}</td>
+          </tr>
+        ))}</tbody>
+      </table>
+    </div>
+  );
+}
+
 /**
  * zzz1250 — one top list, sorted on open: gainers biggest first, losers biggest loss first. Every column sorts on click;
  * the # column always counts the rows as shown.
@@ -69,12 +108,13 @@ function TopList({ title, rows, by, gain }: { title: string; rows: StockScore[];
   const max = Math.max(0, ...rows.map((r) => Math.abs(by === 'rs' ? r.total : (r.pct ?? 0))));
   return (
     <Card title={title}>
-      <SortTable key={`${by}-${gain}`} rows={rows} rowKey={(r) => r.isin} initial={by === 'rs' ? 'total' : 'pct'} desc={gain} cols={[
+      <SortTable key={`${by}-${gain}`} rows={rows} rowKey={(r) => r.isin} initial={by === 'rs' ? 'total' : 'pct'} desc={gain} expand={(r) => <Rounds s={r} />} cols={[
         { key: 'n', label: '#', left: true, cell: (_r, i) => <span style={{ color: C.dim }}>{i + 1}</span> },
         { key: 'sym', label: 'Stock', left: true, sort: (r) => r.symbol, cell: (r) => <><b>{r.symbol}</b> <Pill s={r.status} />{r.includes?.length ? <span style={{ fontSize: 10.5, color: C.dim }} title="Shares received in a demerger; their cost stayed with this company"> + {r.includes.join(', ')}</span> : null}</> },
         { key: 'total', label: 'Total P&L', sort: (r) => r.total, cell: (r) => <span style={{ color: tone(r.total), fontWeight: 800 }} title={`Realised ${inr(r.realized)} · Unrealised ${inr(r.unrealized)} · Dividends ${inr(r.dividends)}`}>{inr(r.total)}</span> },
         { key: 'pct', label: 'Return', title: 'Total P&L ÷ the most money you had in this stock at one time', sort: (r) => r.pct, cell: (r) => <span style={{ color: tone(r.pct), fontWeight: 700 }} title={r.pctTurnover != null ? `${pct(r.pctTurnover)} of all money put into its buys (${inr(r.bought)}, counted again on every round trip)` : undefined}>{pct(r.pct)}</span> },
         { key: 'peak', label: 'Most in it', title: 'The most money you had in this stock at one time (cost of the shares held)', sort: (r) => r.peak, cell: (r) => <span style={{ color: C.mute }}>{inr(r.peak)}</span> },
+        { key: 'best', label: 'Best hold', title: 'Return of the best single holding period (buy → sell). Click the row to see every holding period.', sort: (r) => r.bestRoundPct, cell: (r) => <span style={{ color: tone(r.bestRoundPct) }}>{pct(r.bestRoundPct ?? null)}</span> },
         { key: 'bar', label: '', cell: (r) => <Bar v={by === 'rs' ? r.total : (r.pct ?? 0)} max={max} /> },
       ]} />
     </Card>
@@ -82,7 +122,7 @@ function TopList({ title, rows, by, gain }: { title: string; rows: StockScore[];
 }
 
 export function StockAnalytics({ data }: { data: TradebookAnalytics }) {
-  const [by, setBy] = useState<'rs' | 'pct'>('rs');
+  const [by, setBy] = useState<'rs' | 'pct'>('pct');
   const [status, setStatus] = useState<'all' | StockScore['status']>('all');
   const stocks = data.stocks;
   const st = useMemo(() => {
@@ -127,12 +167,12 @@ export function StockAnalytics({ data }: { data: TradebookAnalytics }) {
 
       <Card title="Top 20 gainers and losers — overall" right={
         <div style={{ display: 'flex', border: `1px solid ${C.line}`, borderRadius: 8, overflow: 'hidden' }}>
-          <button onClick={() => setBy('rs')} style={seg(by === 'rs')}>By ₹</button>
           <button onClick={() => setBy('pct')} style={seg(by === 'pct')}>By % return</button>
+          <button onClick={() => setBy('rs')} style={seg(by === 'rs')}>By ₹</button>
         </div>}>
         <div style={{ fontSize: 11.5, color: C.mute, marginBottom: 8 }}>
           Total P&amp;L per stock = realised (sold) + unrealised (still held, at {data.priceDate} prices) + estimated dividends. Return = total ÷ the most money you had in that stock at one time (hover a return for the figure on all money put into its buys, which counts the same money again on every round trip).
-          {by === 'pct' ? ' The % list leaves out stocks that never had ₹10,000 in them.' : ''} Liquid funds used to park cash are left out. Demerged shares are counted with the parent company. Before charges and tax. Click any column to sort.
+          {by === 'pct' ? ' The % list leaves out stocks that never had ₹10,000 in them.' : ''} Liquid funds used to park cash are left out. Demerged shares are counted with the parent company. Before charges and tax. Click any column to sort; click a stock to see each time you held it.
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(440px, 1fr))', gap: 14 }}>
           <TopList title={`▲ Top ${st.gainers.length} gainers`} rows={st.gainers} by={by} gain />
@@ -190,7 +230,7 @@ export function StockAnalytics({ data }: { data: TradebookAnalytics }) {
             <button key={k} onClick={() => setStatus(k)} style={{ padding: '3px 10px', fontSize: 11, fontWeight: 800, borderRadius: 6, cursor: 'pointer', border: `1px solid ${status === k ? C.blue : C.line}`, background: status === k ? `${C.blue}22` : 'transparent', color: status === k ? C.blue : C.mute }}>{l}</button>
           ))}
         </div>}>
-        <SortTable rows={rows} rowKey={(r) => r.isin} initial="total" cols={[
+        <SortTable rows={rows} rowKey={(r) => r.isin} initial="total" expand={(r) => <Rounds s={r} />} cols={[
           { key: 'sym', label: 'Stock', left: true, sort: (r) => r.symbol, cell: (r) => <><b>{r.symbol}</b>{r.includes?.length ? <span style={{ fontSize: 10.5, color: C.dim }}> + {r.includes.join(', ')}</span> : null}{r.cash ? <span style={{ fontSize: 10, color: C.dim }}> · cash fund</span> : null}</> },
           { key: 'st', label: 'Status', sort: (r) => r.status, cell: (r) => <Pill s={r.status} /> },
           { key: 'buy', label: 'Bought ₹', sort: (r) => r.bought, cell: (r) => inr(r.bought) },

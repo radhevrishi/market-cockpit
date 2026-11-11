@@ -51,3 +51,16 @@ test('after-sale uses only the last exit, not every sale since the first trade',
   // cash funds and demerged lots are not in it
   assert.equal(afterSale([r('L', 'LIQUIDCASE', '2025-01-01', '2025-02-01', 10, 100, 101)], new Set(), () => 102, id).length, 0);
 });
+
+test('zzz1251 — holding periods: each round with money in, money out and return; open round gets the unrealised P&L', async () => {
+  const { holdingRounds } = await import('../tradebook/core');
+  const rs = holdingRounds([
+    { buyDate: '2025-01-01', sellDate: '2025-02-01', cost: 100, proceeds: 110, pnl: 10 },
+    { buyDate: '2025-01-15', sellDate: '2025-03-01', cost: 100, proceeds: 150, pnl: 50 },
+    { buyDate: '2025-05-01', sellDate: null, cost: 200, proceeds: 0, pnl: 0 },
+  ], 40);
+  assert.equal(rs.length, 2);
+  assert.deepEqual([rs[0].from, rs[0].to, rs[0].cost, rs[0].proceeds, rs[0].pnl], ['2025-01-01', '2025-03-01', 200, 260, 60]);
+  assert.ok(Math.abs(rs[0].pct! - 0.3) < 1e-9);
+  assert.equal(rs[1].open, true); assert.equal(rs[1].to, null); assert.equal(rs[1].pnl, 40);
+});

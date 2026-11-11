@@ -4057,3 +4057,7 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   Liquid funds (`isCashFund`, LIQUIDCASE) are left out of the top lists / KPIs. After-sale uses only the LAST holding period
   (overlapping buy→sell spans), not every sell since 2022 (BSE showed avg sell ₹1,217 vs a last exit at ₹3,298); 20 rows each with
   "Sold for". Top lists are SortTables, gainers biggest first, losers biggest loss first. ANALYTICS_VERSION zzz1250.
+- zzz1251 (11 Nov): tradebook top lists open "By % return" (gainers highest % first, losers most negative first). Each stock has
+  `rounds` (`holdingRounds`: overlapping buy→sell spans = one holding period; money in / got back / P&L / return, open round
+  carries the unrealised P&L) shown when a row is clicked, plus "Best hold" (`bestRoundPct`). AEGISLOG +85% is right: ₹1.30 L in,
+  ₹2.41 L back — 35 shares sold near cost first; the last 154 shares made +103% on their own. ANALYTICS_VERSION zzz1251.
