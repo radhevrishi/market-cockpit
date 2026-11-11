@@ -4043,3 +4043,11 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   no self-restart in 3 h → record `ops:self-restart:v1` and exit(1); railway.json restartPolicy ON_FAILURE. gainers-in-backup
   slots 11:41 / 14:41 / 17:41 UTC (the research counts the session as today only until midnight IST). The root cause of the
   retained heap is NOT found yet. GitHub daily-research (gainers-in) still gets HTTP 401 — GitHub's CRON_SECRET is stale (zzz1210).
+- zzz1249 (11 Nov): Tradebook "Stock analytics" tab (`components/tradebook/StockAnalytics.tsx`): top 20 gainers / losers overall
+  by ₹ or % (total = realised + unrealised + estimated dividends; % = total ÷ money bought, % list needs ≥ ₹10,000 bought), stock
+  hit rate, top-5 share of winners, how many names made the net result, results by holding period (`holdBuckets`), sold-then-rose /
+  good exits (`afterSale`: shares sold × (price now − avg sell price), fully sold only), stuck losers (held ≥ 6 months, ≤ −20%),
+  full sortable scorecard (`stockScorecard`, filter held / part sold / sold out). `SortTable` = click-to-sort table; the holdings
+  list uses it (+ Cost column). Portfolio Analytics + Regime views also appear inside the tradebook ("Portfolio analytics" tab,
+  `portfolioAnalytics` prop). Shared styles moved to `tb-ui.tsx`. ANALYTICS_VERSION zzz1249 (stored result marked outdated until
+  ↻ Recompute; the new tab says so).

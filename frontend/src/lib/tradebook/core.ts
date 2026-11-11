@@ -716,9 +716,9 @@ export function pnlByFy(realized: Realized[]): Array<{ fy: string } & PnlStats> 
 /** Estimated dividends: shares held at the close before each ex-date × dividend per share. */
 export function dividendsByFy(l: Ledger, divsOf: (isin: string) => Array<{ t: number; amount: number }> | undefined): {
   byFy: Array<{ fy: string; amount: number; payments: number }>;
-  items: Array<{ symbol: string; exDate: string; qty: number; perShare: number; amount: number; fy: string }>;
+  items: Array<{ isin?: string; symbol: string; exDate: string; qty: number; perShare: number; amount: number; fy: string }>;
 } {
-  const items: Array<{ symbol: string; exDate: string; qty: number; perShare: number; amount: number; fy: string }> = [];
+  const items: Array<{ isin?: string; symbol: string; exDate: string; qty: number; perShare: number; amount: number; fy: string }> = [];
   const start = l.firstDate ? dayMs(l.firstDate) : Infinity;
   for (const isin of l.qtyChanges.keys()) {
     const seenDay = new Set<string>();
@@ -731,7 +731,7 @@ export function dividendsByFy(l: Ledger, divsOf: (isin: string) => Array<{ t: nu
       const q = Math.floor(qtyAt(l, isin, d.t - DAY) + 1e-6);   // zzz1239 — whole shares (a split's fraction is paid in cash)
       if (!q) continue;
       const ex = isoDay(d.t);
-      items.push({ symbol: l.symbolOf.get(isin) || isin, exDate: ex, qty: r2(q), perShare: d.amount, amount: q * d.amount, fy: fyOf(ex) });
+      items.push({ isin, symbol: l.symbolOf.get(isin) || isin, exDate: ex, qty: r2(q), perShare: d.amount, amount: q * d.amount, fy: fyOf(ex) });
     }
   }
   items.sort((a, b) => b.exDate.localeCompare(a.exDate));
@@ -844,4 +844,87 @@ export function reconcilePortfolio(l: DiffInput, current: Array<{ symbol: string
   const order = { 'only-portfolio': 0, 'only-tradebook': 1, quantity: 2, price: 3, same: 4 } as const;
   rows.sort((a, b) => order[a.kind] - order[b.kind] || Math.abs(b.portfolioCost - b.tradebookCost) - Math.abs(a.portfolioCost - a.tradebookCost));
   return { rows, portfolioCost: rows.reduce((s, r) => s + r.portfolioCost, 0), tradebookCost: rows.reduce((s, r) => s + r.tradebookCost, 0) };
+}
+
+// ── zzz1249 — per-stock scorecard, holding-period buckets, what happened after you sold ─────────────────────────────
+
+export interface StockScore {
+  isin: string; symbol: string; status: 'HELD' | 'EXITED' | 'PART_SOLD';
+  bought: number; sold: number;            // gross ₹ of all buys / sells in the files
+  realized: number; unrealized: number; dividends: number; total: number;
+  pct: number | null;                      // total ÷ money put into buys
+  first: string; last: string; trades: number; wins: number; losses: number;
+}
+/** One row per company: realised + unrealised + estimated dividends, against the money put into its buys. Pure. */
+export function stockScorecard(
+  trades: Trade[], realized: Realized[], holdings: Array<{ isin: string; pnl: number | null; qty: number }>,
+  divs: Array<{ isin?: string; amount: number }>, symbolOf: (isin: string, fallback: string) => string,
+): StockScore[] {
+  const m = new Map<string, StockScore>();
+  const get = (isin: string, sym: string) => {
+    let x = m.get(isin);
+    if (!x) m.set(isin, (x = { isin, symbol: symbolOf(isin, sym), status: 'EXITED', bought: 0, sold: 0, realized: 0, unrealized: 0, dividends: 0, total: 0, pct: null, first: '9999', last: '', trades: 0, wins: 0, losses: 0 }));
+    return x;
+  };
+  for (const t of trades) {
+    const x = get(t.isin, t.symbol);
+    if (t.side === 'buy') x.bought += t.qty * t.price; else x.sold += t.qty * t.price;
+    x.trades++;
+    if (t.date < x.first) x.first = t.date;
+    if (t.date > x.last) x.last = t.date;
+  }
+  for (const r of realized) get(r.isin, r.symbol).realized += r.pnl;
+  for (const c of closedTrades(realized)) { const x = get(c.isin, c.symbol); if (c.pnl > 0) x.wins++; else if (c.pnl < 0) x.losses++; }
+  for (const h of holdings) {
+    const x = m.get(h.isin); if (!x) continue;
+    x.unrealized += h.pnl ?? 0;
+    x.status = x.sold > 0 ? 'PART_SOLD' : 'HELD';
+  }
+  for (const d of divs) if (d.isin && m.has(d.isin)) m.get(d.isin)!.dividends += d.amount;
+  return Array.from(m.values()).map((x) => {
+    const total = x.realized + x.unrealized + x.dividends;
+    return { ...x, first: x.first === '9999' ? '' : x.first, total, pct: x.bought > 0 ? total / x.bought : null };
+  });
+}
+
+export interface HoldBucket { label: string; trades: number; wins: number; winRate: number | null; pnl: number; avgPct: number | null }
+/** Closed trades grouped by how long the shares were held. Pure. */
+export function holdBuckets(realized: Realized[]): HoldBucket[] {
+  const defs: Array<[string, (c: { kind: PnlKind; days: number }) => boolean]> = [
+    ['Intraday', (c) => c.kind === 'INTRADAY'],
+    ['Up to 1 month', (c) => c.kind !== 'INTRADAY' && c.days <= 30],
+    ['1 – 6 months', (c) => c.kind !== 'INTRADAY' && c.days > 30 && c.days <= 182],
+    ['6 – 12 months', (c) => c.kind !== 'INTRADAY' && c.days > 182 && c.days <= 365],
+    ['Over 1 year', (c) => c.kind !== 'INTRADAY' && c.days > 365],
+  ];
+  const ct = closedTrades(realized);
+  return defs.map(([label, f]) => {
+    const g = ct.filter(f);
+    const wins = g.filter((c) => c.pnl > 0).length;
+    const cost = g.reduce((s, c) => s + c.cost, 0);
+    return { label, trades: g.length, wins, winRate: g.length ? wins / g.length : null, pnl: g.reduce((s, c) => s + c.pnl, 0), avgPct: cost > 0 ? g.reduce((s, c) => s + c.pnl, 0) / cost : null };
+  }).filter((b) => b.trades > 0);
+}
+
+export interface AfterSale { isin: string; symbol: string; lastSell: string; qtySold: number; avgSellPx: number; priceNow: number; movePct: number; amount: number }
+/**
+ * Fully sold companies: what the shares sold would be worth at today's price. amount > 0 = gain left on the table,
+ * < 0 = loss avoided. Sell prices and quantities come from the realised lots (today's share units). Pure.
+ */
+export function afterSale(realized: Realized[], heldIsins: Set<string>, priceNow: (isin: string) => number | null, symbolOf: (isin: string, fallback: string) => string): AfterSale[] {
+  const m = new Map<string, { symbol: string; q: number; v: number; last: string }>();
+  for (const r of realized) {
+    if (heldIsins.has(r.isin) || r.kind === 'INTRADAY' || !(r.qty > 0) || !(r.sellPx > 0)) continue;
+    const x = m.get(r.isin) || { symbol: r.symbol, q: 0, v: 0, last: '' };
+    x.q += r.qty; x.v += r.qty * r.sellPx; if (r.sellDate > x.last) x.last = r.sellDate;
+    m.set(r.isin, x);
+  }
+  const out: AfterSale[] = [];
+  for (const [isin, x] of m) {
+    const p = priceNow(isin);
+    if (p == null || !(p > 0) || !(x.q > 0)) continue;
+    const avg = x.v / x.q;
+    out.push({ isin, symbol: symbolOf(isin, x.symbol), lastSell: x.last, qtySold: r2(x.q), avgSellPx: avg, priceNow: p, movePct: p / avg - 1, amount: (p - avg) * x.q });
+  }
+  return out;
 }

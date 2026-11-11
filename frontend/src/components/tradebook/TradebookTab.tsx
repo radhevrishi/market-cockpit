@@ -5,44 +5,15 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { applyHoldingsDiff, holdingsDiff, parseTradebookRows, reconcilePortfolio, type HoldingChange, type Trade } from '@/lib/tradebook/core';
 import type { TradebookAnalytics } from '@/lib/tradebook/server';
+import { C, inr, pct, tone, Card, Kpi, th, thL, td, tdL } from './tb-ui';
+import { StockAnalytics, SortTable } from './StockAnalytics';
 
 type H = { symbol: string; entryPrice: number; quantity: number; weight: number; addedAt: string; notes?: string };
-const C = {
-  panel: 'var(--mc-bg-1)', line: 'var(--mc-border-2)', txt: 'var(--mc-text-1)', mute: 'var(--mc-text-3)', dim: 'var(--mc-text-4)',
-  green: 'var(--mc-bullish)', red: 'var(--mc-bearish)', amber: '#D97706', blue: '#3B82F6', violet: '#8B5CF6',
-};
-const inr = (v: number | null | undefined, d = 0) => (v == null || !Number.isFinite(v) ? '—' : `₹${Math.round(v * 10 ** d) / 10 ** d >= 0 ? '' : '−'}${Math.abs(v) >= 1e7 ? `${(Math.abs(v) / 1e7).toFixed(2)} Cr` : Math.abs(v) >= 1e5 ? `${(Math.abs(v) / 1e5).toFixed(2)} L` : Math.abs(v).toLocaleString('en-IN', { maximumFractionDigits: d })}`);
-const pct = (v: number | null | undefined, d = 1) => (v == null || !Number.isFinite(v) ? '—' : `${v >= 0 ? '+' : ''}${(v * 100).toFixed(d)}%`);
-const tone = (v: number | null | undefined) => (v == null ? C.mute : v >= 0 ? C.green : C.red);
-
 async function sha256(buf: ArrayBuffer): Promise<string> {
   const h = await crypto.subtle.digest('SHA-256', buf);
   return Array.from(new Uint8Array(h)).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-function Card({ title, children, right }: { title: string; children: React.ReactNode; right?: React.ReactNode }) {
-  return (
-    <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, padding: 14, marginBottom: 14 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
-        <div style={{ fontSize: 13, fontWeight: 800, color: C.txt, letterSpacing: 0.3 }}>{title}</div>{right}
-      </div>
-      {children}
-    </div>
-  );
-}
-function Kpi({ label, value, sub, color }: { label: string; value: string; sub?: string; color?: string }) {
-  return (
-    <div style={{ minWidth: 150, padding: '10px 12px', border: `1px solid ${C.line}`, borderRadius: 8 }}>
-      <div style={{ fontSize: 10.5, color: C.dim, fontWeight: 800, letterSpacing: 0.4 }}>{label}</div>
-      <div style={{ fontSize: 18, fontWeight: 800, color: color || C.txt, marginTop: 2 }}>{value}</div>
-      {sub && <div style={{ fontSize: 11, color: C.mute, marginTop: 2 }}>{sub}</div>}
-    </div>
-  );
-}
-const th: React.CSSProperties = { textAlign: 'right', padding: '6px 8px', fontSize: 11, color: C.dim, fontWeight: 800, whiteSpace: 'nowrap', borderBottom: `1px solid ${C.line}` };
-const thL: React.CSSProperties = { ...th, textAlign: 'left' };
-const td: React.CSSProperties = { textAlign: 'right', padding: '6px 8px', fontSize: 12.5, whiteSpace: 'nowrap', borderBottom: `1px solid ${C.line}` };
-const tdL: React.CSSProperties = { ...td, textAlign: 'left' };
 
 /**
  * zzz1245 — time-weighted return of the book from the first day of `view`: each day's change in value with that day's buys and
@@ -251,13 +222,13 @@ function ReturnsTable({ rows, title }: { rows: TradebookAnalytics['byFy']; title
   );
 }
 
-export default function TradebookTab({ holdings, onApply }: { holdings: H[]; onApply: (next: H[]) => Promise<boolean> | boolean }) {
+export default function TradebookTab({ holdings, onApply, portfolioAnalytics }: { holdings: H[]; onApply: (next: H[]) => Promise<boolean> | boolean; portfolioAnalytics?: React.ReactNode }) {
   const [data, setData] = useState<TradebookAnalytics | null>(null);
   const [files, setFiles] = useState<TradebookAnalytics['files']>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [log, setLog] = useState<string[]>([]);
-  const [sub, setSub] = useState<'performance' | 'holdings' | 'pnl' | 'dividends' | 'files'>('performance');
+  const [sub, setSub] = useState<'performance' | 'stocks' | 'holdings' | 'pnl' | 'dividends' | 'portfolio' | 'files'>('performance');
   const [applied, setApplied] = useState<{ changes: HoldingChange[]; before: H[] } | null>(null);
 
   const load = useCallback(async (force = false) => {
@@ -387,7 +358,7 @@ export default function TradebookTab({ holdings, onApply }: { holdings: H[]; onA
             <Kpi label="DIVIDENDS (estimated)" value={inr(s.dividends)} sub={`${data.tradeCount.toLocaleString('en-IN')} trades · ${data.firstDate} → ${data.lastDate}`} />
           </div>
           <div style={{ display: 'flex', gap: 4, marginBottom: 12, flexWrap: 'wrap' }}>
-            {([['performance', 'Performance'], ['holdings', 'Holdings'], ['pnl', 'Trades & P&L'], ['dividends', 'Dividends'], ['files', 'Files & notes']] as const).map(([k, l]) => (
+            {([['performance', 'Performance'], ['stocks', 'Stock analytics'], ['holdings', 'Holdings'], ['pnl', 'Trades & P&L'], ['dividends', 'Dividends'], ...(portfolioAnalytics ? [['portfolio', 'Portfolio analytics'] as const] : []), ['files', 'Files & notes']] as const).map(([k, l]) => (
               <button key={k} onClick={() => setSub(k)} style={{ padding: '6px 14px', borderRadius: 7, border: `1px solid ${sub === k ? C.blue : C.line}`, background: sub === k ? `${C.blue}22` : 'transparent', color: sub === k ? C.blue : C.mute, fontWeight: 800, fontSize: 12, cursor: 'pointer' }}>{l}</button>
             ))}
           </div>
@@ -419,16 +390,20 @@ export default function TradebookTab({ holdings, onApply }: { holdings: H[]; onA
                 </Card>
               )}
               <Card title={`Holdings rebuilt from the trades — ${data.holdings.length}`}>
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead><tr><th style={thL}>Stock</th><th style={th}>Qty</th><th style={th}>Avg cost</th><th style={th}>Price</th><th style={th}>Value</th><th style={th}>P&amp;L</th><th style={th}>P&amp;L %</th><th style={th}>Weight</th><th style={th}>Held since</th><th style={th} title="Share of the position held more than 12 months (long-term)">Long-term</th></tr></thead>
-                    <tbody>{data.holdings.map((h) => (
-                      <tr key={h.isin}><td style={tdL}><b>{h.symbol}</b></td><td style={td}>{h.qty.toLocaleString('en-IN')}</td><td style={td}>{h.avgCost.toFixed(2)}</td><td style={td}>{h.price?.toFixed(2) ?? '—'}</td>
-                        <td style={td}>{inr(h.value)}</td><td style={{ ...td, color: tone(h.pnl) }}>{inr(h.pnl)}</td><td style={{ ...td, color: tone(h.pnlPct), fontWeight: 700 }}>{pct(h.pnlPct)}</td>
-                        <td style={td}>{h.weight != null ? `${(h.weight * 100).toFixed(1)}%` : '—'}</td><td style={td}>{h.firstBuy ?? '—'}{h.daysHeld != null ? <span style={{ color: C.dim }}> · {h.daysHeld}d</span> : null}</td><td style={td}>{Math.round(h.ltcgPct * 100)}%</td></tr>
-                    ))}</tbody>
-                  </table>
-                </div>
+                {/* zzz1249 — every column sorts */}
+                <SortTable rows={data.holdings} rowKey={(h) => h.isin} initial="value" cols={[
+                  { key: 'sym', label: 'Stock', left: true, sort: (h) => h.symbol, cell: (h) => <b>{h.symbol}</b> },
+                  { key: 'qty', label: 'Qty', sort: (h) => h.qty, cell: (h) => h.qty.toLocaleString('en-IN') },
+                  { key: 'avg', label: 'Avg cost', sort: (h) => h.avgCost, cell: (h) => h.avgCost.toFixed(2) },
+                  { key: 'px', label: 'Price', sort: (h) => h.price, cell: (h) => h.price?.toFixed(2) ?? '—' },
+                  { key: 'cost', label: 'Cost', sort: (h) => h.cost, cell: (h) => inr(h.cost) },
+                  { key: 'value', label: 'Value', sort: (h) => h.value, cell: (h) => inr(h.value) },
+                  { key: 'pnl', label: 'P&L', sort: (h) => h.pnl, cell: (h) => <span style={{ color: tone(h.pnl) }}>{inr(h.pnl)}</span> },
+                  { key: 'pct', label: 'P&L %', sort: (h) => h.pnlPct, cell: (h) => <span style={{ color: tone(h.pnlPct), fontWeight: 700 }}>{pct(h.pnlPct)}</span> },
+                  { key: 'w', label: 'Weight', sort: (h) => h.weight, cell: (h) => (h.weight != null ? `${(h.weight * 100).toFixed(1)}%` : '—') },
+                  { key: 'since', label: 'Held since', sort: (h) => h.daysHeld, cell: (h) => <>{h.firstBuy ?? '—'}{h.daysHeld != null ? <span style={{ color: C.dim }}> · {h.daysHeld}d</span> : null}</> },
+                  { key: 'lt', label: 'Long-term', title: 'Share of the position held more than 12 months (long-term) — click to sort', sort: (h) => h.ltcgPct, cell: (h) => `${Math.round(h.ltcgPct * 100)}%` },
+                ]} />
               </Card>
               {data.turningLongTerm.length > 0 && (
                 <Card title="Lots turning long-term in the next 60 days — selling after the date is taxed as LTCG">
@@ -438,6 +413,9 @@ export default function TradebookTab({ holdings, onApply }: { holdings: H[]; onA
               )}
             </>
           )}
+
+          {sub === 'stocks' && <StockAnalytics data={data} />}
+          {sub === 'portfolio' && portfolioAnalytics}
 
           {sub === 'pnl' && (
             <>

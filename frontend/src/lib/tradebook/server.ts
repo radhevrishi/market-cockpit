@@ -8,6 +8,7 @@ import { nseEquityIsins } from '../screener/in-build';
 import {
   buildLedger, companyKey, dailySeries, inferIsinSplits, splitsForInstrument, normalizeTrades, MERGERS, dayMs, dividendsByFy, isoDay, lotsTurningLongTerm, pnlByFy, pnlStats, qtyAt, valueAt, windowReturn, xirr, fyOf,
   type Flow, type Ledger, type Split, type Trade, type WindowReturn,
+  stockScorecard, holdBuckets, afterSale, type StockScore, type HoldBucket, type AfterSale,
 } from './core';
 
 const DAY = 86_400_000;
@@ -120,6 +121,10 @@ export interface TradebookAnalytics {
   dividends: ReturnType<typeof dividendsByFy>;
   turningLongTerm: ReturnType<typeof lotsTurningLongTerm>;
   unmatched: { count: number; symbols: string[] };
+  /** zzz1249 — per-company scorecard (realised + unrealised + dividends), holding-period buckets, what happened after selling */
+  stocks?: StockScore[];
+  holdBuckets?: HoldBucket[];
+  afterSale?: AfterSale[];
   notes: string[];
   ledgerPositions: Array<{ symbol: string; qty: number; avgCost: number; isin: string }>;
   unmatchedIsins: string[];
@@ -130,7 +135,7 @@ export interface TradebookAnalytics {
 // are worked out again only when the owner asks (↻ Recompute → force) or uploads new trades (the upload asks with force).
 // A stored result built from fewer trades or by an older version is still served, marked `stale` / `outdated`.
 const STORE_KEY = 'tradebook:analytics:v1';
-export const ANALYTICS_VERSION = 'zzz1243';
+export const ANALYTICS_VERSION = 'zzz1249';
 type Stored = { sig: string; version: string; data: TradebookAnalytics };
 let _cache: Stored | null = null;
 let _running: Promise<TradebookAnalytics> | null = null;
@@ -294,6 +299,9 @@ async function build(rawTrades: Trade[]): Promise<TradebookAnalytics> {
     bySymbol: Array.from(bySym.entries()).map(([symbol, v]) => ({ symbol, ...v })).sort((a, b) => b.realized - a.realized),
     dividends: { byFy: divs.byFy, items: divs.items.slice(0, 400) },
     turningLongTerm: lotsTurningLongTerm(l, asOf, 60),
+    stocks: stockScorecard(trades, l.realized, holdings, divs.items, showSym),
+    holdBuckets: holdBuckets(l.realized),
+    afterSale: afterSale(l.realized, new Set(l.positions.map((p) => p.isin)), (isin) => priceAt(isin, asOf), showSym).sort((a, b) => b.amount - a.amount),
     unmatched: { count: l.unmatched.length, symbols: Array.from(new Set(l.unmatched.map((u) => u.symbol))).slice(0, 60) },
     notes,
     ledgerPositions: l.positions.map((p) => ({ symbol: showSym(p.isin, p.symbol), qty: p.qty, avgCost: p.avgCost, isin: p.isin })),

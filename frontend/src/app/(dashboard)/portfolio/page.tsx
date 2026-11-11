@@ -809,7 +809,10 @@ export default function PortfolioPage() {
       {!loading && holdings.length > 0 && viewTab === 'earnings' && <PortfolioEarningsTab tickers={holdings.map(h => h.symbol)} />}
       {/* zzz1231 — upload Zerodha tradebooks: XIRR, returns vs Nifty Smallcap 100, holdings applied automatically, dividends, P&L */}
       {!loading && viewTab === 'tradebook' && (
-        <TradebookTab holdings={holdings} onApply={async (next) => { setHoldings(next as PortfolioHolding[]); return syncToAPI(next as PortfolioHolding[]); }} />
+        <TradebookTab holdings={holdings} onApply={async (next) => { setHoldings(next as PortfolioHolding[]); return syncToAPI(next as PortfolioHolding[]); }}
+          portfolioAnalytics={holdings.length > 0 ? (<>{/* zzz1249 — the portfolio's own analytics, also inside the tradebook */}
+            <PortfolioAnalytics rows={sortedRows} onSelectCap={(c) => { setCapFilter(c as any); setViewTab('holdings'); }} onSelectTier={(t) => { setTierFilter(t as any); setViewTab('holdings'); }} selectedTier={tierFilter} />
+            <div style={{ marginTop: 16 }}><PortfolioRegimeExposure rows={sortedRows} /></div></>) : undefined} />
       )}
         {!loading && holdings.length > 0 && viewTab === 'analytics' && (
         <PortfolioAnalytics rows={sortedRows}
