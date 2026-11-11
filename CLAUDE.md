@@ -4075,3 +4075,8 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   `splitOffLists` also moves bench names that MISS the criteria and capacity-ramp records built from lending words off the lists;
   `LENDING_WORDS` (persistence) drops disbursement / loan / deposit items from capacity ramps (KARURVYSYA "utilisation 80% ·
   disbursements up 45%").
+- zzz1254 (11 Nov): Portfolio Earnings grades used the 15-minute whole-index cache `search:idx:v3` (every graded entry of 120
+  sessions). A build that missed recent sessions left rows on last quarter's grade (KROSS "MIXED Q1 FY27" while EO had graded Q2).
+  `/api/v1/portfolio/earnings-grades` now looks the requested tickers up directly (`lookupGraded`: newest session first, groups of 6
+  via kvMGet, each group retried once, unread sessions reported as `unread_sessions`); latest = newest quarter then newest session;
+  a graded quarter newer than the scan's wins. The search route and bse-map still use search:idx:v3. Tab cache key v4.

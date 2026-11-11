@@ -225,7 +225,7 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
       setRefreshedAt(ts);
       try {
         // zzz295 — persist so next visit shows cached data instantly
-        localStorage.setItem('mc:portfolio-earnings-tab:v3', JSON.stringify({ ts, grades: merged, tickers }));
+        localStorage.setItem('mc:portfolio-earnings-tab:v4', JSON.stringify({ ts, grades: merged, tickers }));
       } catch {}
     } catch {}
     setLoading(false);
@@ -241,7 +241,7 @@ export default function PortfolioEarningsTab({ tickers: propTickers }: { tickers
     let hasCache = false;
     let staleNulls = false;
     try {
-      const raw = localStorage.getItem('mc:portfolio-earnings-tab:v3');
+      const raw = localStorage.getItem('mc:portfolio-earnings-tab:v4');
       if (raw) {
         const cached = JSON.parse(raw);
         if (cached?.grades) {

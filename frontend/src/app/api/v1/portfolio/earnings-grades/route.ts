@@ -15,7 +15,7 @@
 // Returns  { count, graded, results: { A: {ticker,company,filing_date,tier,quarter,composite_score,...} | null, ... } }
 
 import { NextRequest } from 'next/server';
-import { kvGet, kvSet } from '@/lib/kv';
+import { kvGet, kvSet, kvMGet } from '@/lib/kv';
 import { gradedKeyCandidates } from '@/lib/graded-cache-key';
 import { withCurrentIndiaRules } from '@/lib/india-regrade';
 
@@ -94,6 +94,63 @@ async function buildIndex(): Promise<IndexEntry[]> {
   return flat;
 }
 
+
+/**
+ * zzz1254 — the portfolio tab read a 15-minute cache of EVERY graded entry from 120 sessions (`search:idx:v3`). One build that
+ * missed recent days (a timed-out read, a payload too large to cache) left the tab on last quarter's grade for 15 minutes
+ * at a time — KROSS showed "MIXED Q1 FY27" while Earnings Opportunities had graded its Q2. Now the requested tickers are
+ * looked up directly, newest session first, with the same batched read the Earnings Opportunities window uses; a session
+ * that cannot be read is retried once and, if it still fails, reported in `unread` (never silently treated as "no filing").
+ */
+async function lookupGraded(tickers: string[]): Promise<{ entries: IndexEntry[]; unread: string[] }> {
+  const want = new Set(tickers);
+  const dates = businessDaysBack(LOOKBACK_BUSINESS_DAYS);
+  const entries: IndexEntry[] = [];
+  const seen = new Set<string>();
+  const unread: string[] = [];
+  const GROUP = 6;
+  const readGroup = async (group: string[]): Promise<Array<{ d: string; payload: any }>> => {
+    const keys: string[] = []; const owner: string[] = [];
+    for (const d of group) for (const k of gradedKeyCandidates(d)) { keys.push(k); owner.push(d); }
+    let vals: any[] | null = null;
+    for (let attempt = 0; attempt < 2 && !vals; attempt++) { try { vals = await kvMGet(keys); } catch { vals = null; } }
+    if (!vals) { unread.push(...group); return []; }
+    const out: Array<{ d: string; payload: any }> = [];
+    for (const d of group) {
+      for (let i = 0; i < keys.length; i++) {
+        if (owner[i] !== d) continue;
+        const v = vals[i];
+        if (v && v.by_tier) { out.push({ d, payload: withCurrentIndiaRules(v, keys[i]) }); break; }
+      }
+    }
+    return out;
+  };
+  for (let i = 0; i < dates.length; i += GROUP) {
+    const got = await readGroup(dates.slice(i, i + GROUP));
+    for (const { d, payload } of got) {
+      const daysBack = dates.indexOf(d);
+      for (const tier of TIERS) {
+        const arr = payload.by_tier[tier];
+        if (!Array.isArray(arr)) continue;
+        for (const e of arr) {
+          const ticker = String(e?.ticker || '').toUpperCase();
+          if (!ticker || !want.has(ticker)) continue;
+          const dedupKey = `${ticker}@${e.quarter || ''}`;
+          if (seen.has(dedupKey)) continue;   // newest session first — the first sighting is the latest grade of that quarter
+          seen.add(dedupKey);
+          entries.push({
+            t: ticker, c: String(e.company || ticker), fd: String(e.filing_date || d), tier,
+            sec: e.sector || null, mc: typeof e.market_cap_cr === 'number' ? e.market_cap_cr : null,
+            q: e.quarter || null, cs: typeof e.composite_score === 'number' ? e.composite_score : null,
+            p: typeof e.pead_score === 'number' ? e.pead_score : null, db: daysBack,
+          });
+        }
+      }
+    }
+  }
+  return { entries, unread };
+}
+
 async function getIndex(): Promise<IndexEntry[]> {
   try {
     const cached = await kvGet(INDEX_KEY);
@@ -167,23 +224,25 @@ export async function GET(req: NextRequest) {
   const scan = await fetchScanBatch(base, tickers);
 
   // 2) Enrichment: graded index for professional tier/score when quarter matches
-  const index = await getIndex();
+  const { entries: index, unread } = await lookupGraded(tickers);
+  // newest session first: the first entry per ticker@quarter is the latest grade (a later re-listing of the same quarter wins)
   const gradedByKey = new Map<string, IndexEntry>();
   for (const e of index) {
     if (!e || !e.t) continue;
     const k = `${e.t}@${e.q || ''}`;
-    const existing = gradedByKey.get(k);
-    if (!existing || (e.fd || '') > (existing.fd || '')) gradedByKey.set(k, e);
+    if (!gradedByKey.has(k)) gradedByKey.set(k, e);
   }
 
   // zzz301 — latest graded entry per ticker (regardless of quarter). Used as a
   // fallback so we can still return pead_score/tier when the scan endpoint
   // returns nothing (which currently happens for many tickers on Railway).
+  // zzz1254 — "latest" = the newest QUARTER graded, then the newest session (filing dates repeat across re-listings)
+  const qRank = (q: string | null) => { const m = /Q(\d)\s+FY(\d+)/.exec(q || ''); return m ? parseInt(m[2]) * 10 + parseInt(m[1]) : 0; };
   const latestGradedByTicker = new Map<string, IndexEntry>();
   for (const e of index) {
     if (!e || !e.t) continue;
     const cur = latestGradedByTicker.get(e.t);
-    if (!cur || (e.fd || '') > (cur.fd || '')) latestGradedByTicker.set(e.t, e);
+    if (!cur || qRank(e.q) > qRank(cur.q) || (qRank(e.q) === qRank(cur.q) && e.db < cur.db)) latestGradedByTicker.set(e.t, e);
   }
 
   const results: Record<string, any> = {};
@@ -191,8 +250,10 @@ export async function GET(req: NextRequest) {
     const c = scan[t];
     const scanQuarter = c ? periodToQuarter(c.period || c.resultDate) : null;
     const scanScore = c && typeof c.totalScore === 'number' ? c.totalScore : null;
-    const gradedQ = scanQuarter ? gradedByKey.get(`${t}@${scanQuarter}`) : undefined;
     const gradedAny = latestGradedByTicker.get(t);
+    // zzz1254 — a graded NEWER quarter than the scan's (screener.in not yet updated) wins over the scan's older quarter
+    const gradedQ = (scanQuarter ? gradedByKey.get(`${t}@${scanQuarter}`) : undefined)
+      ?? (gradedAny && scanQuarter && qRank(gradedAny.q) > qRank(scanQuarter) ? gradedAny : undefined);
     const graded = gradedQ || gradedAny;
 
     // zzz301 — only skip if BOTH scan and graded miss. Previously we short-circuited
@@ -212,7 +273,7 @@ export async function GET(req: NextRequest) {
       sector: graded?.sec || null,
       market_cap_cr: graded?.mc ?? null,
       // zzz1252 — a fallback graded entry keeps ITS quarter (its tier / date / score belong to it), never the scan's newer one
-      quarter: gradedQ ? (scanQuarter || gradedQ.q || null) : graded ? (graded.q || null) : scanQuarter,
+      quarter: gradedQ ? (gradedQ.q || scanQuarter || null) : graded ? (graded.q || null) : scanQuarter,
       composite_score,
       pead_score, // zzz299 — real PEAD from graded pipeline
       revenue_yoy: c && typeof c.revenueYoY === 'number' ? c.revenueYoY : null,
@@ -230,6 +291,7 @@ export async function GET(req: NextRequest) {
     covered,  // total tickers with any earnings data
     results,
     _idx: index.length,
+    unread_sessions: unread,   // zzz1254 — sessions that could not be read (their grades may be missing)
   });
 }
 

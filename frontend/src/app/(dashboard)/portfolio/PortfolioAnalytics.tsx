@@ -101,7 +101,7 @@ export function PortfolioAnalytics({ rows, onSelectCap, onSelectTier, selectedTi
   let etMix: any = null;
   try {
     if (typeof window !== 'undefined') {
-      const raw = (localStorage.getItem('mc:portfolio-earnings-tab:v3') ?? localStorage.getItem('mc:portfolio-earnings-tab:v2') ?? localStorage.getItem('mc:portfolio-earnings-tab:v1'));
+      const raw = (localStorage.getItem('mc:portfolio-earnings-tab:v4') ?? localStorage.getItem('mc:portfolio-earnings-tab:v3') ?? localStorage.getItem('mc:portfolio-earnings-tab:v2') ?? localStorage.getItem('mc:portfolio-earnings-tab:v1'));
       if (raw) {
         const c = JSON.parse(raw);
         if (c && c.grades) {

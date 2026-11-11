@@ -56,7 +56,7 @@ export default function PortfolioPage() {
   const tickerToTier = useMemo<Record<string, string>>(() => {
     if (typeof window === 'undefined') return {};
     try {
-      const raw = (localStorage.getItem('mc:portfolio-earnings-tab:v3') ?? localStorage.getItem('mc:portfolio-earnings-tab:v2') ?? localStorage.getItem('mc:portfolio-earnings-tab:v1'));
+      const raw = (localStorage.getItem('mc:portfolio-earnings-tab:v4') ?? localStorage.getItem('mc:portfolio-earnings-tab:v3') ?? localStorage.getItem('mc:portfolio-earnings-tab:v2') ?? localStorage.getItem('mc:portfolio-earnings-tab:v1'));
       if (!raw) return {};
       const c = JSON.parse(raw);
       if (!c || !c.grades) return {};
