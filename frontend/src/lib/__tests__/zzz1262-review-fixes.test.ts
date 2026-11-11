@@ -62,3 +62,22 @@ test('filing age line names the date, and money is only handed back on a refusal
   assert.equal(refundable(400), true); assert.equal(refundable(429), true);
   assert.equal(refundable(500), false); assert.equal(refundable(0), false);
 });
+
+test('graded sessions include weekend days (KROSS filed Q2 on Saturday 17 Oct 2026)', async () => {
+  const { istSessionDaysBack, lookupGraded, clearGradedSessionMemo } = await import('../graded-session-index');
+  const { gradedKeyCandidates } = await import('../graded-cache-key');
+  const now = Date.parse('2026-10-20T06:00:00Z');                       // Tuesday 11:30 IST
+  const days = istSessionDaysBack(5, now);
+  assert.deepEqual(days.slice(0, 7), ['2026-10-20', '2026-10-19', '2026-10-18', '2026-10-17', '2026-10-16', '2026-10-15', '2026-10-14']);
+  assert.equal(days[days.length - 1], '2026-10-14');                   // back to the 5th business day, every day between
+  clearGradedSessionMemo();
+  const sat = gradedKeyCandidates('2026-10-17')[0], older = gradedKeyCandidates('2026-07-24')[0];
+  const store: Record<string, any> = {
+    [sat]: { by_tier: { STRONG: [{ ticker: 'KROSS', company: 'Kross Ltd', quarter: 'Q2 FY27', filing_date: '2026-10-17' }] } },
+    [older]: { by_tier: { MIXED: [{ ticker: 'KROSS', company: 'Kross Ltd', quarter: 'Q1 FY27', filing_date: '2026-07-24' }] } },
+  };
+  const r = await lookupGraded(['KROSS'], { mget: async (keys) => keys.map((k) => store[k] ?? null), regrade: (p) => p, now: () => now });
+  assert.equal(r.unread.length, 0);
+  assert.deepEqual(r.entries.map((e) => `${e.q}:${e.tier}`), ['Q2 FY27:STRONG', 'Q1 FY27:MIXED']);
+  clearGradedSessionMemo();
+});

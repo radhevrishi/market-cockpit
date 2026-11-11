@@ -4140,3 +4140,7 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   Not changed after review (correct as shipped): tradebook returns (peak money, holding rounds), Portfolio Catalysts CB figures,
   heap-guard collection, rewarded rule, US evidence job. Still open: which US names truly cannot be read (check `document_outcomes` live),
   RS leg of the rewarded rule (no per-row RS), root cause of the retained heap (read `heapAfterGc` after a day).
+- zzz1262b (11 Nov): found on the live check — the graded-session reader (and the old search index before it) read WEEKDAYS only, but
+  India files results on Saturdays (17 Oct 2026: 19 graded names, KROSS Q2 STRONG). Search and portfolio grades showed the quarter
+  before for every weekend filer. `istSessionDaysBack` = every IST calendar day back to the 120th business day (≈168 keys, 6 a multi-get);
+  `db` is now calendar days back. Never go back to a weekday-only list for India.

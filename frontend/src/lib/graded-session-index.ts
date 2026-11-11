@@ -13,7 +13,7 @@
 //     on the next call;
 //   · two callers asking for the same day at the same moment share one read (portfolio, risk and cockpit pages all
 //     ask on load).
-// Dates are India (IST) business days — India files on IST days; a UTC date lags by 5 h 30.
+// Dates are India (IST) calendar days, weekends included (results are filed on Saturdays too); a UTC date lags by 5 h 30.
 // ═══════════════════════════════════════════════════════════════════════════
 import { gradedKeyCandidates } from './graded-cache-key';
 
@@ -26,7 +26,7 @@ export interface GradedRow {
   t: string; c: string; fd: string; tier: GradedTier;
   sec: string | null; mc: number | null; q: string | null; cs: number | null; p: number | null; bse: string | null;
 }
-/** A row with how many business days back its session is (0 = today). */
+/** A row with how many sessions (calendar days) back its session is (0 = today). */
 export type GradedEntry = GradedRow & { db: number };
 
 /** The last `n` India business days, newest first (IST calendar; weekends skipped). Pure. */
@@ -38,6 +38,26 @@ export function istBusinessDaysBack(n: number, nowMs: number = Date.now()): stri
     const dow = d.getUTCDay();
     if (dow === 0 || dow === 6) continue;
     out.push(d.toISOString().slice(0, 10));
+  }
+  return out;
+}
+
+/**
+ * zzz1262b — the sessions actually read: EVERY India calendar day from today back to the oldest of the last `n` business
+ * days, newest first. Companies file results on Saturdays (and some Sundays): the 17 Oct 2026 Saturday session held 19
+ * graded results (KROSS Q2 among them) that a weekday-only list never read, so search and the portfolio grades showed
+ * the quarter before. Pure.
+ */
+export function istSessionDaysBack(n: number, nowMs: number = Date.now()): string[] {
+  const biz = istBusinessDaysBack(n, nowMs);
+  const oldest = biz.length ? biz[biz.length - 1] : null;
+  const out: string[] = [];
+  const base = nowMs + 330 * 60_000;
+  for (let i = 0; i < n * 2 + 7; i++) {
+    const d = new Date(base - i * 86_400_000).toISOString().slice(0, 10);
+    if (oldest && d < oldest) break;
+    out.push(d);
+    if (!oldest) break;
   }
   return out;
 }
@@ -119,7 +139,7 @@ async function readGroup(group: string[], deps: GradedReadDeps): Promise<void> {
 export async function gradedSessions(dates: string[], depsIn?: GradedReadDeps): Promise<{ sessions: Array<{ d: string; rows: GradedRow[] }>; unread: string[] }> {
   const deps = depsIn || await defaultDeps();
   const now = (deps.now || Date.now)();
-  const today = istBusinessDaysBack(1, now)[0];
+  const today = new Date(now + 330 * 60_000).toISOString().slice(0, 10);   // the IST calendar day (a Saturday session is "today" on Saturday)
   const fresh = (d: string) => { const m = shared.memo.get(d); return !!m && now - m.at < (d === today ? TODAY_TTL_MS : OLDER_TTL_MS); };
   const waits: Promise<void>[] = [];
   const todo: string[] = [];
@@ -153,7 +173,7 @@ export async function gradedSessions(dates: string[], depsIn?: GradedReadDeps): 
 /** Every graded entry of the look-back window, newest session first, one per ticker + quarter (the newest sighting). */
 export async function gradedIndex(depsIn?: GradedReadDeps): Promise<{ index: GradedEntry[]; unread: string[]; cache: 'memo' | 'built' }> {
   const now = (depsIn?.now || Date.now)();
-  const dates = istBusinessDaysBack(GRADED_LOOKBACK_BUSINESS_DAYS, now);
+  const dates = istSessionDaysBack(GRADED_LOOKBACK_BUSINESS_DAYS, now);
   const key = dates[0];
   if (shared.flat && shared.flat.key === key && now - shared.flat.at < 60_000) return { index: shared.flat.index, unread: [], cache: 'memo' };
   const { sessions, unread } = await gradedSessions(dates, depsIn);
@@ -186,7 +206,7 @@ export function flattenSessions(sessions: Array<{ d: string; rows: GradedRow[] }
 /** The graded entries of just these tickers (upper-case), newest session first. */
 export async function lookupGraded(tickers: string[], depsIn?: GradedReadDeps): Promise<{ entries: GradedEntry[]; unread: string[] }> {
   const now = (depsIn?.now || Date.now)();
-  const dates = istBusinessDaysBack(GRADED_LOOKBACK_BUSINESS_DAYS, now);
+  const dates = istSessionDaysBack(GRADED_LOOKBACK_BUSINESS_DAYS, now);
   const { sessions, unread } = await gradedSessions(dates, depsIn);
   return { entries: flattenSessions(sessions, dates, new Set(tickers.map((t) => String(t).toUpperCase()))), unread };
 }

@@ -50,7 +50,7 @@ test('newest session wins for a ticker + quarter; lookups are narrowed to the as
   });
   const { entries, unread } = await lookupGraded(['kross'], s.deps);
   assert.deepEqual(unread, []);
-  assert.deepEqual(entries.map((e) => `${e.t}@${e.q}@${e.db}`), ['KROSS@Q2 FY27@0', 'KROSS@Q1 FY27@65']);
+  assert.deepEqual(entries.map((e) => `${e.t}@${e.q}@${e.db}`), ['KROSS@Q2 FY27@0', 'KROSS@Q1 FY27@91']);
 });
 
 test('a second call is answered from memory; a failed batch is retried once, then reported and NOT remembered as empty', async () => {
