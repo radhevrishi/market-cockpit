@@ -13,6 +13,7 @@
 //   · "What changed" is computed from the stored runs (theme / candidate / J-stage differences), not written by the model.
 // Written by the AI ONLY on the owner's click; otherwise the last successful run is shown. Pure (no imports).
 
+import { rewardedWhy } from '../rewarded';
 export type ChokeRegion = 'US' | 'IN';
 export type Exposure = 'DIRECT' | 'ENABLER' | 'PROXY' | 'SPECULATIVE';
 export type JStage = 'J0' | 'J1' | 'J2' | 'J3' | 'J4' | 'J5';
@@ -277,6 +278,9 @@ export function lateCurve(f: CandFacts | null | undefined): string[] {
   if (f.p6m != null && f.p6m >= 100) why.push(`up ${x(f.p6m)}x in six months`);
   if (f.st === 3 && (f.p1y ?? 0) >= 50) why.push('weekly chart topping (stage 3) after a big run');
   if (f.st === 2 && (f.stWk ?? 0) >= 100 && (f.p1y ?? 0) >= 100) why.push(`${f.stWk} weeks in the same uptrend and up ${x(f.p1y!)}x in a year — an extended run`);
+  // zzz1259 — "already rewarded": +40% in 3 months with a rising year (shared rule, lib/rewarded)
+  const rw = rewardedWhy({ p3m: f.p3m ?? null, p1y: f.p1y ?? null });
+  if (rw.rewarded) why.push(...rw.why.map((w) => `already rewarded — ${w}`));
   if (why.length && f.pe != null && f.pe >= 80) why.push(`P/E ${Math.round(f.pe)} — the price already pays for a lot`);
   return why;
 }

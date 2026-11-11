@@ -7,7 +7,7 @@ export interface Cand {
   revQ: number | null; revA: number | null; epsQ: number | null; opm: number | null; opmFY?: number | null; gm: number | null; roce: number | null; roe: number | null;
   de: number | null; pe: number | null; ps: number | null; fcfm: number | null; p1y: number | null; p5y: number | null; bb: number | null; fs: number | null;
   /** zzz1206 — 6-month move, weekly stage 1–4, weeks in that stage (for the late-in-the-curve check) */
-  p6m?: number | null; st?: number | null; stWk?: number | null;
+  p6m?: number | null; p3m?: number | null; st?: number | null; stWk?: number | null;
 }
 const n = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
@@ -17,7 +17,7 @@ export function toCand(r: any): Cand | null {
     t: String(r.t).toUpperCase(), n: String(r.n || r.t).slice(0, 48), ind: r.ind ?? r.sec ?? null, mc: r.mc,
     revQ: n(r.revQYoY), revA: n(r.revAYoY), epsQ: n(r.epsQYoY), opm: n(r.opmTTM ?? r.opmFY), opmFY: n(r.opmFY), gm: n(r.gmFY), roce: n(r.roceTTM ?? r.roceFY), roe: n(r.roeTTM ?? r.roeFY),
     de: n(r.de ?? r.deFY), pe: n(r.pe), ps: n(r.ps), fcfm: n(r.fcfmTTM), p1y: n(r.perf1Y), p5y: n(r.perf5Y), bb: n(r.bb), fs: n(r.fs),
-    p6m: n(r.perf6M), st: n(r.twSt ?? r.stage), stWk: n(r.twWk),
+    p6m: n(r.perf6M), p3m: n(r.perf3M), st: n(r.twSt ?? r.stage), stWk: n(r.twWk),
   };
 }
 

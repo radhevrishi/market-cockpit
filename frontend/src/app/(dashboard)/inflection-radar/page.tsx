@@ -83,7 +83,9 @@ function Sens({ companies, us }: { companies: RadarIndustry['companies']; us: bo
 }
 
 function IndustryCard({ x, open, onToggle, smallOnly, us }: { x: RadarIndustry; open: boolean; onToggle: () => void; smallOnly: boolean; us: boolean }) {
-  const companies = x.companies.filter((c) => !smallOnly || !c.large);
+  // zzz1259 — names whose price already ran (3M ≥ 40% with a rising year) go to the end, dimmed, with the reason
+  const companies = x.companies.filter((c) => !smallOnly || !c.large).map((c, i) => ({ c, i })).sort((a, b) => Number(!!a.c.rewarded) - Number(!!b.c.rewarded) || a.i - b.i).map((o) => o.c);
+  const rewardedCount = companies.filter((c) => c.rewarded).length;
   const col = bandCol(x.top);
   const classes = Array.from(new Set(x.signals.flatMap((s) => s.read.classes as SignalClass[])));
   const top = x.signals[0];
@@ -148,10 +150,12 @@ function IndustryCard({ x, open, onToggle, smallOnly, us }: { x: RadarIndustry; 
               <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: 12.5 }}>
                 <thead><tr>{['Company', us ? 'M-cap $M' : 'M-cap ₹Cr', 'Sales Q', 'EPS Q', 'OPM', '3M', '1Y', 'P/E', 'Stage'].map((h, i) => <th key={h} style={{ textAlign: i ? 'right' : 'left', padding: '5px 8px', color: C.dim, fontSize: 10.5, fontWeight: 800, borderBottom: `1px solid ${C.line}`, whiteSpace: 'nowrap' }}>{h}</th>)}</tr></thead>
                 <tbody>{companies.map((c) => (
-                  <tr key={c.ticker} title={`Verify: ${c.verify}`}>
+                  <tr key={c.ticker} title={`Verify: ${c.verify}`} style={c.rewarded ? { opacity: 0.55 } : undefined}>
                     <td style={{ padding: '6px 8px', borderBottom: `1px solid ${C.line}`, minWidth: 170 }}>
                       <a href={`/charts?ticker=${encodeURIComponent(c.ticker)}&market=${us ? 'US' : 'IN'}`} style={{ color: C.txt, fontWeight: 900, textDecoration: 'none' }}>{c.ticker}</a>
                       {c.large && <span style={{ marginLeft: 5 }}><Chip c={C.slate}>large</Chip></span>}
+                      {c.rewarded && <span style={{ marginLeft: 5 }} title={c.rewardedWhy.join(' · ')}><Chip c={C.amber}>already rewarded</Chip></span>}
+                      {c.rewarded === null && <span style={{ marginLeft: 5 }} title="No 3-month price figure in our data, so we cannot say if the move already happened"><Chip c={C.slate}>price history unknown</Chip></span>}
                       <div style={{ fontSize: 10.5, color: C.dim }}>{c.name} · <span style={{ color: C.violet }}>{c.bucket}</span></div>
                       <div style={{ fontSize: 10.5, color: C.mute }}>Verify: {c.verify}</div>
                       {!c.inUniverse && <div style={{ fontSize: 10.5, color: C.amber }}>{us ? 'Not in our US data — check figures elsewhere.' : 'Not in our NSE data (BSE-only or not listed) — check figures on BSE.'}</div>}
@@ -165,6 +169,7 @@ function IndustryCard({ x, open, onToggle, smallOnly, us }: { x: RadarIndustry; 
                   </tr>
                 ))}</tbody>
               </table>
+              {rewardedCount > 0 && <div style={{ fontSize: 11.5, color: C.amber, padding: '6px 4px 0' }}>{rewardedCount === companies.length ? 'Every mapped name has already run (up 40%+ in 3 months): the move is probably paid for — look for the next link in the chain.' : `${rewardedCount} name${rewardedCount === 1 ? '' : 's'} already rewarded (up 40%+ in 3 months, year also up) — shown last, dimmed. A rebound after a falling year is not counted.`}</div>}
               {companies.length === 0 && <div style={{ fontSize: 12, color: C.dim, padding: 6 }}>Only large companies are mapped here — untick "Small and mid caps only" to see them.</div>}
             </div>
             <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, padding: 12 }}>

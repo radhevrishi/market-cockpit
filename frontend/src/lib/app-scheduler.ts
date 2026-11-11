@@ -452,6 +452,16 @@ export async function usEvidenceCheckJob(ctx: JobCtx): Promise<JobOutcome> {
     offset = r.json.next_offset;
   }
   ctx.log(`${checked} US names checked · ${failed} could not be checked · new SEC evidence: ${withNew.length ? withNew.join(', ') : 'none'}`);
+  // zzz1259 — the summary read for names with new evidence (Haiku, owner-approved, own USD ceiling — lib/us-thesis/auto-read)
+  if (withNew.length && ctx.deadline - Date.now() > 240_000) {
+    try {
+      const kv = await import('./kv');
+      await (await import('./us-thesis/auto-read')).runAutoRead(withNew, {
+        call: ctx.call, deadline: ctx.deadline, log: ctx.log,
+        kv: { get: (k) => kv.kvGet(k), set: (k, v, ttl) => kv.kvSet(k, v, ttl), setNX: (k, v, ttl) => kv.kvSetNX(k, v, ttl), del: (k) => kv.kvDel(k), incrByFloat: (k, by, ttl) => kv.kvIncrByFloat(k, by, ttl) },
+      });
+    } catch (e: any) { ctx.log(`auto-read could not run: ${String(e?.message || e).slice(0, 160)}`); }
+  }
   return { ok: checked > 0 && failed <= Math.ceil(checked / 2), status: 200, error: checked === 0 ? 'no names checked' : null };
 }
 
@@ -522,7 +532,7 @@ export const APP_JOBS: readonly AppJob[] = [
   // zzz912 — was two Claude scheduled tasks (US hours every 2 h, late after-close sweep 20:00–22:00 ET). Rules only, no AI.
   { name: 'us-earnings-watch', crons: ['7 11-23/2 * * 1-5', '7 0-2 * * 2-6'], timeoutMs: 27 * MIN, workflow: 'us-earnings-watch.yml', does: 'GET /api/v1/cron/us-earnings-watch (graded-us → US Quality Preset, under $30B → one ranked alert of new names)', run: http('GET', '/api/v1/cron/us-earnings-watch', 12 * MIN) },
   // zzz963 — lowered-outlook check on US BLOCKBUSTER/STRONG rows (filing text free; AI web search ≤ US_GUIDE_CHECK_DAILY_USD a day).
-  { name: 'us-evidence-check', crons: ['23 13 * * 1-5', '37 21 * * 1-5', '17 23 * * 1-5'], timeoutMs: 20 * MIN, workflow: BRIDGE, does: 'GET /api/v1/us-thesis/check-all (EDGAR discovery for every US book + bench name, no model; new 10-Q / 10-K / 8-K 2.02 → NEW EVIDENCE AVAILABLE)', run: usEvidenceCheckJob },   // zzz1256 — before the US open, after the close (10-Q / releases land 20:00–22:00 UTC) and late
+  { name: 'us-evidence-check', crons: ['23 13 * * 1-5', '37 21 * * 1-5', '17 23 * * 1-5'], timeoutMs: 40 * MIN, workflow: BRIDGE, does: 'GET /api/v1/us-thesis/check-all (EDGAR discovery for every US book + bench name, no model; new 10-Q / 10-K / 8-K 2.02 → NEW EVIDENCE AVAILABLE; zzz1259 then reads ≤ 8 such names with Haiku within US_AUTO_READ_DAILY_USD, default $0.30 a day)', run: usEvidenceCheckJob },   // zzz1256 — before the US open, after the close (10-Q / releases land 20:00–22:00 UTC) and late
   { name: 'us-guide-check', crons: ['37 13-23/2 * * 1-5', '37 1 * * 2-6'], timeoutMs: 6 * MIN, workflow: 'us-earnings-watch.yml', does: 'in-process: lib/us-guide-check runUsGuideChecks (top-tier US rows of the last 6 sessions; filing text, then AI web search within the daily ceiling)', run: async () => {
     const r = await (await import('./us-guide-check')).runUsGuideChecks({ budgetMs: 5 * MIN });
     console.log('[us-guide-check]', JSON.stringify(r));
@@ -562,6 +572,9 @@ export const APP_JOBS: readonly AppJob[] = [
     console.log('[doc-search-index]', JSON.stringify({ ...r, byLevel: r.byLevel }));
     return r.ok ? { ok: true, status: 200 } : { ok: false, status: 503, error: r.error || r.why };
   } },
+  // zzz1259 — Choke-Point Themes refreshed weekly (owner approved 11 Nov; it had last run 2 Nov because it only ran on a click).
+  // Sunday 05:10 UTC; skipped when the last report is under 4 days old; at most 2 attempts a ISO week (a failed run keeps the last good report).
+  { name: 'choke-themes-weekly', crons: ['10 5 * * 0'], timeoutMs: 15 * MIN, workflow: BRIDGE, does: 'in-process: lib/choke-themes/run runChoke (one stronger-model run; skipped if the report is < 4 days old; ≤ 2 attempts a week; runChoke keeps its own limit of 6 runs a day)', run: async (ctx) => (await import('./choke-themes/weekly')).chokeWeeklyJob(ctx) },
   { name: 'portfolio-thesis-watch', crons: ['15 2 * * 1-5'], timeoutMs: 4 * MIN, workflow: 'owner-briefs.yml', does: 'POST /api/v1/cron/portfolio-thesis-watch (stored research only, no AI, no price)', run: async (ctx) => (await import('./owner-briefs/job')).ownerBriefJob(ctx, '/api/v1/cron/portfolio-thesis-watch', true) },
 ];
 

@@ -4100,3 +4100,14 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   EO (India + US) now honours `?d=YYYY-MM-DD` and the Lab link passes the company's own result day. FCF growth from a zero or negative
   base is null (was "−900%"); the Debt ÷ FCF headline names the newest year first when its FCF is negative; the Debt ÷ FCF /
   Capex ÷ FCF averages say how many of the 5 years they rest on.
+- zzz1259 (11 Nov): owner approved three things ("yes do all"), built with a Fable 5.2 review. (1) AUTOMATIC US filing reads: the
+  `us-evidence-check` job (job timeout now 40 min) hands its NEW-EVIDENCE names to `lib/us-thesis/auto-read.ts` — Haiku summary via
+  `/api/v1/us-thesis/read?mode=incremental` (never force), ≤ 8 names a run, worst case $0.03 RESERVED before each read (handed back when
+  skipped/failed), own ceiling US_AUTO_READ_DAILY_USD default $0.30 a UTC day (`us-auto-read:usd:v1:<day>`), 2 tries a name then
+  "needs manual" (`us-auto-read:tries:v1`), per-name NX lock, first 429 / budget message ends the run. Do not raise the ceiling without
+  asking. (2) "Already rewarded": `lib/rewarded.ts` — up 40%+ in 3 months AND the year is not down (a rebound is not a reward); RS ≥ 90
+  only together with 25%+ in 3 months (RS alone is the leaders); no 3-month figure = unknown, never passed silently. Used by Choke-Point
+  `lateCurve` (new `p3m` fact → name moves to the late list) and Inflection Radar companies (KEY v6: dimmed, last, "already rewarded"
+  chip with the reason; all-rewarded industries say so). Row RS is not stored per company yet, so the RS leg is not wired on those pages.
+  Outside lib/thesis on purpose (no-price rule). (3) `choke-themes-weekly` (Sun 05:10 UTC): runChoke, skipped if the report is < 4 days
+  old, ≤ 2 attempts per ISO week, failed runs keep the last good report (`lib/choke-themes/weekly.ts`).

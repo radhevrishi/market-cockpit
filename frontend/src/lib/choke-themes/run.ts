@@ -11,7 +11,7 @@ export const CHOKE_PREV_KEY = 'choke-themes:v1:previous';
 export const CHOKE_DAILY_MAX = 6;
 const TTL = 400 * 86_400;
 
-const toFacts = (c: Cand): CandFacts => ({ cap: c.mc, revQ: c.revQ, revA: c.revA, epsQ: c.epsQ, opm: c.opm, opmFY: c.opmFY ?? null, pe: c.pe, fcfm: c.fcfm, de: c.de, p1y: c.p1y, p5y: c.p5y, p6m: c.p6m ?? null, st: c.st ?? null, stWk: c.stWk ?? null });
+const toFacts = (c: Cand): CandFacts => ({ cap: c.mc, revQ: c.revQ, revA: c.revA, epsQ: c.epsQ, opm: c.opm, opmFY: c.opmFY ?? null, pe: c.pe, fcfm: c.fcfm, de: c.de, p1y: c.p1y, p5y: c.p5y, p6m: c.p6m ?? null, p3m: c.p3m ?? null, st: c.st ?? null, stWk: c.stWk ?? null });
 type ChokeScreenerSnapshot = { facts: Record<ChokeRegion, Map<string, CandFacts>>; cands: Record<ChokeRegion, Cand[]> };
 const SCREENER_SNAPSHOT_MS = 60_000;
 // Choke report polling previously reloaded both entire exchanges on every GET.

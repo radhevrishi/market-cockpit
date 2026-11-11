@@ -6,7 +6,8 @@ import { loadNews } from '../news/archive';
 import { getSnapshot } from '../screener/snapshot-cache';
 import { INDUSTRIES, dedupeSignals, geoOf, industryOnTab, newsFitsTab, isCompanyResultsHeadline, industriesOf, industryScore, isSyntheticHeadline, neglectFromPrices, readSignal, recencyWeight, scoreBand, scoreSignal, type ScoredSignal } from './core';
 
-const KEY = 'inflection-radar:v5';   // zzz1244 — one news pass, an India map and a USA map (…:IN / …:US); zzz1246 v5 — news placed per tab
+import { rewardedWhy } from '../rewarded';
+const KEY = 'inflection-radar:v6';   // zzz1244 — one news pass, an India map and a USA map (…:IN / …:US); zzz1246 v5 — news placed per tab
 export type RadarMarket = 'IN' | 'US';
 const TTL_S = 3 * 3600;
 
@@ -15,7 +16,7 @@ export interface RadarIndustry {
   top: number; band: { label: string; action: string };
   confirmations: number;   // zzz1238 — other recent signals backing the best one
   signals: Array<ScoredSignal & { ageDays: number; rawScore: number; sources?: number }>;
-  companies: Array<{ ticker: string; name: string; bucket: string; verify: string; large: boolean; mc: number | null; revQYoY: number | null; epsQYoY: number | null; opm: number | null; perf3M: number | null; perf1Y: number | null; pe: number | null; stage: number | null; inUniverse: boolean; salesCr?: number | null; sharesCr?: number | null }>;
+  companies: Array<{ ticker: string; name: string; bucket: string; verify: string; large: boolean; mc: number | null; revQYoY: number | null; epsQYoY: number | null; opm: number | null; perf3M: number | null; perf1Y: number | null; rewarded: boolean | null; rewardedWhy: string[]; pe: number | null; stage: number | null; inUniverse: boolean; salesCr?: number | null; sharesCr?: number | null }>;
   newsCount: number;
 }
 export interface RadarData { builtAt: string; market: RadarMarket; industries: RadarIndustry[]; notes: string[] }
@@ -65,13 +66,14 @@ async function buildBothNow(): Promise<Record<RadarMarket, RadarData>> {
   for (const market of ['IN', 'US'] as RadarMarket[]) {
   const snap = await getSnapshot(market).catch(() => null);
   const byT = new Map<string, any>((snap?.rows || []).map((r: any) => [String(r.t).toUpperCase(), r]));
+  const rw = (p3: unknown, p1: unknown) => { const o = rewardedWhy({ p3m: typeof p3 === 'number' ? p3 : null, p1y: typeof p1 === 'number' ? p1 : null }); return { rewarded: o.rewarded, rewardedWhy: o.why }; };   // zzz1259
   const largeCap = market === 'IN' ? 30000 : 10000;   // ₹ crore / $ million
   const industries: RadarIndustry[] = INDUSTRIES.filter((ind) => industryOnTab(ind, market)).map((ind) => {
     const companies = (market === 'IN' ? ind.beneficiaries : ind.us || []).map((b) => {
       const r = byT.get(b.ticker);
       return {
         ticker: b.ticker, name: r?.n || b.name, bucket: b.bucket, verify: b.verify, large: !!b.large || (typeof r?.mc === 'number' && r.mc > largeCap),
-        mc: r?.mc ?? null, revQYoY: r?.revQYoY ?? null, epsQYoY: r?.epsQYoY ?? null, opm: r?.opmTTM ?? null, perf3M: r?.perf3M ?? null, perf1Y: r?.perf1Y ?? null, pe: r?.pe ?? null,
+        mc: r?.mc ?? null, revQYoY: r?.revQYoY ?? null, epsQYoY: r?.epsQYoY ?? null, opm: r?.opmTTM ?? null, perf3M: r?.perf3M ?? null, perf1Y: r?.perf1Y ?? null, ...rw(r?.perf3M, r?.perf1Y), pe: r?.pe ?? null,
         stage: r?.twSt ?? null, inUniverse: !!r,
         // zzz1241 — for the EPS sensitivity: TTM sales = market cap ÷ P/S, shares = market cap ÷ price (both ₹ crore / crore)
         salesCr: typeof r?.mc === 'number' && typeof r?.ps === 'number' && r.ps > 0 ? Math.round(r.mc / r.ps) : null,
