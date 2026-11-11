@@ -311,7 +311,10 @@ function groupNames(xs: Array<{ ticker: string; reason: string }>, side: string)
   return [...by.entries()].map(([reason, ts]) => `${ts.length} ${side} (${reason}): ${ts.slice(0, 12).join(', ')}${ts.length > 12 ? ` +${ts.length - 12} more` : ''}`);
 }
 
-export function reconcileCbLists(tab: CbTabSnapshot | null, pcTickers: string[], pcLabel: (t: string) => { state: string; text: string } | null): CbReconciliation {
+/** zzz1263 — a tab copy older than this is not a fair comparison: the list and its figures have moved on since. */
+export const CB_TAB_COPY_MAX_AGE_H = 6;
+
+export function reconcileCbLists(tab: CbTabSnapshot | null, pcTickers: string[], pcLabel: (t: string) => { state: string; text: string } | null, now: Date = new Date()): CbReconciliation {
   if (!tab) {
     return { onlyTab: [], onlyPc: [], line: 'Reconciliation with the Conviction Beats tab: open that tab once in this browser so its list can be compared here.' };
   }
@@ -339,7 +342,14 @@ export function reconcileCbLists(tab: CbTabSnapshot | null, pcTickers: string[],
   const rejNote = markedRejected.length
     ? ` ${markedRejected.length} you marked Rejected ${markedRejected.length === 1 ? 'is' : 'are'} listed here but hidden on the tab while the Quality Preset is on: ${markedRejected.join(', ')}.`
     : '';
-  const line = !onlyTab.length && !onlyPc.length
+  // zzz1263 — an old tab copy against a fresh list is not a mismatch (11 Nov: a copy saved at 08:21 was compared all day and
+  // raised "⚠ Differs … 123 names"; reopening the tab gave "matches name for name"). Both pages apply the same criteria to
+  // the same figures since zzz1253, so an old copy is said to be old, without the warning.
+  const ageH = (now.getTime() - Date.parse(tab.at || '')) / 3_600_000;
+  const oldCopy = Number.isFinite(ageH) && ageH > CB_TAB_COPY_MAX_AGE_H && tab.savedCriteria;
+  const line = (onlyTab.length || onlyPc.length) && oldCopy
+    ? `Not compared with the Conviction Beats tab: its saved copy is from ${when} (${Math.round(ageH)} hours old) and the list has been refreshed since. This page applies the same criteria to the same figures as the tab — open the tab once to compare name for name.${rejNote}`
+    : !onlyTab.length && !onlyPc.length
     ? `Matches the Conviction Beats tab name for name: ${pcSet.size - markedRejected.length} names (tab list saved ${when}).${rejNote}`
     : `⚠ Differs from the Conviction Beats tab (saved ${when}): ${onlyTab.length} only on the tab, ${onlyPc.length} only here — `
       // zzz1253 — names grouped by their reason (at most 12 names a group) — 123 names each repeating one reason was unreadable

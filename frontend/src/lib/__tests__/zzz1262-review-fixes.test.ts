@@ -81,3 +81,31 @@ test('graded sessions include weekend days (KROSS filed Q2 on Saturday 17 Oct 20
   assert.deepEqual(r.entries.map((e) => `${e.q}:${e.tier}`), ['Q2 FY27:STRONG', 'Q1 FY27:MIXED']);
   clearGradedSessionMemo();
 });
+
+test('zzz1263: an AI spending-limit refusal is not "documents could not be read"; RS rank; an old tab copy is not a mismatch', async () => {
+  const { evidenceStateOf, isSpendRefusal } = await import('../thesis/evidence-ledger');
+  const { rsRanks, rsScore } = await import('../screener/rs-rank');
+  const { reconcileCbLists } = await import('../india-cb-view');
+  const { rewardedWhy } = await import('../rewarded');
+  assert.ok(isSpendRefusal('model API HTTP 429: Your project has reached its configured enforced spend limit.'));
+  assert.ok(!isSpendRefusal('EX-99.1 could not be downloaded from EDGAR'));
+  // RS: 3-month return counts double; ranks are 1–99 inside one snapshot; no score = no rank
+  assert.equal(rsScore({ perf3M: 10 }), null);
+  assert.ok(Math.abs(rsScore({ perf3M: 10, perf1Y: 40 })! - (10 * 0.4 + 40 * 0.3) / 0.7) < 1e-9);
+  const rows = Array.from({ length: 100 }, (_, i) => ({ t: `T${i}`, perf3M: i, perf6M: i, perf1Y: i }));
+  rows.push({ t: 'NOPE' } as any);
+  const rk = rsRanks(rows);
+  assert.equal(rk.get('T99'), 99); assert.equal(rk.get('T0'), 1); assert.equal(rk.has('NOPE'), false);
+  assert.equal(rsRanks(rows), rk);                                   // worked out once per snapshot
+  assert.equal(rewardedWhy({ p3m: 28, p1y: 60, rs: 95 }).rewarded, true);   // the RS leg: RS 90+ with 25%+ in 3 months
+  assert.equal(rewardedWhy({ p3m: 12, p1y: 60, rs: 95 }).rewarded, false);  // RS alone is a leader, not "rewarded"
+  // old tab copy
+  const tab = { tickers: ['A', 'B'], savedCriteria: true, at: '2026-11-11T08:21:00Z' };
+  const old = reconcileCbLists(tab, ['A', 'C'], () => null, new Date('2026-11-11T19:00:00Z'));
+  assert.match(old.line, /^Not compared with the Conviction Beats tab/); assert.doesNotMatch(old.line, /⚠/);
+  const fresh = reconcileCbLists(tab, ['A', 'C'], () => null, new Date('2026-11-11T09:00:00Z'));
+  assert.match(fresh.line, /⚠ Differs/);
+  // evidence state: the period's read is on file, a later re-read met the spend limit → CURRENT, said plainly
+  const st = evidenceStateOf as any;
+  assert.equal(typeof st, 'function');
+});

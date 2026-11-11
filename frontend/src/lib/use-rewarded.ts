@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { rewardedWhy, type RewardedOut } from './rewarded';
 
-export type RewardedIndex = Record<string, RewardedOut & { p3m: number | null; p1y: number | null }>;
+export type RewardedIndex = Record<string, RewardedOut & { p3m: number | null; p1y: number | null; rs?: number | null }>;
 type Mkt = 'IN' | 'US';
 const CHUNK = 300;
 const cache: Record<Mkt, RewardedIndex> = { IN: {}, US: {} };
@@ -22,8 +22,8 @@ export function rewardedIndexOf(rows: ReadonlyArray<any> | null | undefined): Re
   for (const r of rows || []) {
     const t = rewardedKey(r?.t);
     if (!t) continue;
-    const p3m = num(r.perf3M), p1y = num(r.perf1Y);
-    out[t] = { ...rewardedWhy({ p3m, p1y }), p3m, p1y };
+    const p3m = num(r.perf3M), p1y = num(r.perf1Y), rs = num(r.rs);
+    out[t] = { ...rewardedWhy({ p3m, p1y, rs }), p3m, p1y, rs };
   }
   return out;
 }

@@ -3916,6 +3916,14 @@ describe('zzz770 PC-A persistence and incremental evidence', () => {
       assert.deepEqual(s.run_log![0].sources_failed, ['screener.in company page']);
       await persistAttempt('DOC', 'IN', 'f2', now, 'SOURCE_UNAVAILABLE', 'Investor presentation: download failed (HTTP 404)', { failureKind: 'document_unreadable', documents_found: 4 });
       assert.equal(evidenceStateOf((await loadLedger('DOC'))!, now).state, 'RETRIEVAL_FAILED');
+      // zzz1263 — the AI provider refusing a RE-read for money reasons is not a document failure: the read on file stands
+      await persistEvidenceRun(input('SPEND', q1Docs, q1Events, 's1'));
+      await persistAttempt('SPEND', 'IN', 's2', '2099-01-01T00:00:00Z', 'FAILED', 'model API HTTP 429: Your project has reached its configured enforced spend limit.');
+      const sp = evidenceStateOf((await loadLedger('SPEND'))!, now);
+      assert.equal(sp.state, 'CURRENT'); assert.match(sp.detail, /refused by the AI spending limit/);
+      await persistEvidenceRun(input('READERR', q1Docs, q1Events, 'e1'));
+      await persistAttempt('READERR', 'IN', 'e2', '2099-01-01T00:00:00Z', 'FAILED', 'model returned no JSON');
+      assert.equal(evidenceStateOf((await loadLedger('READERR'))!, now).state, 'RETRIEVAL_FAILED');
       // A company WITH evidence whose later read failed keeps its evidence and says so.
       await persistEvidenceRun(input('KEEP', q1Docs, q1Events, 'k1'));
       await persistAttempt('KEEP', 'IN', 'k2', now, 'SOURCE_UNAVAILABLE', 'Concall transcript: scanned (OCR unavailable — per-read OCR limit reached)', { failureKind: 'document_unreadable' });

@@ -21,6 +21,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { isSpendRefusal } from './evidence-ledger';   // zzz1263
 import { normSymbol } from '@/lib/portfolio-symbols';
 import { originCounts, type BookOrigin } from './universe';
 import { resolveIndiaBook, bookUniverse, isBseCode, type ResolvedBook, type BseMatch } from './book-membership';
@@ -320,7 +321,7 @@ function assess(row0: BookRow): BookRow {
       evidenceReviewed: !!row.summary,
       sourceUnavailable: row.ledger?.last_attempt?.outcome === 'SOURCE_UNAVAILABLE',
       // A failed read is RETRIEVAL_FAILED, never "not disclosed". (zzz770)
-      retrievalFailed: row.discoveryState === 'RETRIEVAL_FAILED' || row.ledger?.last_attempt?.outcome === 'FAILED'
+      retrievalFailed: row.discoveryState === 'RETRIEVAL_FAILED' || (row.ledger?.last_attempt?.outcome === 'FAILED' && !isSpendRefusal(row.ledger?.last_attempt?.error))
         || (!!row.ledger && !row.ledger.latest_period && freshnessOf(row.ledger).evidence_state === 'RETRIEVAL_FAILED'),
       // Services / software / financial businesses: capacity is N/A. (zzz770)
       business: businessProfileOf(row.graded, row.summary),

@@ -1434,6 +1434,11 @@ export function failureKindOf(run: Pick<EvidenceRun, 'outcome' | 'error' | 'fail
   return /download|scanned|ocr|could not be read|none could be read|budget/i.test(String(run.error || '')) ? 'document_unreadable' : 'source_unreachable';
 }
 
+/** zzz1263 — did the AI provider refuse the call for money reasons (not a document or reader problem)? Pure. */
+export function isSpendRefusal(error: string | null | undefined): boolean {
+  return /spend(?:ing)? limit|HTTP 429|\bquota\b|budget (?:reached|exceeded|exhausted)|daily (?:limit|cap|ceiling)|cap reached|insufficient[_ ]quota|billing/i.test(String(error || ''));
+}
+
 /**
  * Pure: the company's evidence state — one of the owner's seven — from the
  * persisted ledger alone. Currentness is per company, from ITS latest
@@ -1466,10 +1471,18 @@ export function evidenceStateOf(ledger: CompanyLedger | null | undefined, now: D
   // A reader failure on the CURRENT period after the last read. (A failed
   // prior-quarter backfill says nothing about the current period.)
   const attemptOnOlder = !!(run as any)?.reporting_period && (run as any).reporting_period !== ledger.latest_period;
+  const p = ledger.periods[ledger.latest_period];
+  const onFile = !!p && !!p.documents_read && ((p.facts || []).length > 0 || (p.events || []).length > 0);
   if (la && la.outcome === 'FAILED' && !attemptOnOlder && la.at >= (ledger.last_evidence_read_at || '')) {
+    // zzz1263 — the AI provider refusing a call for money reasons (spend limit / 429 / quota) says nothing about the
+    // documents. Seven US names sat on "RETRIEVAL FAILED — documents could not be read" for a month because a RE-read on
+    // 8 Oct met the provider's spend limit, although the period's read was on file and no newer filing existed.
+    if (isSpendRefusal(la.error)) {
+      if (onFile) return { state: 'CURRENT', detail: `${f.detail}${f.detail ? ' · ' : ''}a re-read on ${String(la.at).slice(0, 10)} was refused by the AI spending limit; the earlier read of ${ledger.latest_period} is shown` };
+      return { state: 'RETRIEVAL_FAILED', detail: `the AI spending limit refused the read on ${String(la.at).slice(0, 10)} (not a document problem) — showing ${ledger.latest_period}` };
+    }
     return { state: 'RETRIEVAL_FAILED', detail: `last read failed: ${la.error || 'reader error'} — showing ${ledger.latest_period}` };
   }
-  const p = ledger.periods[ledger.latest_period];
   if (!p || !p.documents_read || (!(p.facts || []).length && !(p.events || []).length)) {
     return { state: 'EVIDENCE_INCOMPLETE', detail: `${ledger.latest_period} on file but ${!p || !p.documents_read ? 'no document was read' : 'no structural fact was extracted'}` };
   }
@@ -1497,7 +1510,7 @@ export function freshnessLine(f: Partial<FreshnessView> & { state: FreshnessStat
   const exp = f.latest_expected_period ? `Latest expected: ${f.latest_expected_period}` : null;
   const join = (...xs: Array<string | null | false | undefined>) => xs.filter(Boolean).join(' · ');
   // The owner's explicit states the legacy five cannot say. (zzz770)
-  if (f.evidence_state === 'RETRIEVAL_FAILED') return { label: 'RETRIEVAL FAILED', text: join(last, 'documents exist but could not be read — not a disclosure gap'), tone: 'alarm' };
+  if (f.evidence_state === 'RETRIEVAL_FAILED') return { label: 'RETRIEVAL FAILED', text: join(last, /spending limit/i.test(f.evidence_detail || '') ? f.evidence_detail : 'documents exist but could not be read — not a disclosure gap'), tone: 'alarm' };
   if (f.evidence_state === 'EVIDENCE_INCOMPLETE') return { label: 'EVIDENCE INCOMPLETE', text: join(last, f.evidence_detail || 'no structural fact on file'), tone: 'warn' };
   if (f.evidence_state === 'NEW_EVIDENCE_AVAILABLE' && staleness === 'NEVER_READ') return { label: '↻ Update available', text: join(exp, 'documents found, not yet read'), tone: 'warn' };
   if (f.evidence_state === 'NOT_SEARCHED') return { label: 'NOT SEARCHED', text: join(exp), tone: 'muted' };

@@ -34,7 +34,7 @@ export const EXPOSURE_WHY: Record<Exposure, string> = {
 };
 
 /** Stock-screener figures laid over a candidate (never written by the model). */
-export interface CandFacts { cap: number | null; revQ: number | null; revA: number | null; epsQ: number | null; opm: number | null; /** zzz1186 — last fiscal year (TTM can carry one-offs) */ opmFY?: number | null; pe: number | null; fcfm: number | null; de: number | null; p1y: number | null; p5y: number | null; /** zzz1206 */ p6m?: number | null; p3m?: number | null; st?: number | null; stWk?: number | null }
+export interface CandFacts { cap: number | null; revQ: number | null; revA: number | null; epsQ: number | null; opm: number | null; /** zzz1186 — last fiscal year (TTM can carry one-offs) */ opmFY?: number | null; pe: number | null; fcfm: number | null; de: number | null; p1y: number | null; p5y: number | null; /** zzz1206 */ p6m?: number | null; p3m?: number | null; /** zzz1263 — RS rank 1–99 */ rs?: number | null; st?: number | null; stWk?: number | null }
 export interface ScenarioIn { years: number; epsCagr: { bear: number; base: number; bull: number }; exitPe: { bear: number; base: number; bull: number }; dilutionPct: number; basis: string }
 export interface ScenarioOut { bear: number; base: number; bull: number; currentPe: number }
 export interface ChokeCandidate {
@@ -279,7 +279,7 @@ export function lateCurve(f: CandFacts | null | undefined): string[] {
   if (f.st === 3 && (f.p1y ?? 0) >= 50) why.push('weekly chart topping (stage 3) after a big run');
   if (f.st === 2 && (f.stWk ?? 0) >= 100 && (f.p1y ?? 0) >= 100) why.push(`${f.stWk} weeks in the same uptrend and up ${x(f.p1y!)}x in a year — an extended run`);
   // zzz1259 — "already rewarded": +40% in 3 months with a rising year (shared rule, lib/rewarded)
-  const rw = rewardedWhy({ p3m: f.p3m ?? null, p1y: f.p1y ?? null });
+  const rw = rewardedWhy({ p3m: f.p3m ?? null, p1y: f.p1y ?? null, rs: f.rs ?? null });
   if (rw.rewarded) why.push(...rw.why.map((w) => `already rewarded — ${w}`));
   if (why.length && f.pe != null && f.pe >= 80) why.push(`P/E ${Math.round(f.pe)} — the price already pays for a lot`);
   return why;

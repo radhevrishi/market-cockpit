@@ -251,7 +251,7 @@ describe('zzz827 — Portfolio Catalysts shows the whole Conviction Beats list',
     const ok = reconcileCbLists(tab, sel.passing, () => null);
     assert.deepEqual([ok.onlyTab.length, ok.onlyPc.length], [0, 0]);
     assert.match(ok.line, /^Matches the Conviction Beats tab name for name: 84 names/);
-    const off = reconcileCbLists({ ...tab, tickers: [...sel.passing, 'ZZ090'] }, sel.passing.slice(1), (t) => (t === 'ZZ090' ? { state: 'fail', text: 'misses your Conviction Beats criteria — sales growth 3% (needs 20%)' } : null));
+    const off = reconcileCbLists({ ...tab, tickers: [...sel.passing, 'ZZ090'] }, sel.passing.slice(1), (t) => (t === 'ZZ090' ? { state: 'fail', text: 'misses your Conviction Beats criteria — sales growth 3% (needs 20%)' } : null), new Date(Date.parse(tab.at) + 3_600_000));
     assert.deepEqual(off.onlyTab.map((x) => x.ticker).sort(), ['ZZ000', 'ZZ090']);
     assert.match(off.onlyTab.find((x) => x.ticker === 'ZZ090')!.reason, /misses your saved criteria here — .*sales growth 3%/);
     assert.match(off.line, /⚠ Differs from the Conviction Beats tab/);

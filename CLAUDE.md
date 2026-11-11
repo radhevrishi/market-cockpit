@@ -4144,3 +4144,14 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   India files results on Saturdays (17 Oct 2026: 19 graded names, KROSS Q2 STRONG). Search and portfolio grades showed the quarter
   before for every weekend filer. `istSessionDaysBack` = every IST calendar day back to the 120th business day (≈168 keys, 6 a multi-get);
   `db` is now calendar days back. Never go back to a weekday-only list for India.
+- zzz1263 (11 Nov night): the four "not done" items.
+  · US "documents could not be read" was NOT documents: 7 names (ESP, LAR, MDA, PL, RSKD …) had a forced RE-read on 8 Oct refused by the
+    OpenAI project spend limit (HTTP 429) and sat on RETRIEVAL FAILED for a month although the period's read was on file.
+    `isSpendRefusal` (evidence-ledger): a money refusal with the read on file = CURRENT (said in the detail); without a read it says
+    "the AI spending limit refused the read (not a document problem)". US reads work again (NVEC Q2 read live, both documents).
+    Note: the US thesis read is billed to OpenAI, not Haiku (old notes said Haiku).
+  · RS rank: `lib/screener/rs-rank.ts` (weighted 3M 40% / 6M 30% / 1Y 30%, rank 1–99 inside one market snapshot, memo per snapshot).
+    Slim screener answer carries `rs`; the rewarded rule's RS leg is live on Inflection Radar (KEY v7), Choke-Point (`Cand.rs`),
+    Multibagger India and the Guidance focus list.
+  · Conviction Beats tab ↔ Portfolio Catalysts: checked live in the owner's browser — "Matches name for name: 24 (+11 marked Rejected)".
+    A tab copy older than 6 h (`CB_TAB_COPY_MAX_AGE_H`) is now said to be old and NOT reported as "⚠ Differs".

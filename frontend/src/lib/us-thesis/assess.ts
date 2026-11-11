@@ -14,6 +14,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { priorVerdictsOf } from '@/lib/thesis/prior-verdicts';
+import { isSpendRefusal } from '../thesis/evidence-ledger';   // zzz1263
 import { aiPattern, isAiTypeRecord, type AiTypeRecord } from '@/lib/thesis/ai-type';
 import { classifyOrNearest, classifyWithFiling, manualPattern, type AbfgResult, type AbfgPattern } from '@/lib/earnings/pattern-abfg';
 import { extractVariables, rowChangeLines } from '@/lib/thesis/variables';
@@ -295,7 +296,7 @@ export function assessUsRow(row0: UsRow, overrides: Record<string, AbfgPattern |
     promiseGap: check ? { gap: check.gap, detail: check.detail, direction: check.direction || 'behind', plan: check.plan ?? null, actual: check.actual ?? null, variance: check.variance ?? null } : null,
     evidenceReviewed: !!row.summary,
     sourceUnavailable: row.ledger?.last_attempt?.outcome === 'SOURCE_UNAVAILABLE',
-    retrievalFailed: row.discoveryState === 'RETRIEVAL_FAILED' || row.ledger?.last_attempt?.outcome === 'FAILED',
+    retrievalFailed: row.discoveryState === 'RETRIEVAL_FAILED' || (row.ledger?.last_attempt?.outcome === 'FAILED' && !isSpendRefusal(row.ledger?.last_attempt?.error)),
     business: businessProfileOf(row.graded, row.summary),
     hasGraderRow: !!row.graded,
     evidencePeriod: row.ledger?.latest_period || row.reportingPeriod || null,

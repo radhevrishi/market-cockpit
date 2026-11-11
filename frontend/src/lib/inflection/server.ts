@@ -4,10 +4,11 @@ import { kvGet, kvSet } from '../kv';
 import { fetchGoogleNewsRSS } from '../indian-news-rss';
 import { loadNews } from '../news/archive';
 import { getSnapshot } from '../screener/snapshot-cache';
+import { rsRanks } from '../screener/rs-rank';
 import { INDUSTRIES, dedupeSignals, geoOf, industryOnTab, newsFitsTab, isCompanyResultsHeadline, industriesOf, industryScore, isSyntheticHeadline, neglectFromPrices, readSignal, recencyWeight, scoreBand, scoreSignal, type ScoredSignal } from './core';
 
 import { rewardedWhy } from '../rewarded';
-const KEY = 'inflection-radar:v6';   // zzz1244 — one news pass, an India map and a USA map (…:IN / …:US); zzz1246 v5 — news placed per tab
+const KEY = 'inflection-radar:v7';   // zzz1244 — one news pass, an India map and a USA map (…:IN / …:US); zzz1246 v5 — news placed per tab
 export type RadarMarket = 'IN' | 'US';
 const TTL_S = 3 * 3600;
 
@@ -66,14 +67,15 @@ async function buildBothNow(): Promise<Record<RadarMarket, RadarData>> {
   for (const market of ['IN', 'US'] as RadarMarket[]) {
   const snap = await getSnapshot(market).catch(() => null);
   const byT = new Map<string, any>((snap?.rows || []).map((r: any) => [String(r.t).toUpperCase(), r]));
-  const rw = (p3: unknown, p1: unknown) => { const o = rewardedWhy({ p3m: typeof p3 === 'number' ? p3 : null, p1y: typeof p1 === 'number' ? p1 : null }); return { rewarded: o.rewarded, rewardedWhy: o.why }; };   // zzz1259
+  const rsBy = rsRanks(snap?.rows as any[]);   // zzz1263
+  const rw = (p3: unknown, p1: unknown, t?: string) => { const o = rewardedWhy({ p3m: typeof p3 === 'number' ? p3 : null, p1y: typeof p1 === 'number' ? p1 : null, rs: t ? rsBy.get(String(t).toUpperCase()) ?? null : null }); return { rewarded: o.rewarded, rewardedWhy: o.why }; };   // zzz1259
   const largeCap = market === 'IN' ? 30000 : 10000;   // ₹ crore / $ million
   const industries: RadarIndustry[] = INDUSTRIES.filter((ind) => industryOnTab(ind, market)).map((ind) => {
     const companies = (market === 'IN' ? ind.beneficiaries : ind.us || []).map((b) => {
       const r = byT.get(b.ticker);
       return {
         ticker: b.ticker, name: r?.n || b.name, bucket: b.bucket, verify: b.verify, large: !!b.large || (typeof r?.mc === 'number' && r.mc > largeCap),
-        mc: r?.mc ?? null, revQYoY: r?.revQYoY ?? null, epsQYoY: r?.epsQYoY ?? null, opm: r?.opmTTM ?? null, perf3M: r?.perf3M ?? null, perf1Y: r?.perf1Y ?? null, ...rw(r?.perf3M, r?.perf1Y), pe: r?.pe ?? null,
+        mc: r?.mc ?? null, revQYoY: r?.revQYoY ?? null, epsQYoY: r?.epsQYoY ?? null, opm: r?.opmTTM ?? null, perf3M: r?.perf3M ?? null, perf1Y: r?.perf1Y ?? null, ...rw(r?.perf3M, r?.perf1Y, r?.t), pe: r?.pe ?? null,
         stage: r?.twSt ?? null, inUniverse: !!r,
         // zzz1241 — for the EPS sensitivity: TTM sales = market cap ÷ P/S, shares = market cap ÷ price (both ₹ crore / crore)
         salesCr: typeof r?.mc === 'number' && typeof r?.ps === 'number' && r.ps > 0 ? Math.round(r.mc / r.ps) : null,

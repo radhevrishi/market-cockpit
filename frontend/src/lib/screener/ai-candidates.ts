@@ -7,7 +7,7 @@ export interface Cand {
   revQ: number | null; revA: number | null; epsQ: number | null; opm: number | null; opmFY?: number | null; gm: number | null; roce: number | null; roe: number | null;
   de: number | null; pe: number | null; ps: number | null; fcfm: number | null; p1y: number | null; p5y: number | null; bb: number | null; fs: number | null;
   /** zzz1206 — 6-month move, weekly stage 1–4, weeks in that stage (for the late-in-the-curve check) */
-  p6m?: number | null; p3m?: number | null; st?: number | null; stWk?: number | null;
+  p6m?: number | null; p3m?: number | null; /** zzz1263 — relative-strength rank 1–99 in its market (set by loadCands) */ rs?: number | null; st?: number | null; stWk?: number | null;
 }
 const n = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 

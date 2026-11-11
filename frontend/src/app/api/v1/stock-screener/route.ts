@@ -4,6 +4,7 @@
 // snapshot exists). The JSON text (US ≈ 15 MB) is made ONCE per snapshot and sent pre-compressed (br ≈ 2.8 MB, compressed once,
 // not per request) with an ETag, so a revisit with an unchanged snapshot is a 304 that transfers nothing.
 import { NextResponse } from 'next/server';
+import { rsRanks } from '@/lib/screener/rs-rank';
 import { ruleOf40Usable } from '@/lib/screener/pine';
 import { kickBuild } from '@/lib/screener/run';
 import { getPool } from '@/lib/db';
@@ -27,7 +28,8 @@ const SLIM_CB = ['gpQYoY', 'gpAYoY', 'revQYoY', 'fcfmTTM', 'fcfmAt', 'fcfmT', 'f
   'perf3M', 'perf1Y'] as const;   // zzz1262: 3-month / 1-year price move for the "already rewarded" check (lib/use-rewarded)
 function slim(rows: any[] | undefined, builtAt: string | null | undefined, market: string, tickers: string[]) {
   const want = new Set(tickers);
-  const out = (rows || []).filter((r) => r && want.has(String(r.t).toUpperCase())).map((r) => Object.fromEntries([...SLIM_KEYS, ...SLIM_EXTRA, ...SLIM_STAGE, ...SLIM_CB].filter((k) => r[k] != null).map((k) => [k, r[k]])));
+  const rs = rsRanks(rows);   // zzz1263: relative-strength rank (1–99) inside this market's snapshot
+  const out = (rows || []).filter((r) => r && want.has(String(r.t).toUpperCase())).map((r) => { const o: Record<string, unknown> = Object.fromEntries([...SLIM_KEYS, ...SLIM_EXTRA, ...SLIM_STAGE, ...SLIM_CB].filter((k) => r[k] != null).map((k) => [k, r[k]])); const k = rs.get(String(r.t).toUpperCase()); if (k != null) o.rs = k; return o; });
   return NextResponse.json({ ok: true, market, builtAt: builtAt ?? null, rows: out }, { headers: { 'Cache-Control': 'private, max-age=300' } });
 }
 export async function GET(req: Request) {
