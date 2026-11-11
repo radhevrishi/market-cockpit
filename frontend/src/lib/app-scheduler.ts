@@ -556,6 +556,9 @@ export const APP_JOBS: readonly AppJob[] = [
   // NSDL confirmed figure + new fortnight sector report at 15:30 / 17:45 / 04:20 UTC, history backfill in small chunks.
   // Crons = lib/fii-dii/schedule FII_DII_CRONS (a test keeps them equal). By hand: POST /api/v1/fii-dii?run=1 (service key).
   { name: 'fii-dii', crons: ['0,15,30,45 13-14 * * 1-5', '0,15,30 15 * * 1-5', '45 17 * * 1-5', '20 4 * * 1-5', '55 0-11,16-23 * * *', '55 12-15 * * 0,6'], timeoutMs: 4 * MIN, workflow: BRIDGE, does: 'in-process: lib/fii-dii/job fiiDiiJob (NSE fiidiiTradeReact → fii_dii_daily; NSDL daily + fortnight sector reports; NSE participant OI; Nifty closes; hourly :55 backfill slots until history is complete)', run: async (ctx) => (await import('./fii-dii/job')).fiiDiiJob(ctx) },
+  // zzz1259 — Choke-Point Themes refreshed weekly (owner approved 11 Nov; it had last run 2 Nov because it only ran on a click).
+  // Sunday 05:10 UTC; skipped when the last report is under 4 days old; at most 2 attempts a ISO week (a failed run keeps the last good report).
+  { name: 'choke-themes-weekly', crons: ['10 5 * * 0'], timeoutMs: 15 * MIN, workflow: BRIDGE, does: 'in-process: lib/choke-themes/run runChoke (one stronger-model run; skipped if the report is < 4 days old; ≤ 2 attempts a week; runChoke keeps its own limit of 6 runs a day)', run: async (ctx) => (await import('./choke-themes/weekly')).chokeWeeklyJob(ctx) },
   // zzz914 — owner briefs moved in from Claude scheduled tasks (they needed the owner's Mac awake; the book is on the server now).
   // Morning conviction brief: 04:29 UTC Mon–Fri (≈06:30 Berlin). Thesis watch: 02:15 UTC Mon–Fri (≈07:45 IST). The route sends
   // once per day; a run that composed but could not deliver (no channel set up) reports ok=false so the heartbeat shows it.
@@ -572,9 +575,6 @@ export const APP_JOBS: readonly AppJob[] = [
     console.log('[doc-search-index]', JSON.stringify({ ...r, byLevel: r.byLevel }));
     return r.ok ? { ok: true, status: 200 } : { ok: false, status: 503, error: r.error || r.why };
   } },
-  // zzz1259 — Choke-Point Themes refreshed weekly (owner approved 11 Nov; it had last run 2 Nov because it only ran on a click).
-  // Sunday 05:10 UTC; skipped when the last report is under 4 days old; at most 2 attempts a ISO week (a failed run keeps the last good report).
-  { name: 'choke-themes-weekly', crons: ['10 5 * * 0'], timeoutMs: 15 * MIN, workflow: BRIDGE, does: 'in-process: lib/choke-themes/run runChoke (one stronger-model run; skipped if the report is < 4 days old; ≤ 2 attempts a week; runChoke keeps its own limit of 6 runs a day)', run: async (ctx) => (await import('./choke-themes/weekly')).chokeWeeklyJob(ctx) },
   { name: 'portfolio-thesis-watch', crons: ['15 2 * * 1-5'], timeoutMs: 4 * MIN, workflow: 'owner-briefs.yml', does: 'POST /api/v1/cron/portfolio-thesis-watch (stored research only, no AI, no price)', run: async (ctx) => (await import('./owner-briefs/job')).ownerBriefJob(ctx, '/api/v1/cron/portfolio-thesis-watch', true) },
 ];
 

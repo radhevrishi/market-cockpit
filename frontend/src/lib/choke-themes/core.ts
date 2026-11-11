@@ -34,7 +34,7 @@ export const EXPOSURE_WHY: Record<Exposure, string> = {
 };
 
 /** Stock-screener figures laid over a candidate (never written by the model). */
-export interface CandFacts { cap: number | null; revQ: number | null; revA: number | null; epsQ: number | null; opm: number | null; /** zzz1186 — last fiscal year (TTM can carry one-offs) */ opmFY?: number | null; pe: number | null; fcfm: number | null; de: number | null; p1y: number | null; p5y: number | null; /** zzz1206 */ p6m?: number | null; st?: number | null; stWk?: number | null }
+export interface CandFacts { cap: number | null; revQ: number | null; revA: number | null; epsQ: number | null; opm: number | null; /** zzz1186 — last fiscal year (TTM can carry one-offs) */ opmFY?: number | null; pe: number | null; fcfm: number | null; de: number | null; p1y: number | null; p5y: number | null; /** zzz1206 */ p6m?: number | null; p3m?: number | null; st?: number | null; stWk?: number | null }
 export interface ScenarioIn { years: number; epsCagr: { bear: number; base: number; bull: number }; exitPe: { bear: number; base: number; bull: number }; dilutionPct: number; basis: string }
 export interface ScenarioOut { bear: number; base: number; bull: number; currentPe: number }
 export interface ChokeCandidate {
