@@ -4086,3 +4086,17 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   before the guard holds a job; the guard then judges the heap after collection (log line "full collection X MB → Y MB").
   Portfolio earnings-grades `lookupGraded` keeps compact per-session rows in memory (`SESSION_MEMO`, today 5 min, older
   30 min) instead of reading and parsing 120 whole graded payloads on every call.
+- zzz1257 (11 Nov): the 15-minute Special Situations refresh blocked the whole Node process ~12–25 s (health probes for unrelated routes
+  aborted at the same moment; every request stalls). Cause: `dedupeFeedEvents` (lib/multibagger-radar-adapter) re-parsed every KEPT
+  headline (secChainKey, canonicalEventKey, sameEvent) for every new event — O(n²) regex work over ~6,000 items. Now each event's
+  features are worked out once (`DedupeFeat` in a WeakMap, `sameEventFeat`); same rules, same first-match order, same output (checked
+  against the old code on 1,500 random events: identical), ~26× faster. Worst case (one family, nothing merges) is still O(n²) but
+  with cheap comparisons; if a stall remains, bucket `kept` by region / hold / family.
+- zzz1258 (11 Nov): US Portfolio Catalysts never moved — every US ledger said "last updated 2026-09-24": nothing looked for new SEC
+  filings unless someone clicked "Check for new evidence" (`/api/v1/us-thesis/check-all` existed, no job called it). New scheduled job
+  `us-evidence-check` (13:23 / 21:37 / 23:17 UTC Mon–Fri, `usEvidenceCheckJob`, resumable batches of 60) = EDGAR discovery only, NO
+  model; a new 10-Q / 10-K / 8-K 2.02 turns NEW EVIDENCE AVAILABLE by itself. The summary read (Haiku) is still one click — an
+  automatic read would add AI spend and needs the owner's say-so. Company Lab: "📅 Earnings" opened today's Earnings Opportunities page;
+  EO (India + US) now honours `?d=YYYY-MM-DD` and the Lab link passes the company's own result day. FCF growth from a zero or negative
+  base is null (was "−900%"); the Debt ÷ FCF headline names the newest year first when its FCF is negative; the Debt ÷ FCF /
+  Capex ÷ FCF averages say how many of the 5 years they rest on.
