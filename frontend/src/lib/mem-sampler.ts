@@ -4,7 +4,7 @@
 // runs. Read by /api/v1/system-status → memory. Never logs personal data.
 export interface MemSample { at: string; rss: number; heapUsed: number; heapTotal: number; external: number; arrayBuffers: number; kvFallbackMb: number; kvFallbackEntries: number; readCacheMb: number; jobs: string[];
   /** zzz1262 — heap in MB right after a full collection (only taken when the heap was large and no heavy job was running) */
-  heapAfterGc?: number }
+  heapAfterGc?: number; /** zzz1269: event-loop hold-ups since the previous sample (ms) */ loop?: { meanMs: number; p50Ms: number; p99Ms: number; maxMs: number } }
 export interface JobMem { job: string; at: string; secs: number; rssBefore: number; rssAfter: number; heapBefore: number; heapAfter: number; ok: boolean }
 const KEY = 'ops:mem-samples:v1';
 const MAX_SAMPLES = 432;   // 72 h at 10 min
@@ -28,7 +28,8 @@ async function takeSample(): Promise<MemSample> {
   if (state.running.size === 0 && before.heapUsed >= GC_SAMPLE_MIN_HEAP_MB) {
     try { const g = (await import('./force-gc')).forceFullGc(); if (g) heapAfterGc = g.afterMb; } catch { /* not available */ }
   }
-  return { at: new Date().toISOString(), ...before, kvFallbackMb, kvFallbackEntries, readCacheMb, jobs: Array.from(state.running), ...(heapAfterGc != null ? { heapAfterGc } : {}) };
+  let loop: MemSample['loop']; try { loop = (await import('./heap-profile')).loopDelay(true) ?? undefined; } catch { /* not available */ }
+  return { at: new Date().toISOString(), ...before, kvFallbackMb, kvFallbackEntries, readCacheMb, jobs: Array.from(state.running), ...(heapAfterGc != null ? { heapAfterGc } : {}), ...(loop ? { loop } : {}) };
 }
 
 /** Starts the 10-minute sampler once per process (instrumentation). */
