@@ -2,16 +2,20 @@
 // Owner login or service key only. Read-only; ?gc=1 runs a full collection first (rate-limited), ?reset=1 restarts the delay histogram.
 import { NextRequest, NextResponse } from 'next/server';
 import { siteAuthOk } from '@/lib/site-auth-request';
-import { heapTop, loopDelay, startHeapProfile } from '@/lib/heap-profile';
+import { heapTop, loopDelay, startHeapProfile, cpuTop } from '@/lib/heap-profile';
 import { forceFullGc } from '@/lib/force-gc';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const maxDuration = 90;
 
 export async function GET(req: NextRequest) {
   if (!(await siteAuthOk(req))) return NextResponse.json({ ok: false, error: 'owner only' }, { status: 401 });
   const sp = req.nextUrl.searchParams;
   startHeapProfile();
+  // ?cpu=20 → sample the processor for 20 s (max 60) and return the functions that used it (find what holds the thread)
+  const cpuS = Number(sp.get('cpu')) || 0;
+  if (cpuS > 0) { const c = await cpuTop(cpuS, Math.min(60, Number(sp.get('top')) || 30)); return NextResponse.json({ ...c, loopDelay: loopDelay(false) }, { headers: { 'Cache-Control': 'no-store' } }); }
   const gc = sp.get('gc') === '1' ? forceFullGc() : null;
   const m = process.memoryUsage();
   const top = await heapTop(Math.min(80, Number(sp.get('top')) || 40), Math.min(16, Number(sp.get('depth')) || 10));

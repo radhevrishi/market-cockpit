@@ -60,7 +60,7 @@ function unzipPayload(raw: any): UsGradedPayload | null {
   return raw?.by_tier ? (raw as UsGradedPayload) : null;
 }
 import {
-  earningsFilersOn, earningsFilerExclusions, companyFacts, cikTickerMap, tickerToCik, submissions, announcementDateFor,
+  earningsFilersOn, earningsFilerExclusions, companyFacts, slimCompanyFacts, cikTickerMap, tickerToCik, submissions, announcementDateFor,
   sharesOutstandingFromFacts, sectorFromSic, isFinancialSic,
   type EdgarFiling,
 } from '@/lib/us-edgar';
@@ -1239,11 +1239,13 @@ export async function GET(req: Request) {
     // ── 3. fundamentals from companyfacts ────────────────────────────────
     prog('reading each filer\u2019s XBRL', 0, listed.length);
     const budgetMiss = new Set<number>();
+    const factsSince = (() => { const d = new Date(`${/^\d{4}-\d{2}-\d{2}$/.test(String(date)) ? date : new Date().toISOString().slice(0, 10)}T00:00:00Z`); d.setUTCMonth(d.getUTCMonth() - 66); return d.toISOString().slice(0, 10); })();
     const facts = await pooled(withPrice, 5, async (x, i) => {
       // zzz805 — past the run budget, stop pulling new filers; they are
       // listed as not graded (time budget) instead of the run dying at 900s.
       if (overBudget()) { budgetMiss.add(i); _queue.tick(cacheKey); return null; }
-      try { return await companyFacts(x.f.cikNum); } finally { if (!explicit) _queue.tick(cacheKey); }
+      // zzz1270: kept for the whole build, so only the last 5.5 years of each file are held (see slimCompanyFacts)
+      try { return slimCompanyFacts(await companyFacts(x.f.cikNum), factsSince); } finally { if (!explicit) _queue.tick(cacheKey); }
     });
 
     interface Prepared {

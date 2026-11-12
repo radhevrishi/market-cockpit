@@ -72,3 +72,37 @@ export function loopDelay(reset = false): { meanMs: number; p50Ms: number; p99Ms
   if (reset) loopHist.reset();
   return out;
 }
+
+// ── zzz1270: where the PROCESSOR time goes (finds the code that holds the one thread for seconds) ──────────────────────────
+type CpuNode = { id: number; callFrame: Node['callFrame']; children?: number[] };
+export interface CpuTopRow { ms: number; pct: number; fn: string; via: string[] }
+/** Pure: a V8 CPU profile → the functions with the most self time, each with its nearest callers. */
+export function topOfCpuProfile(profile: { nodes: CpuNode[]; samples?: number[]; timeDeltas?: number[] }, top = 30): { totalMs: number; rows: CpuTopRow[] } {
+  const byId = new Map<number, CpuNode>(); const parent = new Map<number, number>();
+  for (const n of profile.nodes) { byId.set(n.id, n); for (const c of n.children || []) parent.set(c, n.id); }
+  const self = new Map<number, number>(); let total = 0;
+  const s = profile.samples || [], d = profile.timeDeltas || [];
+  for (let i = 0; i < s.length; i++) { const us = Math.max(0, d[i] || 0); self.set(s[i], (self.get(s[i]) || 0) + us); total += us; }
+  const idle = (n: CpuNode) => /^\((idle|program|garbage collector)\)$/.test(n.callFrame.functionName) && n.callFrame.functionName !== '(garbage collector)';
+  const rows = Array.from(self.entries()).map(([id, us]) => ({ n: byId.get(id)!, id, us })).filter((x) => x.n && !idle(x.n))
+    .sort((a, b) => b.us - a.us).slice(0, top).map((x) => {
+      const via: string[] = []; let p = parent.get(x.id);
+      while (p != null && via.length < 5) { const n = byId.get(p); if (!n) break; if (n.callFrame.functionName !== '(root)') via.push(frameText(n.callFrame)); p = parent.get(p); }
+      return { ms: Math.round(x.us / 1000), pct: total ? Math.round((x.us / total) * 1000) / 10 : 0, fn: frameText(x.n.callFrame), via };
+    });
+  return { totalMs: Math.round(total / 1000), rows };
+}
+let cpuBusy = false;
+export function cpuTop(seconds: number, top = 30): Promise<{ ok: boolean; totalMs: number; rows: CpuTopRow[]; error?: string }> {
+  return new Promise((resolve) => {
+    if (!session || cpuBusy) return resolve({ ok: false, totalMs: 0, rows: [], error: cpuBusy ? 'a profile is already running' : 'profiler not started' });
+    cpuBusy = true;
+    const done = (r: { ok: boolean; totalMs: number; rows: CpuTopRow[]; error?: string }) => { cpuBusy = false; resolve(r); };
+    session.post('Profiler.enable', () => session.post('Profiler.setSamplingInterval', { interval: 2000 }, () => session.post('Profiler.start', () => {
+      setTimeout(() => session.post('Profiler.stop', (err: any, res: any) => {
+        if (err || !res?.profile) return done({ ok: false, totalMs: 0, rows: [], error: String(err?.message || 'no profile') });
+        done({ ok: true, ...topOfCpuProfile(res.profile, top) });
+      }), Math.max(1, Math.min(60, seconds)) * 1000);
+    })));
+  });
+}

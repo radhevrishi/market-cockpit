@@ -702,28 +702,79 @@ export async function earningsFilersOn(date: string): Promise<EdgarFiling[]> {
 }
 
 // ─── companyfacts, cached ─────────────────────────────────────────────────
-// ~0.25 MB on the wire (gzipped), ~3-4 MB parsed. Immutable until the company
-// files again, so a 6-hour TTL is generous and makes repeat scans of the same
-// date nearly free. Bounded so a long-lived container can't grow without limit.
+// zzz1270 — THE memory problem of 10–12 Nov. This cache was bounded by COUNT (600 companies) on the belief that one file is
+// "3–4 MB parsed". A large filer's file is 5–10 MB of JSON and several times that as objects, and in results season the US
+// grade reads hundreds of filers: the live-memory profile showed 536 MB of parsed SEC JSON five minutes after a start, on the
+// way to 2.6 GB — the heap ceiling is 3 GB, so the server spent its time collecting garbage (whole site slow) and then restarted.
+// Now bounded by SIZE: at most FACTS_MAX_CHARS of JSON text in total (≈ 150–250 MB as objects) and FACTS_MAX files; the least
+// recently used file leaves first; one file larger than a quarter of the budget is handed to the caller and not kept.
+// Graded days are stored once graded, so a re-read of a file is one small download, not a re-grade.
 const FACTS_TTL_MS = 6 * 3600_000;
-const FACTS_MAX = 600;
-const _facts = new Map<number, { at: number; data: any }>();
+export const FACTS_MAX = 60;
+export const FACTS_MAX_CHARS = 40 * 1024 * 1024;
+const _facts = new Map<number, { at: number; data: any; chars: number }>();
+let _factsChars = 0;
+const _factsInFlight = new Map<number, Promise<any | null>>();
+
+/** Pure: which cached files leave so that `incoming` chars fit (oldest use first). Exported for the test. */
+export function factsEvictions(entries: ReadonlyArray<{ key: number; chars: number }>, total: number, incoming: number, maxChars = FACTS_MAX_CHARS, maxFiles = FACTS_MAX): number[] {
+  const out: number[] = []; let t = total; let n = entries.length;
+  for (const e of entries) { if (t + incoming <= maxChars && n < maxFiles) break; out.push(e.key); t -= e.chars; n--; }
+  return out;
+}
+export function factsCacheStats(): { files: number; mbText: number } { return { files: _facts.size, mbText: Math.round(_factsChars / 104857.6) / 10 }; }
 
 export async function companyFacts(cikNum: number): Promise<any | null> {
   const hit = _facts.get(cikNum);
-  if (hit && Date.now() - hit.at < FACTS_TTL_MS) return hit.data;
+  if (hit && Date.now() - hit.at < FACTS_TTL_MS) { _facts.delete(cikNum); _facts.set(cikNum, hit); return hit.data; }   // moved to "most recently used"
+  const flying = _factsInFlight.get(cikNum); if (flying) return flying;   // two callers, one download and one parse
   const url = `https://data.sec.gov/api/xbrl/companyfacts/CIK${String(cikNum).padStart(10, '0')}.json`;
-  let data: any = null;
-  try { data = await secJson(url, 2); } catch { data = null; }
-  if (data) {
-    if (_facts.size >= FACTS_MAX) {
-      // evict the oldest quarter of the cache
-      const entries = Array.from(_facts.entries()).sort((a, b) => a[1].at - b[1].at);
-      for (let i = 0; i < Math.ceil(FACTS_MAX / 4); i++) _facts.delete(entries[i][0]);
+  const p = (async () => {
+    let data: any = null; let chars = 0;
+    try {
+      const res = await secFetch(url, 2);
+      if (res.ok) { const text = await res.text(); chars = text.length; data = JSON.parse(text); }
+    } catch { data = null; }
+    if (data) {
+      if (hit) { _facts.delete(cikNum); _factsChars -= hit.chars; }
+      if (chars <= FACTS_MAX_CHARS / 4) {
+        const order = Array.from(_facts.entries()).map(([key, v]) => ({ key, chars: v.chars }));   // Map order = least recently used first
+        for (const k of factsEvictions(order, _factsChars, chars)) { const e = _facts.get(k); if (e) { _factsChars -= e.chars; _facts.delete(k); } }
+        _facts.set(cikNum, { at: Date.now(), data, chars }); _factsChars += chars;
+      }
     }
-    _facts.set(cikNum, { at: Date.now(), data });
+    return data;
+  })().finally(() => { _factsInFlight.delete(cikNum); });
+  _factsInFlight.set(cikNum, p);
+  return p;
+}
+
+/**
+ * zzz1270 — a company file cut down to the data points a grade can use: those whose period ends on or after `sinceISO`.
+ * A file carries every tagged figure since 2009, each repeated for every filing that restated it; a grade of one quarter reads
+ * at most 16 quarters back plus the year before. The US grade holds every filer's file for the whole build of a day
+ * (hundreds on a busy results day), so the full files were the second half of the memory problem. Returns a NEW object;
+ * the full file is not changed (it may sit in the cache for callers that need the long history, e.g. Company Lab).
+ */
+export function slimCompanyFacts(facts: any, sinceISO: string): any {
+  if (!facts || typeof facts !== 'object' || !facts.facts || typeof facts.facts !== 'object') return facts;
+  const out: any = { cik: facts.cik, entityName: facts.entityName, facts: {} };
+  for (const tax of Object.keys(facts.facts)) {
+    const tags = facts.facts[tax]; if (!tags || typeof tags !== 'object') continue;
+    const keptTags: any = {};
+    for (const tag of Object.keys(tags)) {
+      const t = tags[tag]; const units = t?.units; if (!units || typeof units !== 'object') continue;
+      const keptUnits: any = {}; let any = false;
+      for (const u of Object.keys(units)) {
+        const arr = units[u]; if (!Array.isArray(arr)) continue;
+        const kept = arr.filter((p: any) => String(p?.end || p?.filed || '') >= sinceISO);
+        if (kept.length) { keptUnits[u] = kept; any = true; }
+      }
+      if (any) keptTags[tag] = { label: t.label, units: keptUnits };
+    }
+    out.facts[tax] = keptTags;
   }
-  return data;
+  return out;
 }
 
 /**
