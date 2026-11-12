@@ -3050,7 +3050,8 @@ export function scoreExcelRow(row: ExcelRow): ExcelResult {
 
   // ── DECISION STRIP ────────────────────────────────────────────────────────
   const decisionStrip: DecisionStrip = {
-    survival: { pass:!hasCrit&&highCnt===0&&(row.pledge??0)<=25&&(row.de??0)<=(b.deMax*1.5), label:'Survival', detail:hasCrit?'CRITICAL flag':highCnt>0?`${highCnt} HIGH flag(s)`:(row.pledge??0)>25?`Pledge ${row.pledge?.toFixed(0)}%`:'Clean' },
+    // zzz1268: counted from the FINAL red-flag list. The counts taken earlier (before the governance, pump and fraud flags are added) showed "Clean" for a name with a critical flag.
+    survival: { pass:!redFlags.some(f=>f.severity==='CRITICAL')&&redFlags.filter(f=>f.severity==='HIGH').length===0&&(row.pledge??0)<=25&&(row.de??0)<=(b.deMax*1.5), label:'Survival', detail:redFlags.some(f=>f.severity==='CRITICAL')?'CRITICAL flag':redFlags.filter(f=>f.severity==='HIGH').length>0?`${redFlags.filter(f=>f.severity==='HIGH').length} HIGH flag(s)`:(row.pledge??0)>25?`Pledge ${row.pledge?.toFixed(0)}%`:'Clean' },
     acceleration: { pass:row.accelSignal==='ACCELERATING'||(row.yoySalesGrowth??0)>=20, label:'Accel', detail:row.accelSignal??(row.yoySalesGrowth!==undefined?`YOY ${row.yoySalesGrowth.toFixed(0)}%`:'No data') },
     // PATCH 0436 BUG-031 — PEG guard. When trailing EPS growth is negative,
     // Screener.in returns a negative PEG which is mathematically nonsensical

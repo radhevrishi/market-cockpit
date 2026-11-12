@@ -3,7 +3,7 @@
 // Moved verbatim out of page.tsx (pure refactor, no behaviour change).
 import React, { useState, useMemo, useEffect } from 'react';
 import { getConvictionTickers } from '@/lib/conviction-beats';
-import { subscribeDecisions, readDecisions, type DecisionStatus } from '@/lib/decisions';
+import { subscribeDecisions, readDecisions, decisionLookup, type DecisionStatus } from '@/lib/decisions';
 import { computeClusterScore, isClusterSeed, CLUSTER_TIER_META } from '@/lib/op-leverage-cluster';
 import type { Grade, ExcelResult } from '@/lib/multibagger-india-scoring';
 import { scoreUSARow } from '@/lib/multibagger-usa-scoring';
@@ -13,7 +13,7 @@ import { USA_SLIM_KEY, USA_STORAGE_KEY, _getUsaRowsMemCache, _setUsaRowsMemCache
 import { mbServerSnapshotLoad } from './storage';
 import { type MbAnalyticsStock, type MbMarketScope } from './types';
 import { MbScreenerChips, MultiConfirmedCard } from './widgets';
-import { useRewardedIndex, demoteRewarded, rewardedKey, type RewardedIndex } from '@/lib/use-rewarded';   // zzz1262
+import { useRewardedIndex, rewardedKey } from '@/lib/use-rewarded';   // zzz1262
 
 export function MultibaggerAnalytics({
   indiaRows,
@@ -203,14 +203,12 @@ export function MultibaggerAnalytics({
   // score deltas, "new since last upload", and sector rotation.
   // PATCH 0874 — dep on dataTick so a fresh upload from another tab
   // refreshes the baseline view.
-  const prevScoreMap = React.useMemo<Record<string, number>>(() => {
-    if (typeof window === 'undefined') return {};
+  // zzz1268: one baseline per market. The two were merged into one map, so a US score replaced the India score of the same symbol (INFY).
+  const prevScores = React.useMemo<{ IN: Record<string, number>; US: Record<string, number> }>(() => {
+    if (typeof window === 'undefined') return { IN: {}, US: {} };
     try {
-      const ind = JSON.parse(localStorage.getItem('mb_india_prev_scores_v1') || '{}');
-      const us  = JSON.parse(localStorage.getItem('mb_usa_prev_scores_v1')   || '{}');
-      // Merge — symbols are unique across markets in practice (RELIANCE vs RELIANCE.NS).
-      return { ...ind, ...us };
-    } catch { return {}; }
+      return { IN: JSON.parse(localStorage.getItem('mb_india_prev_scores_v1') || '{}'), US: JSON.parse(localStorage.getItem('mb_usa_prev_scores_v1') || '{}') };
+    } catch { return { IN: {}, US: {} }; }
   }, [dataTick]);
 
   // Conviction Beats overlay.
@@ -275,7 +273,7 @@ export function MultibaggerAnalytics({
       const flags = (r as any).redFlags as { severity: string; kind?: string }[] | undefined;
       const summary = flags && flags.length > 0 ? {
         critical: flags.filter((f) => f.severity === 'CRITICAL').length,
-        structural: flags.filter((f) => f.severity === 'HIGH' && f.kind === 'STRUCTURAL').length,
+        structural: flags.filter((f) => f.severity === 'HIGH' && (f.kind ?? 'STRUCTURAL') === 'STRUCTURAL').length,   // zzz1268: no kind = structural, as the scorer counts it
         cyclical: flags.filter((f) => f.severity === 'HIGH' && f.kind === 'CYCLICAL').length,
         medium: flags.filter((f) => f.severity === 'MEDIUM').length,
         total: flags.length,
@@ -289,7 +287,7 @@ export function MultibaggerAnalytics({
         grade: r.grade,
         sector: (r as any).sector,
         market: 'INDIA' as const,
-        prevScore: prevScoreMap[r.symbol] ?? prevScoreMap[stripSym(r.symbol)],
+        prevScore: prevScores.IN[r.symbol] ?? prevScores.IN[stripSym(r.symbol)],
         marketCapCr: (r as any).marketCapCr as number | undefined,
         redFlagSummary: summary,
         // PATCH 0991 — pass through screener-file membership for MULTI-CONFIRMED card
@@ -305,7 +303,7 @@ export function MultibaggerAnalytics({
       grade: r.grade,
       sector: r.sector,
       market: 'USA' as const,
-      prevScore: prevScoreMap[r.symbol] ?? prevScoreMap[stripSym(r.symbol)],
+      prevScore: prevScores.US[r.symbol] ?? prevScores.US[stripSym(r.symbol)],
       marketCapB: r.marketCapB as number | undefined,
       fcfOpDivergence: r.fcfOpDivergence === true,
       postRunStretched: r.postRunStretched === true,
@@ -331,7 +329,7 @@ export function MultibaggerAnalytics({
     }));
     const merged: AnaStock[] = [...ind, ...us];
     return scope === 'BOTH' ? merged : merged.filter((s) => s.market === scope);
-  }, [indiaRows, usaRows, scope, prevScoreMap]);
+  }, [indiaRows, usaRows, scope, prevScores]);
 
   // PATCH 0548 — Richer stats including median, P25/P75, score histogram,
   // sector rotation, decision buckets, hidden gems, concentration risk.
@@ -451,6 +449,9 @@ export function MultibaggerAnalytics({
     //     mixed into AVOID and made the bucket look like everything was
     //     failing when half of it was just "we don't know yet".
     const looksLikeDataGap = (s: typeof stocks[number]) => {
+      // zzz1268: only India rows carry a red-flag list. A US row has none, so every US name the scorer hard-capped (15 / 25 / 38)
+      // was filed as "data gap" and never reached AVOID.
+      if (s.market !== 'INDIA') return false;
       const t = s.redFlagSummary?.total ?? 0;
       return s.score < 30 && t === 0;
     };
@@ -473,7 +474,9 @@ export function MultibaggerAnalytics({
     const decisionMap = (() => {
       try { return readDecisions(); } catch { return {}; }
     })();
-    const decisionOf = (sym: string) => decisionMap[stripSym(sym).toUpperCase()];
+    // zzz1268: US decisions are stored under "US:SYM", India under the plain symbol. The plain look-up never found a US decision and gave
+    // a US row the India decision of the same symbol (INFY).
+    const decisionOf = (s: { symbol: string; market: 'INDIA' | 'USA' }) => decisionLookup(decisionMap as any, stripSym(s.symbol), s.market === 'USA' ? 'US' : 'IN');
 
     // (1) ADD CANDIDATES — Score A+/A but NOT on Conviction Beats.
     //     Already a strong fundamental but not yet on the institutional bench.
@@ -503,10 +506,10 @@ export function MultibaggerAnalytics({
     //     This is the "am I being too conservative?" check.
     const reEvaluate = stocks
       .filter((s) => {
-        const d = decisionOf(s.symbol);
+        const d = decisionOf(s);
         return d && d.status === 'REJECTED' && (s.grade === 'A+' || s.grade === 'A');
       })
-      .map((s) => ({ ...s, _decision: decisionOf(s.symbol)! }))
+      .map((s) => ({ ...s, _decision: decisionOf(s)! }))
       .sort((a, b) => b.score - a.score)
       .slice(0, 10);
 
@@ -514,7 +517,7 @@ export function MultibaggerAnalytics({
     //     Helps the user spot uncovered A+ names that haven't been triaged.
     const aDecisionCount = stocks
       .filter((s) => (s.grade === 'A+' || s.grade === 'A'))
-      .filter((s) => !!decisionOf(s.symbol)).length;
+      .filter((s) => !!decisionOf(s)).length;
 
     // ── QUALITY AUDIT — how clean is the A-roster? ───────────────────────
     // For the user's PAYS post-mortem: A+ universe shouldn't be celebrated
@@ -559,10 +562,10 @@ export function MultibaggerAnalytics({
       .filter((s) => {
         if (!(s.grade === 'A+' || s.grade === 'A')) return false;
         if (!isInCb(s.symbol)) return false;
-        const d = decisionOf(s.symbol);
+        const d = decisionOf(s);
         return d && (d.status === 'BUY' || d.status === 'WATCH');
       })
-      .map((s) => ({ ...s, _decision: decisionOf(s.symbol)! }))
+      .map((s) => ({ ...s, _decision: decisionOf(s)! }))
       .sort((a, b) => b.score - a.score);
 
     const qualityAudit = {
@@ -625,17 +628,19 @@ export function MultibaggerAnalytics({
     // Build a stable Set of AVOID-classified symbols, then EXCLUDE them
     // from every positive-classification section so the same stock never
     // appears in both AVOID and BUY/TOP 25/MULTI-CONFIRMED/CONVICTION.
-    const _avoidSyms = new Set(avoid.map((s) => s.symbol));
+    // zzz1268: keyed by market + symbol — a US name on AVOID no longer removes the India name with the same symbol
+    const mk = (s: { symbol: string; market: string }) => `${s.market}:${s.symbol}`;
+    const _avoidSyms = new Set(avoid.map(mk));
     // Top picks expanded to 25 — excludes AVOID
     const topPicks = [...stocks]
-      .filter((s) => !_avoidSyms.has(s.symbol))
+      .filter((s) => !_avoidSyms.has(mk(s)))
       .sort((a, b) => b.score - a.score)
       .slice(0, 25);
 
     // Conviction overlap also excludes AVOID (a flagged stock shouldn't
     // surface as a "strongest decision-ready candidate" just because the
     // CB bench has it from an old quarter).
-    const convictionOverlap = stocks.filter((s) => isInCb(s.symbol) && !_avoidSyms.has(s.symbol));
+    const convictionOverlap = stocks.filter((s) => isInCb(s.symbol) && !_avoidSyms.has(mk(s)));
 
     // PATCH 0578 — Operating Leverage Cluster scores. Compute on the raw
     // India rows (which carry the per-row fundamentals the cluster formula
@@ -816,7 +821,7 @@ export function MultibaggerAnalytics({
         const seen = new Set<string>();
         const out: typeof stocks = [];
         for (const c of candidates) {
-          const key = (c.symbol || '').toUpperCase();
+          const key = `${c.market}:${(c.symbol || '').toUpperCase()}`;   // zzz1268
           if (seen.has(key)) continue;
           seen.add(key);
           out.push(c);
@@ -850,9 +855,10 @@ export function MultibaggerAnalytics({
   const rwIn = useRewardedIndex(buyListSyms.IN, 'IN');
   const rwUs = useRewardedIndex(buyListSyms.US, 'US');
   const rwOf = (s: { symbol: string; market?: string }) => (s.market === 'USA' ? rwUs : rwIn)[rewardedKey(s.symbol)];
-  const rwBoth: RewardedIndex = { ...rwIn, ...rwUs };
-  const strongBuyShown = stats ? demoteRewarded(stats.strongBuy, (s) => s.symbol, rwBoth) : [];
-  const top3Shown = stats ? demoteRewarded(stats.top3Today || [], (s) => s.symbol, rwBoth).filter((s) => rwOf(s)?.rewarded !== true).slice(0, 3) : [];
+  // zzz1268: each name is looked up in its OWN market's index (the two were merged by symbol)
+  const demoteByMarket = <T extends { symbol: string; market?: string }>(list: ReadonlyArray<T>): T[] => [...list.filter((x) => rwOf(x)?.rewarded !== true), ...list.filter((x) => rwOf(x)?.rewarded === true)];
+  const strongBuyShown = stats ? demoteByMarket(stats.strongBuy) : [];
+  const top3Shown = stats ? demoteByMarket(stats.top3Today || []).filter((s) => rwOf(s)?.rewarded !== true).slice(0, 3) : [];
   const RewardedChip = ({ s }: { s: { symbol: string; market?: string } }) => {
     const r = rwOf(s);
     if (!r || r.rewarded !== true) return null;

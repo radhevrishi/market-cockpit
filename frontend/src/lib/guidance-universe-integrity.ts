@@ -81,6 +81,8 @@ export function periodFacts(label: string, pkind: GgPeriodKind, opts: { context?
 // ═══ metric family, currency, unit, scale ═══════════════════════════════════════════════════════
 export const FAMILY_OF: Record<GgMetric, GuMetricFamily> = { REVENUE: 'REVENUE', PAT: 'NET_PROFIT', EBITDA: 'EBITDA', EPS: 'EPS', FCF: 'FCF' };
 const LABEL_FAMILIES: Array<[RegExp, GuMetricFamily]> = [
+  // zzz1267: operating cash flow is not net profit ("Net cash provided by operating activities" was filed as PAT) — its own family, so the label check flags it
+  [/\b(?:net cash (?:provided|generated|from|flow)|cash (?:flows? )?(?:provided by|generated from|from) operat\w+|operating cash flows?|cash flows? from operations)\b/i, 'FCF'],
   [/\b(?:revenue(?:s)? from operations|net sales|sales|turnover|top[- ]?line|revenue(?:s)?)\b/i, 'REVENUE'],
   [/\b(?:pat|profit after tax|net profit|net income|net earnings|bottom[- ]?line)\b/i, 'NET_PROFIT'],
   [/\b(?:ebitda|operating profit)\b/i, 'EBITDA'],
@@ -186,10 +188,13 @@ const GUIDANCE_RAISE_RE = /\b(?:rais(?:ed|es|ing)|upgrad(?:ed|es|ing)|hik(?:ed|e
 export const isCapitalRaise = (text: string): boolean => CAPITAL_RAISE_RE.test(text || '');
 export const isReiteration = (text: string): boolean => /\b(reiterat\w*|reaffirm\w*|maintain\w*|unchanged|re-?stat\w*)\b/i.test(text || '');
 /** true when the text says the GUIDANCE was raised (not funds, not a reiteration) */
+/** zzz1267: the sentence itself says the figure did not change ("(Unchanged)", "reiterated", "reaffirm", "confirms ... guidance", "stick to our guidance"). */
+export const saysUnchanged = (text: string): boolean => /\b(?:unchanged|reiterat\w*|reaffirm\w*|confirm(?:s|ed|ing)?\b[^.]{0,40}\bguidance|stick(?:ing)? to (?:our|the|its) guidance)\b/i.test(text || '');
 export function textSaysGuidanceRaised(text: string): boolean {
   const t = text || '';
   if (!GUIDANCE_RAISE_RE.test(t)) return false;
-  if (isReiteration(t) && !/\b(raised|upgraded|hiked|lifted)\b[^.]{0,40}\b(guidance|target|outlook)/i.test(t)) return false;
+  // zzz1267: "raising revenue growth guidance to 4.5–5.5% and reaffirming organic growth" is a raise (the -ing / -es forms were missed)
+  if (isReiteration(t) && !/\b(rais(?:ed|es|ing)|upgrad(?:ed|es|ing)|hik(?:ed|es|ing)|lift(?:ed|s|ing)|increas(?:ed|es|ing))\b[^.]{0,40}\b(guidance|target|outlook)/i.test(t)) return false;
   return true;
 }
 
@@ -210,6 +215,22 @@ export function compareVersions(prev: GuVersionIn, cur: GuVersionIn): { kind: 'A
 }
 const snap = (v: GuVersionIn): GuVersionSnapshot => ({ date: v.date, low: v.low, high: v.high, absoluteLow: v.absLow, absoluteHigh: v.absHigh, unit: v.unit, display: v.display, source: v.source });
 const amtOf = (v: GuVersionIn): string | null => (v.absLow != null && v.unit ? amountText({ value: v.absHigh ?? v.absLow, valueLow: v.absHigh != null && v.absHigh !== v.absLow ? v.absLow : undefined, unit: v.unit }) : null);
+const SCALE_MULT: Record<string, number> = { LAKH: 1e5, CRORE: 1e7, THOUSAND: 1e3, MILLION: 1e6, BILLION: 1e9 };
+const moneyOf = (v: GuVersionIn): { cur: string; amt: number } | null => {
+  if (v.absLow == null && v.absHigh == null) return null;
+  const u = parseUnit(v.unit); if (!u.currency || !u.scale) return null;
+  return { cur: u.currency, amt: ((v.absLow ?? v.absHigh) as number + ((v.absHigh ?? v.absLow) as number)) / 2 * SCALE_MULT[u.scale] };
+};
+/**
+ * zzz1267: an earlier "version" whose amount is more than 4x away from the current amount (same currency) is a different figure
+ * (a segment, a quarter, a fragment: EXLS "$28–32M" beside full-year revenue of $2.43B), not an earlier value of this guidance.
+ * No company revises one year's guidance four-fold. The current version is the LAST element and is always kept.
+ */
+export function sameMeasureAs(prev: GuVersionIn, cur: GuVersionIn): boolean {
+  const a = moneyOf(prev), b = moneyOf(cur);
+  if (!a || !b || a.cur !== b.cur || a.amt <= 0 || b.amt <= 0) return true;
+  const r = a.amt / b.amt; return r >= 0.25 && r <= 4;
+}
 /** The labelled fact 'revision vs prior guidance' (kept apart from growth vs prior-year actual). */
 export function revisionVsPriorOf(prev: GuVersionIn | null, cur: GuVersionIn): GuRevisionVsPrior | null {
   if (!prev) return null;

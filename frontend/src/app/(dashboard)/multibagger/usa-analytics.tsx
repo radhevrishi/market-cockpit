@@ -10,6 +10,9 @@ import { ACCENT, BORDER, CARD_BG, F, GREEN, MUTED, ORANGE, PURPLE, RED, TEXT, YE
 import { USA_STORAGE_KEY } from './mem-cache';
 import { rewardedWhy } from '@/lib/rewarded';   // zzz1262
 
+/** zzz1268: results are due within 7 days. A date already PAST (negative days) is not "soon" — it used to count as soon. */
+const earningsSoon = (d: number | null | undefined): boolean => typeof d === 'number' && d >= 0 && d <= 7;
+
 export function USAAnalytics() {
   // Live USA dataset — single source of truth read from LS, refreshed on
   // every relevant event so this tab never shows stale data.
@@ -66,7 +69,7 @@ export function USAAnalytics() {
   const prevScoreMap = React.useMemo<Record<string, number>>(() => {
     if (typeof window === 'undefined') return {};
     try { return JSON.parse(localStorage.getItem('mb_usa_prev_scores_v1') || '{}'); } catch { return {}; }
-  }, [rows.length]);
+  }, [rows]);   // zzz1268: a re-upload of the same size must re-read the baseline
 
   const empty = rows.length === 0;
   const F2 = F;
@@ -83,7 +86,7 @@ export function USAAnalytics() {
     const acceleratingCount = rows.filter(r => r.accelSignal === 'ACCELERATING').length;
     const fcfDivCount = rows.filter(r => r.fcfOpDivergence).length;
     const postRunCount = rows.filter(r => r.postRunStretched).length;
-    const earningsCloseCount = rows.filter(r => (r.earningsProximityDays ?? 999) <= 7).length;
+    const earningsCloseCount = rows.filter(r => earningsSoon(r.earningsProximityDays)).length;
     const totalMcapB = rows.reduce((s, r) => s + (r.marketCapB || 0), 0);
     const avgMcapB = n ? totalMcapB / n : 0;
     // Grade distribution
@@ -161,7 +164,7 @@ export function USAAnalytics() {
       .filter(r => (r.piotroskiFScore ?? -1) >= 6)
       .filter(r => !r.fcfOpDivergence)
       .filter(r => !r.postRunStretched)
-      .filter(r => (r.earningsProximityDays ?? 999) > 7)
+      .filter(r => !earningsSoon(r.earningsProximityDays))
       // zzz1262 — "already rewarded" (up 40%+ in 3 months and the year is not down — lib/rewarded): such a name stays on
       // the list but goes below every name that has not run yet; the chip on its row says why.
       .map(r => ({ r, rewarded: rewardedWhy({ p3m: (r as any).perf3m, p1y: (r as any).perf1y }).rewarded === true }))
@@ -174,7 +177,7 @@ export function USAAnalytics() {
     // appear first — those are the most dangerous because the user is
     // most likely to act on them without realising the flag).
     const atRiskRows = [...rows]
-      .filter(r => r.fcfOpDivergence || r.postRunStretched || (r.earningsProximityDays ?? 999) <= 7)
+      .filter(r => r.fcfOpDivergence || r.postRunStretched || earningsSoon(r.earningsProximityDays))
       .sort((a, b) => (b.score || 0) - (a.score || 0))
       .slice(0, 12);
     return {
@@ -268,7 +271,7 @@ export function USAAnalytics() {
                 const flags: Array<{ label: string; color: string }> = [];
                 if (r.fcfOpDivergence) flags.push({ label: 'FCF≠OP', color: RED });
                 if (r.postRunStretched) flags.push({ label: 'STRETCHED', color: ORANGE });
-                if ((r.earningsProximityDays ?? 999) <= 7) flags.push({ label: `ER ${r.earningsProximityDays}d`, color: YELLOW });
+                if (earningsSoon(r.earningsProximityDays)) flags.push({ label: `ER ${r.earningsProximityDays}d`, color: YELLOW });
                 const d = getDecision(r.symbol, 'US');
                 return (
                   <div key={r.symbol} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: '#0a0a0f', borderRadius: 6 }}>

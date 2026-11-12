@@ -103,7 +103,7 @@ export function checkUniverseInvariants(bundle: GuInvariantBundle): GuInvariantV
       if (p.revision === 'RAISED' && !hadRaiseStep && !textSaysGuidanceRaised(stmt) && (isCapitalRaise(stmt) || isReiteration(stmt))) v('RAISE_FROM_REITERATION_OR_CAPITAL_RAISE', r, p, 'A reiteration or a capital raise is marked RAISED.');
       // growth basis wording and consistency
       if (/\(implied\)/.test(p.display)) v('BARE_IMPLIED', r, p, 'The display says (implied) without a basis.');
-      if (p.growthType === 'DERIVED' && !/derived: /.test(p.display)) v('DERIVED_NO_BASIS_IN_DISPLAY', r, p, 'A derived growth display does not show its amounts.');
+      if (p.growthType === 'DERIVED' && !/derived: |worked out from /.test(p.display)) v('DERIVED_NO_BASIS_IN_DISPLAY', r, p, 'A derived growth display does not show its amounts.');
       if (p.sourceConflict && p.sources.length < 2) v('CONFLICT_WITHOUT_TWO_SOURCES', r, p, 'sourceConflict is set but fewer than two sources are stored.');
     }
   }

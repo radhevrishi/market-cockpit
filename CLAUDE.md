@@ -4173,3 +4173,22 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
     ASTRAMICRO, ADANIPORTS amount → percent); 5 records the server itself flags RAISE_FROM_REITERATION still shown as RAISED (ITW, EW, R,
     COLM, SLDE); a "raise" to a smaller decline shown with a minus (PNR, UTMD); DTE listed under DTE and DTB; 611 US FY26 records carry a
     placeholder period end 2027-03-01; table text used as the statement (CGNX, DAVE, XPRO, HLMN); 136 DERIVED_NO_BASIS invariants.
+- zzz1266–1268 (12 Nov): (a) Guidance lists: `getUniverseBundle` is single-flight (concurrent first visitors share ONE build) and
+  boot-warm fetches the page's two list URLs, so the first visit after a deploy is not an 18 s rebuild.
+  (b) Guidance revision truth (`guidance-universe.ts` pointOf, after `revPrior`): the point's OWN sentence decides last — a
+  reiteration / "(Unchanged)" / capital raise is never RAISED unless this figure itself moved up (a raise of another measure in the
+  same filing used to carry over: COLM net sales, SLDE net income); a first sighting that says "unchanged / reiterated / confirms
+  guidance" is MAINTAINED (`saysUnchanged`). `textSaysGuidanceRaised` reads "raising … guidance" beside "reaffirming" (ITW).
+  `sameMeasureAs`: an earlier amount > 4x away from the current one is another measure and leaves priors + versions (EXLS "$28–32M").
+  A CAGR worked out from a far target is not compared with an earlier total change (`totalVsYearly`). History step shows amount →
+  amount (`stepNext`). `isLowBoundOnly`: "+16% +17%" table columns are not "+16%+". Operating cash flow labels are their own family
+  (flags CFO filed as PAT). Invariant DERIVED_NO_BASIS accepts "worked out from". One US company under two symbols (DTE / DTB) is
+  one row — ONLY when the name starts with the kept symbol and the other has the same length + first two letters; two different
+  tickers are otherwise never merged (zzz848 test). Not changed: US `periodEnd` 1 March next year is the EXPIRY estimate
+  (`periodInferred` says so); a narrower decline (−7% → −3%) stays RAISED; HLMN-type table rows need a re-read.
+  (c) Multibagger: `op-leverage-cluster` reads India field names (`withIndiaNames`; India rows could not pass 54, tier needs 65);
+  analytics decisions via `decisionLookup` per market; AVOID / top-3 / baselines / rewarded look-ups keyed by market; "data gap"
+  is India-only (US hard-capped names reach AVOID); HIGH flag without kind = structural; `earningsSoon` (0–7 days, a past date is
+  not soon); guidance mode ceilings = scorer's (DECELERATING 62, no MONITOR 45 cap, no step-up under a critical / structural flag);
+  survival strip counts the final red-flag list. Checked and already right: India grade = worse of rank and score grade (zzz379).
+  Left: US momentum tilt can move the number ≤ 5 points inside its grade band; R40 cap input vs shown R40 differ by design (annual vs quarterly).

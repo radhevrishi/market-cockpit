@@ -203,7 +203,30 @@ function detectDowngrades(row: any): string[] {
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
-export function computeClusterScore(row: any): ClusterResult {
+/**
+ * zzz1268: India rows name their figures differently (opm / opmPrev / yoySalesGrowth / salesGrowth3y / yoyProfitGrowth / fcfAbsolute).
+ * The score read only the US names, so for every India row margin inflection was 0 and utilisation stopped at ROCE: the highest
+ * reachable score was 54 and the HIGH CONVICTION tier (65) could never be reached. The India names are read as stand-ins here:
+ * this year's operating margin against last year's, and profit growth against sales growth for operating leverage.
+ * `capex3yr` on an India row is a rupee amount, not a % of sales, so it is no longer read as "capex ÷ sales".
+ */
+function withIndiaNames(row: any): any {
+  if (!row || typeof row !== 'object') return row;
+  const pick = (...v: unknown[]) => v.find((x) => typeof x === 'number' && Number.isFinite(x));
+  return {
+    ...row,
+    opmTtm: pick(row.opmTtm, row.opm),
+    opmAnn: pick(row.opmAnn, row.opmPrev),
+    yoySalesPct: pick(row.yoySalesPct, row.salesGrowthQtr, row.yoySalesGrowth),
+    salesGrowth3yr: pick(row.salesGrowth3yr, row.salesCagr3, row.salesGrowth3y, row.revCagr),
+    ebitdaGrowthYoy: pick(row.ebitdaGrowthYoy, row.ebitdaCagr3, row.yoyProfitGrowth, row.profitCagr),
+    fcfPerShareTtm: pick(row.fcfPerShareTtm, row.fcfMarginAnn, row.fcfAbsolute, row.fcfYield),
+    capex3yr: undefined,
+  };
+}
+
+export function computeClusterScore(rowIn: any): ClusterResult {
+  const row = withIndiaNames(rowIn);
   // PATCH 0586 — DATA_INCOMPLETE handling. User reported UTIL 4 / MARG 0
   // across every row even on the seed names. Root cause: the formula was
   // scoring rows that lacked the key fundamentals at all, producing

@@ -24,7 +24,7 @@ import {
 } from './guidance-config';
 import {
   FAMILY_OF, amountText, buildHistory, claimTypeOf, daysBetween, deriveGrowth, derivedDp, extractMetricLabel, familyOfLabel, fnum, isCapitalRaise, isReiteration, isStale, nonGuidanceReason, normPeriod, parseUnit,
-  pctText, periodFacts, r0, r1, revisionVsPriorOf, sameMoneyBasis, sameValue, sg, textSaysGuidanceRaised, verificationStateOf, type GuVersionIn,
+  pctText, periodFacts, r0, r1, revisionVsPriorOf, sameMoneyBasis, sameMeasureAs, saysUnchanged, sameValue, sg, textSaysGuidanceRaised, verificationStateOf, type GuVersionIn,
 } from './guidance-universe-integrity';
 export { normPeriod, amountText, pctText, PLAUSIBLE_REVENUE_GROWTH_PCT, REPORTING_LAG_DAYS, REGRESSION_TOLERANCE_PP, PRIOR_NEIGHBOURHOOD_PP };
 import { buildCompanyIndex, normCompanyName } from './guidance-upgrades-candidates';
@@ -808,7 +808,10 @@ function revisionFor(it: Item, history: Prior[]): GuUniverseRecord['revision'] {
   const cur = mid(it.low, it.high);
   const priors = history.filter((p) => p.low != null).sort((a, b) => a.date.localeCompare(b.date));
   const last = priors[priors.length - 1];
-  const numeric = cur != null && last ? revisionOf(mid(last.low, last.high), cur, false) : null;
+  // zzz1267: a yearly rate worked out from a far target (CAGR) is not compared with an earlier TOTAL change ("+100% by FY31" vs "16.5% a year")
+  const lastMid = last ? mid(last.low, last.high) : null;
+  const totalVsYearly = !!it.cagrFromBase && lastMid != null && cur != null && lastMid >= 50 && lastMid >= cur * 2.5;
+  const numeric = cur != null && last && !totalVsYearly ? revisionOf(lastMid, cur, false) : null;
   if (it.gc && it.isPrimary) {
     const r = it.gc.revision;
     if (r === 'RAISED' && noRaiseWords && numeric !== 'RAISED') return isCapitalRaise(stmt) && !isReiteration(stmt) ? 'NONE' : 'MAINTAINED';
@@ -1062,6 +1065,14 @@ function pointOf(it: Item, history: Prior[], ps: GuPeriodInfo, x: PointCtx): GuP
   const hist = buildHistory(ver, x.lifecycle);
   const lastStep = hist[hist.length - 1];
   const revPrior = lastStep && lastStep.from ? revisionVsPriorOf(toVersionIn(lastStep.from), toVersionIn(lastStep.to)) : null;
+  // zzz1267: the point's OWN sentence decides last. A reiteration ("reiterated", "(Unchanged)", "reaffirming") or a capital raise is never shown as
+  // RAISED unless this figure itself moved up against its earlier value — a raise of ANOTHER measure in the same filing does not carry over
+  // (Columbia: EPS raised, net sales "(Unchanged)"; Slide: net income "reiterated"). A first sighting that says "unchanged" is MAINTAINED, not new.
+  {
+    const stmt = it.statement || ''; const movedUp = revPrior?.direction === 'RAISED' || hist.some((h) => h.revision === 'RAISED');
+    if (revision === 'RAISED' && !movedUp && !textSaysGuidanceRaised(stmt) && (isCapitalRaise(stmt) || isReiteration(stmt))) revision = isCapitalRaise(stmt) && !isReiteration(stmt) ? 'NONE' : 'MAINTAINED';
+    else if ((revision === 'INITIAL' || revision === 'NONE') && saysUnchanged(stmt) && !textSaysGuidanceRaised(stmt) && !isCapitalRaise(stmt) && (!revPrior || revPrior.direction === 'MAINTAINED')) revision = 'MAINTAINED';
+  }
   const gvp: GuGrowthVsPriorYear | null = growthType === 'EXPLICIT' && low != null ? { type: 'EXPLICIT', low, mid: (low + (high ?? low)) / 2, high: high ?? low, display: pctText(low, open ? null : high === low ? null : high, open), baseLabel: null, basis: 'stated_by_company' }
     : growthType === 'DERIVED' && derivation && derivation.basis === 'absolute_vs_prior_year_actual' ? { type: 'DERIVED', low: derivation.growthLow, mid: derivation.growthMid, high: derivation.growthHigh, display: `${pctShown} ${basisLabel}`, baseLabel, basis: derivation.basis }
     : growthType === 'IMPLIED' && low != null ? { type: 'IMPLIED', low, mid: (low + (high ?? low)) / 2, high: high ?? low, display: `${pctShown} (${basisLabel})`, baseLabel, basis: growthBasis } : null;
@@ -1085,6 +1096,11 @@ function pointOf(it: Item, history: Prior[], ps: GuPeriodInfo, x: PointCtx): GuP
     calculationType: calcType, verificationStatus: verStatus, freshness: freshnessOf(ago).tier, wording: guidanceWording(verStatus, calcType), eventType: changeType,
   };
 }
+/** zzz1267: when the earlier value is an AMOUNT, the new value leads with its amount too ("₹43,000–45,000 Cr → ₹44,000–46,000 Cr (+14–19%)"), never amount → percent. */
+const stepNext = (last: Prior | undefined, abs: Item['abs'], display: string): string => {
+  if (!last?.abs || !abs) return display;
+  const amt = amountText(abs); return display.includes(amt) ? display : `${amt} (${display})`;
+};
 const fmtPrior = (p: Prior) => { const pc = p.low == null ? null : pctText(p.low, p.high === p.low ? null : p.high, false); return p.abs ? `${amountText(p.abs)}${pc ? ` (about ${pc})` : ''}` : pc ?? 'no %'; };
 
 function companyOf(base: Item, all: Item[], pt: GuPoint, key: string): GgCompany {
@@ -1097,7 +1113,7 @@ function companyOf(base: Item, all: Item[], pt: GuPoint, key: string): GgCompany
     period: x.period, periodKind: x.pkind, organic: x.organic, basis: 'UNSTATED', originalStatement: x.statement, unit: '%',
   } as GgGuidancePoint));
   const history: GgLedgerRow[] = [...pt.priors.map((p): GgLedgerRow => ({ date: p.date, period: base.period, metric: base.metric, old: null, next: fmtPrior(p), revision: 'INITIAL', source: p.note || 'Earlier guidance', reason: p.note || '', status: 'SUPERSEDED' })),
-    { date: base.src.date || '', period: base.period, metric: base.metric, old: pt.priors.length ? fmtPrior(pt.priors[pt.priors.length - 1]) : null, next: pt.display, revision: pt.revision === 'NONE' ? 'INITIAL' : (pt.revision as GgRevision), source: base.src.name, reason: '', status: 'ACTIVE' }];
+    { date: base.src.date || '', period: base.period, metric: base.metric, old: pt.priors.length ? fmtPrior(pt.priors[pt.priors.length - 1]) : null, next: stepNext(pt.priors[pt.priors.length - 1], base.abs, pt.display), revision: pt.revision === 'NONE' ? 'INITIAL' : (pt.revision as GgRevision), source: base.src.name, reason: '', status: 'ACTIVE' }];
   const src = srcRefOf(base);
   const organicWord = base.organic === 'ORGANIC' ? 'Organic' : base.organic === 'ACQUISITION_LED' ? 'Acquisition-led' : base.organic === 'MIXED' ? 'Organic + acquisition' : 'Organic mix unknown';
   return {
@@ -1194,8 +1210,11 @@ export function buildUniverse(live: GgCompany[], ledgerRows: Array<{ market: 'IN
     const pf = periodFacts(win.period, win.pkind, { context: win.periodContext, statement: win.statement, cumulativeYears: win.cumulativeYears });
     const ps = periodStatusOf(pf.contextApplied ? pf.effectivePeriod : win.period, win.pkind, win.market, win.src.date || (win.gc?.announcedAt ?? null), now, win.statement);   // zzz1118
     if (ps.status === 'EXPIRED') { pushInactive(e, win, 'EXPIRED', ps.reason, { periodEnd: ps.end ? ps.end.toISOString().slice(0, 10) : null }); continue; }
-    const history: Prior[] = [...win.priors, ...rest.map((l) => ({ date: l.src.date || '', low: l.low, high: l.high, note: l.src.name, abs: l.abs })).filter((p) => p.date)].filter((p) => p.date);
-    const versions: GuVersionIn[] = [...win.priors.map((p) => versionOfPrior(p, win.abs?.unit ?? null)), ...rest.map(versionOfItem), versionOfItem(win)];
+    // zzz1267: an earlier figure more than 4x away from the current amount is another measure (a segment, a quarter), not an earlier value of this guidance
+    const winVer = versionOfItem(win);
+    const sameMeasurePrior = (p: Prior): boolean => sameMeasureAs(versionOfPrior(p, win.abs?.unit ?? null), winVer);
+    const history: Prior[] = [...win.priors, ...rest.map((l) => ({ date: l.src.date || '', low: l.low, high: l.high, note: l.src.name, abs: l.abs })).filter((p) => p.date)].filter((p) => p.date && sameMeasurePrior(p));
+    const versions: GuVersionIn[] = [...win.priors.filter(sameMeasurePrior).map((p) => versionOfPrior(p, win.abs?.unit ?? null)), ...rest.map(versionOfItem).filter((v) => sameMeasureAs(v, winVer)), winVer];
     const conflict = losers.length > 0;
     const sources: GuSourceEntry[] = [srcEntry(win, tierOf(win) <= 2 ? 'PRIMARY' : 'OTHER'), ...losers.map((l) => srcEntry(l, tierOf(l) >= 3 ? 'MEDIA_CLAIM' : 'OTHER'))];
     for (const c of win.confirmedBy || []) { const t = classifySourceTier({ rank: win.src.rank, type: c.type, name: c.name, url: c.url }).tier; sources.push({ name: c.name, type: c.type, url: c.url, date: c.date, tier: t, tierLabel: TIER_LABEL[t], value: 'reiterated', low: null, high: null, absolute: null, role: t <= 2 ? 'PRIMARY' : 'OTHER' }); }
@@ -1227,6 +1246,36 @@ export function buildUniverse(live: GgCompany[], ledgerRows: Array<{ market: 'IN
     const keep = mine.filter((x) => !has.has(`${x.it.metric}|${normPeriod(x.it.period)}`));
     for (const x of mine) if (!keep.includes(x)) pushInactive(a, x.it, 'SUPERSEDED', `Duplicate of ${canon[0].it.company} (same company, metric and period); the canonical record is kept.`, { supersededBy: `${canon[0].it.company}` });
     if (keep.length) activeByEntity.set(a, keep); else { activeByEntity.delete(a); dupOf.delete(a); }
+  }
+  // zzz1267: ONE row per listed company. Two RESOLVED tickers in one market with the very same company name are one company under two
+  // symbols (DTE Energy filed under DTE and under DTB, its debenture symbol). The symbol that the name starts with wins. Figures the kept symbol does not hold move to it; figures it already holds are not shown twice.
+  {
+    const byName = new Map<string, string[]>();
+    for (const e of Array.from(activeByEntity.keys())) {
+      if (isUnresolved(e)) continue;
+      for (const n of Array.from(nameSets.get(e) || [])) { if (n.length < 4) continue; const k = `${e.split(':')[0]}|${n}`; const l = byName.get(k) || []; if (!l.includes(e)) l.push(e); byName.set(k, l); }
+    }
+    for (const [k, list] of Array.from(byName.entries())) {
+      const live = list.filter((e) => activeByEntity.has(e)); if (live.length < 2) continue;
+      const squashed = k.split('|')[1].replace(/ /g, '');
+      const rank = (e: string): [number, number, number, string] => { const t = e.split(':')[1].toLowerCase(); return [squashed.startsWith(t) ? 0 : 1, -(activeByEntity.get(e) || []).length, t.length, t]; };
+      live.sort((x, y) => { const a = rank(x), b = rank(y); return a[0] - b[0] || a[1] - b[1] || a[2] - b[2] || a[3].localeCompare(b[3]); });
+      const canonKey = live[0]; const canon = activeByEntity.get(canonKey)!;
+      // Two different tickers are otherwise never merged (zzz848). Only this narrow, evidenced case: a US company whose NAME starts with
+      // the kept symbol (DTE Energy → DTE), and another symbol of the same length that shares its first two letters (DTB).
+      const ct = canonKey.split(':')[1].toLowerCase();
+      if (canonKey.split(':')[0] !== 'US' || ct.length < 2 || !squashed.startsWith(ct)) continue;
+      for (const other of live.slice(1)) {
+        const ot = other.split(':')[1].toLowerCase();
+        if (ot.length !== ct.length || ot.slice(0, 2) !== ct.slice(0, 2)) continue;
+        const has = new Set(canon.map((x) => `${x.it.metric}|${normPeriod(x.it.period)}`));
+        for (const x of activeByEntity.get(other) || []) {
+          if (has.has(`${x.it.metric}|${normPeriod(x.it.period)}`)) pushInactive(other, x.it, 'SUPERSEDED', `Duplicate of ${canon[0].it.company} (${canonKey.split(':')[1]}): the same company under another symbol; the record under its main symbol is kept.`, { supersededBy: canon[0].it.company });
+          else { canon.push(x); has.add(`${x.it.metric}|${normPeriod(x.it.period)}`); }
+        }
+        activeByEntity.delete(other); dupOf.delete(other);
+      }
+    }
   }
   // zzz854: event statuses per company + metric (any period), matched by market + ticker
   const evIdx = new Map<string, GuEventStatus[]>();

@@ -536,8 +536,9 @@ export function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(
     // Re-apply governance watch cap (Patch 0313)
     if ((r as any).governanceWatch)  newScore = Math.min(newScore, 65);
     // Re-apply decelerating + monitor bucket caps
-    if (r.accelSignal === 'DECELERATING') newScore = Math.min(newScore, 52);
-    if (r.bucket === 'MONITOR')           newScore = Math.min(newScore, 45);
+    // zzz1268: the same ceiling as the scorer (62). This still said 52 and still capped the MONITOR bucket at 45 — a cap the scorer
+    // dropped — so switching guidance on pulled a 70 down to 45 with no guidance data at all.
+    if (r.accelSignal === 'DECELERATING') newScore = Math.min(newScore, 62);
 
     // PATCH 0337 — Mirror the new op-lev <1.0 and cyclical-peak caps so
     // guidance bonus can't slip an A-grade past them.
@@ -571,7 +572,8 @@ export function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(
     const GRADE_DOWN_MAP: Record<Grade, Grade> = {'A+':'A','A':'B+','B+':'B','B':'C','C':'D','D':'D','NR':'NR'};
 
     if (guidanceScore !== undefined && guidanceScore !== -1) {
-      if (guidanceScore >= 0.7 && r.accelSignal === 'ACCELERATING') {
+      // zzz1268: no step up for a name held down by a critical or structural red flag (its score ceiling is the point of the flag)
+      if (guidanceScore >= 0.7 && r.accelSignal === 'ACCELERATING' && !critG && structHighG === 0) {
         newGrade = GRADE_UP_MAP[newGrade] as Grade;
       } else if (guidanceScore <= 0.3 && r.accelSignal === 'DECELERATING') {
         newGrade = GRADE_DOWN_MAP[newGrade] as Grade;

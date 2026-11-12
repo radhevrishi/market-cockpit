@@ -38,7 +38,7 @@ export interface GuServiceDeps {
   getExtracted?: (now: Date) => Promise<GuExtractedIn>;
 }
 let mem: GuBundle | null = null;
-export function resetUniverseMemory(): void { mem = null; }
+export function resetUniverseMemory(): void { mem = null; building = null; }
 
 export function getSeedRows(raw: unknown = seedFile): { rows: GuSeedRow[]; dropped: number } {
   try { const r = loadSeedRows(raw); return { rows: r.rows, dropped: r.dropped.length }; } catch { return { rows: [], dropped: 0 }; }
@@ -50,9 +50,19 @@ const nonEmpty = (b: GuUniverseBuild | null | undefined) => !!b && ((b.records?.
 const EMPTY_SCAN = { note: 'Live scan unavailable; universe served from stored data.', complete: false } as unknown as GgResponse['scan'];
 
 /** Both markets are always built together so the India and USA summary buckets are complete whichever market filter the page applies. */
+let building: Promise<GuBundle> | null = null;
 export async function getUniverseBundle(t0: number, force = false, deps: GuServiceDeps = {}): Promise<GuBundle> {
   const useMem = deps.useMemory ?? !deps.getLive;
   if (useMem && mem && !force && Date.now() - mem.at <= MEM_TTL_MS) return mem;
+  // zzz1266 — ONE build at a time. Two page loads (or a page load during the boot warm-up) each started their own ~19 s cold
+  // build of the same universe; the second now waits for the first and gets the same bundle. A forced build is never shared.
+  if (!useMem || force) return buildUniverseBundle(t0, force, deps, useMem);
+  if (building) return building;
+  const p = buildUniverseBundle(t0, force, deps, useMem).finally(() => { if (building === p) building = null; });
+  building = p;
+  return p;
+}
+async function buildUniverseBundle(t0: number, force: boolean, deps: GuServiceDeps, useMem: boolean): Promise<GuBundle> {
   const now = deps.now ? deps.now() : new Date();
   const seed = getSeedRows(deps.seed ?? seedFile);
   const kg = deps.kvGet ?? kvGet; const ks = deps.kvSet ?? kvSet;

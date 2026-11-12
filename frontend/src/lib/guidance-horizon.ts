@@ -70,7 +70,7 @@ export function isLowBoundOnly(text: string, low: number | null | undefined): bo
   const n = String(low).replace('.', '\\.');
   const t = String(text || '').replace(/,/g, '');
   return new RegExp(`(?:at least|at a minimum|minimum(?: of)?|min\\.?|upwards? of|more than|over|above|in excess of|north of|not less than|no less than)\\s+(?:a\\s+)?(?:about\\s+|around\\s+|~\\s*)?${n}(?:\\.0+)?\\s*%`, 'i').test(t)
-    || new RegExp(`(?:^|[^\\d.])${n}(?:\\.0+)?\\s*%\\s*(?:\\+|plus(?! or minus)\\b|or (?:more|higher|above)|and above|and more)`, 'i').test(t)
+    || new RegExp(`(?:^|[^\\d.])${n}(?:\\.0+)?\\s*%\\s*(?:\\+(?!\\s*\\d)|plus(?! or minus)\\b|or (?:more|higher|above)|and above|and more)`, 'i').test(t)
     || new RegExp(`(?:^|[^\\d.])${n}(?:\\.0+)?\\s*%[^.]{0,40}\\b(?:at the minimum|at a minimum|minimum)\\b`, 'i').test(t);
 }
 
