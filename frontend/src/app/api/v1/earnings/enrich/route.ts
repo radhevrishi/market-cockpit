@@ -12,6 +12,7 @@
 // ~2-5s total when cold, <1s when warm (KV-cached).
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { pickScreenerHit } from '@/lib/screener-slug-pick';
 import { RP_LATEST_KEY, RP_HAVE_KEY, overlayResultsPdf } from '@/lib/india-results-pdf';   // zzz879
 import { NextResponse } from 'next/server';
 import { isQuarterEndStale, yoyFromDatedSeries, sameFigure } from '@/lib/india-eo-card-data';  // zzz820
@@ -429,10 +430,11 @@ async function fetchScreenerForSymbol(symbol: string): Promise<any | null> {
 
 /** zzz876 — the Screener URL slug for a ticker whose own symbol page does not exist (BSE code for BSE-primary names). KV cached.
  *  Direct request first (Screener's search answers this server — the company-name lookup uses it), then the relay. */
+const SLUG_RULE_V = 4;   // zzz1271: bump when the rule that accepts a search result changes
 const slugWhy = new Map<string, string>();
 let slugQueue: Promise<void> = Promise.resolve();   // zzz876: why a slug lookup came back empty (shown in _screener_slug)
 async function resolveScreenerSlug(symbol: string): Promise<string | null> {
-  const key = `screener-slug:v3:${symbol.toUpperCase()}`;
+  const key = `screener-slug:v4:${symbol.toUpperCase()}`;   // zzz1271: v3 held first-result guesses (SHYAM → SHYAMMETL)
   if (isRedisAvailable()) {
     try { const c = await kvGet<string>(key); if (c === '-') return null; if (c && typeof c === 'string') return c; } catch {}
   }
@@ -461,9 +463,8 @@ async function resolveScreenerSlug(symbol: string): Promise<string | null> {
       const list: any[] | null = Array.isArray(json) ? json : Array.isArray(json?.companies) ? json.companies : null;
       if (!list) { slugWhy.set(symbol, `${via} answered with no list`); continue; }   // a challenge / HTML page is not an answer
       answered = true;
-      const symUp = symbol.toUpperCase();
-      const slugs = list.map((c) => /^\/company\/([^/]+)\//.exec(String(c?.url || ''))?.[1] || '').filter(Boolean);
-      slug = slugs.find((x) => x.toUpperCase() === symUp) || slugs[0] || null;
+      // zzz1271: never the first fuzzy result — see lib/screener-slug-pick (another company's figures under this symbol)
+      slug = pickScreenerHit(symbol, list)?.slug || null;
       if (slug) break;
     } catch (e: any) { slugWhy.set(symbol, `${via} ${e?.name === 'TimeoutError' ? 'timeout' : 'network error'}`); }
   }
@@ -1320,7 +1321,7 @@ function isValidSymbol(s: string): boolean {
 //
 // Cache the resolved name in KV for 180 days — company names rarely change.
 async function resolveCompanyNameFromScreenerSearch(symbol: string): Promise<string | null> {
-  const cacheKey = `co-name:v1:${symbol.toUpperCase()}`;
+  const cacheKey = `co-name:v2:${symbol.toUpperCase()}`;   // zzz1271: v1 held first-result names
   if (isRedisAvailable()) {
     try {
       const cached = await kvGet<string>(cacheKey);
@@ -1343,17 +1344,9 @@ async function resolveCompanyNameFromScreenerSearch(symbol: string): Promise<str
     const arr: any[] = Array.isArray(json) ? json : (Array.isArray(json?.companies) ? json.companies : []);
     if (arr.length === 0) return null;
 
-    // Best match priority:
-    //   1. URL path contains /SYMBOL/ exactly (means Screener's symbol equals ours)
-    //   2. Name starts with the symbol letters (acronym-style names)
-    //   3. First result (Screener's default ranking)
+    // zzz1271: the company whose page is this symbol, or the one BSE-code-only company the symbol shortens — never result #1
     const symUp = symbol.toUpperCase();
-    const exact = arr.find((c) => {
-      const u = String(c.url || '').toUpperCase();
-      return u.includes(`/${symUp}/`) || u.endsWith(`/${symUp}`);
-    });
-    const winner = exact || arr[0];
-    const name = String(winner.name || winner.company_name || '').trim();
+    const name = pickScreenerHit(symbol, arr)?.name || '';
     if (!name) return null;
     // Don't cache the bare ticker as the "name" (that means search returned the ticker itself)
     if (name.toUpperCase() === symUp) return null;
@@ -1484,7 +1477,10 @@ async function enrichOneInner(symbol: string, filedHint?: string, bypassCache = 
   if (isRedisAvailable() && !bypassCache) {
     try {
       const cached = await kvGet(cacheKey);
-      if (cached) { _enrichMemPut(cacheKey, cached); return cached; }
+      // zzz1271: an answer read through a screener.in search look-up under the old rule (first fuzzy result) may be ANOTHER company's
+      // figures (SHYAM carried Shyam Metalics). Those stored answers are not used; the name is looked up again under the checked rule.
+      const viaOldSlug = cached && typeof (cached as any)._screener_slug === 'string' && /\(worker /.test((cached as any)._screener_slug) && (cached as any)._slug_rule !== SLUG_RULE_V;
+      if (cached && !viaOldSlug) { _enrichMemPut(cacheKey, cached); return cached; }
     } catch {}
   }
   // PATCH 0514 — Symbol variants for tickers with special chars.
@@ -1946,7 +1942,7 @@ async function enrichOneInner(symbol: string, filedHint?: string, bypassCache = 
   if (out.gap_pct === undefined) out.gap_pct = null;
   if ((out as any).d2_pct === undefined) out.d2_pct = null;
   if ((out as any).move_pct === undefined) out.move_pct = null;
-  if (slugUsed) (out as any)._screener_slug = slugUsed;   // zzz876: visible in the response, so a miss can be explained
+  if (slugUsed) { (out as any)._screener_slug = slugUsed; (out as any)._slug_rule = SLUG_RULE_V; }   // zzz876: visible in the response, so a miss can be explained
   const _needsPrice = filedHint && (
     out.d1_pct == null || out.gap_pct == null ||
     (out as any).d2_pct == null || (out as any).move_pct == null

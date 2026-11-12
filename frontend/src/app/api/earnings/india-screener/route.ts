@@ -1,3 +1,4 @@
+import { pickScreenerHit } from '@/lib/screener-slug-pick';
 import { NextResponse } from 'next/server';
 import { fetchCompanyFinancialResults } from '@/lib/nse';
 import { rateLimitResponse } from '@/lib/rateLimit';
@@ -380,10 +381,11 @@ export async function GET(request: Request) {
         );
         if (searchRes.ok) {
           const results = await searchRes.json();
-          if (Array.isArray(results) && results.length > 0) {
-            const url = results[0].url; // e.g. "/company/523850/"
+          const hit0 = pickScreenerHit(symbol, Array.isArray(results) ? results : []);   // zzz1271: never the first fuzzy result
+          if (hit0) {
+            const url = `/company/${hit0.slug}/`;
             const fallbackUrl = `https://www.screener.in${url}`;
-            debug.warnings.push(`Resolved via Screener search: ${results[0].name} (${url})`);
+            debug.warnings.push(`Resolved via Screener search: ${hit0.name} (${url})`);
             res = await fetch(fallbackUrl, {
               headers: SCREENER_HEADERS,
               signal: AbortSignal.timeout(15000),
@@ -466,7 +468,8 @@ export async function GET(request: Request) {
           );
           if (searchRes.ok) {
             const results = await searchRes.json();
-            for (const candidate of (Array.isArray(results) ? results : []).slice(0, 3)) {
+            const hit1 = pickScreenerHit(symbol, Array.isArray(results) ? results : []);   // zzz1271
+            for (const candidate of (hit1 ? [{ url: `/company/${hit1.slug}/` }] : [])) {
               const url = candidate.url;
               if (!url || typeof url !== 'string') continue;
               for (const variant of [`${url}consolidated/`, url]) {

@@ -1,3 +1,4 @@
+import { pickScreenerHit } from '@/lib/screener-slug-pick';
 import { NextResponse } from 'next/server';
 import { fetchCompanyFinancialResults, fetchStockQuote } from '@/lib/nse';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
@@ -436,7 +437,8 @@ async function resolveScreenerSymbol(nseSymbol: string): Promise<string | null> 
         // Find best match: exact NSE symbol match first, then fuzzy
         const exact = results.find((r: any) => r.url && normalizeSymbol(r.url.replace('/company/', '').replace('/consolidated/', '').replace('/', '')) === normalizeSymbol(nseSymbol));
         const fuzzy = results.find((r: any) => r.url && fuzzyMatch(r.url.replace('/company/', '').replace('/consolidated/', '').replace('/', ''), nseSymbol));
-        const match = exact || fuzzy || results[0];
+        const hitS = pickScreenerHit(nseSymbol, results);   // zzz1271: a fuzzy or first result is another company (SHYAM → SHYAMMETL)
+        const match = exact || (hitS ? { url: `/company/${hitS.slug}/` } : null);
         if (match?.url) {
           const resolved = match.url.replace('/company/', '').replace('/consolidated/', '').replace('/', '');
           // Cache the resolution
@@ -863,7 +865,8 @@ async function fetchFinancialPageHTML(symbol: string, type: 'consolidated' | 'st
         const searchRes = await fetch(searchUrl, { headers, signal: AbortSignal.timeout(5000) });
         if (searchRes.ok) {
           const results = await searchRes.json();
-          const match = Array.isArray(results) ? results.find((r: any) => r.url && r.name && !r.name.includes('DVR') && r.id) : null;
+          const hitD = pickScreenerHit(symbol, Array.isArray(results) ? results : []);   // zzz1271
+          const match = hitD ? { url: `/company/${hitD.slug}/` } : null;
           if (match?.url) {
             const discoveredSym = match.url.replace('/company/', '').replace('/consolidated/', '').replace('/', '');
             console.log(`[Earnings Scan] ${symbol}: discovered screener symbol = ${discoveredSym}`);

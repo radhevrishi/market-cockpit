@@ -4192,3 +4192,18 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   not soon); guidance mode ceilings = scorer's (DECELERATING 62, no MONITOR 45 cap, no step-up under a critical / structural flag);
   survival strip counts the final red-flag list. Checked and already right: India grade = worse of rank and score grade (zzz379).
   Left: US momentum tilt can move the number ≤ 5 points inside its grade band; R40 cap input vs shown R40 differ by design (annual vs quarterly).
+- zzz1269–1271 (12 Nov): (a) SLOW SITE = MEMORY. `lib/heap-profile.ts` + owner-only `/api/v1/ops/heap` (live-memory profile: which
+  code allocated what is still held; `?cpu=N` processor profile; event-loop delay, also in each memory sample as `loop`). It showed
+  547 MB of parsed SEC JSON 13 min after a start: `companyFacts` cached up to 600 whole files (~2 GB) and a US grade build held every
+  filer's full file → heap at its 3 GB ceiling, constant collection, restarts several times a night. Now the cache is bounded by SIZE
+  (60 files / 40 MB text, least recently used out, one download per company at a time) and the US grade keeps `slimCompanyFacts`
+  (data points of the last 5.5 years). Use /api/v1/ops/heap FIRST for any future memory question. Still open: `guidance-upgrades`
+  list for a window not in memory takes 16–25 s and held the thread 12–13 s (hourly `refresh-guidance-upgrades` at :10).
+  (b) WRONG COMPANY ON EO (owner: "reported 2 Nov, showing today"). The results reader took the FIRST result of screener.in's fuzzy
+  search when a symbol had no page: "SHYAM" (a BSE-only small company with a board meeting) got Shyam Metalics' figures, "ARUR" got
+  Karur Vysya Bank's. zzz1264 could not see it — it matched by TICKER. `lib/screener-slug-pick.ts` `pickScreenerHit`: only the
+  symbol's own page, or the single BSE-code-only company whose name the symbol shortens; used by enrich (slug + name; keys
+  `screener-slug:v4`, `co-name:v2`; stored enrich answers read through the old look-up are ignored via `_slug_rule`), fin-fallback,
+  india-screener, earnings-guidance ingest, earnings-scan. NEVER take result #1 of a search as the company. And
+  `india-shown-earlier` also matches by COMPANY NAME + quarter (`byName`, `earlierSightingFor`): a card under another symbol moves
+  to "graded on another day" under the real symbol.

@@ -2,6 +2,7 @@
 // net profit read from each company's screener.in page, for cards where the stock-screener snapshot and the earnings feed have no
 // figure. The stored page from the screener build (Postgres) is used first; otherwise the page is read live (consolidated, then
 // standalone). Memory cache only: 12 h for a found figure, 1 h when nothing was found. Nothing written to Redis.
+import { pickScreenerHit } from '@/lib/screener-slug-pick';
 import { NextRequest, NextResponse } from 'next/server';
 import { dbAvailable, dbQuery } from '@/lib/db';
 import { fetchScreenerHtml } from '@/lib/earnings/screener-fetch';
@@ -43,8 +44,7 @@ async function readOne(t: string, stored: InRaw | null, name?: string): Promise<
       try {
         const res = await fetch(`https://www.screener.in/api/company/search/?q=${encodeURIComponent(q)}`, { headers: SEARCH_HEADERS, signal: AbortSignal.timeout(6000) });
         const list: any[] = res.ok ? await res.json().catch(() => []) : [];
-        const slugs = (Array.isArray(list) ? list : []).map((c) => /^\/company\/([^/]+)\//.exec(String(c?.url || ''))?.[1] || '').filter(Boolean);
-        slug = slugs.find((x) => x.toUpperCase() === t) || slugs[0] || null;
+        slug = pickScreenerHit(t, Array.isArray(list) ? list : [])?.slug || null;   // zzz1271: never the first fuzzy result
         if (slug) break;
         if (!res.ok) last = `company search HTTP ${res.status}`;
       } catch { last = 'company search did not answer'; }

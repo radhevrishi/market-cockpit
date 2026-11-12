@@ -25,6 +25,7 @@
  * 3. Manual GET/POST for re-ingestion
  */
 
+import { pickScreenerHit } from '@/lib/screener-slug-pick';
 import { NextRequest, NextResponse } from 'next/server';
 import { secretFromRequest } from '@/lib/request-secret';   // zzz883: header first, ?secret= only for old callers
 import { kvGet, kvSet, kvSetNX, kvSwap, kvDel } from '@/lib/kv';
@@ -480,9 +481,8 @@ async function bootstrapSymbolFromScreener(symbol: string): Promise<EarningsCach
     );
     if (searchRes.ok) {
       const results = await searchRes.json();
-      const match = Array.isArray(results)
-        ? results.find((r: any) => r.url && !r.name?.includes('DVR'))
-        : null;
+      const hitG = pickScreenerHit(symbol, Array.isArray(results) ? results : []);   // zzz1271: never the first fuzzy result
+      const match = hitG ? { url: `/company/${hitG.slug}/` } : null;
       if (match?.url) {
         const discoverUrl = `https://www.screener.in${match.url}`;
         const discRes = await fetch(discoverUrl, { headers: SCREENER_HEADERS, signal: AbortSignal.timeout(10000) });
