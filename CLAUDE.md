@@ -4207,3 +4207,11 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   india-screener, earnings-guidance ingest, earnings-scan. NEVER take result #1 of a search as the company. And
   `india-shown-earlier` also matches by COMPANY NAME + quarter (`byName`, `earlierSightingFor`): a card under another symbol moves
   to "graded on another day" under the real symbol.
+- zzz1272 (12 Nov): Transformation Radar readability (owner: "more readable, bigger text"). Type scale `RF` in
+  concall-intel/radar-card.tsx (label 11.5 / small 12.5 / body 14 / lead 15 / title 20). Cards: thesis + earnings impact first,
+  evidence quote, "In the numbers" tiles (valuation boilerplate moved to the tooltip — `cleanValuationText`), checks as
+  "N of 6 pass" with the first open gate marked NEXT CHECK, risk + milestone side by side, filing / Company Lab buttons.
+  Page: 22 px title, the 11 coverage counters + coverage note folded under a one-line "Data coverage" summary, bigger
+  filter chips. Shortlist table: 6 columns (#, Company with old business under it via `cleanOldBusiness`, What changes,
+  Potential earnings impact, Proof stage + confidence, Next milestone; key risk on hover and in the card), zebra rows,
+  company links jump to the card. No data or rule changes.

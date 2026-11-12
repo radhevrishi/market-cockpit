@@ -140,7 +140,9 @@ test('09 radar insight: lanes follow the research state; ordinary business is ne
 
 test('10 the page: shortlist table columns, thesis + evidence first, ordinary growth folded', () => {
   const ui = readFileSync(new URL('../../app/(dashboard)/concall-intel/components2.tsx', import.meta.url), 'utf8');
-  for (const h of ['Company', 'Old business', 'What changes', 'Potential earnings impact', 'Proof stage', 'Key risk', 'Next milestone']) assert.ok(ui.includes(`'${h}'`), h);
+  // zzz1272 — the table keeps the decision columns; old business sits under the company, the key risk on hover + the card
+  for (const h of ['Company', 'What changes', 'Potential earnings impact', 'Proof stage', 'Next milestone']) assert.ok(ui.includes(`'${h}'`), h);
+  assert.ok(ui.includes('cleanOldBusiness(t.thesis.oldBusiness)') && ui.includes('Key risk: ${t.thesis.keyRisk}'));
   assert.match(ui, /Operational improvements \/ ordinary growth — not structural transformations/);
   assert.match(ui, /an empty shortlist is a valid answer/);
   const card = readFileSync(new URL('../../app/(dashboard)/concall-intel/radar-card.tsx', import.meta.url), 'utf8');

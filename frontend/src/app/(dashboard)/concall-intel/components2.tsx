@@ -10,7 +10,7 @@ import type { TransformationRadarData, TransformScreenPayload, TransformScreenEn
 import { TF, TFM, TIER_COLOR, CONV_TIER_COLOR } from './constants';
 import { velocityColor } from './helpers';
 import { FeedStatusNote } from './FeedStatusNote';
-import { RadarCard, STATE_META, tierLabel } from './radar-card';   // zzz1214, zzz1224
+import { RadarCard, STATE_META, tierLabel, RF, cleanOldBusiness } from './radar-card';   // zzz1214, zzz1224, zzz1272 type scale
 import { radarDecision, type RadarQueue } from '@/lib/concall-radar-decision';
 
 export function TfSection({ n, title, lede, children }: { n: string; title: string; lede?: ReactNode; children: ReactNode }) {
@@ -507,37 +507,45 @@ export function TransformationScreenerTab() {
   const hiddenByFilters = allEntries.length - scopedEntries.length;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      {/* header */}
-      <div style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '16px 18px' }}>
-        <div style={{ fontSize: 15, fontWeight: 900, color: TF.cyan, letterSpacing: '0.3px' }}>🔭 Transformation Radar — actionable filing shortlist</div>
-        <div style={{ fontSize: 12.5, color: TF.muted, lineHeight: 1.6, marginTop: 6 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {/* header — zzz1272: larger type, the data-coverage counters folded behind a one-line summary */}
+      <div style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 12, padding: '20px 22px' }}>
+        <div style={{ fontSize: 22, fontWeight: 900, color: TF.cyan, letterSpacing: '0.2px' }}>🔭 Transformation Radar — actionable filing shortlist</div>
+        <div style={{ fontSize: RF.body, color: TF.muted, lineHeight: 1.65, marginTop: 8, maxWidth: 1100 }}>
           Reads concall transcripts, investor presentations and results documents. Only management's own words count as proof; each company is checked against its latest results, guidance and valuation. Unread companies are unchecked, not negative.
         </div>
         {/* controls */}
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 }}>
-          <span style={{ fontSize: 10, fontWeight: 800, color: TF.dim, letterSpacing: '0.5px' }}>WINDOW</span>
+          <span style={{ fontSize: RF.label, fontWeight: 900, color: TF.dim, letterSpacing: '0.6px' }}>WINDOW</span>
           {[7, 30, 60, 90].map((d) => (
             <button key={d} onClick={() => setDays(d)} style={{
-              fontSize: 11.5, fontWeight: 800, padding: '5px 12px', borderRadius: 6, cursor: 'pointer',
+              fontSize: RF.small, fontWeight: 800, padding: '6px 15px', borderRadius: 7, cursor: 'pointer',
               border: `1px solid ${days === d ? TF.cyan : TF.border}`,
               background: days === d ? 'color-mix(in srgb, var(--mc-cyan) 13%, transparent)' : 'transparent',
               color: days === d ? TF.cyan : TF.muted,
             }}>{d}d</button>
           ))}
           <button onClick={() => load(days, true)} disabled={loading || building} title="Start a new scan; the last verified results remain until it finishes" style={{
-            fontSize: 11.5, fontWeight: 800, padding: '5px 12px', borderRadius: 6, cursor: loading ? 'wait' : 'pointer',
+            fontSize: RF.small, fontWeight: 800, padding: '6px 15px', borderRadius: 7, cursor: loading ? 'wait' : 'pointer',
             border: `1px solid ${TF.green}`, background: 'color-mix(in srgb, var(--mc-bullish) 10%, transparent)', color: TF.green,
           }}>{building ? '⏳ Rebuilding…' : loading ? '⏳ Loading…' : '↻ Rescan (fresh)'}</button>
           {data && (
-            <span style={{ fontSize: 10.5, color: TF.dim, ...TFM }}>
+            <span style={{ fontSize: RF.small, color: TF.dim, ...TFM }}>
               last scan {new Date(data.generated_at).toLocaleString('en-IN')}
             </span>
           )}
         </div>
         {/* zzz1212 — data health: every number says what it counts; routine notices and covering letters are never "analysed" */}
         {data && fn && (
-          <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(128px, 1fr))', gap: 6 }}>
+          <details style={{ marginTop: 14, background: TF.card2, border: `1px solid ${TF.border}`, borderRadius: 9, padding: '10px 14px' }}>
+          <summary style={{ cursor: 'pointer', fontSize: RF.small, color: TF.text2, lineHeight: 1.6 }}>
+            <b style={{ color: TF.text }}>Data coverage</b>{' · '}read in full <b style={{ color: TF.green }}>{fn.read_full.toLocaleString('en-IN')}</b> of {fn.eligible.toLocaleString('en-IN')} documents
+            {' · '}<b style={{ color: fn.not_yet_read ? TF.amber : TF.green }}>{fn.not_yet_read.toLocaleString('en-IN')}</b> not read yet
+            {fn.with_proof != null && <>{' · '}<b style={{ color: TF.purple }}>{fn.with_proof.toLocaleString('en-IN')}</b> with a confirmed or potential change</>}
+            {' · '}<span style={{ color: data.feed_status?.nse === 'OK' && data.feed_status?.bse === 'OK' ? TF.green : TF.amber }}>NSE {data.feed_status?.nse === 'OK' ? '✓' : '✗'} · BSE {data.feed_status?.bse === 'OK' ? '✓' : '✗'}</span>
+            <span style={{ color: TF.dim }}> — details</span>
+          </summary>
+          <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8 }}>
             {([
               ['Exchange feed', `NSE ${data.feed_status?.nse === 'OK' ? '✓' : '✗'} · BSE ${data.feed_status?.bse === 'OK' ? '✓' : '✗'}`, data.feed_status?.bse === 'OK' && data.feed_status?.nse === 'OK' ? TF.green : TF.amber,
                 data.feed_status?.reason ? `Not complete: ${data.feed_status.reason}` : 'Both exchanges answered'],
@@ -552,31 +560,32 @@ export function TransformationScreenerTab() {
               ['Documents with a signal', fn.with_signal.toLocaleString('en-IN'), TF.dim, 'Documents (not companies) read in full with at least one transformation keyword — a keyword is not proof. Several documents can belong to one company.'],
               ...(fn.with_proof != null ? [['Confirmed or potential change', fn.with_proof.toLocaleString('en-IN'), TF.purple, 'Documents whose evidence sentence shows a structural change — confirmed or potential (research watch). Ordinary business and plans are not counted.'] as [string, string, string, string]] : []),
             ] as const).map(([k, v, c, tip]) => (
-              <div key={k} title={tip} style={{ background: TF.card2, border: `1px solid ${TF.border}`, borderRadius: 7, padding: '6px 9px' }}>
-                <div style={{ fontSize: 14, fontWeight: 900, color: c, ...TFM }}>{v}</div>
-                <div style={{ fontSize: 9.5, color: TF.dim, marginTop: 1 }}>{k}</div>
+              <div key={k} title={tip} style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 8, padding: '9px 12px' }}>
+                <div style={{ fontSize: 18, fontWeight: 900, color: c, ...TFM }}>{v}</div>
+                <div style={{ fontSize: RF.label, color: TF.muted, marginTop: 2 }}>{k}</div>
               </div>
             ))}
           </div>
-        )}
-        {data && (data.coverage_note || (data.concalls_in_feed ?? 0) > 0) && (
-          <div style={{ fontSize: 11, color: fn && fn.not_yet_read > 0 ? TF.amber : TF.muted, marginTop: 8, lineHeight: 1.55 }}>
-            {data.coverage_note ?? `Coverage: ${data.analyzed} of ${data.concalls_in_feed} identified concall filings sampled. This is not a complete market scan; missed companies are not negative calls.`}
-          </div>
+          {(data.coverage_note || (data.concalls_in_feed ?? 0) > 0) && (
+            <div style={{ fontSize: RF.small, color: fn.not_yet_read > 0 ? TF.amber : TF.muted, marginTop: 10, lineHeight: 1.6 }}>
+              {data.coverage_note ?? `Coverage: ${data.analyzed} of ${data.concalls_in_feed} identified concall filings sampled. This is not a complete market scan; missed companies are not negative calls.`}
+            </div>
+          )}
+          </details>
         )}
         {data && !building && fn && fn.not_yet_read > 0 && (
           <div style={{ marginTop: 8, display: 'flex', gap: 9, alignItems: 'center', flexWrap: 'wrap' }}>
             <button type="button" disabled={loading || moreLoading} onClick={() => { void loadMore(); }}
               title="Read the next 40 unread transcripts / presentations now (newest first). This also happens automatically every 20 minutes."
               style={{ border: `1px solid ${TF.border}`, borderRadius: 6, background: TF.card2, color: TF.cyan,
-                padding: '7px 11px', cursor: moreLoading ? 'wait' : 'pointer', fontSize: 11, fontWeight: 800 }}>
+                padding: '8px 14px', cursor: moreLoading ? 'wait' : 'pointer', fontSize: RF.small, fontWeight: 800 }}>
               {moreLoading ? 'Reading…' : `Read next ${Math.min(40, fn.not_yet_read)} unread documents now`}
             </button>
-            {moreNote && <span role="status" style={{ fontSize: 11, color: TF.amber }}>{moreNote}</span>}
+            {moreNote && <span role="status" style={{ fontSize: RF.small, color: TF.amber }}>{moreNote}</span>}
           </div>
         )}
         {building && (
-          <p role="status" aria-live="polite" style={{ color: TF.amber, fontSize: 12, margin: '10px 0 0' }}>
+          <p role="status" aria-live="polite" style={{ color: TF.amber, fontSize: RF.small, margin: '10px 0 0' }}>
             ⏳ Radar scanning in the background. Rechecking every 8 seconds; existing results are retained.
           </p>
         )}
@@ -592,8 +601,8 @@ export function TransformationScreenerTab() {
           neither is the difference between "re-read a thesis I already own"
           and "open a new one", which the radar could not express. */}
       {data && allEntries.length > 0 && (
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
-          <span style={{ fontSize: 10, color: TF.dim, fontWeight: 700, letterSpacing: '0.4px' }}>SHOW</span>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontSize: RF.label, color: TF.dim, fontWeight: 900, letterSpacing: '0.6px' }}>SHOW</span>
           {([null, 'portfolio', 'bench', 'other'] as (SymbolSource | null)[]).map((k) => {
             const on = sourceFilter === k;
             const m = k ? SOURCE_META[k] : { label: 'All', icon: '◈', color: TF.dim };
@@ -601,7 +610,7 @@ export function TransformationScreenerTab() {
             return (
               <button key={String(k)} onClick={() => setSourceFilter(k)}
                 style={{
-                  fontSize: 11, fontWeight: 800, padding: '3px 10px', borderRadius: 20, cursor: 'pointer',
+                  fontSize: RF.small, fontWeight: 800, padding: '5px 13px', borderRadius: 20, cursor: 'pointer',
                   border: `1px solid ${m.color}${on ? '' : '55'}`,
                   background: on ? m.color : `${m.color}18`,
                   color: on ? '#0B1220' : m.color,
@@ -613,7 +622,7 @@ export function TransformationScreenerTab() {
           <button onClick={() => setSmallMidOnly(!smallMidOnly)}
             title={`Show ₹${RADAR_MIN_CAP_CR.toLocaleString('en-IN')}–₹${SMALL_MID_MAX_CR.toLocaleString('en-IN')} Cr. Unknown sizes remain visible but are not certified small/mid.`}
             style={{
-              fontSize: 11, fontWeight: 800, padding: '3px 10px', borderRadius: 20, cursor: 'pointer',
+              fontSize: RF.small, fontWeight: 800, padding: '5px 13px', borderRadius: 20, cursor: 'pointer',
               border: `1px solid #38BDF8${smallMidOnly ? '' : '55'}`,
               background: smallMidOnly ? '#38BDF8' : '#38BDF818',
               color: smallMidOnly ? '#0B1220' : '#38BDF8',
@@ -627,12 +636,12 @@ export function TransformationScreenerTab() {
 
       {/* zzz1214 — what to look at: best only, by lane, then the review queue */}
       {data && (
-        <div style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '12px 14px' }}>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, alignItems: 'center' }}>
+        <div style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 12, padding: '14px 18px' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
             <button type="button" onClick={() => setBestPick(!bestOnly)} aria-pressed={bestOnly}
               title="Confirmed = every gate passes on ONE evidence sentence: a structural mechanism (mix shift, new product line or new business — not ordinary orders, customers or places), primary source, the event dated in the sentence and the company's own, a known size, no contradiction. Research watch = a plausible structural change with something still unknown. Valuation is a separate check."
               style={{ background: bestOnly ? '#FDE68A' : TF.card2, color: bestOnly ? '#7C2D12' : TF.text2, border: `1px solid ${bestOnly ? '#F59E0B' : TF.border}`,
-                borderRadius: 999, fontSize: 11.5, fontWeight: 900, cursor: 'pointer', padding: '7px 12px' }}>
+                borderRadius: 999, fontSize: RF.small, fontWeight: 900, cursor: 'pointer', padding: '8px 15px' }}>
               {bestOnly ? '★ ' : '☆ '}Confirmed · {bestCount}{promisingCount ? ` + ◐ ${promisingCount} to reconcile` : ''} · ◔ Research watch · {watchCount}
             </button>
             <span style={{ width: 1, height: 18, background: TF.border }} />
@@ -644,14 +653,14 @@ export function TransformationScreenerTab() {
             ] as const).map(([key, label, color, tip]) => (
               <button key={key} type="button" title={tip} onClick={() => setLaneFilter(key)} aria-pressed={laneFilter === key}
                 style={{ background: laneFilter === key ? `color-mix(in srgb, ${color} 18%, transparent)` : TF.card2, color,
-                  border: `1px solid ${laneFilter === key ? color : TF.border}`, borderRadius: 7, fontSize: 11, fontWeight: 800, cursor: 'pointer', padding: '6px 10px' }}>
+                  border: `1px solid ${laneFilter === key ? color : TF.border}`, borderRadius: 8, fontSize: RF.small, fontWeight: 800, cursor: 'pointer', padding: '7px 13px' }}>
                 {label} · {laneCounts[key]}
               </button>
             ))}
           </div>
           {/* zzz1226 — the old keyword review queue is hidden once the transformation checks exist (it contradicted them) */}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', marginTop: 9 }}>
-            {!hasTransformation && <span style={{ fontSize: 10, color: TF.dim, fontWeight: 800, letterSpacing: '0.4px' }}>REVIEW QUEUE</span>}
+            {!hasTransformation && <span style={{ fontSize: RF.label, color: TF.dim, fontWeight: 900, letterSpacing: '0.6px' }}>REVIEW QUEUE</span>}
             {!hasTransformation && ([
               ['ALL', 'All', TF.cyan],
               ['RESEARCH', 'Underwrite', TF.green],
@@ -661,16 +670,16 @@ export function TransformationScreenerTab() {
             ] as const).map(([key, label, color]) => (
               <button key={key} type="button" onClick={() => setDecisionFilter(key)} aria-pressed={decisionFilter === key}
                 style={{ background: decisionFilter === key ? `color-mix(in srgb, ${color} 18%, transparent)` : 'transparent',
-                  color, border: `1px solid ${decisionFilter === key ? color : TF.border}`, borderRadius: 6, fontSize: 10.5, fontWeight: 700, cursor: 'pointer', padding: '4px 8px' }}>
+                  color, border: `1px solid ${decisionFilter === key ? color : TF.border}`, borderRadius: 7, fontSize: RF.small, fontWeight: 700, cursor: 'pointer', padding: '5px 11px' }}>
                 {label} · {decisionCounts[key]}
               </button>
             ))}
             <button type="button" onClick={() => setShowFullSignals(v => !v)} aria-pressed={showFullSignals}
-              style={{ background: 'transparent', border: `1px solid ${TF.border}`, borderRadius: 6, padding: '4px 8px', cursor: 'pointer', color: TF.text2, fontSize: 10.5, marginLeft: 'auto' }}>
+              style={{ background: 'transparent', border: `1px solid ${TF.border}`, borderRadius: 7, padding: '5px 12px', cursor: 'pointer', color: TF.text2, fontSize: RF.small, fontWeight: 700, marginLeft: 'auto' }}>
               {showFullSignals ? 'Fold all details' : 'Open all details'}
             </button>
           </div>
-          <div style={{ fontSize: 10.5, color: TF.dim, marginTop: 7, lineHeight: 1.5 }}>
+          <div style={{ fontSize: RF.small, color: TF.muted, marginTop: 10, lineHeight: 1.6 }}>
             {/* zzz1219 — each number counts one stage, in order: companies in the window → after SHOW / size → after lane / best / review */}
             {allEntries.length} compan{allEntries.length === 1 ? 'y' : 'ies'} with a signal in this window{data?.signal_documents ? ` (from ${data.signal_documents} documents)` : ''}{hiddenByFilters > 0 ? ` · ${scopedEntries.length} after the SHOW / size filter (${hiddenByFilters} set aside)` : ''} · <b>{entries.length} shown</b> after the lane / best / review filters. Research priority, never a buy signal.
             {bestOnly && bestCount + promisingCount === 0 && ' No company is a confirmed transformation in this window — an empty shortlist is a valid answer; the research watch holds the potential ones.'}
@@ -679,7 +688,7 @@ export function TransformationScreenerTab() {
       )}
 
       {err && !loading && !data?.feed_status && (
-        <div style={{ background: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: TF.text }}>
+        <div style={{ background: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', borderRadius: 8, padding: '10px 14px', fontSize: RF.body, color: TF.text }}>
           ⚠ {err}{retries.current < 5 ? ' Retrying automatically.' : ' Press ↻ Rescan to try again.'}
         </div>
       )}
@@ -690,7 +699,7 @@ export function TransformationScreenerTab() {
 
       {data && !building && !loading && entries.length === 0 && !err && feedState !== 'FAILED' && (
         <div style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '18px' }}>
-          <div style={{ fontSize: 13, color: TF.text2, lineHeight: 1.6 }}>
+          <div style={{ fontSize: RF.body, color: TF.text2, lineHeight: 1.65 }}>
             {/* zzz1212 — say WHY the list is empty, from the funnel: never a blanket "nothing found" */}
             {scopedEntries.length > 0
               ? <>No company is in <b>{decisionFilter === 'RESEARCH' ? 'Underwrite thesis' : decisionFilter}</b> — that queue needs a positive filing tone, three distinct proof steps and two structural drivers, and none of the {scopedEntries.length} companies with a signal meets all of them yet. Select <b>All signals</b> to see them.</>
@@ -714,21 +723,21 @@ export function TransformationScreenerTab() {
       {/* zzz1212 — substantive documents read in full without a transformation pattern (never notices / letters) */}
       {data && !building && data.scanned_no_signal && data.scanned_no_signal.length > 0 && (
         <details style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '10px 14px' }}>
-          <summary style={{ cursor: 'pointer', fontSize: 11, fontWeight: 800, color: TF.dim, letterSpacing: '0.4px' }}>
+          <summary style={{ cursor: 'pointer', fontSize: RF.small, fontWeight: 800, color: TF.muted, letterSpacing: '0.4px' }}>
             READ IN FULL · NO TRANSFORMATION PATTERN ({data.scanned_no_signal.length} newest)
           </summary>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
             {data.scanned_no_signal.map((s, i) => (
               <div key={`${s.symbol}-${i}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '7px 11px', background: TF.card2, border: `1px solid ${TF.border}`, borderRadius: 8, flexWrap: 'wrap' }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', minWidth: 0 }}>
-                  <span style={{ fontSize: 12.5, fontWeight: 800, color: TF.text2 }}>{s.symbol}</span>
-                  <span style={{ fontSize: 10.5, color: TF.dim, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 360 }}>{s.subject}</span>
+                  <span style={{ fontSize: RF.body, fontWeight: 800, color: TF.text2 }}>{s.symbol}</span>
+                  <span style={{ fontSize: RF.small, color: TF.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 520 }}>{s.subject}</span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                  <span style={{ fontSize: 9.5, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: `${TF.dim}18`, color: TF.dim }}>
+                  <span style={{ fontSize: RF.label, fontWeight: 700, padding: '2px 8px', borderRadius: 4, background: `${TF.dim}18`, color: TF.dim }}>
                     {s.scored_from === 'PDF' ? `${s.doc_label || 'document'} read · no pattern` : 'subject only · not read'}
                   </span>
-                  {s.attachment_url && <a href={s.attachment_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, color: TF.cyan, fontWeight: 700 }}>open →</a>}
+                  {s.attachment_url && <a href={s.attachment_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: RF.small, color: TF.cyan, fontWeight: 700 }}>open →</a>}
                 </div>
               </div>
             ))}
@@ -739,24 +748,24 @@ export function TransformationScreenerTab() {
       {/* zzz1212 — processing and excluded documents: every filing that was NOT scored, with the true reason */}
       {data && !building && data.excluded && data.excluded.length > 0 && (
         <details style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '10px 14px' }}>
-          <summary style={{ cursor: 'pointer', fontSize: 11, fontWeight: 800, color: TF.dim, letterSpacing: '0.4px' }}>
+          <summary style={{ cursor: 'pointer', fontSize: RF.small, fontWeight: 800, color: TF.muted, letterSpacing: '0.4px' }}>
             PROCESSING AND EXCLUDED DOCUMENTS
             {data.excluded_counts && <span style={{ fontWeight: 600, marginLeft: 8 }}>
               {Object.entries(data.excluded_counts).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${n} ${EXCLUDED_LABEL[k] || k.toLowerCase()}`).join(' · ')}
             </span>}
           </summary>
-          <div style={{ fontSize: 10.5, color: TF.dim, margin: '8px 0', lineHeight: 1.5 }}>
+          <div style={{ fontSize: RF.small, color: TF.muted, margin: '10px 0', lineHeight: 1.6 }}>
             Not scored, newest first ({data.excluded.length} shown). Meeting schedules, invites and recording links are judged from the exchange subject; covering letters and unreadable PDFs from the document itself. When a company files the actual transcript as a new filing, that filing is read on the next scan.
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
             {data.excluded.map((x, i) => (
               <div key={`${x.symbol}-${x.filing_datetime}-${i}`} style={{ display: 'grid', gridTemplateColumns: 'minmax(90px, 120px) minmax(120px, 170px) 1fr auto', gap: 8, alignItems: 'baseline', padding: '6px 10px', background: TF.card2, border: `1px solid ${TF.border}`, borderRadius: 7 }}>
-                <span style={{ fontSize: 12, fontWeight: 800, color: TF.text2 }}>{x.symbol}</span>
-                <span style={{ fontSize: 9.5, fontWeight: 800, color: x.doc_class === 'UNREADABLE' ? TF.amber : TF.dim }}>{x.label}{x.basis === 'SUBJECT' ? ' (from subject)' : ''}</span>
-                <span style={{ fontSize: 10.5, color: TF.muted, lineHeight: 1.4 }}>{x.reason}</span>
+                <span style={{ fontSize: RF.body, fontWeight: 800, color: TF.text2 }}>{x.symbol}</span>
+                <span style={{ fontSize: RF.label, fontWeight: 800, color: x.doc_class === 'UNREADABLE' ? TF.amber : TF.dim }}>{x.label}{x.basis === 'SUBJECT' ? ' (from subject)' : ''}</span>
+                <span style={{ fontSize: RF.small, color: TF.muted, lineHeight: 1.5 }}>{x.reason}</span>
                 <span style={{ display: 'flex', gap: 8 }}>
-                  {x.link && <a href={x.link} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, color: TF.cyan, fontWeight: 700 }}>company link →</a>}
-                  {x.attachment_url && <a href={x.attachment_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, color: TF.cyan, fontWeight: 700 }}>filing →</a>}
+                  {x.link && <a href={x.link} target="_blank" rel="noopener noreferrer" style={{ fontSize: RF.small, color: TF.cyan, fontWeight: 700 }}>company link →</a>}
+                  {x.attachment_url && <a href={x.attachment_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: RF.small, color: TF.cyan, fontWeight: 700 }}>filing →</a>}
                 </span>
               </div>
             ))}
@@ -767,11 +776,12 @@ export function TransformationScreenerTab() {
       {/* zzz1224 — the shortlist at a glance: one row per company, plain words */}
       {data && !building && (data.entries?.length ?? 0) > 0 && <ShortlistTable title="CONFIRMED TRANSFORMATIONS" rows={shortlist}
         empty="None in this window. A confirmed transformation needs every gate to pass on one sentence; an empty list is a valid answer." />}
-      {data && watchRows.length > 0 && <ShortlistTable title="RESEARCH WATCH — POTENTIAL TRANSFORMATIONS (something still unknown: size, owner or date)" rows={watchRows} />}
+      {data && watchRows.length > 0 && <ShortlistTable title="RESEARCH WATCH — POTENTIAL TRANSFORMATIONS" sub="Something is still unknown — size, owner or date. Click a company to jump to its card." rows={watchRows} />}
 
       {/* leaderboard — zzz1214 compact cards (radar-card.tsx) */}
+      {entries.length > 0 && <div style={{ fontSize: RF.label, fontWeight: 900, color: TF.dim, letterSpacing: '0.6px', marginTop: 4 }}>COMPANY CARDS · {entries.length}</div>}
       {entries.map((e, i) => (
-        <div key={`${e.symbol}-${e.filing_datetime}-${i}`} id={`radar-${String(e.symbol || '').toUpperCase()}`}>
+        <div key={`${e.symbol}-${e.filing_datetime}-${i}`} id={`radar-${String(e.symbol || '').toUpperCase()}`} style={{ scrollMarginTop: 80 }}>
           <RadarCard e={e} rank={i + 1} bench={bench[e.symbol?.toUpperCase()]}
             inBook={sourceOf(e.symbol) === 'portfolio'} capCr={capOf(e.symbol)} showFullSignals={showFullSignals} />
         </div>
@@ -782,7 +792,7 @@ export function TransformationScreenerTab() {
       {data && !building && <NotTransformations title="Insufficient evidence — plans, capabilities, slide fragments or old milestones" rows={insufficientRows} />}
 
       {data && entries.length > 0 && (
-        <div style={{ ...TFM, fontSize: 9.5, color: TF.dim, lineHeight: 1.6 }}>
+        <div style={{ fontSize: RF.small, color: TF.dim, lineHeight: 1.65 }}>
           Ranked by research state (earnings-power → commercial → emerging), then size against the business, then confidence, then how recent. A business change and earnings growth are shown separately; the radar never assumes one caused the other, and it does not judge valuation. Research priority, not a buy rating. Educational, not investment advice.
         </div>
       )}
@@ -791,33 +801,43 @@ export function TransformationScreenerTab() {
 }
 
 // ── zzz1224 — shortlist table and the folded "not a transformation" lists ──
-function ShortlistTable({ title, rows, empty }: { title: string; rows: TransformScreenEntry[]; empty?: string }) {
-  const cell: CSSProperties = { padding: '6px 8px', borderTop: `1px solid ${TF.border}`, verticalAlign: 'top', fontSize: 11, lineHeight: 1.45, color: TF.text2 };
+function ShortlistTable({ title, sub, rows, empty }: { title: string; sub?: string; rows: TransformScreenEntry[]; empty?: string }) {
+  // zzz1272 — one row per company in plain words; the key risk (same for every name of a kind) lives on the card
+  const cell: CSSProperties = { padding: '11px 12px', borderTop: `1px solid ${TF.border}`, verticalAlign: 'top', fontSize: 13.5, lineHeight: 1.55, color: TF.text2 };
   return (
-    <div style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '10px 12px', overflowX: 'auto' }}>
-      <div style={{ fontSize: 11, fontWeight: 900, color: TF.text, letterSpacing: '0.3px', marginBottom: 6 }}>{title} · {rows.length}</div>
-      {rows.length === 0 ? <div style={{ fontSize: 11.5, color: TF.muted }}>{empty}</div> : <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 880 }}>
+    <div style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 12, padding: '14px 18px', overflowX: 'auto' }}>
+      <div style={{ fontSize: RF.lead, fontWeight: 900, color: TF.text, letterSpacing: '0.2px' }}>{title} · {rows.length}</div>
+      {sub && <div style={{ fontSize: RF.small, color: TF.muted, marginTop: 3 }}>{sub}</div>}
+      {rows.length === 0 ? <div style={{ fontSize: RF.body, color: TF.muted, marginTop: 8 }}>{empty}</div> : <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 960, marginTop: 10 }}>
         <thead>
-          <tr>{['Company', 'Old business', 'What changes', 'Potential earnings impact', 'Proof stage', 'Key risk', 'Next milestone'].map((h) => (
-            <th key={h} style={{ textAlign: 'left', fontSize: 9.5, color: TF.dim, fontWeight: 800, padding: '4px 8px', letterSpacing: '0.3px' }}>{h.toUpperCase()}</th>
+          <tr>{['#', 'Company', 'What changes', 'Potential earnings impact', 'Proof stage', 'Next milestone'].map((h) => (
+            <th key={h} style={{ textAlign: 'left', fontSize: RF.label, color: TF.dim, fontWeight: 900, padding: '6px 12px', letterSpacing: '0.6px', whiteSpace: 'nowrap' }}>{h.toUpperCase()}</th>
           ))}</tr>
         </thead>
         <tbody>
           {rows.map((e, i) => {
             const t = e.insight?.transformation;
             const meta = STATE_META[t?.state || 'INSUFFICIENT'];
+            const href = `#radar-${String(e.symbol || '').toUpperCase()}`;
+            const tc = t?.tier === 'CONFIRMED' ? '#B45309' : t?.tier === 'WATCH' ? '#7C3AED' : meta.color;
             return (
-              <tr key={`${e.symbol}-${i}`}>
-                <td style={cell}>
-                  <a href={`#radar-${String(e.symbol || '').toUpperCase()}`} style={{ fontWeight: 900, color: TF.text, textDecoration: 'none' }}>{e.symbol}</a>
-                  <div style={{ fontSize: 9.5, fontWeight: 800, color: t?.tier === 'WATCH' ? '#7C3AED' : meta.color }}>{tierLabel(t, meta.label)}</div>
+              <tr key={`${e.symbol}-${i}`} style={{ background: i % 2 ? TF.card2 : 'transparent' }}>
+                <td style={{ ...cell, color: TF.dim, fontWeight: 800, width: 34 }}>{i + 1}</td>
+                <td style={{ ...cell, minWidth: 200 }}>
+                  <a href={href} style={{ fontSize: RF.lead, fontWeight: 900, color: TF.text, textDecoration: 'none' }}>{e.symbol}</a>
+                  {e.company_name && <div style={{ fontSize: RF.small, color: TF.muted }}>{e.company_name}</div>}
+                  {t && <div style={{ fontSize: 12, color: TF.dim, marginTop: 2 }} title={t.thesis.oldBusiness}>{cleanOldBusiness(t.thesis.oldBusiness)}</div>}
                 </td>
-                <td style={cell}>{t?.thesis.oldBusiness ?? '—'}</td>
-                <td style={cell}>{t ? `${t.mechanismWord}: ${t.thesis.whatChanges}` : '—'}</td>
-                <td style={cell}>{t?.thesis.earningsImpact ?? '—'}</td>
-                <td style={cell}>{t?.proofStage ?? '—'}<div style={{ fontSize: 9.5, color: TF.dim }}>{t ? `${t.confidence.toLowerCase()} confidence` : ''}</div></td>
-                <td style={cell}>{t?.thesis.keyRisk ?? '—'}</td>
-                <td style={cell}>{t?.thesis.nextMilestone ?? '—'}</td>
+                <td style={{ ...cell, minWidth: 240 }}>
+                  {t && <div style={{ fontSize: RF.small, fontWeight: 900, color: tc, marginBottom: 2 }}>{t.mechanismWord}</div>}
+                  {t ? t.thesis.whatChanges : '—'}
+                </td>
+                <td style={{ ...cell, minWidth: 220 }}>{t?.thesis.earningsImpact ?? '—'}</td>
+                <td style={{ ...cell, whiteSpace: 'nowrap' }}>
+                  <b style={{ color: TF.text }}>{t?.proofStage ?? '—'}</b>
+                  {t && <div style={{ fontSize: 12, fontWeight: 800, color: t.confidence === 'HIGH' ? '#10B981' : t.confidence === 'MEDIUM' ? '#0EA5E9' : TF.dim }}>{t.confidence.toLowerCase()} confidence</div>}
+                </td>
+                <td style={{ ...cell, minWidth: 220 }} title={t ? `Key risk: ${t.thesis.keyRisk}` : undefined}>{t?.thesis.nextMilestone ?? '—'}</td>
               </tr>
             );
           })}
@@ -831,18 +851,18 @@ function NotTransformations({ title, rows }: { title: string; rows: TransformScr
   if (rows.length === 0) return null;
   return (
     <details style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '10px 14px' }}>
-      <summary style={{ cursor: 'pointer', fontSize: 11, fontWeight: 800, color: TF.dim, letterSpacing: '0.3px' }}>{title} ({rows.length})</summary>
+      <summary style={{ cursor: 'pointer', fontSize: RF.small, fontWeight: 800, color: TF.muted, letterSpacing: '0.3px' }}>{title} ({rows.length})</summary>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 8 }}>
         {rows.map((e, i) => {
           const t = e.insight?.transformation;
           return (
-            <div key={`${e.symbol}-${i}`} style={{ display: 'grid', gridTemplateColumns: 'minmax(90px, 120px) 1fr auto', gap: 8, alignItems: 'baseline', padding: '6px 10px', background: TF.card2, border: `1px solid ${TF.border}`, borderRadius: 7 }}>
-              <span style={{ fontSize: 12, fontWeight: 800, color: TF.text2 }}>{e.symbol}</span>
-              <span style={{ fontSize: 10.5, color: TF.muted, lineHeight: 1.45 }}>
+            <div key={`${e.symbol}-${i}`} style={{ display: 'grid', gridTemplateColumns: 'minmax(100px, 140px) 1fr auto', gap: 10, alignItems: 'baseline', padding: '8px 12px', background: TF.card2, border: `1px solid ${TF.border}`, borderRadius: 7 }}>
+              <span style={{ fontSize: RF.body, fontWeight: 800, color: TF.text2 }}>{e.symbol}</span>
+              <span style={{ fontSize: RF.small, color: TF.muted, lineHeight: 1.55 }}>
                 {t?.stateReason}
                 {t?.evidence.quote && <span style={{ color: TF.dim }}> — “{t.evidence.quote.slice(0, 170)}{t.evidence.quote.length > 170 ? '…' : ''}”</span>}
               </span>
-              {e.attachment_url ? <a href={e.attachment_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, color: TF.cyan, fontWeight: 700 }}>filing →</a> : <span />}
+              {e.attachment_url ? <a href={e.attachment_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: RF.small, color: TF.cyan, fontWeight: 700 }}>filing →</a> : <span />}
             </div>
           );
         })}
