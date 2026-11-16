@@ -2,7 +2,7 @@
 // Pure helpers (no I/O) so they can be tested. The route reads / writes KV with them.
 export const LASTGOOD_PREFIX = 'guidance-upgrades:lastgood:v1:';
 export const LASTGOOD_TTL_S = 7 * 86_400;
-export const LASTGOOD_MAX_CHARS = 850_000;   // Upstash rejects values over 1 MiB
+export const LASTGOOD_MAX_CHARS = 12_000_000;   // zzz1275 — was 850 KB (Upstash's 1 MiB limit). The store is Postgres now; at 850 KB the 30D / 120D answers (4–8 MB) could not be trimmed small enough, nothing was saved and every visit rebuilt for ~30 s
 export const LASTGOOD_SERVE_MS = 3 * 3600_000;   // zzz1275 — was 10 min: the hourly refresh left the copy older, so most visits rebuilt for 26–34 s. The page asks for a fresh build in the background anyway. // a saved copy this young is served at once (the page then refreshes it in the background)
 
 export interface LastGood<T> { savedAt: number; body: T }

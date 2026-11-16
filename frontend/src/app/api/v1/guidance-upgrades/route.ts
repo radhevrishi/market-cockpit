@@ -133,7 +133,7 @@ async function getFull(req: NextRequest) {
   // zzz865: a cold server (new deploy, new instance) has no memory copy. A young saved copy in KV is served at once; the page then asks again with force=1 for fresh data.
   const lgKey = lastGoodKey(window, market);
   if (sp.get('force') !== '1') {
-    const lg = await withTimeout(kvGet<unknown>(lgKey), 2_500, null);
+    const lg = await withTimeout(kvGet<unknown>(lgKey), 8_000, null);   // zzz1275 — an 8 MB saved copy; still far quicker than the ~30 s rebuild
     if (isUsableLastGood(lg) && lastGoodAgeMs(lg) < LASTGOOD_SERVE_MS) {
       return NextResponse.json({ ...(lg.body as object), servedFromSaved: true, savedAt: new Date(lg.savedAt).toISOString() }, { headers: { 'Cache-Control': 'no-store' } });
     }
@@ -637,7 +637,7 @@ async function getFull(req: NextRequest) {
   // zzz880: market caps seen in the graded results (India ₹ Cr, US $M), for the focus list's small / mid filter
   (body as any).caps = { IN: Object.fromEntries(capByTicker.IN), US: Object.fromEntries(capByTicker.US) };
   mem.set(memKey, { at: Date.now(), body });
-  { const slim = slimForStore(body as any); if (slim) await withTimeout(kvSet(lgKey, { savedAt: Date.now(), body: slim.body }, LASTGOOD_TTL_S).catch(() => 0), 2_500, 0); }
+  { const slim = slimForStore(body as any); if (slim) await withTimeout(kvSet(lgKey, { savedAt: Date.now(), body: slim.body }, LASTGOOD_TTL_S).catch(() => 0), 8_000, 0); }
   if (mem.size > 20) mem.delete(mem.keys().next().value as string);
   return NextResponse.json(body, { headers: { 'Cache-Control': 'no-store' } });
 }

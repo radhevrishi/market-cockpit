@@ -4229,4 +4229,5 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   India guidance reading is unchanged (its ceiling is the owner's GUIDANCE_EXTRACT_DAILY_USD).
 - zzz1275 (16 Nov): Guidance Upgrades 30D / 120D took 26–34 s on most visits — the saved copy was served only when < 10 min old but the
   hourly job refreshes it once an hour. LASTGOOD_SERVE_MS 3 h (lib/guidance-lastgood.ts); the page already asks for a fresh build in
-  the background after a saved copy. US quotes cold call ~8 s after a deploy, 0.7 s after.
+  the background after a saved copy. LASTGOOD_MAX_CHARS 850 KB → 12 MB (Postgres store; at 850 KB the 4–8 MB answers were never
+  saved), saved-copy read / write timeouts 8 s. US quotes cold call ~8 s after a deploy, 0.7 s after.
