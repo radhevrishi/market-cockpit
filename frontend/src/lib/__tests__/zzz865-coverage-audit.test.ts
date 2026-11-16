@@ -11,8 +11,8 @@ describe('zzz865 saved copy', () => {
     const small = { events: [1, 2], reviewQueue: [], unresolved: [], summary: { n: 5 } };
     assert.equal(slimForStore(small)!.slimmed, false);
     const big = { events: Array.from({ length: 900 }, (_, i) => ({ i, t: 'x'.repeat(1500) })), reviewQueue: Array.from({ length: 500 }, (_, i) => ({ i, t: 'y'.repeat(1500) })), unresolved: [], summary: { n: 5 } };
-    const r = slimForStore(big)!;
-    assert.equal(r.slimmed, true); assert.ok(JSON.stringify(r.body).length <= LASTGOOD_MAX_CHARS); assert.deepEqual(r.body.summary, { n: 5 });
+    const r = slimForStore(big, 850_000)!;   // zzz1275 — the default limit is 12 MB now; the trimming itself is what this checks
+    assert.equal(r.slimmed, true); assert.ok(JSON.stringify(r.body).length <= 850_000); assert.deepEqual(r.body.summary, { n: 5 });
   });
   test('usable check and key', () => {
     assert.equal(isUsableLastGood({ savedAt: 1, body: { events: [] } }), true);
