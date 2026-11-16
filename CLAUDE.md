@@ -4227,3 +4227,6 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
 - zzz1274 (16 Nov): US web guidance check (us-guide-check AI step) is OFF by default (daily ceiling default 0). Owner turns it on in
   Railway: US_GUIDE_CHECK_DAILY_USD=0.40. The free filing-text read still runs. /api/v1/system-status → aiSwitches shows the state.
   India guidance reading is unchanged (its ceiling is the owner's GUIDANCE_EXTRACT_DAILY_USD).
+- zzz1275 (16 Nov): Guidance Upgrades 30D / 120D took 26–34 s on most visits — the saved copy was served only when < 10 min old but the
+  hourly job refreshes it once an hour. LASTGOOD_SERVE_MS 3 h (lib/guidance-lastgood.ts); the page already asks for a fresh build in
+  the background after a saved copy. US quotes cold call ~8 s after a deploy, 0.7 s after.

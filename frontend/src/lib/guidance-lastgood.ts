@@ -3,7 +3,7 @@
 export const LASTGOOD_PREFIX = 'guidance-upgrades:lastgood:v1:';
 export const LASTGOOD_TTL_S = 7 * 86_400;
 export const LASTGOOD_MAX_CHARS = 850_000;   // Upstash rejects values over 1 MiB
-export const LASTGOOD_SERVE_MS = 10 * 60_000; // a saved copy this young is served at once (the page then refreshes it in the background)
+export const LASTGOOD_SERVE_MS = 3 * 3600_000;   // zzz1275 — was 10 min: the hourly refresh left the copy older, so most visits rebuilt for 26–34 s. The page asks for a fresh build in the background anyway. // a saved copy this young is served at once (the page then refreshes it in the background)
 
 export interface LastGood<T> { savedAt: number; body: T }
 
