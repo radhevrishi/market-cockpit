@@ -132,7 +132,7 @@ async function callCoverageCheck(row: any): Promise<GuideCheck | null> {
 // ── 3. AI with a web search ──────────────────────────────────────────────────
 const dailyKey = (day: string) => `us-guide-check:usd:${day}`;
 // zzz979: $1 a day (owner, 12 Oct 2026 — about 14 Claude web checks a day); the env var still overrides
-export const dailyCapUsd = () => { const raw = process.env.US_GUIDE_CHECK_DAILY_USD; const v = Number(raw); return raw != null && raw !== '' && Number.isFinite(v) && v >= 0 ? v : 1; };
+export const dailyCapUsd = () => { const raw = process.env.US_GUIDE_CHECK_DAILY_USD; const v = Number(raw); return raw != null && raw !== '' && Number.isFinite(v) && v >= 0 ? v : 0.4; };   // zzz1273 — default $1 → $0.40 a day (owner: AI cost); env still wins
 
 const SYSTEM = `You check one fact about one US company's latest earnings report: which way did management move its OWN forward guidance?
 Answer "lowered" if ANY outlook, forecast or guidance range was cut, reduced, revised down or withdrawn — for the company, a segment, a product line or a named customer programme — versus what management itself had guided before, in the earnings release, the investor presentation, the earnings call, or as reported by news in the days after. A cut on one line counts even if other lines were raised (say both in "what").
@@ -158,7 +158,7 @@ export async function aiGuideCheck(row: { ticker: string; company?: string; quar
 Earnings report filed: ${row.filing_date}${row.quarter ? ` (${row.quarter}${row.period_end ? `, period ended ${row.period_end}` : ''})` : ''}.
 Question: in this earnings report, its slides, its call or the news of the following days, did management raise, keep or lower its guidance or outlook (company-wide, a segment, a product line or a key customer programme) versus its own prior guidance?`;
   // zzz1050: OpenAI returns strict JSON against US_GUIDE_CHECK_SCHEMA (the search still runs); parseAnswer + the checks below still decide
-  const r = await webResearch('us-guide-check', SYSTEM, prompt, { maxSearches: 3, signal: AbortSignal.timeout(90_000), schema: { name: 'guide_direction', schema: US_GUIDE_CHECK_SCHEMA } });
+  const r = await webResearch('us-guide-check', SYSTEM, prompt, { maxSearches: 2, signal: AbortSignal.timeout(90_000), schema: { name: 'guide_direction', schema: US_GUIDE_CHECK_SCHEMA } });
   if (r.usd > 0) await kvIncrByFloat(dailyKey(day), r.usd, 3 * 24 * 3600).catch(() => null);
   if (!r.ok) return null;
   const a = parseAnswer(r.text);

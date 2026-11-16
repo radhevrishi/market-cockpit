@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { checkRateLimit } from '@/lib/rateLimit';
+import { noteRequest } from '@/lib/fetch-meter';   // zzz1273 — request count by route family and caller kind
 import { SITE_COOKIE, PUBLIC_PAGE_PATHS, isProtectedApi, expectedToken, safeEqual, hasServiceKey } from '@/lib/site-auth';
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -98,6 +99,7 @@ export async function proxy(req: NextRequest) {
     return NextResponse.redirect(url, 308);
   }
 
+  if (path.startsWith('/api/')) noteRequest(path, isService(req) ? 'service' : req.cookies.get(SITE_COOKIE)?.value ? 'owner' : 'anon');
   if (!path.startsWith('/api/')) {
     // zzz778 — every page is the owner's. Static assets never reach here
     // (see the matcher); /login is the only public page.

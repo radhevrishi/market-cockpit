@@ -1097,7 +1097,7 @@ describe('evidence ledger — persistence, history, idempotency', () => {
     assert.equal(stored!.summary.utilisation.current, '75%');
     // and the view sent to the page drops the raw output
     assert.equal(ledgerView(reloaded).runs[0].raw_extraction_json, undefined);
-    assert.equal(freshnessOf(reloaded).state, 'CURRENT');
+    assert.equal(freshnessOf(reloaded, now).state, 'CURRENT');
   });
 
   test('§33 — Q2 is added, Q1 is untouched, what-changed is computed from facts', () => {
@@ -1151,10 +1151,10 @@ describe('evidence ledger — persistence, history, idempotency', () => {
   test('a newer document seen at a source flips freshness to NEW EVIDENCE AVAILABLE', () => {
     const { period, run } = buildPeriod('E2E', q1Docs, q1Events, q1Summary, 'run1');
     let ledger = mergePeriod(emptyLedger('E2E', 'IN', now), period, run);
-    assert.equal(freshnessOf(ledger).state, 'CURRENT');
+    assert.equal(freshnessOf(ledger, now).state, 'CURRENT');
     ledger = recordSeen(ledger, '2026-10-28', '2026-10-29T00:00:00.000Z');
     assert.equal(ledger.newest_seen_period, 'Q2 FY27');
-    assert.equal(freshnessOf(ledger).state, 'NEW_EVIDENCE_AVAILABLE');
+    assert.equal(freshnessOf(ledger, now).state, 'NEW_EVIDENCE_AVAILABLE');
   });
 
   test('§36 — partial batch progress is derived from the ledgers after a reload', () => {

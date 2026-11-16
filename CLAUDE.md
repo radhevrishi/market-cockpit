@@ -4215,3 +4215,12 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   filter chips. Shortlist table: 6 columns (#, Company with old business under it via `cleanOldBusiness`, What changes,
   Potential earnings impact, Proof stage + confidence, Next milestone; key risk on hover and in the card), zebra rows,
   company links jump to the card. No data or rule changes.
+- zzz1273 (16 Nov): hosting / AI cost pass (owner: "prices going through the roof"). Railway 1–16 Nov: app $14 (RAM $10, egress $2.3,
+  CPU $1.8), Postgres $5.1 (RAM ~0.9 GB), Redis $0.16 (unused by the app — owner may delete). AI (OpenAI) $28.8 in 16 days.
+  The site's pages were already owner-only (proxy + /login), so "making it private" saves ~nothing. Changes: SEC submissions cache
+  drops forms no reader uses (`SUBS_SKIP_FORM`: 3/4/5, 144, 424B*, FWP, 13F, SC 13G, S-8, D, fund forms) and holds ≤ 600 companies
+  (was 1,500 × up to 1,000 rows); company-facts cache 16 MB / 30 files (was 40 MB / 60). US web guidance check: default ceiling
+  $0.40 a day (was $1; env US_GUIDE_CHECK_DAILY_USD wins), 2 searches a check (was 3). `lib/fetch-meter.ts` (installed at start-up):
+  per code site, response bodies ≥ 512 KB read by `.json()`/`.text()` + request counts by route family and caller (owner / service /
+  anon) → /api/v1/system-status `fetchMeter` — read it to find the remaining ~480 MB of held response bodies and the 45 GB egress.
+  engine.test freshness tests now pass a fixed `now` (they failed from mid-Nov on the real clock and would have blocked every deploy).

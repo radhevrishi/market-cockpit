@@ -446,6 +446,12 @@ export interface SubmissionsLite {
   formerName: string | null;
   recent: Array<{ form: string; filingDate: string; reportDate: string | null; items: string[]; accession: string }>;
 }
+// zzz1273 — memory: a cached company kept every one of its last 1,000 filings as objects, up to 1,500 companies (≈ 300–450 MB
+// in the live-memory profile). Most rows of a busy filer are insider forms (3/4/5, 144), prospectus supplements (424B*, FWP),
+// 13F / fund forms and Form D — no reader of `recent` uses them (readers: 8-K items, 10-Q/10-K/20-F/40-F/6-K, SC TO / 13D / 13E3 /
+// 14D9, S-4/F-4/425, proxies). Insider trades are read from Form 4 URLs elsewhere (us-movers-server), not from this list.
+export const SUBS_SKIP_FORM = /^(?:3|4|5|144|424B\d|FWP|13F-HR|13F-NT|SC 13G|S-8(?: POS)?|11-K|D|CORRESP|UPLOAD|N-[A-Z0-9-]+|497[A-Z]*|485[A-Z]*)(?:\/A)?$/;
+const SUBS_MAX = 600;
 const _subs = new Map<number, { at: number; data: SubmissionsLite | null; failed?: boolean }>();
 export async function submissions(cikNum: number): Promise<SubmissionsLite | null> {
   const hit = _subs.get(cikNum);
@@ -465,6 +471,7 @@ export async function submissions(cikNum: number): Promise<SubmissionsLite | nul
       // hundreds of 424B prospectus supplements a quarter; a 400-row cap did
       // not reach back to JPM's July earnings 8-K.
       for (let i = 0; i < n; i++) {
+        if (SUBS_SKIP_FORM.test(String(r.form[i] || ''))) continue;   // zzz1273 — forms no reader looks at (see SUBS_SKIP_FORM)
         recent.push({
           form: String(r.form[i] || ''),
           filingDate: String(r.filingDate?.[i] || ''),
@@ -495,8 +502,8 @@ export async function submissions(cikNum: number): Promise<SubmissionsLite | nul
       };
     }
   } catch { out = null; failed = true; }
-  if (_subs.size > 1500) {
-    const oldest = Array.from(_subs.entries()).sort((a, b) => a[1].at - b[1].at).slice(0, 300);
+  if (_subs.size > SUBS_MAX) {
+    const oldest = Array.from(_subs.entries()).sort((a, b) => a[1].at - b[1].at).slice(0, Math.ceil(SUBS_MAX / 5));
     for (const [k] of oldest) _subs.delete(k);
   }
   _subs.set(cikNum, { at: Date.now(), data: out, failed });
@@ -710,8 +717,8 @@ export async function earningsFilersOn(date: string): Promise<EdgarFiling[]> {
 // recently used file leaves first; one file larger than a quarter of the budget is handed to the caller and not kept.
 // Graded days are stored once graded, so a re-read of a file is one small download, not a re-grade.
 const FACTS_TTL_MS = 6 * 3600_000;
-export const FACTS_MAX = 60;
-export const FACTS_MAX_CHARS = 40 * 1024 * 1024;
+export const FACTS_MAX = 30;   // zzz1273 — was 60 files / 40 MB; memory is most of the hosting bill
+export const FACTS_MAX_CHARS = 16 * 1024 * 1024;
 const _facts = new Map<number, { at: number; data: any; chars: number }>();
 let _factsChars = 0;
 const _factsInFlight = new Map<number, Promise<any | null>>();
@@ -722,7 +729,7 @@ export function factsEvictions(entries: ReadonlyArray<{ key: number; chars: numb
   for (const e of entries) { if (t + incoming <= maxChars && n < maxFiles) break; out.push(e.key); t -= e.chars; n--; }
   return out;
 }
-export function factsCacheStats(): { files: number; mbText: number } { return { files: _facts.size, mbText: Math.round(_factsChars / 104857.6) / 10 }; }
+export function factsCacheStats(): { files: number; mbText: number; subs: number } { return { files: _facts.size, mbText: Math.round(_factsChars / 104857.6) / 10, subs: _subs.size }; }
 
 export async function companyFacts(cikNum: number): Promise<any | null> {
   const hit = _facts.get(cikNum);
