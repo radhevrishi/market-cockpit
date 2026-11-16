@@ -132,7 +132,7 @@ async function callCoverageCheck(row: any): Promise<GuideCheck | null> {
 // ── 3. AI with a web search ──────────────────────────────────────────────────
 const dailyKey = (day: string) => `us-guide-check:usd:${day}`;
 // zzz979: $1 a day (owner, 12 Oct 2026 — about 14 Claude web checks a day); the env var still overrides
-export const dailyCapUsd = () => { const raw = process.env.US_GUIDE_CHECK_DAILY_USD; const v = Number(raw); return raw != null && raw !== '' && Number.isFinite(v) && v >= 0 ? v : 0.4; };   // zzz1273 — default $1 → $0.40 a day (owner: AI cost); env still wins
+export const dailyCapUsd = () => { const raw = process.env.US_GUIDE_CHECK_DAILY_USD; const v = Number(raw); return raw != null && raw !== '' && Number.isFinite(v) && v >= 0 ? v : 0; };   // zzz1274 — OFF by default (owner, 16 Nov: AI cost). Turn on in Railway: US_GUIDE_CHECK_DAILY_USD=0.40 (dollars a day). The free filing-text read still runs.
 
 const SYSTEM = `You check one fact about one US company's latest earnings report: which way did management move its OWN forward guidance?
 Answer "lowered" if ANY outlook, forecast or guidance range was cut, reduced, revised down or withdrawn — for the company, a segment, a product line or a named customer programme — versus what management itself had guided before, in the earnings release, the investor presentation, the earnings call, or as reported by news in the days after. A cut on one line counts even if other lines were raised (say both in "what").

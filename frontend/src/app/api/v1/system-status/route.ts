@@ -81,7 +81,9 @@ const MEMO_MS = 90_000;   // zzz1049: 30 s → 90 s (each build fires eleven pro
 const procMem = () => { try { const m = process.memoryUsage(); const mb = (v: number) => Math.round(v / 1048576); return { rssMb: mb(m.rss), heapUsedMb: mb(m.heapUsed), heapTotalMb: mb(m.heapTotal), externalMb: mb(m.external), uptimeH: Math.round(process.uptime() / 360) / 10 }; } catch { return null; } };
 // zzz1230: which key-value store is live, its size, and the Upstash → Postgres copy progress
 const kvStoreStatus = async () => { try { return await Promise.race([kvBackendStatus(), new Promise((r) => setTimeout(() => r({ error: 'timeout' }), 4000))]); } catch { return null; } };
-const withKv = async (body: any) => ({ ...body, kvUsage: kvUsageSnapshot(), kvStore: await kvStoreStatus(), processMemory: procMem(), memory: memReport(), fetchMeter: meterReport() });
+const withKv = async (body: any) => ({ ...body, kvUsage: kvUsageSnapshot(), kvStore: await kvStoreStatus(), processMemory: procMem(), memory: memReport(), fetchMeter: meterReport(), aiSwitches: aiSwitches() });
+// zzz1274 — which optional AI jobs are on (Railway variables), so the owner can see the switch took effect
+const aiSwitches = () => { const n = (k: string) => { const r = process.env[k]; const v = Number(r); return r != null && r !== '' && Number.isFinite(v) ? v : null; }; const g = n('US_GUIDE_CHECK_DAILY_USD'); return { usGuideCheck: { on: (g ?? 0) > 0, dailyUsd: g ?? 0, howToTurnOn: 'Railway → market-cockpit → Variables: US_GUIDE_CHECK_DAILY_USD = 0.40 (0 or removed = off)' } }; };
 const meterReport = () => { try { return fetchMeterReport(); } catch { return null; } };   // zzz1273
 const memReport = () => { try { return memoryReport(); } catch { return null; } };
 /** Optional extras must never hold the status answer up: give each at most `ms`. */

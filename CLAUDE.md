@@ -4224,3 +4224,6 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   per code site, response bodies ≥ 512 KB read by `.json()`/`.text()` + request counts by route family and caller (owner / service /
   anon) → /api/v1/system-status `fetchMeter` — read it to find the remaining ~480 MB of held response bodies and the 45 GB egress.
   engine.test freshness tests now pass a fixed `now` (they failed from mid-Nov on the real clock and would have blocked every deploy).
+- zzz1274 (16 Nov): US web guidance check (us-guide-check AI step) is OFF by default (daily ceiling default 0). Owner turns it on in
+  Railway: US_GUIDE_CHECK_DAILY_USD=0.40. The free filing-text read still runs. /api/v1/system-status → aiSwitches shows the state.
+  India guidance reading is unchanged (its ceiling is the owner's GUIDANCE_EXTRACT_DAILY_USD).

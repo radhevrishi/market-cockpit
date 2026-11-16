@@ -15,7 +15,7 @@ test('zzz1273 submissions list drops forms no reader uses, keeps every form a re
 test('zzz1273 smaller SEC company-file cache; US web check default ceiling lowered', () => {
   assert.equal(FACTS_MAX, 30); assert.equal(FACTS_MAX_CHARS, 16 * 1024 * 1024);
   const prev = process.env.US_GUIDE_CHECK_DAILY_USD; delete process.env.US_GUIDE_CHECK_DAILY_USD;
-  assert.equal(dailyCapUsd(), 0.4);
+  assert.equal(dailyCapUsd(), 0);   // zzz1274 — off unless set in Railway
   process.env.US_GUIDE_CHECK_DAILY_USD = '1'; assert.equal(dailyCapUsd(), 1);   // the owner's setting still wins
   if (prev == null) delete process.env.US_GUIDE_CHECK_DAILY_USD; else process.env.US_GUIDE_CHECK_DAILY_USD = prev;
 });
