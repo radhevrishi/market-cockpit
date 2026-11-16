@@ -26,8 +26,10 @@ export function appFrame(stack: string): string {
     const n = l.match(/\/(src\/(?:lib|app)\/[^:)]+):(\d+)/);
     if (n) return `${n[1]}:${n[2]}`;
   }
-  const first = lines.find((l) => /chunks|node_modules/.test(l)) || lines[0] || '';
-  return first.trim().replace(/^at\s+/, '').slice(0, 90);
+  // no app source chunk in the frames: name the first two frames that are not this meter or Node internals (route chunks are hashed)
+  const rest = lines.filter((l) => !/fetch-meter|node:internal|\(native\)/.test(l)).slice(0, 2)
+    .map((l) => l.trim().replace(/^at\s+/, '').replace(/\/app\/frontend\/\.next\/server\/chunks\/(?:ssr\/)?/, '').replace(/\[root-of-the-server\]__/, 'root:'));
+  return (rest.join(' < ') || (lines[0] || '').trim()).slice(0, 160);
 }
 
 export function noteBody(site: string, kind: string, chars: number): void {
