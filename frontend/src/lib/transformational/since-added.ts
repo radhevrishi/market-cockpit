@@ -17,7 +17,8 @@ export function sinceAdded(bars: Bar[], sessionDate: string): SinceAdded | null 
   if ((Date.parse(`${baseDate}T00:00:00Z`) - Date.parse(`${sessionDate}T00:00:00Z`)) / 86_400_000 > 4) return null;
   const last = ok[ok.length - 1];
   const pct = Math.round(((last.c - ok[i].c) / ok[i].c) * 1000) / 10;
-  return { base: ok[i].c, baseDate, last: last.c, lastDate: isoOf(last.t), pct, sessions: ok.length - 1 - i };
+  const r2 = (v: number) => Math.round(v * 100) / 100;
+  return { base: r2(ok[i].c), baseDate, last: r2(last.c), lastDate: isoOf(last.t), pct, sessions: ok.length - 1 - i };
 }
 
 const MEMO = new Map<string, { at: number; v: SinceAdded | null }>();
