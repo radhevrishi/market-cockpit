@@ -13,6 +13,9 @@ import { MbChip, MB_COLOR } from '@/components/transformational/MbChip';
 import { TurnaroundBadge } from '@/components/turnaround/TurnaroundBadge';   // zzz1227
 import { turnaroundFromTg, type Turnaround } from '@/lib/turnaround/core';
 import type { TgVerify } from '@/lib/transformational/verify';   // zzz1233
+import { readDecisions, subscribeDecisions, type Decision } from '@/lib/decisions';   // zzz1283
+import { cbMarkReader, setCbMark } from '@/lib/cb-decisions';
+import { tgRejectState } from '@/lib/transformational/marks';
 import { MB_NAME, MB_WORD, ONE_PAGE_CASE, OTHER_THEME, aiIsCurrent, chanceOf, marginDeltaOf, tgKindWord, type MbLabel, type TgBoard, type TgItem, type TgStrength } from '@/lib/transformational/core';
 
 type Mkt = 'ALL' | 'IN' | 'US';
@@ -30,6 +33,9 @@ export default function TransformationalGainersPage() {
   const [data, setData] = useState<(TgBoard & { rejected?: Array<TgItem & { verify?: TgVerify | null }>; verifiedCount?: number }) | null>(null);
   const [verBusy, setVerBusy] = useState<string | null>(null);   // zzz1233
   const [showRej, setShowRej] = useState(false);
+  const [decisions, setDecisions] = useState<Record<string, Decision>>({});   // zzz1283 — rejects (shared with Conviction Beats)
+  const [showMineRej, setShowMineRej] = useState(false);
+  useEffect(() => { const load = () => setDecisions(readDecisions()); load(); return subscribeDecisions(load); }, []);
   const [state, setState] = useState<'loading' | 'ok' | 'error'>('loading');
   const [err, setErr] = useState<string | null>(null);
   const [mkt, setMkt] = useState<Mkt>('ALL');
@@ -131,7 +137,11 @@ export default function TransformationalGainersPage() {
     return { n: v.length, avg, median: p[Math.floor(p.length / 2)], up: p.filter((x) => x > 0).length, best: p[p.length - 1], worst: p[0] };
   }, [groups0, since, addedOn]);
   // zzz1282 — sort by the day's move or by the move since the company was added (unknown values always last)
-  const groups = useMemo(() => {
+  const rejOf = useCallback((g: Group) => {
+    const d = cbMarkReader(decisions, g.market)(g.ticker).decision;
+    return { state: tgRejectState(d?.status, d?.date, g.items[0].sessionDate), date: d?.date?.slice(0, 10) || '' };
+  }, [decisions]);
+  const groupsSorted = useMemo(() => {
     if (sort !== 'move' && sort !== 'since') return groups0;
     const val = (g: Group): number | null => {
       if (sort === 'move') return g.best.movePct ?? null;
@@ -144,6 +154,10 @@ export default function TransformationalGainersPage() {
       return sortDesc ? y - x : x - y;
     });
   }, [groups0, sort, sortDesc, since, addedOn]);
+  // zzz1283 — rejected companies leave the list, counts and tiles unless "Show rejected" is on
+  const rejHidden = useMemo(() => groupsSorted.filter((g) => rejOf(g).state === 'hidden').length, [groupsSorted, rejOf]);
+  const groups = useMemo(() => showMineRej ? groupsSorted : groupsSorted.filter((g) => rejOf(g).state !== 'hidden'), [groupsSorted, rejOf, showMineRej]);
+  const rejectGroup = (g: Group, on: boolean) => setCbMark(g.ticker, g.market, on ? 'rejected' : null, { company: g.company });
 
   const themes = useMemo(() => (data?.themes || []).filter((t) => mkt === 'ALL' || (data?.items || []).some((x) => x.theme === t.theme && x.market === mkt)), [data, mkt]);
 
@@ -291,6 +305,9 @@ export default function TransformationalGainersPage() {
                 <button type="button" style={chip(sort === 'move')} onClick={() => pickSort('move')} title="The day's move; click again to flip">Move {sort === 'move' ? (sortDesc ? '↓' : '↑') : ''}</button>
                 <button type="button" style={chip(sort === 'since')} onClick={() => pickSort('since')} title="Move since the company was added to this board; click again to flip">Since added {sort === 'since' ? (sortDesc ? '↓' : '↑') : ''}</button>
               </div></div>
+              <div><div style={sectionTitle} title="Same Rejected mark as Conviction Beats and the Decision Logbook. A rejected company comes back by itself when it has a new event after the day you rejected it.">Rejected</div><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <button type="button" style={chip(showMineRej, R.red)} onClick={() => setShowMineRej((v) => !v)}>{showMineRej ? 'Hide rejected' : `Show rejected (${rejHidden})`}</button>
+              </div></div>
             </div>
             <div style={{ border: `1px solid ${R.border}`, borderRadius: 10, padding: 12, background: R.bg }}>
               <div style={{ ...sectionTitle, display: 'flex', justifyContent: 'space-between' }}><span>Themes</span>{theme && <button type="button" onClick={() => setTheme(null)} style={{ fontSize: 11, color: R.cyan, background: 'none', border: 'none', cursor: 'pointer' }}>clear ✕</button>}</div>
@@ -341,14 +358,20 @@ export default function TransformationalGainersPage() {
                     <tbody>
                       {groups.map((g) => {
                         const x = g.best; const f = x.facts; const open = openKey === g.key;
+                        const rj = rejOf(g);
                         const dm = marginDeltaOf(f);   // zzz1276 — null on a tiny / loss-making base
                         return (
                           <Fragment key={g.key}>
-                            <tr className="tg-row" onClick={() => setOpenKey(open ? null : g.key)} style={{ boxShadow: `inset 3px 0 0 ${STRENGTH_COLOR[x.strength]}` }}>
+                            <tr className="tg-row" onClick={() => setOpenKey(open ? null : g.key)} style={{ boxShadow: `inset 3px 0 0 ${STRENGTH_COLOR[x.strength]}`, opacity: rj.state === 'hidden' ? 0.45 : 1 }}>
                               <td style={{ minWidth: 170 }}>
                                 <div style={{ fontWeight: 900, fontSize: 14 }}>{g.ticker} {newSet.has(g.key) && <span style={{ fontSize: 10, fontWeight: 800, color: R.violet, border: `1px solid ${R.violet}`, borderRadius: 999, padding: '0 5px', marginLeft: 4 }}>NEW</span>}</div>
                                 <div style={{ fontSize: 12, color: R.dim }}>{g.market === 'IN' ? '🇮🇳' : '🇺🇸'} {g.company}</div>
                                 <div style={{ fontSize: 11, color: R.faint }}>{fmtCap(x)}</div>
+                                <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 4, flexWrap: 'wrap' }}>
+                                  {rj.state === 'hidden' && <span style={{ fontSize: 10, fontWeight: 800, color: R.red }}>✕ Rejected {rj.date}</span>}
+                                  {rj.state === 'resurfaced' && <span style={{ fontSize: 10, fontWeight: 800, color: R.amber }} title="You rejected it; it has a new event on the board since then">✕ Rejected {rj.date} · new event since</span>}
+                                  <button type="button" onClick={(e) => { e.stopPropagation(); rejectGroup(g, !rj.state); }} title={rj.state ? 'Undo the reject (also clears it on Conviction Beats and the Decision Logbook)' : 'Reject: hide this company here (and mark it Rejected on Conviction Beats / Decision Logbook). It comes back if a new event is filed.'} style={{ fontSize: 10, fontWeight: 800, color: rj.state ? R.cyan : R.red, background: 'none', border: `1px solid ${rj.state ? R.cyan : R.red}`, borderRadius: 999, padding: '0 7px', cursor: 'pointer' }}>{rj.state ? 'Undo' : '✕ Reject'}</button>
+                                </div>
                               </td>
                               <td className="tg-hide-sm" style={{ minWidth: 140 }}>
                                 <span style={{ fontSize: 12, fontWeight: 700, color: R.cyan }}>{x.theme === OTHER_THEME ? 'Other' : x.theme}</span>

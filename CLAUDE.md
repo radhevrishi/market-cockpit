@@ -4277,3 +4277,7 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   a year's revenue, or an order < 25% with no multi-year runway. Rules read: deep losses (operating margin < −20%) −8.
 - zzz1282 (18 Nov): Transformational Gainers sort by Move (the day's move) and Since added — Sort chips plus clickable column
   headers; click again flips highest ↔ lowest first; rows without a figure go last. `groups0` = filtered groups, `groups` = sorted.
+- zzz1283 (18 Nov): Transformational Gainers "✕ Reject" per company = the SAME logbook mark as Conviction Beats (setCbMark →
+  lib/decisions REJECTED, per symbol + market, vault-synced). Rejected companies leave the list, counts and tiles; "Show rejected (N)"
+  in the filter rail brings them back greyed with Undo. `tgRejectState` (lib/transformational/marks.ts): an event dated AFTER the
+  reject day brings the company back with "rejected on X · new event since".
