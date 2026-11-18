@@ -14,7 +14,7 @@ import { TurnaroundBadge } from '@/components/turnaround/TurnaroundBadge';   // 
 import { turnaroundFromTg, type Turnaround } from '@/lib/turnaround/core';
 import type { TgVerify } from '@/lib/transformational/verify';   // zzz1233
 import { readDecisions, subscribeDecisions, type Decision } from '@/lib/decisions';   // zzz1283
-import { cbMarkReader, setCbMark } from '@/lib/cb-decisions';
+import { cbMarkReader, setCbMark, markOfDecision } from '@/lib/cb-decisions';
 import { tgRejectState } from '@/lib/transformational/marks';
 import { MB_NAME, MB_WORD, ONE_PAGE_CASE, OTHER_THEME, aiIsCurrent, chanceOf, marginDeltaOf, tgKindWord, type MbLabel, type TgBoard, type TgItem, type TgStrength } from '@/lib/transformational/core';
 
@@ -35,6 +35,7 @@ export default function TransformationalGainersPage() {
   const [showRej, setShowRej] = useState(false);
   const [decisions, setDecisions] = useState<Record<string, Decision>>({});   // zzz1283 — rejects (shared with Conviction Beats)
   const [showMineRej, setShowMineRej] = useState(false);
+  const [watchOnly, setWatchOnly] = useState(false);   // zzz1284 — only companies marked Watchlist
   useEffect(() => { const load = () => setDecisions(readDecisions()); load(); return subscribeDecisions(load); }, []);
   const [state, setState] = useState<'loading' | 'ok' | 'error'>('loading');
   const [err, setErr] = useState<string | null>(null);
@@ -139,7 +140,7 @@ export default function TransformationalGainersPage() {
   // zzz1282 — sort by the day's move or by the move since the company was added (unknown values always last)
   const rejOf = useCallback((g: Group) => {
     const d = cbMarkReader(decisions, g.market)(g.ticker).decision;
-    return { state: tgRejectState(d?.status, d?.date, g.items[0].sessionDate), date: d?.date?.slice(0, 10) || '' };
+    return { state: tgRejectState(d?.status, d?.date, g.items[0].sessionDate), date: d?.date?.slice(0, 10) || '', mark: markOfDecision(d) };
   }, [decisions]);
   const groupsSorted = useMemo(() => {
     if (sort !== 'move' && sort !== 'since') return groups0;
@@ -156,7 +157,10 @@ export default function TransformationalGainersPage() {
   }, [groups0, sort, sortDesc, since, addedOn]);
   // zzz1283 — rejected companies leave the list, counts and tiles unless "Show rejected" is on
   const rejHidden = useMemo(() => groupsSorted.filter((g) => rejOf(g).state === 'hidden').length, [groupsSorted, rejOf]);
-  const groups = useMemo(() => showMineRej ? groupsSorted : groupsSorted.filter((g) => rejOf(g).state !== 'hidden'), [groupsSorted, rejOf, showMineRej]);
+  const watchCount = useMemo(() => groupsSorted.filter((g) => rejOf(g).mark === 'watchlist').length, [groupsSorted, rejOf]);
+  const groups = useMemo(() => watchOnly ? groupsSorted.filter((g) => rejOf(g).mark === 'watchlist')
+    : showMineRej ? groupsSorted : groupsSorted.filter((g) => rejOf(g).state !== 'hidden'), [groupsSorted, rejOf, showMineRej, watchOnly]);
+  const watchGroup = (g: Group, on: boolean) => setCbMark(g.ticker, g.market, on ? 'watchlist' : null, { company: g.company });
   const rejectGroup = (g: Group, on: boolean) => setCbMark(g.ticker, g.market, on ? 'rejected' : null, { company: g.company });
 
   const themes = useMemo(() => (data?.themes || []).filter((t) => mkt === 'ALL' || (data?.items || []).some((x) => x.theme === t.theme && x.market === mkt)), [data, mkt]);
@@ -200,7 +204,7 @@ export default function TransformationalGainersPage() {
       <style>{`
         .tg-grid{display:grid;grid-template-columns:270px minmax(0,1fr);gap:16px;align-items:start}
         .tg-side{position:sticky;top:8px;display:flex;flex-direction:column;gap:12px}
-        .tg-kpis{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px;margin:10px 0 14px}
+        .tg-kpis{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:8px;margin:10px 0 14px}
         .tg-table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}
         .tg-table th{position:sticky;top:0;background:var(--mc-bg-1);text-align:left;font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--mc-text-3);padding:8px 10px;border-bottom:2px solid var(--mc-bg-4);white-space:nowrap}
         .tg-table td{padding:9px 10px;border-bottom:1px solid var(--mc-bg-4);vertical-align:top}
@@ -253,11 +257,12 @@ export default function TransformationalGainersPage() {
       <div className="tg-kpis">
         {[
           { k: 'Companies', v: kpi.cos, c: R.text, sub: `${filtered.length} events · click: clear filters`, on: false,
-            click: () => { setTheme(null); setStrength(null); setMbMin(null); setOnlyNew(false); setQ(''); setMkt('ALL'); } },
+            click: () => { setTheme(null); setStrength(null); setMbMin(null); setOnlyNew(false); setQ(''); setMkt('ALL'); setWatchOnly(false); setTurnOnly(false); } },
           { k: 'Transformational', v: kpi.trans, c: R.green, sub: 'lasting change to earnings', on: strength === 'TRANSFORMATIONAL', click: () => setStrength((v) => (v === 'TRANSFORMATIONAL' ? null : 'TRANSFORMATIONAL')) },
           { k: `High ${MB_NAME.toLowerCase()}`, v: kpi.high, c: R.green, sub: `rules + AI · AI reviewed ${kpi.aiCos} of ${kpi.cos}`, on: mbMin === 'HIGH', click: () => setMbMin((v) => (v === 'HIGH' ? null : 'HIGH')) },
           { k: 'New this week', v: kpi.fresh, c: R.violet, sub: data?.historyFrom && data.historyFrom > shortHistory ? `history only since ${data.historyFrom} — 'new' settles after 2 weeks` : 'first seen in 7 days', on: onlyNew, click: () => setOnlyNew((v) => !v) },
           { k: '🔄 Turnarounds', v: taCount, c: R.violet, sub: 'new owner · licence · roll-out · debt repair · revival', on: turnOnly, click: () => setTurnOnly((v) => !v) },
+          { k: '👁 Watchlist', v: watchCount, c: R.cyan, sub: 'companies you marked Watch · click: show only them', on: watchOnly, click: () => setWatchOnly((v) => !v) },
           { k: 'Themes', v: kpi.themes, c: R.cyan, sub: theme ? `showing: ${theme === OTHER_THEME ? 'Other' : theme} · click: all` : `${kpi.newThemes} new this week · pick one on the left`, on: !!theme, click: () => setTheme(null) },
           { k: 'Window', v: `${days}d`, c: R.text, sub: `${data ? `${data.from} → ${data.to}` : ''} · click: change`, on: days !== 60, click: () => setDays((d) => ({ 60: 30, 30: 14, 14: 7, 7: 60 } as Record<number, number>)[d] || 60) },
         ].map((t) => (
@@ -305,7 +310,8 @@ export default function TransformationalGainersPage() {
                 <button type="button" style={chip(sort === 'move')} onClick={() => pickSort('move')} title="The day's move; click again to flip">Move {sort === 'move' ? (sortDesc ? '↓' : '↑') : ''}</button>
                 <button type="button" style={chip(sort === 'since')} onClick={() => pickSort('since')} title="Move since the company was added to this board; click again to flip">Since added {sort === 'since' ? (sortDesc ? '↓' : '↑') : ''}</button>
               </div></div>
-              <div><div style={sectionTitle} title="Same Rejected mark as Conviction Beats and the Decision Logbook. A rejected company comes back by itself when it has a new event after the day you rejected it.">Rejected</div><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <div><div style={sectionTitle} title="Same Watchlist / Rejected marks as Conviction Beats and the Decision Logbook. A rejected company comes back by itself when it has a new event after the day you rejected it.">Your marks</div><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <button type="button" style={chip(watchOnly, R.cyan)} onClick={() => setWatchOnly((v) => !v)}>👁 Watchlist only ({watchCount})</button>
                 <button type="button" style={chip(showMineRej, R.red)} onClick={() => setShowMineRej((v) => !v)}>{showMineRej ? 'Hide rejected' : `Show rejected (${rejHidden})`}</button>
               </div></div>
             </div>
@@ -370,6 +376,9 @@ export default function TransformationalGainersPage() {
                                 <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 4, flexWrap: 'wrap' }}>
                                   {rj.state === 'hidden' && <span style={{ fontSize: 10, fontWeight: 800, color: R.red }}>✕ Rejected {rj.date}</span>}
                                   {rj.state === 'resurfaced' && <span style={{ fontSize: 10, fontWeight: 800, color: R.amber }} title="You rejected it; it has a new event on the board since then">✕ Rejected {rj.date} · new event since</span>}
+                                  {rj.mark === 'watchlist' && <span style={{ fontSize: 10, fontWeight: 800, color: R.cyan }}>👁 Watching</span>}
+                                  {rj.mark === 'bought' && <span style={{ fontSize: 10, fontWeight: 800, color: R.green }}>● Bought</span>}
+                                  {!rj.state && <button type="button" onClick={(e) => { e.stopPropagation(); watchGroup(g, rj.mark !== 'watchlist'); }} title={rj.mark === 'watchlist' ? 'Remove from your watchlist (also on Conviction Beats / Decision Logbook)' : 'Watch: mark this company Watchlist (same mark as Conviction Beats / Decision Logbook)'} style={{ fontSize: 10, fontWeight: 800, color: R.cyan, background: 'none', border: `1px solid ${R.cyan}`, borderRadius: 999, padding: '0 7px', cursor: 'pointer' }}>{rj.mark === 'watchlist' ? 'Unwatch' : '👁 Watch'}</button>}
                                   <button type="button" onClick={(e) => { e.stopPropagation(); rejectGroup(g, !rj.state); }} title={rj.state ? 'Undo the reject (also clears it on Conviction Beats and the Decision Logbook)' : 'Reject: hide this company here (and mark it Rejected on Conviction Beats / Decision Logbook). It comes back if a new event is filed.'} style={{ fontSize: 10, fontWeight: 800, color: rj.state ? R.cyan : R.red, background: 'none', border: `1px solid ${rj.state ? R.cyan : R.red}`, borderRadius: 999, padding: '0 7px', cursor: 'pointer' }}>{rj.state ? 'Undo' : '✕ Reject'}</button>
                                 </div>
                               </td>

@@ -4281,3 +4281,5 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   lib/decisions REJECTED, per symbol + market, vault-synced). Rejected companies leave the list, counts and tiles; "Show rejected (N)"
   in the filter rail brings them back greyed with Undo. `tgRejectState` (lib/transformational/marks.ts): an event dated AFTER the
   reject day brings the company back with "rejected on X · new event since".
+- zzz1284 (18 Nov): Transformational Gainers "👁 Watch" button next to Reject (same Watchlist mark as Conviction Beats via setCbMark),
+  "👁 Watching" / "● Bought" badges, a "👁 Watchlist" KPI tile (8 tiles now) and "Watchlist only (N)" in the "Your marks" filter section.
