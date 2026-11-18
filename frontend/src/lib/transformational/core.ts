@@ -94,7 +94,7 @@ export const THEMES: Array<{ name: string; re: RegExp; structural: boolean }> = 
   { name: 'Auto / EV components', re: /\b(?:auto(?:motive)? components?|auto parts?|auto manufactur\w*|auto ancillar\w*|EVs?|electric vehicles?|wheels?|forgings?|castings?|two-?wheelers?|tractors?|commercial vehicles?|OEMs?)\b/i, structural: false },
   { name: 'Capital goods / industrial machinery', re: /\b(?:capital goods|machinery|electrical (?:equipment|products)|industrial (?:specialties|products|machinery)|machine tools?|pumps?|valves?|compressors?|engineering|fabrications?|heavy equipment|cranes?)\b/i, structural: true },
   { name: 'Infrastructure / construction / EPC', re: /\b(?:EPC|construction|contractors?|environmental services|water utilit\w+|infrastructure|highways?|roads?|bridges?|tunnel\w*|water (?:supply|treatment)|irrigation|smart cit\w+)\b/i, structural: true },
-  { name: 'Telecom / networking', re: /\b(?:telecom\w*|5G|network(?:ing)?|fib(?:re|er) optic|broadband|towers?)\b/i, structural: true },
+  { name: 'Telecom / networking', re: /\b(?:telecom\w*|communications equipment|5G|network(?:ing)?|fib(?:re|er) optic|broadband|towers?)\b/i, structural: true },
   { name: 'Software / IT services / SaaS', re: /\b(?:software|SaaS|cloud|IT services|IT enabled services|EDP services|computer services|IT consulting|digital|cyber ?security|subscription|ARR)\b/i, structural: false },
   { name: 'Metals & mining', re: /\b(?:steel|aluminium|aluminum|copper|zinc|iron ore|mining|minerals?|coal|precious metals|gold|silver|royalt(?:y|ies) (?:compan\w+|corp\w*|streams?))\b/i, structural: false },
   { name: 'Paper & packaging', re: /\b(?:paper|paperboard|packaging|kraft|corrugat\w*|pulp|labels?|flexible packaging|forest products)\b/i, structural: false },
@@ -136,6 +136,8 @@ export function themeOf(texts: Array<string | null | undefined>, industry?: stri
     const byTxt = best(texts.filter(Boolean).join(' \n ').slice(0, 6000));
     if (byTxt && byTxt.n >= 1) return { theme: byTxt.name, why: `the filing says "${byTxt.word}" (industry "${ind}" is a catch-all)` };
   }
+  // Nasdaq's "Radio And Television Broadcasting And Communications Equipment" is equipment makers (satellites, radios), not media
+  if (/communications equipment/i.test(ind)) return { theme: 'Telecom / networking', why: `the company's industry: ${ind}` };
   const byInd = ind ? best(ind) : null;
   if (byInd) return { theme: byInd.name, why: `the company's industry: ${ind}` };
   if (ind) return { theme: ind.slice(0, 60), why: 'the company\'s industry (screener)' };
@@ -583,7 +585,19 @@ export interface TgBoard { items: TgItem[]; themes: TgThemeRow[]; newCompanies: 
 const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
 
 /** The board over `days` ending `today`: newest first, themes with counts, themes and companies first seen in the last 7 days. */
-export function buildBoard(all: TgItem[], today: string, days = 60): TgBoard {
+/** zzz1276 — one company, one theme: when one of a company's events named its theme from the filing text (because the industry
+ *  is a catch-all) and another only had the catch-all, the text-named theme wins for all of them. Pure; returns new objects. */
+export function unifyCompanyThemes(all: TgItem[]): TgItem[] {
+  const pick = new Map<string, { theme: string; why: string | null }>();
+  for (const x of all) if (/^the filing says/.test(String(x.themeWhy || '')) && x.theme !== OTHER_THEME) pick.set(`${x.market}:${x.ticker}`, { theme: x.theme, why: x.themeWhy || null });
+  return all.map((x) => {
+    const p = pick.get(`${x.market}:${x.ticker}`);
+    return p && x.theme !== p.theme && !/^the filing says/.test(String(x.themeWhy || '')) && VAGUE_INDUSTRY_RE.test(String(x.industry || '').trim()) ? { ...x, theme: p.theme, themeWhy: p.why } : x;
+  });
+}
+
+export function buildBoard(all0: TgItem[], today: string, days = 60): TgBoard {
+  const all = unifyCompanyThemes(all0);
   const from = addDays(today, -days), recent = addDays(today, -7);
   const inWin = all.filter((x) => x.sessionDate >= from && x.sessionDate <= today);
   const needsCheck = inWin.filter((x) => x.needsCheck).sort((a, b) => b.sessionDate.localeCompare(a.sessionDate));

@@ -43,3 +43,12 @@ test('zzz1276 a US company scaling 40%+ into profit is not a turnaround; a slow 
   assert.equal(turnaroundOf({ market: 'US', texts: ['returned to profit'], ids, facts: { revenueYoY: 25, patYoY: null, marginNow: 6, marginPrior: -2 } })?.archetype, 'OPERATING_REVIVAL');
   assert.equal(turnaroundOf({ market: 'IN', texts: ['returned to profit'], ids, facts: { revenueYoY: 55, patYoY: null, marginNow: 6, marginPrior: -2 } })?.archetype, 'OPERATING_REVIVAL');
 });
+
+test('zzz1276 one company keeps one theme when the text named it on one event', async () => {
+  const { unifyCompanyThemes } = await import('../transformational/core');
+  const base: any = { market: 'US', ticker: 'ESTA', industry: 'Industrial Specialties' };
+  const out = unifyCompanyThemes([{ ...base, id: 'a', theme: 'Capital goods / industrial machinery', themeWhy: "the company's industry: Industrial Specialties" },
+    { ...base, id: 'b', theme: 'Pharma CDMO / API / healthcare', themeWhy: 'the filing says "FDA" (industry "Industrial Specialties" is a catch-all)' }]);
+  assert.deepEqual(out.map((x: any) => x.theme), ['Pharma CDMO / API / healthcare', 'Pharma CDMO / API / healthcare']);
+  assert.equal(themeOf([''], 'Radio And Television Broadcasting And Communications Equipment', 'BlackSky').theme, 'Telecom / networking');
+});

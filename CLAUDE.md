@@ -4239,4 +4239,5 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   `trimDanglingHeadline` cuts a release headline split mid-figure back to the last Results / Highlights / Update / Guidance phrase
   (headline only — figure lines are never trimmed). `marginDeltaOf`: no margin move on a tiny / loss-making base (|margin| > 60% or a
   move > 50 pts); inflection signals are re-worded at read time from today's figures. Turnaround: a US company growing sales 40%+ or
-  with a prior margin below −25% is scaling, not an operating revival (`TaInput.market`). Fable review was not available (credits).
+  with a prior margin below −25% is scaling, not an operating revival (`TaInput.market`). `unifyCompanyThemes` (buildBoard): one company,
+  one theme across its events. Nasdaq "…Communications Equipment" → Telecom. Fable review was not available (credits).
