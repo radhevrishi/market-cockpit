@@ -431,7 +431,7 @@ export function nonEventReason(x: Pick<TgItem, 'kind' | 'headline' | 'whatChange
   if ((x.kind === 'ORDERS' || x.kind === 'CAPACITY' || x.kind === 'APPROVAL') && RATING_RE.test(text) && !(STRICT[x.kind] as RegExp).test(text.replace(RATING_RE, ''))) return 'a credit-rating action, not the labelled event';
   if (x.kind === 'ORDERS' && MOU_RE.test(text) && !ORDER_FIRM_RE.test(text)) return 'an MoU / letter to explore, not a firm order';
   // zzz1279 — a small solar plant for the company's own power (HARIOMPIPE 5 MW, SANSTAR 3 MW, ADVANCE 4 MW) is cost saving, not business capacity
-  if ((x.kind === 'CAPACITY' || x.kind === 'ORDERS') && CAPTIVE_SOLAR_RE.test(text) && !(STRICT.CAPACITY as RegExp).test(text.replace(CAPTIVE_SOLAR_RE, ''))) return 'a small solar plant for its own power, not new business capacity';
+  if ((x.kind === 'CAPACITY' || x.kind === 'ORDERS') && CAPTIVE_SOLAR_RE.test(text) && !(STRICT.CAPACITY as RegExp).test(text.replace(new RegExp(CAPTIVE_SOLAR_RE.source, 'gi'), ''))) return 'a small solar plant for its own power, not new business capacity';
   // zzz1279 — a capacity that is only proposed / expected (DIACABS "Proposed capacity addition", TINNARUBR "will be commissioned by Q3")
   if (x.kind === 'CAPACITY' && PLANNED_CAP_RE.test(text) && !DONE_CAP_RE.test(text)) return 'a planned capacity, not yet commissioned';
   const strict = STRICT[x.kind];

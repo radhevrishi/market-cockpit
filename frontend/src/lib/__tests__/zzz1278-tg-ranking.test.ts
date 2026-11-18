@@ -60,6 +60,7 @@ test('zzz1279 large companies, falling figures, captive solar, planned capacity,
   assert.ok(falling.minus.some((m) => /revenue down/.test(m)) && falling.minus.some((m) => /profit down/.test(m)));
   const r = (kind: any, headline: string) => ner({ kind, headline, whatChanged: null, quote: null });
   assert.match(String(r('CAPACITY', 'Board approved Q2 FY27 results, appointed Rajdeep Tripathy as VP-HR, and noted 5 MW solar plant commissioning.')), /solar/);
+  assert.match(String(ner({ kind: 'CAPACITY', headline: 'noted 5 MW solar plant commissioning.', whatChanged: 'Production ramp', quote: 'noted 5 MW solar plant commissioning.' })), /solar/);   // the text twice
   assert.match(String(r('CAPACITY', 'As filed: "Existing capacity utilisation 60% Proposed capacity addition One CCV line"')), /planned/);
   assert.match(String(r('CAPACITY', 'The ongoing 3,500 MTPA MRP capacity expansion is progressing as planned and will be commissioned by Q3 FY27')), /planned/);
   assert.equal(r('CAPACITY', 'Additional 15K MTPA R32-equivalent HFC plant at Surat commenced commercial operations today.'), null);
