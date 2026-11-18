@@ -339,6 +339,22 @@ export async function GET(request: Request) {
   }
   const symbol = toScreenerSymbol(raw);
   const isStandalone = searchParams.get('standalone') === 'true';
+
+  // zzz1277 — ?stored=1: the yearly tables from the page OUR stock-screener build keeps (screener_store), no live
+  // screener.in request. Used by Multibagger's capital-allocation panel. A company not in the universe yet falls through
+  // to the live read below (same as before).
+  if (searchParams.get('stored') === '1' && !isStandalone) {
+    try {
+      const { dbQuery } = await import('@/lib/db');
+      const r = await dbQuery<{ payload: any; updated_at: string | null }>(
+        `SELECT payload, updated_at::text AS updated_at FROM screener_store WHERE market = 'IN' AND ticker = $1 AND kind = 'fund'`, [symbol]).catch(() => []);
+      const rawPage = r[0]?.payload?.raw ?? null;
+      if (rawPage?.T?.a?.headers?.length) {
+        const { storedTablesAnswer } = await import('@/lib/screener/in-tables-view');
+        return NextResponse.json(storedTablesAnswer(symbol, rawPage, r[0]?.updated_at ?? null));
+      }
+    } catch { /* fall through to the live read */ }
+  }
   const path = isStandalone ? `company/${symbol}/` : `company/${symbol}/consolidated/`;
 
   const debug: { url: string; status: number | null; sections: string[]; warnings: string[] } = {

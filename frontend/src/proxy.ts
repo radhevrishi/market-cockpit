@@ -26,7 +26,6 @@ const HEAVY_ROUTES = [
   '/api/earnings/estimates',
   '/api/earnings/fmp-proxy',
   '/api/concall/parse',
-  '/api/market/multibagger',
   '/api/auth/login',          // zzz778 — password guessing is capped at 30/min/IP
 ];
 

@@ -116,6 +116,37 @@ export function normaliseBse(rows: any[]): UpcomingMeeting[] {
   return out;
 }
 
+/** zzz1277 — Pure: results board meetings read from NSE "Board Meeting Intimation" announcements (the announcements feed kept
+ *  answering after 14 Nov 2026 while the board-meetings API and BSE's forthcoming-results API refused this server). The date is
+ *  the meeting date written in the line under the subject ("… scheduled on 21-Nov-2026 to consider … financial results"). */
+const MONTH_NAMES = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+export function meetingDateInText(text: string): string | null {
+  const t = String(text || '');
+  let x = t.match(/\b(?:on|dated?|held on|scheduled (?:on|for))\s+(?:\w+day,?\s+)?(\d{1,2})(?:st|nd|rd|th)?[-\s/.]([A-Za-z]{3,9}|\d{1,2})[-\s/.,]+(\d{4})/i);
+  if (x) {
+    const mi = MON_IDX[x[2].slice(0, 3).toLowerCase()];
+    if (mi != null) return `${String(+x[1]).padStart(2, '0')}-${MON[mi]}-${x[3]}`;
+    if (/^\d{1,2}$/.test(x[2])) { const m = +x[2] - 1; if (m >= 0 && m < 12) return `${String(+x[1]).padStart(2, '0')}-${MON[m]}-${x[3]}`; }
+  }
+  x = t.match(/\b(?:on|scheduled (?:on|for))\s+(?:\w+day,?\s+)?([A-Za-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})/i);
+  if (x) { const mi = MONTH_NAMES.findIndex((n) => n.startsWith(x![1].toLowerCase().slice(0, 3))); if (mi >= 0) return `${String(+x[2]).padStart(2, '0')}-${MON[mi]}-${x[3]}`; }
+  return null;
+}
+export function meetingsFromAnnouncements(filings: Array<{ symbol: string; company_name?: string; subject?: string; detail?: string; category?: string | null }>): UpcomingMeeting[] {
+  const out: UpcomingMeeting[] = [];
+  for (const f of filings) {
+    const sub = String(f.subject || ''), det = String(f.detail || ''), all = `${sub} ${f.category || ''} ${det}`;
+    if (!/board meeting/i.test(all)) continue;
+    if (!/financial\s*result|quarterly\s*result|half.?yearly\s*result|annual\s*result|\bresults?\b.*(quarter|half|year|period)/i.test(all)) continue;
+    if (/\boutcome\b|postpone|cancel|adjourn/i.test(all)) continue;   // the outcome is a filing, not a coming meeting
+    const date = meetingDateInText(det) || meetingDateInText(sub);
+    const sym = String(f.symbol || '').toUpperCase();
+    if (!date || !sym) continue;
+    out.push({ bm_symbol: sym, bm_date: date, bm_purpose: 'Financial Results', bm_desc: det.slice(0, 300) || sub, sm_name: String(f.company_name || sym), source: 'NSE' });
+  }
+  return mergeMeetings(out, []);
+}
+
 /** Pure: union by symbol+date, NSE row wins over BSE for the same meeting. */
 export function mergeMeetings(nse: UpcomingMeeting[], bse: UpcomingMeeting[]): UpcomingMeeting[] {
   const seen = new Set<string>();
@@ -138,6 +169,22 @@ export async function fetchUpcomingBoardMeetings(from: Date, to: Date): Promise<
     (async () => {
       const url = `https://api.bseindia.com/BseIndiaAPI/api/Corpforthresults/w?scripcode=&Fdate=${bseQueryDate(from)}&Purpose=P&TDate=${bseQueryDate(to)}&strSearch=P`;
       try {
+        // zzz1277 — direct first (proxiedFetch only ever used the relay, which BSE refused with 403 from 14 Nov), then the relay.
+        const init: RequestInit = {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36',
+            'Accept': 'application/json, text/plain, */*',
+            'Referer': 'https://www.bseindia.com/',
+            'Origin': 'https://www.bseindia.com',
+          },
+          signal: AbortSignal.timeout(20_000),
+          cache: 'no-store',
+        };
+        const direct: Response | null = await fetch(url, init).catch(() => null);
+        if (direct && direct.ok) {
+          const text = await direct.text();
+          try { const j = JSON.parse(text); if ((Array.isArray(j) ? j : j?.Table || []).length) return j; } catch { /* try the relay */ }
+        }
         const r = await proxiedFetch(url, {
           headers: {
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36',
@@ -155,7 +202,13 @@ export async function fetchUpcomingBoardMeetings(from: Date, to: Date): Promise<
     })(),
   ]);
 
-  const nseRows: any[] = Array.isArray(nseRaw) ? nseRaw : (Array.isArray(nseRaw?.data) ? nseRaw.data : []);
+  let nseRows: any[] = Array.isArray(nseRaw) ? nseRaw : (Array.isArray(nseRaw?.data) ? nseRaw.data : []);
+  // zzz1277 — the dated range call answered nothing from 14 Nov 2026. Ask once without dates (NSE's own upcoming list).
+  if (!nseRows.length) {
+    const plain: any = await nseApiFetch('/api/corporate-board-meetings?index=equities', 300000).catch(() => null);
+    const rows = Array.isArray(plain) ? plain : (Array.isArray(plain?.data) ? plain.data : []);
+    if (rows.length) { nseRows = rows; res.nse.error = null; }
+  }
   const bseRows: any[] = Array.isArray(bseRaw) ? bseRaw : (Array.isArray(bseRaw?.Table) ? bseRaw.Table : []);
   if (nseRaw == null && !res.nse.error) res.nse.error = 'NSE answered nothing (blocked, cookie refresh failed, or negative-cached)';
   if (bseRaw == null && !res.bse.error) res.bse.error = 'BSE answered nothing';
@@ -164,5 +217,18 @@ export async function fetchUpcomingBoardMeetings(from: Date, to: Date): Promise<
   res.nse = { ok: nseRows.length > 0, rows: nse.length, error: res.nse.error };
   res.bse = { ok: bseRows.length > 0, rows: bse.length, error: res.bse.error };
   res.meetings = mergeMeetings(nse, bse);
+  // zzz1277 — last resort: the NSE announcements feed (board meeting intimations, last 21 days).
+  if (!res.meetings.length) {
+    try {
+      const { fetchNSEAnnouncements } = await import('@/lib/nse-bse-feed');
+      const iso = (d: Date) => d.toISOString().slice(0, 10);
+      const ann = await fetchNSEAnnouncements({ fromIso: iso(new Date(Date.now() - 21 * 86_400_000)), toIso: iso(new Date()), signal: AbortSignal.timeout(45_000) });
+      const fromAnn = meetingsFromAnnouncements(ann.filings || []);
+      if (fromAnn.length) {
+        res.meetings = fromAnn;
+        res.nse = { ok: true, rows: fromAnn.length, error: `${res.nse.error || 'board-meetings API empty'} — used ${fromAnn.length} board-meeting intimations from the announcements feed` };
+      }
+    } catch { /* keep the empty answer */ }
+  }
   return res;
 }

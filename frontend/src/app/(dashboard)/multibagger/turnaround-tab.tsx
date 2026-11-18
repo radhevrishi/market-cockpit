@@ -113,7 +113,7 @@ export function TurnaroundCompare() {
   }, []);
 
   // zzz215 — AUTO-SYNC from screener.in. Turnarounds (3658519) + Debt
-  // Reduction (3658621) are exported 4×/day by screener-sync.yml; this pulls
+  // Reduction (3658621) are run on our own stock-screener data (/api/v1/screener-data, zzz1234); this pulls
   // them through the existing handleFiles() pipeline. Auto-loads once when
   // the tab is empty; manual pull button always available.
   const [turnSyncing, setTurnSyncing] = useState(false);

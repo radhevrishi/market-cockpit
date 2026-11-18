@@ -4241,3 +4241,15 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   move > 50 pts); inflection signals are re-worded at read time from today's figures. Turnaround: a US company growing sales 40%+ or
   with a prior margin below −25% is scaling, not an operating revival (`TaInput.market`). `unifyCompanyThemes` (buildBoard): one company,
   one theme across its events. Nasdaq "…Communications Equipment" → Telecom. Fable review was not available (credits).
+- zzz1277 (18 Nov): "is everything on our own screener?" audit. Multibagger India / USA / Technicals / Turnarounds / Screens and
+  Fundamentals already read our snapshot (/api/v1/screener-data, /api/v1/tv-data). Fixed the leftovers: Multibagger capital-allocation
+  reads `/api/earnings/india-screener?stored=1` (yearly tables from screener_store 'fund' via `lib/screener/in-tables-view.ts`; live read
+  only for a company outside the universe; dividend yield is not kept → says so); "Recently added" compares with this browser's own daily
+  list copy (`multibagger/ticker-history.ts`, `mb_ticker_hist_v1_<tab>_<market>`, 10 days) instead of old TradingView CSVs on GitHub;
+  Fundamentals Refresh no longer dispatches the screener.in GitHub sync; home "Sync Screener.in" chip + dead button removed. Deleted unused
+  screener.in routes: api/market/multibagger, api/v1/screens/[id], api/screener/redirect, api/screener/sync, api/v1/earnings/cfo-debug.
+  KEPT on purpose (need same-day company pages our weekly re-read cannot give): EO enrich / earnings-scan / india-screener live (Concall
+  AI, latest quarter, NSE first), guidance-docs + concall PDF discovery, AI gainers India (owner's screener.in gainers screen), US live
+  gainers / movers (TradingView scanner, snapshot fallback). Our India snapshot itself is BUILT from screener.in company pages (stored).
+  Calendar job had failed since 14 Nov (NSE board-meetings API empty, BSE 403 via relay): BSE now direct first then relay; NSE dateless
+  call; last resort = results board-meeting intimations parsed from the NSE announcements feed (`meetingsFromAnnouncements`).

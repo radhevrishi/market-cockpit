@@ -258,7 +258,7 @@ export function VolumePocketsPanel({ techRows, onBest, onOpen }: { techRows: any
 
       {stocks.length === 0 ? (
         <div style={{ fontSize: 12.5, color: MUTED, padding: 12, background: PANEL2, borderRadius: 8 }}>
-          No Volume Pockets data on the server yet. The screener-sync GitHub Action runs 4×/day — or trigger it manually (Actions → &quot;Sync Screener.in CSVs&quot;).
+          No Volume Pockets names right now. These two screens are run on our own stock-screener data (rebuilt every hour); none match today.
         </div>
       ) : (
         <div style={{ overflowX: 'auto', border: `1px solid ${LINE}`, borderRadius: 10 }}>

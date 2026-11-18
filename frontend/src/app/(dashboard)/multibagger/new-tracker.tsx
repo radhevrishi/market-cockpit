@@ -3,6 +3,7 @@
 // Moved verbatim out of page.tsx (pure refactor, no behaviour change).
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { type NewTabKey } from './types';
+import { baselineDay, recordTickerDay, type TickerHistory } from './ticker-history';
 
 const NEW_WINDOW_DAYS = 7;
 function _newLoad(k, fallback) {
@@ -81,70 +82,27 @@ function _raSave(k: string, v: unknown) {
   if (typeof window === 'undefined') return;
   try { localStorage.setItem(k, JSON.stringify(v)); } catch {}
 }
-async function fetchHistoricalTickers(dataFolder: string): Promise<Set<string> | null> {
-  // Cache key: date-of-comparison + folder
-  const dayKey = new Date().toISOString().slice(0, 10);
-  const cacheKey = 'mb_hist_v2_' + dataFolder.replace(/\W/g,'_') + '_' + dayKey;
-  const cached = _raLoad<string[] | null>(cacheKey, null);
-  if (cached) return new Set(cached);
-  try {
-    // Get commits for this folder from ~48h ago (skip today's + yesterday's late sync)
-    const until = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
-    const commitsR = await fetch(`https://api.github.com/repos/radhevrishi/market-cockpit/commits?path=${encodeURIComponent(dataFolder)}&until=${encodeURIComponent(until)}&per_page=1`);
-    if (!commitsR.ok) return null;
-    const commits = await commitsR.json();
-    if (!Array.isArray(commits) || commits.length === 0) return null;
-    const sha = commits[0].sha;
-    // Fetch manifest at that SHA
-    const manifestUrl = `https://raw.githubusercontent.com/radhevrishi/market-cockpit/${sha}/${dataFolder}/manifest.json`;
-    const mR = await fetch(manifestUrl);
-    if (!mR.ok) return null;
-    const manifest = await mR.json();
-    if (!manifest || !Array.isArray(manifest.files)) return null;
-    const tickers = new Set<string>();
-    // Fetch each CSV, extract ticker column
-    await Promise.all(manifest.files.map(async (f: {name: string}) => {
-      try {
-        const csvUrl = `https://raw.githubusercontent.com/radhevrishi/market-cockpit/${sha}/${dataFolder}/${f.name}`;
-        const cR = await fetch(csvUrl);
-        if (!cR.ok) return;
-        const text = await cR.text();
-        const lines = text.split('\n');
-        if (lines.length < 2) return;
-        const header = lines[0].split(',').map(h => h.replace(/"/g, '').trim());
-        let tIdx = header.findIndex(h => /^ticker$/i.test(h));
-        if (tIdx < 0) tIdx = header.findIndex(h => /^symbol$/i.test(h) || /nse.?code/i.test(h));
-        if (tIdx < 0) return;
-        for (let i = 1; i < lines.length; i++) {
-          const line = lines[i].trim(); if (!line) continue;
-          const parts = line.split(',');
-          if (parts.length <= tIdx) continue;
-          let t = (parts[tIdx] || '').replace(/"/g, '').trim();
-          // Handle "NASDAQ:AAPL" style
-          if (t.includes(':')) t = t.split(':').pop() || t;
-          t = t.toUpperCase();
-          if (t) tickers.add(t);
-        }
-      } catch {}
-    }));
-    if (tickers.size > 0) _raSave(cacheKey, Array.from(tickers));
-    return tickers;
-  } catch { return null; }
+/** zzz1277 — "Recently added" compares today's list with this browser's own copy of the list from 2+ days ago (kept one
+ *  per day, 10 days). It used to read the old TradingView CSVs committed to GitHub — those are no longer updated now the
+ *  lists come from our own screener, so every name looked "new" or nothing did. Pure helpers exported for tests. */
+function localHistory(tab: string, current: string[]): { set: Set<string> | null; day: string | null } {
+  const key = 'mb_ticker_hist_v1_' + tab.replace(/\W/g, '_');
+  const today = new Date().toISOString().slice(0, 10);
+  const hist = _raLoad<TickerHistory>(key, {});
+  const base = baselineDay(hist, today);
+  _raSave(key, recordTickerDay(hist, today, current));
+  return base ? { set: new Set(hist[base]), day: base } : { set: null, day: null };
 }
-export function RecentlyAddedPanel({ tab, tickers, marketLabel, dataFolder }: { tab: NewTabKey; tickers: string[]; marketLabel: string; dataFolder: string }) {
+export function RecentlyAddedPanel({ tab, tickers, marketLabel, dataFolder }: { tab: NewTabKey; tickers: string[]; marketLabel: string; dataFolder?: string }) {
+  const currentUpper = React.useMemo(() => new Set(tickers.map(t => (t || '').split(':').pop()!.toUpperCase()).filter(Boolean)), [tickers]);
   const [historical, setHistorical] = React.useState<Set<string> | null>(null);
+  const [baseDay, setBaseDay] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
   React.useEffect(() => {
-    let cancel = false;
-    setLoading(true);
-    fetchHistoricalTickers(dataFolder).then(h => {
-      if (cancel) return;
-      setHistorical(h);
-      setLoading(false);
-    });
-    return () => { cancel = true; };
-  }, [dataFolder]);
-  const currentUpper = React.useMemo(() => new Set(tickers.map(t => (t || '').split(':').pop()!.toUpperCase())), [tickers]);
+    if (!currentUpper.size) return;   // list not loaded yet — never record an empty day
+    const h = localHistory(String(tab) + '_' + marketLabel, Array.from(currentUpper));   // one list per tab AND market
+    setHistorical(h.set); setBaseDay(h.day); setLoading(false);
+  }, [tab, marketLabel, currentUpper]);
   const added = React.useMemo(() => {
     if (!historical || historical.size === 0) return [] as string[];
     return Array.from(currentUpper).filter(t => t && !historical.has(t));
@@ -153,10 +111,10 @@ export function RecentlyAddedPanel({ tab, tickers, marketLabel, dataFolder }: { 
     <div style={{ margin: '12px 0', padding: '10px 14px', backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: 10 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: added.length > 0 ? 8 : 0 }}>
         <span style={{ fontSize: 13, fontWeight: 800, color: '#22D3EE' }}>&#128225; Recently Added ({loading ? '…' : added.length})</span>
-        <span style={{ fontSize: 11, color: '#64748b' }}>{marketLabel} &middot; new vs 2-day-old sync data from GitHub</span>
+        <span style={{ fontSize: 11, color: '#64748b' }}>{marketLabel} &middot; {baseDay ? `new since ${baseDay} (this browser's copy of the list)` : 'list kept from today — new names show from the day after tomorrow'}</span>
       </div>
       {loading && (
-        <span style={{ fontSize: 11, color: '#64748b', fontStyle: 'italic' }}>Loading historical data from GitHub…</span>
+        <span style={{ fontSize: 11, color: '#64748b', fontStyle: 'italic' }}>Waiting for the list…</span>
       )}
       {!loading && added.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -166,10 +124,10 @@ export function RecentlyAddedPanel({ tab, tickers, marketLabel, dataFolder }: { 
         </div>
       )}
       {!loading && historical && added.length === 0 && (
-        <span style={{ fontSize: 11, color: '#64748b', fontStyle: 'italic' }}>No new tickers vs the 2-day-old sync snapshot. Tomorrow's arrivals will surface here as the sync data changes.</span>
+        <span style={{ fontSize: 11, color: '#64748b', fontStyle: 'italic' }}>No new names since that day.</span>
       )}
       {!loading && !historical && (
-        <span style={{ fontSize: 11, color: '#f97316', fontStyle: 'italic' }}>Could not fetch historical sync data (GitHub API rate limit or network). Try refreshing later.</span>
+        <span style={{ fontSize: 11, color: '#64748b', fontStyle: 'italic' }}>First visit on this browser — today's list is kept and compared from the next visit on another day.</span>
       )}
     </div>
   );

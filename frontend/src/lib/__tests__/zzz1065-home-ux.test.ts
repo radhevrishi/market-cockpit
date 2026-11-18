@@ -238,8 +238,8 @@ describe('All tools drawer + favourites', () => {
     const a = home.indexOf('<ToolsDrawer>'), b = home.indexOf('</ToolsDrawer>');
     assert.ok(a > 0 && b > a);
     const inside = home.slice(a, b);
-    assert.ok((inside.match(/<NavLink\b/g) || []).length >= 49, 'the A–Z tool links are inside (49 at zzz1065)');
-    for (const href of ['/system-health', '/critical-themes', '/watchlists', '/screener-sync', '/tax-planner']) assert.ok(inside.includes(`href="${href}"`), href);
+    assert.ok((inside.match(/<NavLink\b/g) || []).length >= 48, 'the A–Z tool links are inside (49 at zzz1065; zzz1277 removed "Sync Screener.in")');
+    for (const href of ['/system-health', '/critical-themes', '/watchlists', '/tax-planner']) assert.ok(inside.includes(`href="${href}"`), href);
     const d = read('app/(dashboard)/_home/ToolsDrawer.tsx');
     assert.match(d, /hidden=\{!open\}/);
     assert.match(d, /aria-expanded=\{open\}/);

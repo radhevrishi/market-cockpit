@@ -8,7 +8,7 @@ import { type CapAllocAnalysis } from './types';
 
 async function analyseCapAlloc(ticker: string): Promise<CapAllocAnalysis | null> {
   const norm = ticker.includes('.') ? ticker : `${ticker}.NS`;
-  const res = await fetch(`/api/earnings/india-screener?ticker=${encodeURIComponent(norm)}`);
+  const res = await fetch(`/api/earnings/india-screener?ticker=${encodeURIComponent(norm)}&stored=1`);   // zzz1277 — our stock-screener copy first
   const json = await res.json().catch(() => null);
   if (!json?.ok) return null;
   const annual: any[] = json.annual || [];
@@ -54,7 +54,7 @@ async function analyseCapAlloc(ticker: string): Promise<CapAllocAnalysis | null>
   const div = (json.topMetrics?.dividendYieldPct ?? null);
   const pe = (json.topMetrics?.peRatio ?? null);
   const payoutPct = div != null && pe != null ? Math.round(div * pe * 100) / 100 : null;
-  let divVerdict = 'No dividend data';
+  let divVerdict = json.source === 'stored' ? 'Dividend yield not kept in our screener data' : 'No dividend data';
   if (payoutPct !== null) {
     if (payoutPct < 15 && epsGrowth !== null && epsGrowth > 15) divVerdict = `Low payout (${payoutPct.toFixed(0)}%) + strong EPS growth — reinvesting well`;
     else if (payoutPct > 60 && epsGrowth !== null && epsGrowth < 5) divVerdict = `High payout (${payoutPct.toFixed(0)}%) + weak EPS growth — over-distributing`;
