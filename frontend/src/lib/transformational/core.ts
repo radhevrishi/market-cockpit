@@ -171,6 +171,7 @@ export function multibaggerOf(x: Pick<TgItem, 'market' | 'orderToRevenuePct' | '
   // zzz1170 — missing figures are UNKNOWN, not bad: no points either way, but said plainly
   if (f.revenueYoY == null && f.patYoY == null && f.marginNow == null) minus.push('growth figures unknown — the read rests on the event alone');
   if (f.revenueYoY != null) { if (f.revenueYoY >= 40) { s += 12; plus.push(`revenue +${Math.round(f.revenueYoY)}% a year`); } else if (f.revenueYoY >= 25) { s += 8; plus.push(`revenue +${Math.round(f.revenueYoY)}% a year`); } else if (f.revenueYoY < 0) { s -= 8; minus.push(`revenue down ${Math.abs(Math.round(f.revenueYoY))}%`); } else if (f.revenueYoY < 10) { s -= 4; minus.push(`revenue growth only ${Math.round(f.revenueYoY)}%`); } }
+  if (f.marginNow != null && f.marginNow < -20) { s -= 8; minus.push(`deep losses (operating margin ${Math.round(f.marginNow)}%)`); }   // zzz1281
   if (f.patYoY != null && f.patYoY >= 60) { s += 8; plus.push(`profit +${Math.round(f.patYoY)}%`); }
   else if (f.patYoY != null && f.patYoY <= -30) { s -= 8; minus.push(`profit down ${Math.abs(Math.round(f.patYoY))}%`); }   // zzz1279
   if (f.marginNow != null && f.marginPrior != null) { const d = f.marginNow - f.marginPrior; if (d >= 3) { s += 6; plus.push(`margin up ${d.toFixed(1)} points (operating leverage)`); } else if (d <= -2) { s -= 4; minus.push(`margin down ${Math.abs(d).toFixed(1)} points`); } }
@@ -535,6 +536,20 @@ export function headlineRevenueGrowth(text: string): number | null {
 }
 
 /** Cleans one item and re-reads it under the current rule; null = not one of the most important events. Pure. */
+/** zzz1281 — "Transformational" is for a lasting change to the business, not a good quarter. 155 of 157 US rows were Transformational
+ *  because a results release with guidance raised / backlog up / growth acceleration counted as a strong event. Now, at most
+ *  Inflection when: the lead event is the results (guidance, results, turnaround); the shown event is the results release itself and no
+ *  sized order backs it; or an order is known to be under 25% of a year's revenue with no multi-year runway. Pure. */
+export const RESULTS_RELEASE_RE = /\b(?:reports?|announces?|posts?|delivers?)\b[^.]{0,80}\b(?:results|quarter|fiscal)\b|\bresults?\b[^.]{0,40}\b(?:quarter|Q[1-4]|fiscal|FY)\b|^Revenue \$|^Net income \$|\bQ[1-4] ?FY ?\d{2} result filed\b/i;
+export function strengthCap(x: Pick<TgItem, 'strength' | 'kind' | 'headline' | 'orderToRevenuePct' | 'durationYears'>): TgStrength {
+  if (x.strength !== 'TRANSFORMATIONAL') return x.strength;
+  if (x.kind === 'GUIDANCE' || x.kind === 'RESULTS' || x.kind === 'TURNAROUND') return 'INFLECTION';
+  const otr = x.orderToRevenuePct;
+  if (RESULTS_RELEASE_RE.test(String(x.headline || '')) && !(otr != null && otr >= 25)) return 'INFLECTION';
+  if (x.kind === 'ORDERS' && otr != null && otr < 25 && !x.durationYears) return 'INFLECTION';
+  return 'TRANSFORMATIONAL';
+}
+
 /** zzz1278 — India: a results line filed in Oct–Dec 2026 is Q2 FY27, but summaries sometimes write "Q2 FY26" (HARIOMPIPE, UNOMINDA,
  *  APLAPOLLO). Only the year is corrected, only when the quarter number matches the latest quarter ended before the filing and the
  *  year is off by exactly one. Pure. */
@@ -620,6 +635,7 @@ export function reviewItem(x0: TgItem, snap?: SnapFacts | null): TgItem | null {
   }
   const th = themeOf([x.headline, x.quote, x.whatChanged, ...x.signals], x.industry || null, x.company);
   if (th.theme !== OTHER_THEME || x.theme === OTHER_THEME || x.industry) { x.theme = th.theme; x.themeWhy = th.why; }
+  x.strength = strengthCap(x);   // zzz1281
   x.mb = multibaggerOf(x);
   if (x.strength === 'NOTABLE' && x.mb.score < 55) return null;
   x.needsCheck = evidenceGap(x);

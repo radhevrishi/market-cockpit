@@ -4271,3 +4271,7 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   best / worst) for the companies in the current list: share move from the close of the FIRST session the company appeared on the
   board to the latest close. `lib/transformational/since-added.ts` (pure `sinceAdded`, `sinceAddedMany` over the shared chart cache,
   6 at a time, 30-min memo) + POST `/api/v1/transformational/since` { keys: ["IN:ROTO:2026-11-18"] }. Free daily prices, no AI.
+- zzz1281 (18 Nov): 155 of 157 US board rows were "Transformational" — a results release with guidance raised / backlog up / growth
+  acceleration counted as a strong event. `strengthCap` (on read, before the multibagger read): at most Inflection when the lead event
+  is guidance / results / turnaround, when the shown text is the results release (`RESULTS_RELEASE_RE`) without an order ≥ 25% of
+  a year's revenue, or an order < 25% with no multi-year runway. Rules read: deep losses (operating margin < −20%) −8.

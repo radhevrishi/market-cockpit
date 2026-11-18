@@ -67,3 +67,15 @@ test('zzz1279 large companies, falling figures, captive solar, planned capacity,
   assert.equal(r('CAPACITY', 'Barjora line commissioned and UAE installation nears completion.'), null);
   assert.equal(fq('Board approved Q2 FY2026 results', '2026-11-03'), 'Board approved Q2 FY2027 results');
 });
+
+test('zzz1281 a good quarter is an Inflection, not Transformational', async () => {
+  const { strengthCap } = await import('../transformational/core');
+  const t = (o: any) => strengthCap({ strength: 'TRANSFORMATIONAL', kind: 'ORDERS', headline: '', orderToRevenuePct: null, durationYears: false, ...o });
+  assert.equal(t({ kind: 'GUIDANCE', headline: 'QuinStreet Reports Record Fiscal First Quarter 2027 Results' }), 'INFLECTION');
+  assert.equal(t({ kind: 'ORDERS', headline: 'News Release Babcock & Wilcox Enterprises Reports Third Quarter 2026 Results' }), 'INFLECTION');
+  assert.equal(t({ kind: 'APPROVAL', headline: 'Revenue $5.2M vs $3.7M a year ago (+40.4%)' }), 'INFLECTION');
+  assert.equal(t({ kind: 'ORDERS', headline: 'Received LoI from GETCO for substation contract', orderToRevenuePct: 8.8 }), 'INFLECTION');
+  assert.equal(t({ kind: 'ORDERS', headline: 'Awarded Rs.342 Crore contract by B-RIDE', orderToRevenuePct: 30.5 }), 'TRANSFORMATIONAL');
+  assert.equal(t({ kind: 'CAPACITY', headline: 'Additional 15K MTPA HFC plant at Surat commenced commercial operations today.' }), 'TRANSFORMATIONAL');
+  assert.equal(t({ strength: 'INFLECTION', kind: 'CAPACITY' }), 'INFLECTION');
+});
