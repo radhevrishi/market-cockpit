@@ -4275,3 +4275,5 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   acceleration counted as a strong event. `strengthCap` (on read, before the multibagger read): at most Inflection when the lead event
   is guidance / results / turnaround, when the shown text is the results release (`RESULTS_RELEASE_RE`) without an order ≥ 25% of
   a year's revenue, or an order < 25% with no multi-year runway. Rules read: deep losses (operating margin < −20%) −8.
+- zzz1282 (18 Nov): Transformational Gainers sort by Move (the day's move) and Since added — Sort chips plus clickable column
+  headers; click again flips highest ↔ lowest first; rows without a figure go last. `groups0` = filtered groups, `groups` = sorted.

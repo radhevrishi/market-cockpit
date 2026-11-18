@@ -42,12 +42,14 @@ export default function TransformationalGainersPage() {
   const [chainMin, setChainMin] = useState<number | null>(null);   // zzz1190 — evidence chain: stages met at least
   const [turnOnly, setTurnOnly] = useState(false);   // zzz1227 — Turnaround → Compounder only
   const [q, setQ] = useState('');
-  const [sort, setSort] = useState<'newest' | 'chance'>('chance');
+  const [sort, setSort] = useState<'newest' | 'chance' | 'move' | 'since'>('chance');
+  const [sortDesc, setSortDesc] = useState(true);   // zzz1282 — Move / Since added: highest first, click again for lowest first
+  const pickSort = (k: 'move' | 'since') => { if (sort === k) setSortDesc((d) => !d); else { setSort(k); setSortDesc(true); } };
   const [aiBusy, setAiBusy] = useState<string | null>(null);
   const [aiNote, setAiNote] = useState<string | null>(null);
 
   useEffect(() => {
-    try { const s = JSON.parse(localStorage.getItem(FILTER_KEY) || 'null'); if (s) { setMkt(s.mkt || 'ALL'); setSmallMid(s.smallMid !== false); setSort(s.sort === 'newest' ? 'newest' : 'chance'); } } catch { /* defaults */ }
+    try { const s = JSON.parse(localStorage.getItem(FILTER_KEY) || 'null'); if (s) { setMkt(s.mkt || 'ALL'); setSmallMid(s.smallMid !== false); setSort(['newest', 'move', 'since'].includes(s.sort) ? s.sort : 'chance'); } } catch { /* defaults */ }
   }, []);
   useEffect(() => { try { localStorage.setItem(FILTER_KEY, JSON.stringify({ mkt, smallMid, sort })); } catch { /* optional */ } }, [mkt, smallMid, sort]);
 
@@ -78,7 +80,7 @@ export default function TransformationalGainersPage() {
     && (!turnOnly || taById.has(x.id))
     && (!q || `${x.ticker} ${x.company} ${x.headline} ${x.theme}`.toLowerCase().includes(q.toLowerCase()))), [data, mkt, theme, strength, mbMin, smallMid, onlyNew, chainMin, q, newSet, turnOnly, taById]);
 
-  const groups = useMemo(() => {
+  const groups0 = useMemo(() => {
     const m = new Map<string, Group>();
     for (const x of filtered) {
       const k = `${x.market}:${x.ticker}`;
@@ -105,7 +107,7 @@ export default function TransformationalGainersPage() {
   }, [data]);
   const [since, setSince] = useState<Record<string, SinceAdded | null>>({});
   useEffect(() => {
-    const keys = groups.map((g) => `${g.key}:${addedOn.get(g.key) || g.items[g.items.length - 1].sessionDate}`).filter((k) => !(k in since));
+    const keys = groups0.map((g) => `${g.key}:${addedOn.get(g.key) || g.items[g.items.length - 1].sessionDate}`).filter((k) => !(k in since));
     if (!keys.length) return;
     let off = false;
     (async () => {
@@ -119,15 +121,29 @@ export default function TransformationalGainersPage() {
     })();
     return () => { off = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groups, addedOn]);
+  }, [groups0, addedOn]);
   const sinceOf = (g: Group) => since[`${g.key}:${addedOn.get(g.key) || g.items[g.items.length - 1].sessionDate}`];
   const sinceStats = useMemo(() => {
-    const v = groups.map((g) => since[`${g.key}:${addedOn.get(g.key) || g.items[g.items.length - 1].sessionDate}`]).filter((x): x is SinceAdded => !!x && x.sessions > 0);
+    const v = groups0.map((g) => since[`${g.key}:${addedOn.get(g.key) || g.items[g.items.length - 1].sessionDate}`]).filter((x): x is SinceAdded => !!x && x.sessions > 0);
     if (!v.length) return null;
     const p = v.map((x) => x.pct).sort((a, b) => a - b);
     const avg = Math.round((p.reduce((a, b) => a + b, 0) / p.length) * 10) / 10;
     return { n: v.length, avg, median: p[Math.floor(p.length / 2)], up: p.filter((x) => x > 0).length, best: p[p.length - 1], worst: p[0] };
-  }, [groups, since, addedOn]);
+  }, [groups0, since, addedOn]);
+  // zzz1282 — sort by the day's move or by the move since the company was added (unknown values always last)
+  const groups = useMemo(() => {
+    if (sort !== 'move' && sort !== 'since') return groups0;
+    const val = (g: Group): number | null => {
+      if (sort === 'move') return g.best.movePct ?? null;
+      const sa = since[`${g.key}:${addedOn.get(g.key) || g.items[g.items.length - 1].sessionDate}`];
+      return sa && sa.sessions > 0 ? sa.pct : null;
+    };
+    return [...groups0].sort((a, b) => {
+      const x = val(a), y = val(b);
+      if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1;
+      return sortDesc ? y - x : x - y;
+    });
+  }, [groups0, sort, sortDesc, since, addedOn]);
 
   const themes = useMemo(() => (data?.themes || []).filter((t) => mkt === 'ALL' || (data?.items || []).some((x) => x.theme === t.theme && x.market === mkt)), [data, mkt]);
 
@@ -272,6 +288,8 @@ export default function TransformationalGainersPage() {
               <div><div style={sectionTitle}>Sort</div><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 <button type="button" style={chip(sort === 'newest')} onClick={() => setSort('newest')}>Newest</button>
                 <button type="button" style={chip(sort === 'chance')} onClick={() => setSort('chance')}>{MB_NAME}</button>
+                <button type="button" style={chip(sort === 'move')} onClick={() => pickSort('move')} title="The day's move; click again to flip">Move {sort === 'move' ? (sortDesc ? '↓' : '↑') : ''}</button>
+                <button type="button" style={chip(sort === 'since')} onClick={() => pickSort('since')} title="Move since the company was added to this board; click again to flip">Since added {sort === 'since' ? (sortDesc ? '↓' : '↑') : ''}</button>
               </div></div>
             </div>
             <div style={{ border: `1px solid ${R.border}`, borderRadius: 10, padding: 12, background: R.bg }}>
@@ -318,7 +336,7 @@ export default function TransformationalGainersPage() {
                 <div style={{ overflowX: 'auto' }}>
                   <table className="tg-table">
                     <thead><tr>
-                      <th>Company</th><th className="tg-hide-sm">Theme</th><th>What changed</th><th className="tg-hide-sm">Growth (latest quarter)</th><th>{MB_NAME}</th><th className="tg-hide-sm">Move</th><th className="tg-hide-sm" title="Share move from the close of the first session the company appeared on this board to the latest close">Since added</th><th className="tg-hide-sm">Session</th>
+                      <th>Company</th><th className="tg-hide-sm">Theme</th><th>What changed</th><th className="tg-hide-sm">Growth (latest quarter)</th><th>{MB_NAME}</th><th className="tg-hide-sm" style={{ cursor: 'pointer' }} onClick={() => pickSort('move')} title="Sort by the day's move (click again to flip)">Move {sort === 'move' ? (sortDesc ? '↓' : '↑') : '⇅'}</th><th className="tg-hide-sm" style={{ cursor: 'pointer' }} onClick={() => pickSort('since')} title="Share move from the close of the first session the company appeared on this board to the latest close — click to sort (again to flip)">Since added {sort === 'since' ? (sortDesc ? '↓' : '↑') : '⇅'}</th><th className="tg-hide-sm">Session</th>
                     </tr></thead>
                     <tbody>
                       {groups.map((g) => {
