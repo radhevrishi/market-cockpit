@@ -4267,3 +4267,7 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   per-share or price-room chain check −6 each (said in the read). `nonEventReason`: small solar plants for own power
   (`CAPTIVE_SOLAR_RE`) and capacity only proposed / expected (`PLANNED_CAP_RE` without `DONE_CAP_RE`) are held back.
   `fixIndiaQuarterLabel` also fixes "Q2 FY2026".
+- zzz1280 (18 Nov): Transformational Gainers "Since added" — new column + a summary strip (tracked, average, median, how many up,
+  best / worst) for the companies in the current list: share move from the close of the FIRST session the company appeared on the
+  board to the latest close. `lib/transformational/since-added.ts` (pure `sinceAdded`, `sinceAddedMany` over the shared chart cache,
+  6 at a time, 30-min memo) + POST `/api/v1/transformational/since` { keys: ["IN:ROTO:2026-11-18"] }. Free daily prices, no AI.

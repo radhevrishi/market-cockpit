@@ -6,6 +6,7 @@
 // plus an AI second opinion on request). Filled automatically from the daily research; no AI runs on page load.
 // ═══════════════════════════════════════════════════════════════════════════
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import type { SinceAdded } from '@/lib/transformational/since-added';
 import NavLink from '@/components/NavLink';
 import { R, tint } from '@/components/special-situations/radar-tokens';
 import { MbChip, MB_COLOR } from '@/components/transformational/MbChip';
@@ -94,6 +95,39 @@ export default function TransformationalGainersPage() {
       ? arr.sort((a, b) => chanceOf(b.best).score - chanceOf(a.best).score || b.items[0].sessionDate.localeCompare(a.items[0].sessionDate))
       : arr.sort((a, b) => b.items[0].sessionDate.localeCompare(a.items[0].sessionDate) || chanceOf(b.best).score - chanceOf(a.best).score);
   }, [filtered, sort]);
+
+  // zzz1280 — "Since added": the share's move from the close of the first session the company appeared on the board to the
+  // latest close (free daily prices, no AI). Tracks how the board's picks actually did.
+  const addedOn = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const x of data?.items || []) { const k = `${x.market}:${x.ticker}`; const d = m.get(k); if (!d || x.sessionDate < d) m.set(k, x.sessionDate); }
+    return m;
+  }, [data]);
+  const [since, setSince] = useState<Record<string, SinceAdded | null>>({});
+  useEffect(() => {
+    const keys = groups.map((g) => `${g.key}:${addedOn.get(g.key) || g.items[g.items.length - 1].sessionDate}`).filter((k) => !(k in since));
+    if (!keys.length) return;
+    let off = false;
+    (async () => {
+      for (let i = 0; i < keys.length && !off; i += 150) {
+        try {
+          const r = await fetch('/api/v1/transformational/since', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ keys: keys.slice(i, i + 150) }) });
+          const j = await r.json();
+          if (!off && j?.moves) setSince((cur) => ({ ...cur, ...j.moves }));
+        } catch { /* the column stays — */ }
+      }
+    })();
+    return () => { off = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groups, addedOn]);
+  const sinceOf = (g: Group) => since[`${g.key}:${addedOn.get(g.key) || g.items[g.items.length - 1].sessionDate}`];
+  const sinceStats = useMemo(() => {
+    const v = groups.map((g) => since[`${g.key}:${addedOn.get(g.key) || g.items[g.items.length - 1].sessionDate}`]).filter((x): x is SinceAdded => !!x && x.sessions > 0);
+    if (!v.length) return null;
+    const p = v.map((x) => x.pct).sort((a, b) => a - b);
+    const avg = Math.round((p.reduce((a, b) => a + b, 0) / p.length) * 10) / 10;
+    return { n: v.length, avg, median: p[Math.floor(p.length / 2)], up: p.filter((x) => x > 0).length, best: p[p.length - 1], worst: p[0] };
+  }, [groups, since, addedOn]);
 
   const themes = useMemo(() => (data?.themes || []).filter((t) => mkt === 'ALL' || (data?.items || []).some((x) => x.theme === t.theme && x.market === mkt)), [data, mkt]);
 
@@ -271,10 +305,20 @@ export default function TransformationalGainersPage() {
               </div>
             ) : (
               <div style={{ border: `1px solid ${R.border}`, borderRadius: 10, overflow: 'hidden', background: R.bg }}>
+                {sinceStats && (
+                  <div title="For the companies in the list below (current filters): the share's move from the close of the first session each company appeared on this board to the latest close. Free daily prices; no AI." style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'baseline', padding: '8px 12px', borderBottom: `1px solid ${R.border}`, fontSize: 12.5, color: R.dim, fontVariantNumeric: 'tabular-nums' }}>
+                    <b style={{ color: R.text }}>📈 Since added (this list)</b>
+                    <span>{sinceStats.n} tracked</span>
+                    <span>average <b style={{ color: sinceStats.avg >= 0 ? R.green : R.red }}>{sinceStats.avg >= 0 ? '+' : ''}{sinceStats.avg}%</b></span>
+                    <span>median <b style={{ color: sinceStats.median >= 0 ? R.green : R.red }}>{sinceStats.median >= 0 ? '+' : ''}{sinceStats.median}%</b></span>
+                    <span><b style={{ color: R.text }}>{sinceStats.up}</b> of {sinceStats.n} up ({Math.round((sinceStats.up / sinceStats.n) * 100)}%)</span>
+                    <span>best {sinceStats.best >= 0 ? '+' : ''}{sinceStats.best}% · worst {sinceStats.worst}%</span>
+                  </div>
+                )}
                 <div style={{ overflowX: 'auto' }}>
                   <table className="tg-table">
                     <thead><tr>
-                      <th>Company</th><th className="tg-hide-sm">Theme</th><th>What changed</th><th className="tg-hide-sm">Growth (latest quarter)</th><th>{MB_NAME}</th><th className="tg-hide-sm">Move</th><th className="tg-hide-sm">Session</th>
+                      <th>Company</th><th className="tg-hide-sm">Theme</th><th>What changed</th><th className="tg-hide-sm">Growth (latest quarter)</th><th>{MB_NAME}</th><th className="tg-hide-sm">Move</th><th className="tg-hide-sm" title="Share move from the close of the first session the company appeared on this board to the latest close">Since added</th><th className="tg-hide-sm">Session</th>
                     </tr></thead>
                     <tbody>
                       {groups.map((g) => {
@@ -312,10 +356,18 @@ export default function TransformationalGainersPage() {
                                 <div style={{ color: (x.movePct ?? 0) >= 0 ? R.green : R.red, fontWeight: 800 }}>{pct(x.movePct)} <span style={{ color: R.faint, fontWeight: 400 }}>{x.moveWindow}</span></div>
                                 <div style={{ color: R.faint }}>3M {pct(x.returns.m3)}</div>
                               </td>
+                              <td className="tg-hide-sm" style={{ whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>
+                                {(() => { const sa = sinceOf(g); const on = addedOn.get(g.key) || g.items[g.items.length - 1].sessionDate;
+                                  if (sa === undefined) return <span style={{ color: R.faint }}>…</span>;
+                                  if (!sa) return <span style={{ color: R.faint }} title="No daily price for the added session">—</span>;
+                                  return (<span title={`Close ${sa.base} on ${sa.baseDate} → ${sa.last} on ${sa.lastDate} (${sa.sessions} sessions)`}>
+                                    <b style={{ color: sa.sessions === 0 ? R.faint : sa.pct >= 0 ? R.green : R.red }}>{sa.sessions === 0 ? 'today' : `${sa.pct >= 0 ? '+' : ''}${sa.pct}%`}</b>
+                                    <div style={{ color: R.faint, fontSize: 11 }}>from {on}</div></span>); })()}
+                              </td>
                               <td className="tg-hide-sm" style={{ whiteSpace: 'nowrap', fontSize: 12, color: R.dim }}>{g.items[0].sessionDate}<div style={{ color: R.faint }}>{open ? '▲ less' : '▼ more'}</div></td>
                             </tr>
                             {open && (
-                              <tr><td colSpan={7} style={{ background: R.bg2, padding: '10px 14px' }}>
+                              <tr><td colSpan={8} style={{ background: R.bg2, padding: '10px 14px' }}>
                                 <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 12, marginBottom: 6 }}>
                                   <NavLink href={`/charts?m=${g.market}&t=${encodeURIComponent(g.ticker)}`} style={{ color: R.cyan, fontWeight: 700 }}>Open chart →</NavLink>
                                   <NavLink href={`/ai-gainers?market=${g.market}`} style={{ color: R.cyan, fontWeight: 700 }}>AI Daily Gainers →</NavLink>
