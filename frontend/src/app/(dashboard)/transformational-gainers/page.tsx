@@ -12,7 +12,7 @@ import { MbChip, MB_COLOR } from '@/components/transformational/MbChip';
 import { TurnaroundBadge } from '@/components/turnaround/TurnaroundBadge';   // zzz1227
 import { turnaroundFromTg, type Turnaround } from '@/lib/turnaround/core';
 import type { TgVerify } from '@/lib/transformational/verify';   // zzz1233
-import { MB_NAME, MB_WORD, ONE_PAGE_CASE, OTHER_THEME, chanceOf, tgKindWord, type MbLabel, type TgBoard, type TgItem, type TgStrength } from '@/lib/transformational/core';
+import { MB_NAME, MB_WORD, ONE_PAGE_CASE, OTHER_THEME, chanceOf, marginDeltaOf, tgKindWord, type MbLabel, type TgBoard, type TgItem, type TgStrength } from '@/lib/transformational/core';
 
 type Mkt = 'ALL' | 'IN' | 'US';
 const STRENGTH_COLOR: Record<TgStrength, string> = { TRANSFORMATIONAL: R.green, INFLECTION: R.cyan, NOTABLE: R.amber };
@@ -279,7 +279,7 @@ export default function TransformationalGainersPage() {
                     <tbody>
                       {groups.map((g) => {
                         const x = g.best; const f = x.facts; const open = openKey === g.key;
-                        const dm = f.marginNow != null && f.marginPrior != null ? f.marginNow - f.marginPrior : null;
+                        const dm = marginDeltaOf(f);   // zzz1276 — null on a tiny / loss-making base
                         return (
                           <Fragment key={g.key}>
                             <tr className="tg-row" onClick={() => setOpenKey(open ? null : g.key)} style={{ boxShadow: `inset 3px 0 0 ${STRENGTH_COLOR[x.strength]}` }}>

@@ -85,32 +85,37 @@ export const THEMES: Array<{ name: string; re: RegExp; structural: boolean }> = 
   { name: 'Power grid / transformers / T&D', re: /\b(?:transformers?|switchgear|transmission|substation|grid|HVDC|power cables?|conductors?|reactors?|busbar|energy meters?)\b/i, structural: true },
   { name: 'Power generation & gas turbines', re: /\b(?:gas turbines?|HRSG|boilers?|thermal power|power plants?|combined cycle|steam turbines?|nuclear|SMR)\b/i, structural: true },
   { name: 'Renewables / solar / storage', re: /\b(?:solar|photovoltaic|PV modules?|wind|battery|energy storage|BESS|green hydrogen|electrolys\w+|renewable)\b/i, structural: true },
-  { name: 'Oil & gas / pipelines / LNG', re: /\b(?:pipelines?|LNG|oil (?:and|&) gas|upstream|refiner\w*|line pipe|OCTG|drilling|offshore|oilfield|integrated oil|oil & gas production|petrochem\w*|gas infrastructure)\b/i, structural: true },
-  { name: 'Defence & aerospace', re: /\b(?:defen[cs]e|aerospace|missiles?|munitions?|ammunition|radar|military|DRDO|HAL|BEL|navy|army|air force|drones?|UAV|satellites?)\b/i, structural: true },
-  { name: 'Railways & metro', re: /\b(?:railways?|rail|metro|Vande Bharat|wagons?|locomotives?|coaches|RVNL|IRCON|signall?ing)\b/i, structural: true },
-  { name: 'Electronics / EMS / semiconductors', re: /\b(?:EMS|electronics manufactur\w*|electronic components?|PCBs?|printed circuit|semiconductors?|chips?|OSAT|wafers?|fab|display|components? for mobiles?)\b/i, structural: true },
-  { name: 'Pharma CDMO / API / healthcare', re: /\b(?:CDMO|CRAMS|API|ANDA|USFDA|FDA|drug|pharma\w*|biolog\w+|clinical|hospitals?|healthcare|health care|diagnostic\w*|medical devices?|medical\b|dental|nursing|vaccines?|peptides?|GLP-?1|formulations?|therapeutics?|biotech\w*)\b/i, structural: true },
-  { name: 'Specialty chemicals & materials', re: /\b(?:specialty chemicals?|chemicals?|fluoro\w*|polymers?|plastic products?|resins?|pigments?|agrochem\w*|catalysts?|carbon black|graphite|rare earths?|lithium)\b/i, structural: true },
-  { name: 'Auto / EV components', re: /\b(?:auto(?:motive)? components?|auto parts?|auto ancillar\w*|EVs?|electric vehicles?|wheels?|forgings?|castings?|two-?wheelers?|tractors?|commercial vehicles?|OEMs?)\b/i, structural: false },
-  { name: 'Capital goods / industrial machinery', re: /\b(?:capital goods|machinery|electrical (?:equipment|products)|industrial (?:specialties|products|machinery)|machine tools?|pumps?|valves?|compressors?|engineering|fabrication|heavy equipment|cranes?)\b/i, structural: true },
-  { name: 'Infrastructure / construction / EPC', re: /\b(?:EPC|construction|infrastructure|highways?|roads?|bridges?|tunnel\w*|water (?:supply|treatment)|irrigation|smart cit\w+)\b/i, structural: true },
-  { name: 'Telecom / networking', re: /\b(?:telecom|5G|network(?:ing)?|fib(?:re|er) optic|broadband|towers?)\b/i, structural: true },
+  { name: 'Oil & gas / pipelines / LNG', re: /\b(?:pipelines?|LNG|natural gas|oil (?:and|&) gas|upstream|refiner\w*|line pipe|OCTG|drilling|offshore|oilfield|integrated oil|oil & gas production|petrochem\w*|gas infrastructure)\b/i, structural: true },
+  { name: 'Defence & aerospace', re: /\b(?:defen[cs]e|aerospace|ordnance|missiles?|munitions?|ammunition|radar|military|DRDO|HAL|BEL|navy|army|air force|drones?|UAV|satellites?)\b/i, structural: true },
+  { name: 'Railways & metro', re: /\b(?:railways?|railroads?|rail|metro|Vande Bharat|wagons?|locomotives?|coaches|RVNL|IRCON|signall?ing)\b/i, structural: true },
+  { name: 'Electronics / EMS / semiconductors', re: /\b(?:EMS|electronics manufactur\w*|electronic components?|PCBs?|printed circuit|semiconductors?|chips?|OSAT|wafers?|fab|display|computer manufactur\w*|lidar|components? for mobiles?)\b/i, structural: true },
+  { name: 'Pharma CDMO / API / healthcare', re: /\b(?:CDMO|CRAMS|API|ANDA|USFDA|FDA|drug|pharma\w*|biolog\w+|clinical|hospitals?|healthcare|health care|diagnostic\w*|medical devices?|medical\b|medtech|surgical|orthop\w+|implants?|prosthe\w+|ophthalmic|electromedical|home health|hospice|dental|nursing|vaccines?|peptides?|GLP-?1|formulations?|therapeutics?|biotech\w*)\b/i, structural: true },
+  { name: 'Specialty chemicals & materials', re: /\b(?:specialty chemicals?|chemicals?|fluoro\w*|polymers?|plastic products?|resins?|pigments?|agrochem\w*|catalysts?|carbon black|graphite|rare earths?|lithium|major chemicals)\b/i, structural: true },
+  { name: 'Auto / EV components', re: /\b(?:auto(?:motive)? components?|auto parts?|auto manufactur\w*|auto ancillar\w*|EVs?|electric vehicles?|wheels?|forgings?|castings?|two-?wheelers?|tractors?|commercial vehicles?|OEMs?)\b/i, structural: false },
+  { name: 'Capital goods / industrial machinery', re: /\b(?:capital goods|machinery|electrical (?:equipment|products)|industrial (?:specialties|products|machinery)|machine tools?|pumps?|valves?|compressors?|engineering|fabrications?|heavy equipment|cranes?)\b/i, structural: true },
+  { name: 'Infrastructure / construction / EPC', re: /\b(?:EPC|construction|contractors?|environmental services|water utilit\w+|infrastructure|highways?|roads?|bridges?|tunnel\w*|water (?:supply|treatment)|irrigation|smart cit\w+)\b/i, structural: true },
+  { name: 'Telecom / networking', re: /\b(?:telecom\w*|5G|network(?:ing)?|fib(?:re|er) optic|broadband|towers?)\b/i, structural: true },
   { name: 'Software / IT services / SaaS', re: /\b(?:software|SaaS|cloud|IT services|IT enabled services|EDP services|computer services|IT consulting|digital|cyber ?security|subscription|ARR)\b/i, structural: false },
-  { name: 'Metals & mining', re: /\b(?:steel|aluminium|aluminum|copper|zinc|iron ore|mining|minerals?|coal)\b/i, structural: false },
-  { name: 'Paper & packaging', re: /\b(?:paper|paperboard|packaging|kraft|corrugat\w*|pulp|labels?|flexible packaging)\b/i, structural: false },
-  { name: 'Cement & building materials', re: /\b(?:cement|tiles?|sanitaryware|pipes? and fittings|plywood|laminates?|building materials?|glass)\b/i, structural: false },
+  { name: 'Metals & mining', re: /\b(?:steel|aluminium|aluminum|copper|zinc|iron ore|mining|minerals?|coal|precious metals|gold|silver|royalt(?:y|ies) (?:compan\w+|corp\w*|streams?))\b/i, structural: false },
+  { name: 'Paper & packaging', re: /\b(?:paper|paperboard|packaging|kraft|corrugat\w*|pulp|labels?|flexible packaging|forest products)\b/i, structural: false },
+  { name: 'Cement & building materials', re: /\b(?:cement|tiles?|sanitaryware|pipes? and fittings|plywood|laminates?|building (?:materials?|products)|glass)\b/i, structural: false },
   { name: 'Sugar / agri / food processing', re: /\b(?:sugar|ethanol|distiller\w*|agri\w*|fertili[sz]ers?|seeds?|edible oils?|dairy|poultry|aquaculture|tea|coffee|rice)\b/i, structural: false },
-  { name: 'Power utilities & distribution', re: /\b(?:power utilit\w+|discoms?|electricity|power distribution|power generation compan\w+|independent power)\b/i, structural: true },
-  { name: 'Consumer / retail / brands', re: /\b(?:consumer|FMCG|retail|stores?|brands?|apparel|footwear|jewell?ery|beverages?|foods?|restaurants?|QSR|e-?commerce)\b/i, structural: false },
-  { name: 'Financials / lending', re: /\b(?:banks?|banking|NBFC|lending|loans?|AUM|insurance|insurers?|asset management|broking|stockbroking|fintech|microfinance|finance|capital markets|savings institutions?)\b/i, structural: false },
+  { name: 'Power utilities & distribution', re: /\b(?:power utilit\w+|electric utilit\w+|discoms?|electricity|power distribution|power generation compan\w+|independent power)\b/i, structural: true },
+  { name: 'Consumer / retail / brands', re: /\b(?:consumer|FMCG|retail|stores?|brands?|apparel|footwear|jewell?ery|beverages?|foods?|restaurants?|QSR|e-?commerce|shoes?|home furnishings|toys?|recreational (?:games|products))\b/i, structural: false },
+  { name: 'Financials / lending', re: /\b(?:banks?|banking|NBFC|lending|loans?|AUM|insurance|insurers?|asset management|broking|stockbroking|fintech|microfinance|finance|capital markets|savings institutions?|investment bank\w*|investment managers?|brokers?(?:-dealers?)?|buy now,? pay later)\b/i, structural: false },
   { name: 'Real estate', re: /\b(?:real estate|realty|residential|housing|homebuild\w*|pre-?sales|land parcels?|REITs?|construction & development)\b/i, structural: false },
-  { name: 'Logistics / shipping', re: /\b(?:logistics|shipping|marine transportation|ports?|tankers?|vessels?|freight|trucking|warehous\w+|containers?)\b/i, structural: false },
-  { name: 'Media / entertainment', re: /\b(?:broadcasting|publishing|media|entertainment|movies?|film|television|streaming)\b/i, structural: false },
+  { name: 'Logistics / shipping', re: /\b(?:logistics|shipping|transportation services|rental(?:\/| and )leasing|marine transportation|ports?|tankers?|vessels?|freight|trucking|warehous\w+|containers?)\b/i, structural: false },
+  { name: 'Media / entertainment', re: /\b(?:broadcasting|publishing|advertising|media|entertainment|movies?|film|television|streaming)\b/i, structural: false },
   { name: 'Hotels / travel / leisure', re: /\b(?:hotels?|resorts?|hospitality|tourism|travel|leisure|casinos?|cruise)\b/i, structural: false },
   { name: 'Textiles', re: /\b(?:textiles?|yarn|spinning|fabrics?|garments?)\b/i, structural: false },
 ];
 export const STRUCTURAL_THEMES = new Set(THEMES.filter((t) => t.structural).map((t) => t.name));
 export const OTHER_THEME = 'Other / not classified yet';
+/** zzz1276 — Nasdaq's industry for many US names is a catch-all that says little about the business ("Industrial Specialties"
+ *  holds breast-implant and orthopaedic makers, "Military/Government/Technical" an infrastructure builder, "Finance: Consumer
+ *  Services" an investment bank). For these the company's own filing text decides when it clearly names a theme (2+ words),
+ *  then the bucket itself. */
+export const VAGUE_INDUSTRY_RE = /^(?:industrial specialties|industrial machinery\/components|military\/government\/technical|building products|finance: consumer services|radio and television broadcasting and communications equipment|business services|diversified commercial services|professional services|miscellaneous\b.*|multi-sector companies|other consumer services|edp services|office equipment\/supplies\/services|catalog\/specialty distribution|misc corporate leasing services|electrical products|metal fabrications|industrial specialt\w*)$/i;
 
 /** The theme: the company's industry decides when it names a table theme (it says what the company IS); otherwise the event
  *  text (the theme with the most words, ties to the earlier, more specific one); otherwise the industry itself as a new theme. */
@@ -125,6 +130,12 @@ export function themeOf(texts: Array<string | null | undefined>, industry?: stri
     return b;
   };
   // zzz1169 — industry first: a resort owner is not "telecom", an inspection-tool maker is not "oil & gas"
+  // zzz1276 — Nasdaq "Finance: …" buckets are financial companies, whatever word follows the colon
+  if (/^finance\b|\bbankers?\b|\bbrokers?\b/i.test(ind)) return { theme: 'Financials / lending', why: `the company's industry: ${ind}` };
+  if (ind && VAGUE_INDUSTRY_RE.test(ind)) {
+    const byTxt = best(texts.filter(Boolean).join(' \n ').slice(0, 6000));
+    if (byTxt && byTxt.n >= 2) return { theme: byTxt.name, why: `the filing says "${byTxt.word}" (industry "${ind}" is a catch-all)` };
+  }
   const byInd = ind ? best(ind) : null;
   if (byInd) return { theme: byInd.name, why: `the company's industry: ${ind}` };
   if (ind) return { theme: ind.slice(0, 60), why: 'the company\'s industry (screener)' };
@@ -217,9 +228,18 @@ function factsOf(it: AnyItem): TgFacts {
   return { revenueYoY: num(e?.revenueYoY), patYoY: num(e?.patYoY), marginNow: num(e?.marginNow), marginPrior: num(e?.marginPrior), cfoToPat: num(e?.cfoToPat), guidance: e?.guidance ?? null };
 }
 
+/** zzz1276 — margin change in points, or null when it is not meaningful: a margin worked out on a tiny or loss-making base
+ *  (prior or current beyond ±60%, or a move of more than 50 points — "+2,664 points" for a biotech with almost no revenue). */
+export function marginDeltaOf(f: Pick<TgFacts, 'marginNow' | 'marginPrior'>): number | null {
+  const a = f.marginNow, b = f.marginPrior;
+  if (a == null || b == null || !Number.isFinite(a) || !Number.isFinite(b)) return null;
+  if (Math.abs(a) > 60 || Math.abs(b) > 60 || Math.abs(a - b) > 50) return null;
+  return a - b;
+}
+
 /** Earnings inflection in the FILED figures (never press). */
 export function inflectionOf(f: TgFacts): string | null {
-  const r = f.revenueYoY, p = f.patYoY, dm = f.marginNow != null && f.marginPrior != null ? f.marginNow - f.marginPrior : null;
+  const r = f.revenueYoY, p = f.patYoY, dm = marginDeltaOf(f);
   if (r != null && r >= 50) return `revenue +${Math.round(r)}%`;
   if (r != null && p != null && r >= 25 && p >= 40) return `revenue +${Math.round(r)}%, profit +${Math.round(p)}%`;
   if (r != null && dm != null && r >= 15 && dm >= 3) return `revenue +${Math.round(r)}%, margin +${dm.toFixed(1)} points`;
@@ -292,7 +312,13 @@ export function transformationalFrom(items: AnyItem[], market: TgMarket, session
 // ── zzz1169: the review every item passes (at save time AND when the board is read, so stored rows follow today's rule) ──
 
 const JUNK_HEAD: RegExp[] = [
-  /^\s*(?:contacts?|investor relations|media contact)\b/i, /\bvice president,? investor relations\b/i, /@\w+\.\w{2,}/, /\+\d[\d ()-]{8,}/,
+  /^\s*(?:contacts?|investor relations|investor contacts?|media contacts?)\b/i,
+  // zzz1276 — page furniture taken as the headline: a street address with phone ("Vericel Corporation 25 Blue Sky Drive Burlington,
+  // MA 01803 T 617 …"), stacked release labels, "Earnings Release of X Dated …"
+  /\b\d{1,6}\s+(?:[A-Z][\w.]*\s+){1,4}(?:Ave|Avenue|St|Street|Road|Rd|Blvd|Boulevard|Drive|Dr|Way|Parkway|Pkwy|Lane|Ln|Place|Pl|Court|Ct)\b.{0,60}\b[A-Z]{2}\s+\d{5}\b/,
+  /\b(?:T|Tel|Phone|F|Fax)\.?:?\s*\(?\d{3}\)?[ .-]\d{3}-\d{4}\b/,
+  /^\s*(?:(?:news|press|earnings) release|for immediate release|financial news brief)(?:\s+(?:(?:news|press) release|for immediate release|financial news brief))+[\s:.,-]*$/i,
+  /^\s*earnings release of .{0,80}\bdated\b/i, /\bvice president,? investor relations\b/i, /@\w+\.\w{2,}/, /\+\d[\d ()-]{8,}/,
   /^\s*\d{2,6}\s+[A-Z][\w.]+(?:\s+[A-Z][\w.]+)*\s+(?:Ave|Avenue|St|Street|Road|Rd|Blvd|Drive|Dr)\b/i,
   /^\s*(?:news release|press release|for immediate release|financial news brief)\b[\s:.,-]*$/i,
   /\b(?:voting (?:and support )?agreement|consolidated financial (?:report|statements)|form 51-102f3|material change report)\b/i,
@@ -303,10 +329,26 @@ const JUNK_HEAD: RegExp[] = [
 const OLDER = /^\s*older context \((\d+)d\):\s*/i;
 export const isJunkText = (s: string | null | undefined): boolean => { const t = String(s || '').replace(OLDER, '').trim(); return t.length < 18 || JUNK_HEAD.some((r) => r.test(t)); };
 
+/** zzz1276 — a release headline cut mid-figure by a sentence splitter ("… Financial Results Revenue of $59.3", "… Guidance to a
+ *  Range of $115", "… Business Update Advancing a"): cut back to the last whole headline phrase (Results / Highlights / Update /
+ *  Guidance / Outlook …), else drop the dangling tail. Text without a dangling end is returned as it is. Pure. */
+const DANGLING_END = /(?:\$\s?[\d,]+(?:\.\d+)?|\b\d+\.\d+|\b(?:of|over|to|by|at|from|approximately)\s+\$?[\d,.]+|\b(?:a|an|the|and|to|of|with|for|by|in|on)|[•·:,;–—-])\s*$/i;
+export function trimDanglingHeadline(t0: string): string {
+  let t = String(t0 || '').replace(/\s+/g, ' ').trim();
+  if (!DANGLING_END.test(t)) return t;
+  const re = /\b(?:Results|Highlights|Update|Updates|Guidance|Outlook|Strategy|Milestones|Progress)\b/g;
+  let last = -1;
+  for (let m = re.exec(t); m; m = re.exec(t)) last = m.index + m[0].length;
+  if (last > 25) return t.slice(0, last).trim();
+  for (let i = 0; i < 4 && DANGLING_END.test(t); i++) t = t.replace(/\s*(?:\S+\s+)?\S+\s*$/, '').trim();
+  return t;
+}
+
 /** What the row should say happened: the first plain sentence among the headline, what changed and the source sentence. */
 export function bestHeadline(x: Pick<TgItem, 'headline' | 'whatChanged' | 'quote' | 'signals'>): string {
-  for (const c of [x.headline, x.whatChanged, x.quote]) {
-    const t = String(c || '').replace(OLDER, '').replace(/\s+/g, ' ').trim();
+  for (const [i, c] of [x.headline, x.whatChanged, x.quote].entries()) {
+    const raw = String(c || '').replace(OLDER, '').replace(/\s+/g, ' ').trim();
+    const t = i === 0 ? trimDanglingHeadline(raw) : raw;   // only the release headline is cut by a splitter; figure lines end in figures
     if (!isJunkText(t)) return t.slice(0, 300);
   }
   return x.signals.filter((g) => !/^Earnings inflection/.test(g)).slice(0, 3).join(' · ') || String(x.headline || '').slice(0, 300);
@@ -510,7 +552,13 @@ export function reviewItem(x0: TgItem, snap?: SnapFacts | null): TgItem | null {
   if (x.facts.patYoY != null && x.facts.patYoY <= -100) { toLoss = true; x.facts.patYoY = null; }
   x.factsNote = [tiny.length ? `n/m — tiny or negative base (${tiny.join(', ')})` : null, toLoss ? 'profit swung to a loss' : null].filter(Boolean).join(' · ') || null;
   if (!x.factsSource && (x.facts.revenueYoY != null || x.facts.patYoY != null)) x.factsSource = 'filing';
-  const th = themeOf([x.headline, x.quote], x.industry || null, x.company);
+  // zzz1276 — the inflection line is re-worded from today's figures: a margin move on a tiny or loss-making base ("+2,664 points")
+  // is not shown, and a line whose only reason was such a move goes
+  if (x.facts.revenueYoY != null || x.facts.patYoY != null || x.facts.marginNow != null) {
+    const fresh = inflectionOf(x.facts);
+    x.signals = x.signals.flatMap((g) => (/^Earnings inflection/.test(g) ? (fresh ? [`Earnings inflection: ${fresh}`] : []) : [g]));
+  }
+  const th = themeOf([x.headline, x.quote, x.whatChanged, ...x.signals], x.industry || null, x.company);
   if (th.theme !== OTHER_THEME || x.theme === OTHER_THEME || x.industry) { x.theme = th.theme; x.themeWhy = th.why; }
   x.mb = multibaggerOf(x);
   if (x.strength === 'NOTABLE' && x.mb.score < 55) return null;

@@ -35,6 +35,8 @@ export interface TaInput {
   facts?: TaFacts | null;
   /** new shares already flagged by the card */
   dilution?: boolean;
+  /** zzz1276 — market: a US company growing 40%+ that turns profitable is scaling, not reviving */
+  market?: 'IN' | 'US' | null;
 }
 
 export interface Turnaround {
@@ -140,7 +142,8 @@ export function turnaroundOf(x: TaInput): Turnaround | null {
   const ids = new Set((x.ids || []).map((i) => String(i || '')).filter(Boolean));
   const f = x.facts || {};
   const rev = num(f.revenueYoY), pat = num(f.patYoY), mNow = num(f.marginNow), mPrior = num(f.marginPrior), cfo = num(f.cfoToPat);
-  const dm = mNow != null && mPrior != null ? mNow - mPrior : null;
+  // zzz1276 — margins on a tiny or loss-making base (prior −400%) say nothing about a revival
+  const dm = mNow != null && mPrior != null && Math.abs(mNow) <= 60 && Math.abs(mPrior) <= 60 && Math.abs(mNow - mPrior) <= 50 ? mNow - mPrior : null;
 
   // the monograph's earnings rule (keeps Timex-type names without an ownership event): sales > 20%, margin up from a LOW base,
   // cash not negative — a low base (margin under 8%) is what separates a revival from an ordinary good quarter
@@ -148,7 +151,10 @@ export function turnaroundOf(x: TaInput): Turnaround | null {
   // a loss → profit swing on flat or falling sales (under +10%) is cost cuts or a one-off, not yet a revival (owner's monograph:
   // 'one good quarter or a tax credit is not a trend') — it only counts when sales are growing or not known
   const swing = ids.has('turnaround_profit') || ids.has('turned_profitable') || has(all, REVIVAL_RE);
-  const revival = (swing && !(rev != null && rev < 10)) || earningsRule;
+  // zzz1276 (owner: "turnaround on every US results card") — a US company growing sales 40%+ that reaches profit, or widens a
+  // thin margin, is a young business scaling, not a troubled one recovering; and a prior margin below −25% is pre-scale, not distress
+  const scaling = (x.market === 'US' && rev != null && rev >= 40) || (mPrior != null && mPrior < -25);
+  const revival = !scaling && ((swing && !(rev != null && rev < 10)) || earningsRule);
 
   let archetype: TaArchetype | null = null;
   if ((ids.has('open_offer') || has(all, OWNERSHIP_RE)) && !(has(all, BUYS_ELSEWHERE_RE) && !has(all, CONTROL_OF_US_RE))) archetype = 'OWNERSHIP_RESCUE';
@@ -226,6 +232,7 @@ export function turnaroundFromGainer(it: any): Turnaround | null {
   const fresh = cats.filter((c) => c && !(typeof c.ageDays === 'number' && c.ageDays > 30));
   const e = us ? it.usCard?.earnings : it.earnings;
   return turnaroundOf({
+    market: us ? 'US' : 'IN',
     texts: [it.headline, it.whatChanged, it.quote, ...fresh.flatMap((c) => [c.label, c.sentence])],
     ids: fresh.map((c) => c.id),
     facts: us
@@ -236,8 +243,9 @@ export function turnaroundFromGainer(it: any): Turnaround | null {
 }
 
 /** From a stored Transformational Gainers row (signals, headline, what changed, quote, filed figures). Pure. */
-export function turnaroundFromTg(x: { signals?: string[]; headline?: string | null; whatChanged?: string | null; quote?: string | null; kind?: string; facts?: TaFacts | null; dilution?: boolean }): Turnaround | null {
+export function turnaroundFromTg(x: { market?: 'IN' | 'US' | null; signals?: string[]; headline?: string | null; whatChanged?: string | null; quote?: string | null; kind?: string; facts?: TaFacts | null; dilution?: boolean }): Turnaround | null {
   return turnaroundOf({
+    market: x.market ?? null,
     texts: [x.headline, x.whatChanged, x.quote, ...(x.signals || [])],
     ids: x.kind === 'TURNAROUND' ? ['turnaround_profit'] : [],
     facts: x.facts || null,
