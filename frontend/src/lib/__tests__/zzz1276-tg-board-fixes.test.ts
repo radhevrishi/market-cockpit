@@ -7,7 +7,7 @@ test('zzz1276 themes: catch-all Nasdaq industries let the filing decide; Finance
   assert.equal(themeOf(['Establishment Labs breast implants FDA approval of Motiva implants'], 'Industrial Specialties', 'Establishment Labs').theme, 'Pharma CDMO / API / healthcare');
   assert.equal(themeOf(['Perella Weinberg revenue'], 'Finance: Consumer Services', 'Perella Weinberg Partners').theme, 'Financials / lending');
   assert.equal(themeOf(['Sezzle results'], 'Finance: Consumer Services', 'Sezzle Inc.').theme, 'Financials / lending');
-  assert.equal(themeOf(['revenue grew'], 'Industrial Specialties', 'X Corp').theme, 'Capital goods / industrial machinery');   // no clear text: bucket stays
+  assert.equal(themeOf(['revenue grew'], 'Industrial Specialties', 'X Corp').theme, 'Capital goods / industrial machinery');   // no theme word in the text: bucket stays
   assert.equal(themeOf([''], 'Ophthalmic Goods', 'Y').theme, 'Pharma CDMO / API / healthcare');
   assert.equal(themeOf([''], 'Ordnance And Accessories', 'Y').theme, 'Defence & aerospace');
   assert.equal(themeOf([''], 'Railroads', 'Y').theme, 'Railways & metro');

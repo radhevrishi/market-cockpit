@@ -4233,7 +4233,7 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   saved), saved-copy read / write timeouts 8 s. US quotes cold call ~8 s after a deploy, 0.7 s after.
 - zzz1276 (18 Nov): Transformational Gainers board fixes (owner's page copy). Themes: Nasdaq catch-all industries
   (`VAGUE_INDUSTRY_RE`: Industrial Specialties, Military/Government/Technical, Finance: Consumer Services, Building Products …) let the
-  filing text decide when it names a theme 2+ times; "Finance:" / bankers / brokers → Financials; more Nasdaq names mapped (ophthalmic,
+  filing text (headline, quote, what changed, signals) decide when it names any theme; "Finance:" / bankers / brokers → Financials; more Nasdaq names mapped (ophthalmic,
   ordnance, railroads, telecommunications, precious metals, electric utilities, investment managers, shoes …). Headlines: page
   furniture is junk (street address + ZIP / phone, stacked release labels, "Investor Contact", "Earnings Release of X Dated …");
   `trimDanglingHeadline` cuts a release headline split mid-figure back to the last Results / Highlights / Update / Guidance phrase

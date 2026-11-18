@@ -113,7 +113,7 @@ export const STRUCTURAL_THEMES = new Set(THEMES.filter((t) => t.structural).map(
 export const OTHER_THEME = 'Other / not classified yet';
 /** zzz1276 — Nasdaq's industry for many US names is a catch-all that says little about the business ("Industrial Specialties"
  *  holds breast-implant and orthopaedic makers, "Military/Government/Technical" an infrastructure builder, "Finance: Consumer
- *  Services" an investment bank). For these the company's own filing text decides when it clearly names a theme (2+ words),
+ *  Services" an investment bank). For these the company's own filing text decides when it names a theme,
  *  then the bucket itself. */
 export const VAGUE_INDUSTRY_RE = /^(?:industrial specialties|industrial machinery\/components|military\/government\/technical|building products|finance: consumer services|radio and television broadcasting and communications equipment|business services|diversified commercial services|professional services|miscellaneous\b.*|multi-sector companies|other consumer services|edp services|office equipment\/supplies\/services|catalog\/specialty distribution|misc corporate leasing services|electrical products|metal fabrications|industrial specialt\w*)$/i;
 
@@ -134,7 +134,7 @@ export function themeOf(texts: Array<string | null | undefined>, industry?: stri
   if (/^finance\b|\bbankers?\b|\bbrokers?\b/i.test(ind)) return { theme: 'Financials / lending', why: `the company's industry: ${ind}` };
   if (ind && VAGUE_INDUSTRY_RE.test(ind)) {
     const byTxt = best(texts.filter(Boolean).join(' \n ').slice(0, 6000));
-    if (byTxt && byTxt.n >= 2) return { theme: byTxt.name, why: `the filing says "${byTxt.word}" (industry "${ind}" is a catch-all)` };
+    if (byTxt && byTxt.n >= 1) return { theme: byTxt.name, why: `the filing says "${byTxt.word}" (industry "${ind}" is a catch-all)` };
   }
   const byInd = ind ? best(ind) : null;
   if (byInd) return { theme: byInd.name, why: `the company's industry: ${ind}` };
