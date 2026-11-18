@@ -12,7 +12,7 @@ import { MbChip, MB_COLOR } from '@/components/transformational/MbChip';
 import { TurnaroundBadge } from '@/components/turnaround/TurnaroundBadge';   // zzz1227
 import { turnaroundFromTg, type Turnaround } from '@/lib/turnaround/core';
 import type { TgVerify } from '@/lib/transformational/verify';   // zzz1233
-import { MB_NAME, MB_WORD, ONE_PAGE_CASE, OTHER_THEME, chanceOf, marginDeltaOf, tgKindWord, type MbLabel, type TgBoard, type TgItem, type TgStrength } from '@/lib/transformational/core';
+import { MB_NAME, MB_WORD, ONE_PAGE_CASE, OTHER_THEME, aiIsCurrent, chanceOf, marginDeltaOf, tgKindWord, type MbLabel, type TgBoard, type TgItem, type TgStrength } from '@/lib/transformational/core';
 
 type Mkt = 'ALL' | 'IN' | 'US';
 const STRENGTH_COLOR: Record<TgStrength, string> = { TRANSFORMATIONAL: R.green, INFLECTION: R.cyan, NOTABLE: R.amber };
@@ -119,7 +119,7 @@ export default function TransformationalGainersPage() {
     const high = groups.filter((g) => chanceOf(g.best).label === 'HIGH').length;
     const fresh = groups.filter((g) => newSet.has(g.key)).length;
     const newThemes = themes.filter((t) => t.isNew).length;
-    const aiCos = groups.filter((g) => g.items.some((x) => x.ai)).length;
+    const aiCos = groups.filter((g) => g.items.some((x) => aiIsCurrent(x.ai))).length;   // zzz1278 — current-prompt reads only
     return { cos, trans, high, fresh, themes: themes.length, newThemes, aiCos };
   }, [groups, newSet, themes]);
   // zzz1229: companies on the board (current filters) with a Turnaround → Compounder read
@@ -335,7 +335,7 @@ export default function TransformationalGainersPage() {
                                       {it.durationYears && <span style={{ color: R.green }}>multi-year runway</span>}
                                       {it.materiality && <span>materiality {String(it.materiality).toLowerCase()}</span>}
                                       {it.sourceUrl && /^https?:\/\//.test(it.sourceUrl) && <a href={it.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: R.cyan }}>source ↗</a>}
-                                      {!it.ai && <button type="button" disabled={!!aiBusy} onClick={() => askAi([it.id], it.id)} style={{ ...chip(false, R.violet), padding: '1px 8px', fontSize: 11 }}>{aiBusy === it.id ? '🤖 reading…' : '🤖 Ask AI'}</button>}
+                                      {!aiIsCurrent(it.ai) && <button type="button" disabled={!!aiBusy} onClick={() => askAi([it.id], it.id)} style={{ ...chip(false, R.violet), padding: '1px 8px', fontSize: 11 }}>{aiBusy === it.id ? '🤖 reading…' : '🤖 Ask AI'}</button>}
                                     </div>
                                     <div style={{ fontSize: 14, fontWeight: 700, marginTop: 3, lineHeight: 1.4 }}>{it.headline}</div>
                                     {it.whatChanged && it.whatChanged !== it.headline && <div style={{ fontSize: 13, color: R.dim, marginTop: 2, lineHeight: 1.45 }}>{it.whatChanged}</div>}

@@ -20,7 +20,10 @@ export type MbLabel = 'HIGH' | 'MEDIUM' | 'LOW' | 'UNLIKELY';
 
 export interface TgFacts { revenueYoY: number | null; patYoY: number | null; marginNow: number | null; marginPrior: number | null; cfoToPat: number | null; guidance: string | null }
 export interface MbView { score: number; label: MbLabel; plus: string[]; minus: string[] }
-export interface AiMb { label: MbLabel; probabilityPct: number; why: string[]; risks: string[]; verifyNext: string[]; theme: string | null; at: string; model: string | null }
+export interface AiMb { label: MbLabel; probabilityPct: number; why: string[]; risks: string[]; verifyNext: string[]; theme: string | null; at: string; model: string | null; /** zzz1278 — prompt version; older reads answered a different question */ v?: number }
+/** zzz1278 — v2 judges the COMPANY with this event as new evidence (v1 asked whether ONE event alone can make a 3x — almost always "no": 168 of 223 India rows LOW, 0 HIGH). */
+export const AI_READ_VERSION = 2;
+export const aiIsCurrent = (ai: AiMb | null | undefined): ai is AiMb => !!ai && ai.v === AI_READ_VERSION;
 
 export interface TgItem {
   id: string; market: TgMarket; ticker: string; company: string;
@@ -375,7 +378,7 @@ export function orderValue(text: string, market: TgMarket): number | null {
 }
 
 const TARGET_RE = /\b(?:voting and support agreement|to be acquired by|agreed to be acquired|will be acquired|acquired by an? (?:affiliate|entity|fund)|go(?:ing)?[- ]private|take[- ]private|takeover bid|definitive agreement to be acquired)\b/i;
-const NOT_ORDER_RE = /\b(?:refund|high court|supreme court|tribunal|nclt order|arbitration|tax (?:demand|relief)|court relief|penalty|summons|show[- ]cause|notice, direction or order|communication from the authority|violation|RERA registration)\b/i;
+const NOT_ORDER_RE = /\b(?:refund|high court|supreme court|tribunal|nclt order|arbitration|tax (?:demand|relief)|court relief|penalty|summons|show[- ]cause|notice, direction or order|communication from the authority|violation|RERA (?:registration|approval)|date of receipt of communication|order dated \w+ \d{1,2},? \d{4}, received)\b/i;
 // zzz1190 — a results release is not an order: its first ₹ / $ figure is revenue (Paramount "revenue ₹560 Cr" read as a 28% order)
 const RESULTS_TEXT_RE = /\b(?:results?|quarter(?:ly)?|Q[1-4]\s?FY|net (?:income|profit)|EBITDA|PBT|revenue (?:of|rose|grew|was|up)|news release|financial news)\b/i;
 const ORDER_WORD_RE = /\b(?:orders?|contracts?|LoA|LoI|letter of (?:award|acceptance|intent)|awarded|bagged|won|wins?|purchase orders?)\b/i;
@@ -402,6 +405,30 @@ const LEAD_RAISE = /\b(?:listing approval|(?:conversion of|from) warrants?(?: co
 // zzz1190 — the company is the BUYER (PVP "LOI signed for proposed procurement of … LINAC systems"), not receiving an order
 const BUYER_RE = /\b(?:for (?:the )?(?:proposed )?procurement of|to procure|procure(?:ment)? of|proposed purchase of|placed (?:an? )?(?:purchase )?order (?:with|on)|acquisition of (?:equipment|machinery|land))\b/i;
 
+// zzz1278 — text that is not an event at all (procedural board-meeting lines, legal / privacy wording, cash-flow table rows, awards
+// and workplace certificates, a subsidiary set up), a credit-rating action labelled as an order / plant / approval, an MoU to
+// explore labelled as an order, and the quarter's results labelled as an order / plant / approval (owner's 18 Nov board copy).
+export const NON_EVENT_RE = /\b(?:board meeting (?:commenced|concluded)|commenced (?:today )?at \d|concluded at \d{1,2}[:.]\d{2}|great place to work|IGBC|green homes? (?:silver|gold|platinum)|sharing information with government|personal data|privacy (?:policy|notice)|payments? to acquire investments|fixed deposits (?:placed|matured)|incorporation of (?:a )?(?:wholly[- ]owned )?subsidiary)\b/i;
+const RATING_RE = /\b(?:ICRA|CRISIL|CARE(?:Edge)?|India Ratings|Acuit[eé]|Brickwork|Infomerics)\b[^.]{0,80}\b(?:ratings?|upgrad\w*|reaffirm\w*|outlook)\b|\bcredit ratings?\b[^.]{0,40}\b(?:upgrad\w*|reaffirm\w*|revised)\b/i;
+const MOU_RE = /\b(?:MoU|memorandum of understanding|to explore|non-binding)\b/i;
+const ORDER_FIRM_RE = /\b(?:awarded|bagged|won|wins|order (?:worth|of|value|for)|orders (?:worth|totalling|totaling|of)|letter of (?:award|acceptance)|LoA|purchase orders?|contract (?:worth|of|for|from))\b/i;
+const RESULTS_LEAD_RE = /\b(?:financial results|results for the (?:quarter|half)|reported Q[1-4]|Q[1-4] ?FY ?\d{2} (?:results|revenue|PAT|consolidated|unaudited)|unaudited (?:standalone|consolidated)? ?(?:financial )?results|(?:revenue|PAT|net profit|total income) (?:rose|rises|up|grew|jumps?|of rs|of inr|of ₹)|H1 ?FY ?\d{2} (?:total )?income)\b/i;
+const STRICT: Partial<Record<TgKind, RegExp>> = {
+  ORDERS: /\b(?:orders?|contracts?|LoA|LoI|letter of (?:award|acceptance|intent)|awarded|bagged)\b/i,
+  CAPACITY: /\b(?:commission\w*|commenc\w+ (?:of )?(?:commercial )?(?:production|operations)|began (?:commercial )?(?:production|operations)|started (?:commercial )?production|capacity|new (?:plant|line|facility|unit))\b/i,
+  APPROVAL: /\b(?:approv\w+|licen[cs]\w*|certif\w+|USFDA|EIR|clearance|accredit\w*|empanel\w*|registration)\b/i,
+};
+/** zzz1278 — why the shown text is not the labelled business event, or null. Pure. */
+export function nonEventReason(x: Pick<TgItem, 'kind' | 'headline' | 'whatChanged' | 'quote'>): string | null {
+  const text = [x.headline, x.whatChanged, x.quote].filter(Boolean).join(' \n ');
+  if (NON_EVENT_RE.test(text)) return 'the shown text is procedural / legal wording or an award, not a business event';
+  if ((x.kind === 'ORDERS' || x.kind === 'CAPACITY' || x.kind === 'APPROVAL') && RATING_RE.test(text) && !(STRICT[x.kind] as RegExp).test(text.replace(RATING_RE, ''))) return 'a credit-rating action, not the labelled event';
+  if (x.kind === 'ORDERS' && MOU_RE.test(text) && !ORDER_FIRM_RE.test(text)) return 'an MoU / letter to explore, not a firm order';
+  const strict = STRICT[x.kind];
+  if (strict && RESULTS_LEAD_RE.test(text) && !strict.test(text)) return "the shown text is the quarter's results, not the labelled event";
+  return null;
+}
+
 /** Why the text does not back the event, or null when it does. Figures in the filing (an earnings inflection) back themselves. */
 export function evidenceGap(x: Pick<TgItem, 'kind' | 'headline' | 'whatChanged' | 'quote' | 'signals' | 'market' | 'marketCap'>): string | null {
   const text = [x.headline, x.whatChanged, x.quote].filter(Boolean).join(' \n ');
@@ -420,6 +447,8 @@ export function evidenceGap(x: Pick<TgItem, 'kind' | 'headline' | 'whatChanged' 
   if (x.kind === 'ORDERS' && BUYER_RE.test(text)) return 'the company is the buyer (a purchase / LOI to procure), not receiving an order — establish whether it is a commitment and which business earns from it';
   if (x.signals.some((g) => /^Earnings inflection/.test(g))) return null;
   if (GENERIC_DOC.test(text)) return 'the quoted text is generic document wording, not an event';
+  const ne = nonEventReason(x);
+  if (ne) return ne;
   if (RAISE_ONLY.test(text) && !SUPPORT[x.kind].test(text.replace(RAISE_ONLY, ''))) return 'the text is about raising money (share issue), not the labelled event';
   if (x.kind === 'STRATEGIC' && EXISTING_REL.test(text)) return 'an existing relationship in a routine update, not a new deal';
   if (!SUPPORT[x.kind].test(text)) return `the shown text does not mention the ${KIND_WORD[x.kind].toLowerCase()}`;
@@ -496,6 +525,19 @@ export function headlineRevenueGrowth(text: string): number | null {
 }
 
 /** Cleans one item and re-reads it under the current rule; null = not one of the most important events. Pure. */
+/** zzz1278 — India: a results line filed in Oct–Dec 2026 is Q2 FY27, but summaries sometimes write "Q2 FY26" (HARIOMPIPE, UNOMINDA,
+ *  APLAPOLLO). Only the year is corrected, only when the quarter number matches the latest quarter ended before the filing and the
+ *  year is off by exactly one. Pure. */
+export function fixIndiaQuarterLabel(text: string, filed: string | null): string {
+  if (!text || !filed || !/^\d{4}-\d{2}-\d{2}/.test(filed)) return text;
+  const y = Number(filed.slice(0, 4)), mo = Number(filed.slice(5, 7));
+  // latest quarter end strictly before the filing month: Mar / Jun / Sep / Dec
+  const endMo = mo <= 3 ? 12 : mo <= 6 ? 3 : mo <= 9 ? 6 : 9, endY = mo <= 3 ? y - 1 : y;
+  const q = endMo === 6 ? 1 : endMo === 9 ? 2 : endMo === 12 ? 3 : 4;
+  const fy = (endMo >= 4 ? endY + 1 : endY) % 100;
+  return text.replace(/\bQ([1-4])\s?FY\s?'?(\d{2})\b/g, (m, qq, yy) => (Number(qq) === q && Math.abs(Number(yy) - fy) === 1 ? m.replace(yy, String(fy).padStart(2, '0')) : m));
+}
+
 export function reviewItem(x0: TgItem, snap?: SnapFacts | null): TgItem | null {
   const x: TgItem = { ...x0, facts: { ...x0.facts }, signals: [...x0.signals] };
   // zzz1228: a stored revenue growth that fights the release's own stated company figure was read from a product line
@@ -507,6 +549,12 @@ export function reviewItem(x0: TgItem, snap?: SnapFacts | null): TgItem | null {
   }
   const texts = `${x.headline} \n ${x.whatChanged || ''} \n ${x.quote || ''} \n ${x.signals.join(' ; ')}`;
   const inflect = x.signals.some((g) => /^Earnings inflection/.test(g));
+  // zzz1278 — quarter labels and junk headlines on rows that stand on their filed figures
+  if (x.market === 'IN') { const d = x.eventDate || x.sessionDate; x.headline = fixIndiaQuarterLabel(x.headline, d); if (x.whatChanged) x.whatChanged = fixIndiaQuarterLabel(x.whatChanged, d); }
+  if (inflect && NON_EVENT_RE.test(x.headline || '')) {
+    const sig = x.signals.find((g) => /^Earnings inflection/.test(g));
+    x.headline = sig ? `${sig} (the release itself was not about the results)` : x.headline;
+  }
   // being acquired: the upside is capped at the deal price — never a multibagger
   if (x.kind === 'STRATEGIC' && (TARGET_RE.test(texts) || (/merger agreement|takeover/i.test(texts) && (x.movePct ?? 0) >= 20))) return null;
   // an event filed > 10 days before the session was not why the share moved (it was listed when it was new)
@@ -520,7 +568,7 @@ export function reviewItem(x0: TgItem, snap?: SnapFacts | null): TgItem | null {
     if (!inflect && NOT_ORDER_RE.test(`${x.headline} ${x.quote || ''} ${x.whatChanged || ''}`)) return null;   // a court relief or tax refund is not an order
     const otext = `${x.quote || ''} ${x.headline} ${x.whatChanged || ''}`;
     let v = ORDER_WORD_RE.test(otext) && !(RESULTS_TEXT_RE.test(`${x.headline} ${x.quote || ''}`) && !ORDER_WORD_RE.test(x.headline)) ? orderValue(otext, x.market) : null;
-    if (v == null && x.market === 'IN') { const u = orderValue(`${x.quote || ''} ${x.headline}`.replace(/(?:US\$|USD)\s*/gi, '$'), 'US'); if (u != null) v = u * 8.5; }   // $M → ₹ Cr (~85/$ ÷ 10)
+    if (v == null && x.market === 'IN') { const u = orderValue(`${x.quote || ''} ${x.headline}`.replace(/(?:US\$|USD)\s*/gi, '$'), 'US'); if (u != null) v = u * 9.6; }   // $M → ₹ Cr (~96/$ ÷ 10; zzz1278 — was 85/$)
     if (v != null && revenue) x.orderToRevenuePct = Math.round((v / revenue) * 1000) / 10;
     if (x.orderToRevenuePct != null && x.orderToRevenuePct > 500) { x.orderToRevenuePct = null; v = null; }   // units or denominator do not reconcile — not scored
     if (!inflect && v != null) {
@@ -571,9 +619,10 @@ export function reviewItem(x0: TgItem, snap?: SnapFacts | null): TgItem | null {
 }
 
 // ── zzz1169: one ranking — the rules read, blended with the AI read when there is one ──
-const AI_POINTS: Record<MbLabel, number> = { HIGH: 78, MEDIUM: 55, LOW: 32, UNLIKELY: 12 };
+// zzz1278 — the AI label's points; an AI read from an older prompt (aiIsCurrent false) is shown but not blended
+export const AI_POINTS: Record<MbLabel, number> = { HIGH: 85, MEDIUM: 62, LOW: 35, UNLIKELY: 12 };
 export function chanceOf(x: Pick<TgItem, 'mb' | 'ai'>): { score: number; label: MbLabel; from: 'rules' | 'rules + AI' } {
-  if (!x.ai) return { score: x.mb.score, label: x.mb.label, from: 'rules' };
+  if (!aiIsCurrent(x.ai)) return { score: x.mb.score, label: x.mb.label, from: 'rules' };
   const s = Math.round((x.mb.score + AI_POINTS[x.ai.label]) / 2);
   return { score: s, label: s >= 65 ? 'HIGH' : s >= 45 ? 'MEDIUM' : s >= 25 ? 'LOW' : 'UNLIKELY', from: 'rules + AI' };
 }

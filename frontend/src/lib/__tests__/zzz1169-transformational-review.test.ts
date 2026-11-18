@@ -18,7 +18,7 @@ const base = (over: Partial<TgItem> = {}): TgItem => {
 
 test('ranking: an AI-read 8% never outranks an unread HIGH', () => {
   const hi = { mb: { score: 70, label: 'HIGH' as const, plus: [], minus: [] }, ai: null };
-  const lo = { mb: { score: 50, label: 'MEDIUM' as const, plus: [], minus: [] }, ai: { label: 'UNLIKELY' as const, probabilityPct: 8, why: [], risks: [], verifyNext: [], theme: null, at: '', model: null } };
+  const lo = { mb: { score: 50, label: 'MEDIUM' as const, plus: [], minus: [] }, ai: { label: 'UNLIKELY' as const, probabilityPct: 8, why: [], risks: [], verifyNext: [], theme: null, at: '', model: null, v: 2 } };   // zzz1278 — a current-prompt read
   assert.ok(chanceOf(hi).score > chanceOf(lo).score);
   assert.equal(chanceOf(lo).from, 'rules + AI');
 });

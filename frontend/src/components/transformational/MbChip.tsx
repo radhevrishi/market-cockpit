@@ -2,19 +2,21 @@
 // zzz1166 — the "multibagger chance" chip: the rules read (always), and the AI read beside it when there is one. Click opens why.
 import React, { useState } from 'react';
 import { R, tint } from '@/components/special-situations/radar-tokens';
-import { MB_NAME, MB_WORD, chanceOf, type AiMb, type MbLabel, type MbView } from '@/lib/transformational/core';
+import { AI_POINTS, MB_NAME, MB_WORD, aiIsCurrent, chanceOf, type AiMb, type MbLabel, type MbView } from '@/lib/transformational/core';
 
 export const MB_COLOR: Record<MbLabel, string> = { HIGH: R.green, MEDIUM: R.cyan, LOW: R.amber, UNLIKELY: R.grey };
 
-export function MbChip({ mb, ai, compact = false }: { mb: MbView; ai?: AiMb | null; compact?: boolean }) {
+export function MbChip({ mb, ai: ai0, compact = false }: { mb: MbView; ai?: AiMb | null; compact?: boolean }) {
   const [open, setOpen] = useState(false);
+  // zzz1278 — an AI read from the older prompt is not shown or blended; it is being read again
+  const staleAi = !!ai0 && !aiIsCurrent(ai0);
+  const ai = staleAi ? null : ai0;
   const c = MB_COLOR[mb.label];
   const ac = ai ? MB_COLOR[ai.label] : null;
   const all = chanceOf({ mb, ai });
   const oc = MB_COLOR[all.label];
   // zzz1190 — rules and AI far apart: say why, before anyone reads the blended number
-  const AI_PTS: Record<MbLabel, number> = { HIGH: 78, MEDIUM: 55, LOW: 32, UNLIKELY: 12 };
-  const gap = ai ? mb.score - AI_PTS[ai.label] : 0;
+  const gap = ai ? mb.score - AI_POINTS[ai.label] : 0;
   const differ = ai && Math.abs(gap) >= 30
     ? (gap > 0
       ? `Rules rate it higher: they count ${mb.plus.slice(0, 2).join('; ') || 'the filed figures'} — the AI weighs ${ai.risks.slice(0, 2).join('; ') || 'risks the rules cannot see'}.`
@@ -33,6 +35,7 @@ export function MbChip({ mb, ai, compact = false }: { mb: MbView; ai?: AiMb | nu
           style={{ cursor: 'pointer', fontSize: 11, fontWeight: 800, padding: '3px 8px', borderRadius: 999, border: `1px solid ${c}`, color: c, background: tint(c, 10), whiteSpace: 'nowrap' }}>
           🚀 {ai ? 'Rules' : MB_NAME}: {MB_WORD[mb.label]} · {mb.score}/100
         </button>
+        {staleAi && <span title="The AI read on this row came from an older, too-strict question; it is being read again (up to 60 rows a day, strongest first). Until then the rules read is the ranking." style={{ fontSize: 10.5, color: R.dim, alignSelf: 'center' }}>🤖 AI re-read pending</span>}
         {ai && ac && (
           <button type="button" onClick={() => setOpen((v) => !v)} title="The AI's own read of the same facts (a second opinion). Click for why."
             style={{ cursor: 'pointer', fontSize: 11, fontWeight: 800, padding: '3px 8px', borderRadius: 999, border: `1px dashed ${ac}`, color: ac, background: tint(ac, 8), whiteSpace: 'nowrap' }}>

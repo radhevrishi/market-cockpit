@@ -4253,3 +4253,12 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   gainers / movers (TradingView scanner, snapshot fallback). Our India snapshot itself is BUILT from screener.in company pages (stored).
   Calendar job had failed since 14 Nov (NSE board-meetings API empty, BSE 403 via relay): BSE now direct first then relay; NSE dateless
   call; last resort = results board-meeting intimations parsed from the NSE announcements feed (`meetingsFromAnnouncements`).
+- zzz1278 (18 Nov): Transformational Gainers "nothing to buy" — 0 High of 190 for weeks. Cause: the AI read (v1) asked whether ONE event
+  alone can make a 3x and was told it "often says LOW": 218 of 223 India rows LOW/UNLIKELY, so the half-and-half blend topped out
+  near Medium. v2 prompt (`AI_READ_VERSION` 2 in core, `v` on AiMb) judges the COMPANY with the event as evidence, has label anchors,
+  gets industry + P/E + D/E; `AI_POINTS` 85/62/35/12. Old reads are NOT blended or shown (`aiIsCurrent`; chip says "AI re-read
+  pending") and the auto read re-reads them after unread ones (60 days, strongest first, inside the existing 60/day cap).
+  `nonEventReason` holds back procedural board-meeting lines, legal / privacy / cash-flow table text, awards (Great Place to Work,
+  IGBC), rating actions labelled order/plant/approval, MoUs labelled orders, and results text labelled order/plant/approval;
+  NOT_ORDER also RERA approval and tax "communication" orders. `fixIndiaQuarterLabel` corrects "Q2 FY26" on Oct–Dec 2026 filings.
+  USD → ₹ Cr for India order values 9.6 (was 8.5).

@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { saveAi } from '@/lib/transformational/store';
 import { loadReviewed } from '@/lib/transformational/reviewed';
 import { aiMultibagger, AI_DAILY_MAX, AI_PER_CALL_MAX } from '@/lib/transformational/ai';
-import type { TgItem, TgMarket } from '@/lib/transformational/core';
+import { aiIsCurrent, type TgItem, type TgMarket } from '@/lib/transformational/core';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -21,10 +21,17 @@ export async function POST(req: NextRequest) {
   const ids: string[] = Array.isArray(body?.ids) ? body.ids.map(String).slice(0, AI_PER_CALL_MAX) : [];
   const sinceDays = Math.max(1, Math.min(60, Number(body?.sinceDays) || 3));
   try {
-    const all = await loadReviewed(ids.length ? 75 : sinceDays, market);
+    // zzz1278 — auto also re-reads rows whose AI read came from an older prompt (60 days, strongest first), after the unread ones
+    const all = await loadReviewed(ids.length ? 75 : 60, market);
+    const cutoff = new Date(Date.now() - sinceDays * 86_400_000).toISOString().slice(0, 10);
     let pick: TgItem[];
-    if (ids.length) pick = all.filter((x) => ids.includes(x.id) && !(x.ai && !body?.again));
-    else pick = all.filter((x) => !x.ai && !x.needsCheck && x.strength !== 'NOTABLE').sort((a, b) => b.mb.score - a.mb.score);   // reviewed: clean text + screener figures
+    if (ids.length) pick = all.filter((x) => ids.includes(x.id) && !(aiIsCurrent(x.ai) && !body?.again));
+    else {
+      const ok = (x: TgItem) => !x.needsCheck && x.strength !== 'NOTABLE';
+      const unread = all.filter((x) => ok(x) && !x.ai && x.sessionDate >= cutoff).sort((a, b) => b.mb.score - a.mb.score);
+      const stale = all.filter((x) => ok(x) && x.ai && !aiIsCurrent(x.ai)).sort((a, b) => b.mb.score - a.mb.score);
+      pick = [...unread, ...stale];
+    }
     const { kvGet, kvIncrByFloat } = await import('@/lib/kv');
     const used = Number(await kvGet<number>(dayKey()).catch(() => 0)) || 0;
     const room = Math.max(0, Math.min(AI_PER_CALL_MAX, AI_DAILY_MAX - used));
