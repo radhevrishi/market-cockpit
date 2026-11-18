@@ -4262,3 +4262,8 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   IGBC), rating actions labelled order/plant/approval, MoUs labelled orders, and results text labelled order/plant/approval;
   NOT_ORDER also RERA approval and tax "communication" orders. `fixIndiaQuarterLabel` corrects "Q2 FY26" on Oct–Dec 2026 filings.
   USD → ₹ Cr for India order values 9.6 (was 8.5).
+- zzz1279 (18 Nov): Transformational Gainers High list made dependable. Rules read: a large company (> ₹25,000 Cr / $8B) stops at
+  55 and the blend at 60 (never High — Navin Fluorine ₹52,613 Cr was High); revenue down −8, profit down ≥ 30% −8; a failed
+  per-share or price-room chain check −6 each (said in the read). `nonEventReason`: small solar plants for own power
+  (`CAPTIVE_SOLAR_RE`) and capacity only proposed / expected (`PLANNED_CAP_RE` without `DONE_CAP_RE`) are held back.
+  `fixIndiaQuarterLabel` also fixes "Q2 FY2026".

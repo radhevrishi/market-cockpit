@@ -161,7 +161,7 @@ export function multibaggerOf(x: Pick<TgItem, 'market' | 'orderToRevenuePct' | '
     if (small) { s += 20; plus.push('small company — room for earnings and valuation to grow many times'); }
     else if (mid) { s += 14; plus.push('small-to-mid size — room to grow'); }
     else if (upper) { s += 6; plus.push('mid size'); }
-    else minus.push('already large — a 5–10x is much harder from here');
+    else { minus.push('already large — a 5–10x is much harder from here'); (x as any).__large = true; }
   } else minus.push('size not known');
   if (x.strength === 'TRANSFORMATIONAL') { s += 20; plus.push('the event can change future earnings for years'); }
   else if (x.strength === 'INFLECTION') { s += 12; plus.push('earnings are turning up now'); }
@@ -170,8 +170,9 @@ export function multibaggerOf(x: Pick<TgItem, 'market' | 'orderToRevenuePct' | '
   // zzz1169 — no figures at all: the read rests on the event alone
   // zzz1170 — missing figures are UNKNOWN, not bad: no points either way, but said plainly
   if (f.revenueYoY == null && f.patYoY == null && f.marginNow == null) minus.push('growth figures unknown — the read rests on the event alone');
-  if (f.revenueYoY != null) { if (f.revenueYoY >= 40) { s += 12; plus.push(`revenue +${Math.round(f.revenueYoY)}% a year`); } else if (f.revenueYoY >= 25) { s += 8; plus.push(`revenue +${Math.round(f.revenueYoY)}% a year`); } else if (f.revenueYoY < 10) { s -= 4; minus.push(`revenue growth only ${Math.round(f.revenueYoY)}%`); } }
+  if (f.revenueYoY != null) { if (f.revenueYoY >= 40) { s += 12; plus.push(`revenue +${Math.round(f.revenueYoY)}% a year`); } else if (f.revenueYoY >= 25) { s += 8; plus.push(`revenue +${Math.round(f.revenueYoY)}% a year`); } else if (f.revenueYoY < 0) { s -= 8; minus.push(`revenue down ${Math.abs(Math.round(f.revenueYoY))}%`); } else if (f.revenueYoY < 10) { s -= 4; minus.push(`revenue growth only ${Math.round(f.revenueYoY)}%`); } }
   if (f.patYoY != null && f.patYoY >= 60) { s += 8; plus.push(`profit +${Math.round(f.patYoY)}%`); }
+  else if (f.patYoY != null && f.patYoY <= -30) { s -= 8; minus.push(`profit down ${Math.abs(Math.round(f.patYoY))}%`); }   // zzz1279
   if (f.marginNow != null && f.marginPrior != null) { const d = f.marginNow - f.marginPrior; if (d >= 3) { s += 6; plus.push(`margin up ${d.toFixed(1)} points (operating leverage)`); } else if (d <= -2) { s -= 4; minus.push(`margin down ${Math.abs(d).toFixed(1)} points`); } }
   if (f.guidance && /RAISED/i.test(f.guidance)) { s += 6; plus.push('management raised its guidance'); }
   const otr = (x as any).orderToRevenuePct as number | null | undefined;
@@ -183,6 +184,8 @@ export function multibaggerOf(x: Pick<TgItem, 'market' | 'orderToRevenuePct' | '
   if (x.dilution) { s -= 10; minus.push('new shares / dilution'); }
   const m3 = x.returns.m3;
   if (m3 != null) { if (m3 >= 100) { s -= 10; minus.push(`already up ${Math.round(m3)}% in 3 months — much may be priced`); } else if (m3 >= 60) { s -= 5; minus.push(`up ${Math.round(m3)}% in 3 months`); } }
+  // zzz1279 — a large company is never a High: its rules read stops at Medium
+  if ((x as any).__large) { delete (x as any).__large; s = Math.min(s, 55); }
   s = Math.max(0, Math.min(100, Math.round(s)));
   const label: MbLabel = s >= 65 ? 'HIGH' : s >= 45 ? 'MEDIUM' : s >= 25 ? 'LOW' : 'UNLIKELY';
   return { score: s, label, plus, minus };
@@ -410,6 +413,9 @@ const BUYER_RE = /\b(?:for (?:the )?(?:proposed )?procurement of|to procure|proc
 // explore labelled as an order, and the quarter's results labelled as an order / plant / approval (owner's 18 Nov board copy).
 export const NON_EVENT_RE = /\b(?:board meeting (?:commenced|concluded)|commenced (?:today )?at \d|concluded at \d{1,2}[:.]\d{2}|great place to work|IGBC|green homes? (?:silver|gold|platinum)|sharing information with government|personal data|privacy (?:policy|notice)|payments? to acquire investments|fixed deposits (?:placed|matured)|incorporation of (?:a )?(?:wholly[- ]owned )?subsidiary)\b/i;
 const RATING_RE = /\b(?:ICRA|CRISIL|CARE(?:Edge)?|India Ratings|Acuit[eé]|Brickwork|Infomerics)\b[^.]{0,80}\b(?:ratings?|upgrad\w*|reaffirm\w*|outlook)\b|\bcredit ratings?\b[^.]{0,40}\b(?:upgrad\w*|reaffirm\w*|revised)\b/i;
+const CAPTIVE_SOLAR_RE = /\b\d+(?:\.\d+)?\s?MW[pP]?\s+(?:captive\s+|rooftop\s+|ground[- ]mounted\s+)?solar(?:\s+power)?(?:\s+plant|\s+project)?(?:\s+(?:registration|commissioning))?|captive solar\b/i;
+const PLANNED_CAP_RE = /\b(?:proposed|planned|will be commissioned|to be commissioned|expected to (?:be )?commission\w*|nears? (?:completion|commissioning)|under (?:construction|implementation)|progressing as planned)\b/i;
+const DONE_CAP_RE = /\b(?:(?<!to be |will be )commissioned|commenced (?:commercial )?(?:production|operations)|began (?:commercial )?(?:production|operations)|started (?:commercial )?production|now operational|inaugurat\w+)\b/i;
 const MOU_RE = /\b(?:MoU|memorandum of understanding|to explore|non-binding)\b/i;
 const ORDER_FIRM_RE = /\b(?:awarded|bagged|won|wins|order (?:worth|of|value|for)|orders (?:worth|totalling|totaling|of)|letter of (?:award|acceptance)|LoA|purchase orders?|contract (?:worth|of|for|from))\b/i;
 const RESULTS_LEAD_RE = /\b(?:financial results|results for the (?:quarter|half)|reported Q[1-4]|Q[1-4] ?FY ?\d{2} (?:results|revenue|PAT|consolidated|unaudited)|unaudited (?:standalone|consolidated)? ?(?:financial )?results|(?:revenue|PAT|net profit|total income) (?:rose|rises|up|grew|jumps?|of rs|of inr|of ₹)|H1 ?FY ?\d{2} (?:total )?income)\b/i;
@@ -424,6 +430,10 @@ export function nonEventReason(x: Pick<TgItem, 'kind' | 'headline' | 'whatChange
   if (NON_EVENT_RE.test(text)) return 'the shown text is procedural / legal wording or an award, not a business event';
   if ((x.kind === 'ORDERS' || x.kind === 'CAPACITY' || x.kind === 'APPROVAL') && RATING_RE.test(text) && !(STRICT[x.kind] as RegExp).test(text.replace(RATING_RE, ''))) return 'a credit-rating action, not the labelled event';
   if (x.kind === 'ORDERS' && MOU_RE.test(text) && !ORDER_FIRM_RE.test(text)) return 'an MoU / letter to explore, not a firm order';
+  // zzz1279 — a small solar plant for the company's own power (HARIOMPIPE 5 MW, SANSTAR 3 MW, ADVANCE 4 MW) is cost saving, not business capacity
+  if ((x.kind === 'CAPACITY' || x.kind === 'ORDERS') && CAPTIVE_SOLAR_RE.test(text) && !(STRICT.CAPACITY as RegExp).test(text.replace(CAPTIVE_SOLAR_RE, ''))) return 'a small solar plant for its own power, not new business capacity';
+  // zzz1279 — a capacity that is only proposed / expected (DIACABS "Proposed capacity addition", TINNARUBR "will be commissioned by Q3")
+  if (x.kind === 'CAPACITY' && PLANNED_CAP_RE.test(text) && !DONE_CAP_RE.test(text)) return 'a planned capacity, not yet commissioned';
   const strict = STRICT[x.kind];
   if (strict && RESULTS_LEAD_RE.test(text) && !strict.test(text)) return "the shown text is the quarter's results, not the labelled event";
   return null;
@@ -535,7 +545,7 @@ export function fixIndiaQuarterLabel(text: string, filed: string | null): string
   const endMo = mo <= 3 ? 12 : mo <= 6 ? 3 : mo <= 9 ? 6 : 9, endY = mo <= 3 ? y - 1 : y;
   const q = endMo === 6 ? 1 : endMo === 9 ? 2 : endMo === 12 ? 3 : 4;
   const fy = (endMo >= 4 ? endY + 1 : endY) % 100;
-  return text.replace(/\bQ([1-4])\s?FY\s?'?(\d{2})\b/g, (m, qq, yy) => (Number(qq) === q && Math.abs(Number(yy) - fy) === 1 ? m.replace(yy, String(fy).padStart(2, '0')) : m));
+  return text.replace(/\bQ([1-4])\s?FY\s?'?(?:20)?(\d{2})\b/g, (m, qq, yy) => (Number(qq) === q && Math.abs(Number(yy) - fy) === 1 ? m.replace(new RegExp(`${yy}$`), String(fy).padStart(2, '0')) : m));
 }
 
 export function reviewItem(x0: TgItem, snap?: SnapFacts | null): TgItem | null {
@@ -615,6 +625,12 @@ export function reviewItem(x0: TgItem, snap?: SnapFacts | null): TgItem | null {
   x.needsCheck = evidenceGap(x);
   x.research = researchNeeded(x);
   x.chain = evidenceChain(x);
+  // zzz1279 — a failed per-share or price-room check costs points (TIRUPATIFL High with "price room ✗"); said in the read
+  const failed = x.chain.stages.filter((g) => g.state === 'missing' && (g.id === 'perShare' || g.id === 'price'));
+  if (failed.length) {
+    const sc = Math.max(0, x.mb.score - 6 * failed.length);
+    x.mb = { ...x.mb, score: sc, label: sc >= 65 ? 'HIGH' : sc >= 45 ? 'MEDIUM' : sc >= 25 ? 'LOW' : 'UNLIKELY', minus: [...x.mb.minus, ...failed.map((g) => `${g.name.toLowerCase()} check fails (${g.why})`)] };
+  }
   return x;
 }
 
@@ -623,7 +639,8 @@ export function reviewItem(x0: TgItem, snap?: SnapFacts | null): TgItem | null {
 export const AI_POINTS: Record<MbLabel, number> = { HIGH: 85, MEDIUM: 62, LOW: 35, UNLIKELY: 12 };
 export function chanceOf(x: Pick<TgItem, 'mb' | 'ai'>): { score: number; label: MbLabel; from: 'rules' | 'rules + AI' } {
   if (!aiIsCurrent(x.ai)) return { score: x.mb.score, label: x.mb.label, from: 'rules' };
-  const s = Math.round((x.mb.score + AI_POINTS[x.ai.label]) / 2);
+  let s = Math.round((x.mb.score + AI_POINTS[x.ai.label]) / 2);
+  if (x.mb.minus.some((m) => /^already large/.test(m))) s = Math.min(s, 60);   // zzz1279 — a large company is never High
   return { score: s, label: s >= 65 ? 'HIGH' : s >= 45 ? 'MEDIUM' : s >= 25 ? 'LOW' : 'UNLIKELY', from: 'rules + AI' };
 }
 

@@ -48,3 +48,21 @@ test('zzz1278 India quarter labels follow the filing date', () => {
   assert.equal(fixIndiaQuarterLabel('Q4 FY25 results', '2026-05-20'), 'Q4 FY26 results');
   assert.equal(fixIndiaQuarterLabel('Q1 FY26 results', '2026-11-05'), 'Q1 FY26 results');   // a different quarter: left alone
 });
+
+test('zzz1279 large companies, falling figures, captive solar, planned capacity, FY2026 labels', async () => {
+  const { multibaggerOf, nonEventReason: ner, fixIndiaQuarterLabel: fq, chanceOf: ch } = await import('../transformational/core');
+  const base: any = { market: 'IN', orderToRevenuePct: null, strength: 'TRANSFORMATIONAL', durationYears: true, theme: 'Specialty chemicals & materials', evidence: 'official', dilution: false, returns: { w1: null, m1: null, m3: 10 }, kind: 'CAPACITY',
+    facts: { revenueYoY: 57, patYoY: 82, marginNow: 20, marginPrior: 15, cfoToPat: 1.2, guidance: null } };
+  const big = multibaggerOf({ ...base, marketCap: 52_613 });
+  assert.ok(big.score <= 55 && big.label !== 'HIGH');
+  assert.notEqual(ch({ mb: big, ai: { label: 'HIGH', probabilityPct: 35, why: [], risks: [], verifyNext: [], theme: null, at: '', model: null, v: 2 } }).label, 'HIGH');
+  const falling = multibaggerOf({ ...base, marketCap: 1900, facts: { ...base.facts, revenueYoY: -16, patYoY: -88 } });
+  assert.ok(falling.minus.some((m) => /revenue down/.test(m)) && falling.minus.some((m) => /profit down/.test(m)));
+  const r = (kind: any, headline: string) => ner({ kind, headline, whatChanged: null, quote: null });
+  assert.match(String(r('CAPACITY', 'Board approved Q2 FY27 results, appointed Rajdeep Tripathy as VP-HR, and noted 5 MW solar plant commissioning.')), /solar/);
+  assert.match(String(r('CAPACITY', 'As filed: "Existing capacity utilisation 60% Proposed capacity addition One CCV line"')), /planned/);
+  assert.match(String(r('CAPACITY', 'The ongoing 3,500 MTPA MRP capacity expansion is progressing as planned and will be commissioned by Q3 FY27')), /planned/);
+  assert.equal(r('CAPACITY', 'Additional 15K MTPA R32-equivalent HFC plant at Surat commenced commercial operations today.'), null);
+  assert.equal(r('CAPACITY', 'Barjora line commissioned and UAE installation nears completion.'), null);
+  assert.equal(fq('Board approved Q2 FY2026 results', '2026-11-03'), 'Board approved Q2 FY2027 results');
+});
