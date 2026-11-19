@@ -32,6 +32,7 @@ import { buildTvExport } from '@/lib/us-tradingview';
 import { useBoard, useHistory, useDrill, useClientLists, useNseIndustry, useCatalysts, useGradedHistory, useUsProfiles, useHoldingQuotes, postOverlay, CATALYST_WINDOW_DAYS } from './theme-rotation/useThemeRotationData';
 import { BreadthHeatmap, ChangeLogPanel, ClusterPanel, ExposurePanel } from './theme-rotation/AnalyticsPanels';
 import { SummaryStrip } from './theme-rotation/SummaryStrip';
+import { CyclePanel } from './theme-rotation/CyclePanel';
 import { ThemeTable, THEME_ROTATION_CSS } from './theme-rotation/ThemeTable';
 import { EvidencePanel } from './theme-rotation/EvidencePanel';
 import { RrgMap } from './theme-rotation/RrgMap';
@@ -356,6 +357,7 @@ export default function ThemeRotationTab() {
 
       {vm && vm.themes.length > 0 && (
         <>
+          <CyclePanel region={region} payload={payload!} views={vm.themes} nameOf={nameOf} onPick={pick} benchName={benchName} />
           <SummaryStrip vm={vm} benchName={benchName} nameOf={nameOf} onPick={pick} holdings={holdings.total ? holdings : null} historyLoaded={history.loaded} />
 
           <ThemeTable

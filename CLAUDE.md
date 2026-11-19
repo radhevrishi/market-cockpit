@@ -4315,3 +4315,16 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   SMEMBERS / SCARD / SREM / SADD / EXPIRE and two EVAL scripts that the Upstash-compatible relay (/api/v1/kv-rest) never served after
   the move to Postgres. Relay now serves them on the pg store (`PgKv.smembers/scard/srem/journal`; scripts recognised by
   `journalScript` in lib/kv-relay-journal.ts — route files may not export helpers).
+- zzz1289 (19 Nov): Theme Rotation — "Theme Cycle & Leadership Transition" panel at the TOP (components/dashboard/theme-rotation/
+  CyclePanel.tsx). History: `/api/market/theme-cycle?region=` (swr `theme-cycle:v1:<market>`, 20 h fresh; jobs theme-cycle-in 11:23 /
+  theme-cycle-us 21:53 UTC weekdays) — `lib/theme-cycle/{core,universe,server}.ts`: every 15%+ fall of Nifty 50 / SPY found on daily
+  closes (Yahoo period1/period2 — range=max gives MONTHLY bars), each sector over the SAME peak → trough; last boom's leaders = 3
+  strongest run-ups before the peak; fell least + its next 12 months (ahead / in line ±5 pts / behind). India sector indices start
+  2010–11, so earlier falls use baskets (marked *, hindsight — only before 2011-07-01). Lessons are COUNTED: India "fell least" beat
+  the market next year in 2 of 6 — so the watchlist never treats falling less as leadership. Today: theme-rotation route adds
+  `row.cycle` (themeCycle over `cycleRef` = benchmark's last 10%+ fall, or a 5%+ pullback, ≤ 270 days) — CACHE_KEY v24.
+  `lib/theme-cycle/classify.ts` (pure, client): states CONFIRMED / EMERGING / EARLY_ROTATION / STABILISING / DEFENSIVE / FAILED /
+  BROKEN / NOT_READY / NEUTRAL; market (RS + structure) = ONE vote, breadth / earnings / catalysts once each (improving only with an
+  earlier period and enough names), volume proxy + valuation shown not counted. Transitions only between related themes (same
+  cluster / group), worded "relative-strength divergence", never "money moved". Failed transitions from the browser's weekly record
+  `mc:theme-cycle:states:v1:<region>`. Not buy signals.

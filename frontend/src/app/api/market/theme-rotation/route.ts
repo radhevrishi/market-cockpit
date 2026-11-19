@@ -39,6 +39,7 @@ import { gradedKeyCandidates } from '@/lib/graded-cache-key';
 import { readUsProfiles } from '@/lib/us-book-store';
 import { fetchUsProfiles, profileIsFresh, type UsProfile } from '@/lib/us-book/profile';
 import { gzipSync, gunzipSync } from 'zlib';
+import { seriesFromTs, referenceWindow, themeCycle } from '@/lib/theme-cycle/core';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -49,7 +50,8 @@ export const maxDuration = 60;
 // v22 (zzz795): constituent breadth, volume flow proxy, short-term-break verdict.
 // v23 (zzz797): 20-day line + tightened short-term break with its trigger,
 // 12-week RS line for the sparkline, 20/200-day constituent breadth.
-const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v23:${r}`;
+// v24 (zzz1289): per-theme `cycle` (same-window fall / recovery vs the benchmark) + payload `cycleRef`.
+const CACHE_KEY = (r: ThemeRegion) => `theme-rotation:v24:${r}`;
 // zzz483 — rotation is a slow (daily/weekly) signal, so a longer cache is safe and
 // keeps the tab instant. The cron pre-warm below refreshes it well within this
 // window, and the ↻ Refresh button always bypasses it for a live recompute.
@@ -538,6 +540,8 @@ async function build(region: ThemeRegion) {
   // Computed before the rows so each theme can be measured in EXCESS of it.
   const benchmarkRet = benchData ? returns(benchData.ts, benchData.closes) : null;
   const benchmarkRet3m = benchmarkRet?.m3 ?? null;
+  // zzz1289 — one reference window for every theme: the benchmark's high → its low since (the current / latest correction).
+  const cycleRef = benchData ? referenceWindow(seriesFromTs(benchData.ts, benchData.closes)) : null;
 
   const rows = themes.map((t: ThemeDef) => {
     // Resolve the theme's price series: the proxy if it's healthy, else a
@@ -712,6 +716,7 @@ async function build(region: ThemeRegion) {
       shortTermBreak: v.shortTermBreak,
       shortTermBreakWhy: v.shortTermBreakWhy,
       aboveSMA20, dist20, rsWeekly,
+      cycle: themeCycle(seriesFromTs(ts, closes), cycleRef),
       ok: true,
     };
   });
@@ -926,7 +931,7 @@ async function build(region: ThemeRegion) {
   return {
     region,
     benchmark: { symbol: bench.symbol, name: bench.name, price: benchData?.price || 0, changePercent: benchData?.dayChg || 0 },
-    benchmarkRet, breadth,
+    benchmarkRet, breadth, cycleRef,
     themes: rows,
     movedUp, movedDown,
     clusters: clusters.map((c) => ({ id: c.id, label: c.label, members: c.members })),

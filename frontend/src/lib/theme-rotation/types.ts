@@ -6,6 +6,8 @@
 // without React, the network or KV.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import type { ThemeCycle, CycleRef } from '../theme-cycle/core';
+
 export type Market = 'us' | 'india';
 
 export interface Ret { w1: number; m1: number; m3: number; m6: number; ytd: number; y1: number }
@@ -85,6 +87,8 @@ export interface ThemeRow {
   /** zzz797 — the theme's relative-strength line vs the benchmark, weekly,
    *  last ~12 weeks, rebased to 100 at the first point (for the sparkline). */
   rsWeekly?: number[] | null;
+  /** zzz1289 — same-window drawdown / recovery against the benchmark (theme cycle). */
+  cycle?: ThemeCycle | null;
   ok?: boolean;
 }
 
@@ -100,6 +104,8 @@ export interface Payload {
   region: Market;
   benchmark: { symbol: string; name: string; price: number; changePercent: number };
   benchmarkRet?: Ret | null;
+  /** zzz1289 — the benchmark window every theme's `cycle` is measured over. */
+  cycleRef?: CycleRef | null;
   themes: ThemeRow[];
   rotatingIn: string[]; rotatingOut: string[]; topBuy: string[]; topAvoid: string[];
   byVerdict?: Record<string, string[]>;
