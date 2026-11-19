@@ -22,10 +22,10 @@ export interface CyclePayload {
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36';
 
-const FAILS = new Map<string, string>();
+export const FAILS = new Map<string, string>();
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function dailyHistory(symbol: string, fromUnix = 0): Promise<DaySeries | null> {
+export async function dailyHistory(symbol: string, fromUnix = 0): Promise<DaySeries | null> {
   const p2 = Math.floor(Date.now() / 1000) + 86_400;
   const why: string[] = [];
   for (let attempt = 0; attempt < 3; attempt++) {
