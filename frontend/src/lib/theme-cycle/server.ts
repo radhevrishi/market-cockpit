@@ -28,22 +28,26 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export async function dailyHistory(symbol: string, fromUnix = 0): Promise<DaySeries | null> {
   const p2 = Math.floor(Date.now() / 1000) + 86_400;
   const why: string[] = [];
-  for (let attempt = 0; attempt < 3; attempt++) {
-    for (const host of ['query1', 'query2']) {
+  // Same request shape as lib/chart-data / lib/screener/tech-fetch: period1/period2 keep the bars DAILY (range=max gives monthly).
+  // Yahoo answers this server 429 at busy times, so — like tech-fetch — the Cloudflare relay is the third route.
+  const path = `/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${fromUnix}&period2=${p2}&interval=1d&includePrePost=false`;
+  const relay = (process.env.PROXY_URL || '').replace(/\/$/, ''), secret = process.env.PROXY_SECRET || '';
+  const routes: Array<[string, string]> = [['query1', `https://query1.finance.yahoo.com${path}`], ['query2', `https://query2.finance.yahoo.com${path}`]];
+  if (relay && secret) routes.push(['relay', `${relay}/proxy?url=${encodeURIComponent(`https://query1.finance.yahoo.com${path}`)}&secret=${encodeURIComponent(secret)}`]);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    for (const [name, url] of routes) {
       try {
-        // Same request shape as the charts page (lib/chart-data): period1/period2 keep the bars DAILY.
-        const r = await fetch(`https://${host}.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${fromUnix}&period2=${p2}&interval=1d&includePrePost=false&events=div%2Csplit`,
-          { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(20_000), cache: 'no-store' });
-        if (!r.ok) { why.push(`${host} ${r.status}`); continue; }
+        const r = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(20_000), cache: 'no-store' });
+        if (!r.ok) { why.push(`${name} ${r.status}`); if (r.status === 404) break; continue; }
         const j: any = await r.json();
         const res = j?.chart?.result?.[0];
-        if (!res?.timestamp?.length) { why.push(`${host} empty`); continue; }
+        if (!res?.timestamp?.length) { why.push(`${name} empty`); continue; }
         const s = seriesFromTs(res.timestamp, res.indicators?.quote?.[0]?.close || []);
         if (s.d.length >= 200) { FAILS.delete(symbol); return s; }
-        why.push(`${host} ${s.d.length} bars`);
-      } catch (e: any) { why.push(`${host} ${String(e?.name || e).slice(0, 30)}`); }
+        why.push(`${name} ${s.d.length} bars`);
+      } catch (e: any) { why.push(`${name} ${String(e?.name || e).slice(0, 30)}`); }
     }
-    await sleep(1500 * (attempt + 1));
+    await sleep(2000 * (attempt + 1));
   }
   FAILS.set(symbol, why.slice(-3).join(', '));
   return null;
