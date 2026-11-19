@@ -168,6 +168,7 @@ function filterBlobToWindow(filings: FilingRecord[], fromIso: string, toIso: str
 // AbortSignal (otherwise upstream hangs eat the full Vercel maxDuration).
 const ANNOUNCEMENT_NEG_CACHE_MS = 90_000;
 const ANNOUNCEMENT_DEFAULT_TIMEOUT_MS = 12_000;
+const NSE_STEP_TIMEOUT_MS = 6_000;
 
 // Combines a caller-supplied AbortSignal with a default timeout signal so
 // the fetch always has an upper bound, while still honouring caller-side
@@ -371,15 +372,25 @@ export async function fetchNSEAnnouncements(opts: {
     });
 
     try {
-      const doFetch = async (cookie: string) => fetch(url, {
-        signal: withDefaultTimeout(opts.signal, ANNOUNCEMENT_DEFAULT_TIMEOUT_MS),
-        headers: cookie ? { ...NSE_HEADERS, Cookie: cookie } : NSE_HEADERS,
-        cache: 'no-store',
-      });
-      let res = await doFetch(await nseCookies());
-      if (res.status === 401 || res.status === 403) {
-        // Stale / missing session — refresh the cookie once and retry.
-        res = await doFetch(await nseCookies(true));
+      // zzz1287 — NSE answers this server WITHOUT a cookie in ~1 s, but a request carrying the homepage session cookie stalls until
+      // the timeout (live probe 19 Nov: 9 s timeouts for every past day). Order: no cookie (6 s) → with a fresh cookie (6 s) →
+      // the relay. A stall or refusal at one step moves on to the next instead of failing the day.
+      const doFetch = async (cookie: string) => {
+        try {
+          return await fetch(url, {
+            signal: withDefaultTimeout(opts.signal, NSE_STEP_TIMEOUT_MS),
+            headers: cookie ? { ...NSE_HEADERS, Cookie: cookie } : NSE_HEADERS,
+            cache: 'no-store',
+          });
+        } catch (e: any) { if (opts.signal?.aborted) throw e; return null; }
+      };
+      const usable = (r: Response | null) => !!r && r.ok;
+      let res: Response | null = await doFetch('');
+      if (!usable(res)) res = (await doFetch(await nseCookies())) || res;
+      if (!res) {
+        const viaRelay = await nseAnnouncementsViaRelay(url);
+        if (viaRelay == null) throw Object.assign(new Error('timeout'), { name: 'TimeoutError' });
+        res = new Response(JSON.stringify(viaRelay), { status: 200 });
       }
       let data: any = null;
       if (!res.ok) {

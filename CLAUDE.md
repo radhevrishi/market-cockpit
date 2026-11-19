@@ -4292,3 +4292,8 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   mc-proxy relay (Cloudflare egress, own NSE cookie): `fetchNSEAnnouncements` (nse-bse-feed, `nseAnnouncementsViaRelay`) and the
   `nseApiFetch` funnel for filing paths only (`nseRelayEligible` — never price paths). EO calendar: a future day with nothing
   announced says "None announced yet" (was amber "Data unavailable").
+- zzz1287 (19 Nov): India filing feed. NSE answers this server WITHOUT a cookie in ~1 s, but a request carrying the homepage session
+  cookie stalls to the timeout (probe: 9 s timeouts for every past day → Growth Guidance 1 of 14 India days, empty Signals). Now
+  `fetchNSEAnnouncements` tries no cookie (6 s) → cached cookie (6 s) → relay; `nseApiFetch` filing paths try a no-cookie direct call
+  before the relay. The per-company NSE address is `/api/corporate-announcements` (the old `corporates-announcements` was a 404 in 6
+  places, incl. bot portfolio/watchlist alerts). Owner-only `/api/v1/ops/relay-probe?symbol=X` times every step + the app's own feed.

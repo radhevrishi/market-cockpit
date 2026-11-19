@@ -253,6 +253,14 @@ export function nseRelayEligible(path: string): boolean {
 }
 async function nseRelayJson(path: string): Promise<any | null> {
   if (!nseRelayEligible(path)) return null;
+  // zzz1287 — NSE answers filing paths to this server without a cookie in ~1 s while the cookie request can stall; try that first.
+  try {
+    const res = await fetch(`${NSE_BASE}${path}`, { headers: HEADERS, signal: AbortSignal.timeout(6_000), cache: 'no-store' });
+    if (res.ok) {
+      const j: any = await res.json().catch(() => null);
+      if (Array.isArray(j) ? j.length : Array.isArray(j?.data) && j.data.length) return j;
+    }
+  } catch { /* fall through to the relay */ }
   try {
     const { isProxyConfigured, proxiedFetch } = await import('./proxy-fetch');
     if (!isProxyConfigured()) return null;
