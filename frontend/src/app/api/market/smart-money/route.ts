@@ -33,6 +33,7 @@ interface ResponseData {
   deals: Deal[];
   summary: Summary;
   marketStatus: MarketStatus;
+  asOf?: string | null;
 }
 
 // List of institutional identifiers for quality rating
@@ -81,8 +82,9 @@ function extractDeals(data: any, tradeType: 'Bulk' | 'Block'): Deal[] {
       const clientName = item.clientName || item.client || '';
       const dealDate = item.dealDate || item.date || '';
       const quantity = item.quantity || item.qty || 0;
-      const tradePrice = item.tradePrice || item.price || 0;
-      const buyOrSell = item.buyOrSell || item.side || '';
+      // zzz1287: NSE's snapshot rows carry the price as watp (weighted average trade price) and the side as buySell
+      const tradePrice = item.tradePrice || item.price || item.watp || 0;
+      const buyOrSell = item.buyOrSell || item.side || item.buySell || '';
 
       if (!symbol || !clientName || !dealDate) return null;
 
@@ -175,10 +177,11 @@ export async function GET(request: Request) {
     const marketStatus = isMarketOpen();
 
     // Fetch both bulk and block deals from NSE
-    const [bulkData, blockData] = await Promise.all([
-      nseApiFetch('/api/bulk-deal', 60000),
-      nseApiFetch('/api/block-deal', 60000),
-    ]);
+    // zzz1287: the old bulk-deal address is gone (404). NSE's large-deal snapshot holds the last session's bulk + block deals, also after
+    // the close (the old page said "NSE clears deal data after close" — it was the dead address).
+    const snap: any = await nseApiFetch('/api/snapshot-capital-market-largedeal', 300000);
+    const bulkData = Array.isArray(snap?.BULK_DEALS_DATA) ? snap.BULK_DEALS_DATA : [];
+    const blockData = Array.isArray(snap?.BLOCK_DEALS_DATA) ? snap.BLOCK_DEALS_DATA : [];
 
     // Extract and process deals
     const bulkDeals = extractDeals(bulkData, 'Bulk');
@@ -200,6 +203,7 @@ export async function GET(request: Request) {
       deals: allDeals,
       summary,
       marketStatus,
+      asOf: typeof snap?.as_on_date === 'string' ? snap.as_on_date : null,
     };
 
     return NextResponse.json(response);

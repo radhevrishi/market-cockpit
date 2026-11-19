@@ -15,7 +15,7 @@
  */
 
 import { NextResponse } from 'next/server';
-import { nseApiFetch, fetchStockQuote } from '@/lib/nse';
+import { nseApiFetch, fetchStockQuote, fetchNseLargeDeals } from '@/lib/nse';
 import { normalizeTicker } from '@/lib/tickers';
 import { kvGet, kvSet, kvSetNX, kvSwap, kvDel } from '@/lib/kv';
 import { rateLimitResponse } from '@/lib/rateLimit';
@@ -3042,14 +3042,13 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
 
   // NSE + MC/Google run in parallel with 25s overall timeout for NSE
   // NSE India can be slow — 25s allows enough time while staying within Vercel 55s limit
+  const __largeDeals = fetchNseLargeDeals(20000);   // zzz1287: one call for both (old bulk-deal address is a 404)
   const nsePromise = Promise.race([
     Promise.all([
       nseApiFetch(`/api/corporate-announcements?index=equities&from_date=${fromDate}&to_date=${toDate}`, 20000)
         .catch((e: any) => { debug.errors.push(`NSE announcements: ${(e as Error).message}`); return null; }),
-      nseApiFetch('/api/block-deal', 20000)
-        .catch((e: any) => { debug.errors.push(`NSE block deals: ${(e as Error).message}`); return null; }),
-      nseApiFetch('/api/bulk-deal', 20000)
-        .catch((e: any) => { debug.errors.push(`NSE bulk deals: ${(e as Error).message}`); return null; }),
+      __largeDeals.then((d) => d.block).catch((e: any) => { debug.errors.push(`NSE block deals: ${(e as Error).message}`); return null; }),
+      __largeDeals.then((d) => d.bulk).catch((e: any) => { debug.errors.push(`NSE bulk deals: ${(e as Error).message}`); return null; }),
     ]),
     new Promise<[null, null, null]>(res => setTimeout(() => {
       debug.errors.push('NSE: overall 25s timeout — skipped');

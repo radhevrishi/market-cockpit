@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { nseApiFetch } from '@/lib/nse';
+import { nseApiFetch, fetchNseLargeDeals } from '@/lib/nse';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,8 +47,8 @@ export async function GET(request: Request, props: { params: Promise<{ symbol: s
   try {
     // Fetch deals and announcements in parallel
     const [blockData, bulkData, announcementsData] = await Promise.all([
-      nseApiFetch('/api/block-deal', 60000),
-      nseApiFetch('/api/bulk-deal', 60000),
+      fetchNseLargeDeals(60000).then((d) => d.block),
+      fetchNseLargeDeals(60000).then((d) => d.bulk),
       nseApiFetch(`/api/corporate-announcements?index=equities&symbol=${encodeURIComponent(symbol)}`, 300000),
     ]);
 

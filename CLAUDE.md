@@ -4304,3 +4304,9 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   Signals (intelligence-compute) rebuilds 4×/weekday (04:07, 07:07, 10:07, 12:37 UTC; was once at 04:07). 76 raw signals →
   30 monitor after the feed fix; 43 HEURISTIC-value templates + 30 governance stay hidden by design (precision rules, P0848).
   BSE's API also refuses the mc-proxy relay (Akamai Access Denied) — BSE-only data needs the GitHub collectors (CRON_SECRET).
+  zzz1287e: NSE stalls EVERY request that carries the homepage cookie (probe: block-deal, large-deal snapshot, historical deals —
+  all 200 in ~1 s without a cookie, all 8 s timeouts with one). `nseApiFetch` now tries `nseFilingDirect` (no cookie, 6 s) on ALL
+  paths first; filing paths need an array reply, other paths any JSON object. `/api/bulk-deal` is a 404: `fetchNseLargeDeals()`
+  (lib/nse) reads `/api/snapshot-capital-market-largedeal` (BULK_DEALS_DATA / BLOCK_DEALS_DATA, rows given the old field names
+  too) — used by Smart Money (now shows the last session's deals after the close), Signals compute + read, /api/orders.
+  Probe: `/api/v1/ops/relay-probe?nsePaths=/api/a|/api/b` tests NSE paths with and without the cookie.

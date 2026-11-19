@@ -196,8 +196,9 @@ export async function nseApiFetch(path: string, cacheTtl = 60000): Promise<any> 
     const recheck = getCached(cacheKey, cacheTtl);
     if (recheck) return recheck;
 
-    // zzz1287: filing / announcement paths — NSE answers without a cookie in ~1 s while the cookie request can stall for 10 s.
-    if (nseRelayEligible(path)) {
+    // zzz1287: NSE answers this server WITHOUT a cookie in ~1 s on every /api/ path tried (filings, block deals, large-deal
+    // snapshot), while a request carrying the homepage cookie stalls to the timeout. So: no cookie first, cookie only after.
+    {
       const direct = await nseFilingDirect(path);
       if (direct != null) { setCache(cacheKey, direct); return direct; }
     }
@@ -256,13 +257,16 @@ export async function nseApiFetch(path: string, cacheTtl = 60000): Promise<any> 
 export function nseRelayEligible(path: string): boolean {
   return /^\/api\/(corporate-announcements|corporates-financial-results|corporate-board-meetings|corporates-board-meetings)\b/.test(path);
 }
-/** zzz1287 — one no-cookie direct call (6 s). An array reply (even empty) is a real answer; anything else is null. */
+/** zzz1287 — one no-cookie direct call (6 s). Filing paths: an array reply (even empty) is a real answer. Other paths: any JSON
+ *  object or array. Anything else (refusal, HTML challenge, timeout) is null and the cookie call runs. */
 async function nseFilingDirect(path: string): Promise<any | null> {
   try {
     const res = await fetch(`${NSE_BASE}${path}`, { headers: HEADERS, signal: AbortSignal.timeout(6_000), cache: 'no-store' });
     if (!res.ok) return null;
     const j: any = await res.json().catch(() => null);
-    return Array.isArray(j) || Array.isArray(j?.data) ? j : null;
+    if (j == null || typeof j !== 'object') return null;
+    if (nseRelayEligible(path)) return Array.isArray(j) || Array.isArray(j?.data) ? j : null;
+    return Object.keys(j).length || Array.isArray(j) ? j : null;
   } catch { return null; }
 }
 async function nseRelayJson(path: string): Promise<any | null> {
@@ -1020,4 +1024,18 @@ export function isPriceSuspect(symbol: string, price: number, prevClose?: number
   }
 
   return false;
+}
+
+/** zzz1287 — NSE retired '/api/bulk-deal' (404). The large-deal snapshot holds the last session's bulk, block and short deals.
+ *  Rows are given every older field name too (quantity / tradePrice / dealDate / buyOrSell) so old readers keep working. */
+export async function fetchNseLargeDeals(cacheMs = 300000): Promise<{ bulk: { data: any[] }; block: { data: any[] }; asOf: string | null }> {
+  const snap: any = await nseApiFetch('/api/snapshot-capital-market-largedeal', cacheMs);
+  const norm = (rows: any) => (Array.isArray(rows) ? rows : []).map((r: any) => ({
+    ...r,
+    quantity: r.quantity ?? r.qty,
+    tradePrice: r.tradePrice ?? r.watp,
+    dealDate: r.dealDate ?? r.date,
+    buyOrSell: r.buyOrSell ?? r.buySell,
+  }));
+  return { bulk: { data: norm(snap?.BULK_DEALS_DATA) }, block: { data: norm(snap?.BLOCK_DEALS_DATA) }, asOf: typeof snap?.as_on_date === 'string' ? snap.as_on_date : null };
 }

@@ -499,7 +499,7 @@ export default function SmartMoneyPage() {
                   <div style={{ fontSize: '14px', color: THEME.textSecondary, maxWidth: '400px', margin: '0 auto' }}>
                     {data.marketStatus.open
                       ? 'Bulk and block deals will appear here as they are reported during market hours (9:15 AM – 3:30 PM IST).'
-                      : `Last trading session: ${data.marketStatus.lastTradingDay}. Deals from the last session are shown during market hours only — NSE clears deal data after close.`}
+                      : `Last trading session: ${data.marketStatus.lastTradingDay}. NSE has not published any bulk or block deals for it yet.`}
                   </div>
                 </div>
               ) : (

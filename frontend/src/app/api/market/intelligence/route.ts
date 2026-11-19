@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { internalBase } from '@/lib/internal-base';
-import { nseApiFetch, fetchStockQuote } from '@/lib/nse';
+import { nseApiFetch, fetchStockQuote, fetchNseLargeDeals } from '@/lib/nse';
 import { normalizeTicker } from '@/lib/tickers';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 
@@ -2851,10 +2851,8 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
     const [announcementsRaw, blockRaw, bulkRaw] = await Promise.all([
       nseApiFetch(`/api/corporate-announcements?index=equities&from_date=${fromDate}&to_date=${toDate}`, 300000)
         .catch((e: any) => { debug.errors.push(`NSE announcements: ${(e as Error).message}`); return null; }),
-      nseApiFetch('/api/block-deal', 300000)
-        .catch((e: any) => { debug.errors.push(`NSE block deals: ${(e as Error).message}`); return null; }),
-      nseApiFetch('/api/bulk-deal', 300000)
-        .catch((e: any) => { debug.errors.push(`NSE bulk deals: ${(e as Error).message}`); return null; }),
+      fetchNseLargeDeals(300000).then((d) => d.block).catch((e: any) => { debug.errors.push(`NSE block deals: ${(e as Error).message}`); return null; }),
+      fetchNseLargeDeals(300000).then((d) => d.bulk).catch((e: any) => { debug.errors.push(`NSE bulk deals: ${(e as Error).message}`); return null; }),
     ]);
 
     // Parse NSE announcements

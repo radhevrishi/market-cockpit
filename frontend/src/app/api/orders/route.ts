@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { nseApiFetch, fetchNifty50, fetchNiftyMidcap50, fetchNiftyMidcap100, fetchNiftySmallcap250, fetchStockQuote } from '@/lib/nse';
+import { nseApiFetch, fetchNifty50, fetchNiftyMidcap50, fetchNiftyMidcap100, fetchNiftySmallcap250, fetchStockQuote, fetchNseLargeDeals } from '@/lib/nse';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 55;
@@ -76,8 +76,8 @@ function mapStockData(item: any, sector: string = ''): OrdersTicker {
  */
 async function fetchDeals(): Promise<{ block: any[]; bulk: any[] }> {
   const [blockData, bulkData] = await Promise.all([
-    nseApiFetch('/api/block-deal', 60000),
-    nseApiFetch('/api/bulk-deal', 60000),
+    fetchNseLargeDeals(60000).then((d) => d.block),
+    fetchNseLargeDeals(60000).then((d) => d.bulk),
   ]);
 
   const block = (blockData?.data || []).map((d: any) => ({
