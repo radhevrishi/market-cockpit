@@ -9,14 +9,14 @@ import { indiaPresetFilters, isIndiaPresetActive, FILTER_DEFAULT } from '../conv
 import { compileQuery } from '../screener/screenerin-query';
 import { SCREENERIN_DEFAULT_SCREENS } from '../screener/screenerin-defaults';
 
-test('both presets carry debt ÷ equity ≤ 0.5 and Rule of 40 ≥ 40', () => {
-  assert.equal(INDIA_PRESET.deMax, 0.5); assert.equal(INDIA_PRESET.r40Min, 40);
-  assert.equal(US_PRESET.deMax, 0.5); assert.equal(US_PRESET.r40Min, 40);
+test('both presets carry debt ÷ equity ≤ 0.5 and Rule of 40 ≥ 20 (zzz1285)', () => {
+  assert.equal(INDIA_PRESET.deMax, 0.5); assert.equal(INDIA_PRESET.r40Min, 20);
+  assert.equal(US_PRESET.deMax, 0.5); assert.equal(US_PRESET.r40Min, 20);
   const fi = { ...FILTER_DEFAULT, ...indiaPresetFilters() };
-  assert.equal(fi.deMax, 0.5); assert.equal(fi.r40Min, 40); assert.equal(isIndiaPresetActive(fi), true);
+  assert.equal(fi.deMax, 0.5); assert.equal(fi.r40Min, 20); assert.equal(isIndiaPresetActive(fi), true);
   assert.equal(isIndiaPresetActive({ ...fi, r40Min: null }), false);
   const fu = usPresetFilters() as any;
-  assert.equal(fu.deMax, 0.5); assert.equal(fu.r40Min, 40);
+  assert.equal(fu.deMax, 0.5); assert.equal(fu.r40Min, 20);
 });
 
 test('Rule of 40: 30% growth + 15% FCF margin passes, 20 + 5 fails, unknown passes', () => {

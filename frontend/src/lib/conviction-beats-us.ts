@@ -2106,11 +2106,11 @@ export const US_PRESET = {
   eps: 25,
   pead: 40,
   opmDelta: 0,
-  cfoPatMin: 0.7,   // zzz1231 — the owner: operating cash at least 0.7× net income (was 0.5)
+  cfoPatMin: 0.5,   // zzz1285 — the owner: back to 0.5 (zzz1231 had 0.7)
   mktCapMinMusd: 300,
   avoidIlliquid: true,   // zzz1231 — leave out known low-float / low-turnover names (lib/cb-extras)
   deMax: 0.5,   // zzz1238 — debt ÷ equity at most 0.5 (not known passes)
-  r40Min: 40,   // zzz1238 — Rule of 40 at least 40 (the card value; not known passes)
+  r40Min: 20,   // zzz1285 — the owner: Rule of 40 at least 20 (zzz1238 had 40; not known passes)
   // ═══ THE TREND GATE  (zzz661) ═════════════════════════════════════════
   // A great quarter in a downtrend is a great quarter you will hold through
   // a drawdown. Above BOTH averages is the classic definition of a stock the
@@ -2619,7 +2619,7 @@ export function usCbSavedFilters(raw: string | null | undefined): UsConvFilters 
     saved.sales === US_PRESET.sales
     && saved.eps === US_PRESET.eps
     && saved.opmDelta === US_PRESET.opmDelta
-    && (saved.cfoPatMin === US_PRESET.cfoPatMin || saved.cfoPatMin === 0.5)   // zzz1231 — 0.5 was the preset before
+    && (saved.cfoPatMin === US_PRESET.cfoPatMin || saved.cfoPatMin === 0.7)   // zzz1285 — 0.7 was the preset before
     && saved.mktCapMin === US_PRESET.mktCapMinMusd
     && JSON.stringify((saved.verdicts || []).slice().sort()) === JSON.stringify(['BUY', 'STRONG BUY', 'WATCH']);
   if (legacyMatchesPreset) return { ...saved, ...usPresetFilters(), cap: saved.cap, sector: saved.sector, q: saved.q };

@@ -4283,3 +4283,6 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   reject day brings the company back with "rejected on X · new event since".
 - zzz1284 (18 Nov): Transformational Gainers "👁 Watch" button next to Reject (same Watchlist mark as Conviction Beats via setCbMark),
   "👁 Watching" / "● Bought" badges, a "👁 Watchlist" KPI tile (8 tiles now) and "Watchlist only (N)" in the "Your marks" filter section.
+- zzz1285 (19 Nov): Conviction Beats preset India + USA: CFO/PAT min 0.5 (was 0.7) and Rule of 40 min 20 (was 40), at the owner's
+  request; every other preset field unchanged. INDIA_PRESET (lib/quality-preset) + US_PRESET (conviction-beats-us); a US saved filter
+  still on the old preset (cfoPatMin 0.7) is read as the preset and moves to the new values. Alerts / briefs follow the same constants.

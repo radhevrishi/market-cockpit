@@ -73,9 +73,9 @@ test('founder / moat: only schema answers are kept; a moat of NONE carries no ki
   assert.deepEqual(w.moatKinds, ['switching costs']);
 });
 
-test('preset: CFO/PAT at least 0.7 and the liquidity gate (India + USA); old US saved preset still recognised', () => {
-  assert.equal(INDIA_PRESET.cfoPatMin, 0.7);
-  assert.equal(US_PRESET.cfoPatMin, 0.7);
+test('preset: CFO/PAT at least 0.5 (zzz1285) and the liquidity gate (India + USA); old US saved preset still recognised', () => {
+  assert.equal(INDIA_PRESET.cfoPatMin, 0.5);
+  assert.equal(US_PRESET.cfoPatMin, 0.5);
   const fi = { ...FILTER_DEFAULT, ...indiaPresetFilters(null) };
   assert.equal(isIndiaPresetActive(fi), true);
   assert.equal(isIndiaPresetActive({ ...fi, liqOk: null }), false);
@@ -84,8 +84,9 @@ test('preset: CFO/PAT at least 0.7 and the liquidity gate (India + USA); old US 
   assert.equal(passesConvictionFilter({ ...e, cbx: extrasOf({ ...GNG, prom: 55 }, 'IN') }, { ...FILTER_DEFAULT, liqOk: true }), true);
   const fu = usPresetFilters();
   assert.equal(isUsPresetActive(fu), true);
-  const old = usCbSavedFilters(JSON.stringify({ ...fu, cfoPatMin: 0.5, liqOk: undefined }));
-  assert.equal(old?.cfoPatMin, 0.7);
+  const old = usCbSavedFilters(JSON.stringify({ ...fu, cfoPatMin: 0.7, r40Min: 40, liqOk: undefined }));
+  assert.equal(old?.cfoPatMin, 0.5);
+  assert.equal((old as any)?.r40Min, 20);
   assert.equal(old?.liqOk, true);
   assert.equal(passesUsConvictionFilter({ ticker: 'X', cbx: extrasOf({ flt: 10, mc: 500 }, 'US') } as any, { ...fu, sales: null, eps: null, pead: null, opmDelta: null, cfoPatMin: null, opmMin: null, mktCapMin: null, verdicts: null, aboveMa50: false, aboveMa200: false, stage2: null }), false);
 });

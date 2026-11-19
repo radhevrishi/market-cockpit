@@ -25,12 +25,12 @@ export const INDIA_PRESET = {
   pead: 40,        // zzz659 — was 60. PEAD is a drift proxy, not a quality score.
   opmDelta: 0,
   opmMin: 0,       // zzz893 — operating margin must be positive (OPM LEVEL ≥0%); an unknown margin passes
-  cfoPatMin: 0.7,  // zzz1231 — the owner: cash from operations at least 0.7× profit (was 0.5)
+  cfoPatMin: 0.5,  // zzz1285 — the owner: back to 0.5 (zzz1231 had 0.7)
   mktCapMin: 3000, // ₹ Cr
   pledgedMax: 0,   // zzz360 — a null pledge passes; this gates KNOWN pledges.
   verdicts: ['STRONG BUY', 'BUY', 'WATCH'] as string[],
   deMax: 0.5, // zzz1238 — debt ÷ equity at most 0.5 (lenders skipped; not known passes)
-  r40Min: 40, // zzz1238 — Rule of 40 (quarterly sales growth YoY + FCF margin) at least 40 (not known passes)
+  r40Min: 20, // zzz1285 — the owner: Rule of 40 at least 20 (zzz1238 had 40; not known passes)
   avoidIlliquid: true, // zzz1231 — leave out known low-float / low-turnover names (lib/cb-extras: float < 30%, traded value < ₹3 Cr a day …)
 };
 
