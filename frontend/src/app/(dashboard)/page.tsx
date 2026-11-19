@@ -4133,6 +4133,8 @@ const FAVS: Array<{ href: string; label: string; color: string; ext?: boolean }>
   { href: '/ai-gainers', label: '📊 AI Daily Gainers', color: '#A78BFA' },
   // zzz1166 — transformational events from the gainers, 60 days, themes + multibagger chance.
   { href: '/transformational-gainers', label: '🧬 Transformational Gainers', color: '#A78BFA' },
+  // zzz1290 — USA + India regime, distribution, leader health, theme survival, next leadership, risk posture.
+  { href: '/market-leadership', label: '🛡️ Market Leadership & Risk', color: '#EF4444' },
   { href: '/company-lab', label: '🧪 Company Lab', color: '#22D3EE' },
   { href: '/return-simulator', label: '🧮 Return Simulator', color: '#22D3EE' },
   { href: '/portfolio?tab=tradebook', label: '📒 Tradebook', color: '#22D3EE' },   // zzz1237

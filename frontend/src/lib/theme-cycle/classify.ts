@@ -282,3 +282,24 @@ export function cycleSummary(rows: ThemeRow[], reads: Map<string, CycleRead>): C
 }
 
 export { pctOf };
+
+// ── SURVIVAL CLASS (zzz1290, Market Leadership & Risk) ─────────────────────
+// How a theme has come through the benchmark's correction, measured over the SAME peak → trough → today window.
+// Holding up ≠ leading: a theme only reaches EMERGING / CONFIRMED through the evidence states above.
+export type SurvivalClass = 'CONFIRMED_LEADER' | 'EMERGING_LEADER' | 'RECOVERING' | 'STABILISING' | 'HOLDING_UP' | 'FALLING_LESS' | 'IN_LINE' | 'FALLING_HARD' | 'BROKEN';
+export const SURVIVAL_LABEL: Record<SurvivalClass, string> = {
+  CONFIRMED_LEADER: 'Confirmed leader', EMERGING_LEADER: 'Emerging leader', RECOVERING: 'Recovering (early rotation)', STABILISING: 'Stabilising',
+  HOLDING_UP: 'Holding up', FALLING_LESS: 'Falling less', IN_LINE: 'In line with market', FALLING_HARD: 'Falling hard', BROKEN: 'Broken / deteriorating',
+};
+export function survivalClass(t: ThemeRow, r: CycleRead): SurvivalClass {
+  const c = t.cycle;
+  if (r.state === 'CONFIRMED_LEADER') return 'CONFIRMED_LEADER';
+  if (r.state === 'EMERGING_LEADER') return 'EMERGING_LEADER';
+  if (r.state === 'EARLY_ROTATION') return 'RECOVERING';
+  if (r.state === 'STABILISING') return 'STABILISING';
+  if (r.state === 'BROKEN' || r.state === 'FAILED_TRANSITION') return 'BROKEN';
+  if (c?.sincePeak != null && c.sincePeak >= -0.03 && t.aboveSMA50) return 'HOLDING_UP';
+  if (c?.relFall != null && c.relFall >= 5) return 'FALLING_LESS';
+  if ((c?.relSincePeak != null && c.relSincePeak <= -5) || r.state === 'NOT_READY') return 'FALLING_HARD';
+  return 'IN_LINE';
+}

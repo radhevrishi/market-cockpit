@@ -183,6 +183,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'Market Snapshot',
     icon: <Grid3X3 className="w-5 h-5" />,
     items: [
+      { href: '/market-leadership', label: 'Market Leadership & Risk', icon: <Shield className="w-4 h-4" /> },   // zzz1290
       { href: '/market-snapshot', label: 'Market Snapshot', icon: <Grid3X3 className="w-4 h-4" /> },
       { href: '/heatmap',         label: 'Heatmap',         icon: <Grid3X3 className="w-4 h-4" /> },
       { href: '/movers',          label: 'Movers',          icon: <TrendingUp className="w-4 h-4" /> },

@@ -4328,3 +4328,20 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   earlier period and enough names), volume proxy + valuation shown not counted. Transitions only between related themes (same
   cluster / group), worded "relative-strength divergence", never "money moved". Failed transitions from the browser's weekly record
   `mc:theme-cycle:states:v1:<region>`. Not buy signals.
+- zzz1289b–d (19 Nov): theme-cycle history 429'd from Railway on Yahoo — dailyHistory now uses the charts-page request shape and the
+  Cloudflare relay (PROXY_URL /proxy) as third route, like tech-fetch; `?probe=SYMBOL` diagnostic on /api/market/theme-cycle.
+  Theme Rotation's model (board + evidence inputs + buildViewModel) is now ONE hook `useThemeRotationModel(region, reloadKey)`
+  (components/dashboard/theme-rotation/useThemeModel.ts) — moved verbatim; the tab and Market Leadership read the same engine.
+  Weekly cycle-state memory moved to lib/theme-cycle/memory.ts.
+- zzz1290 (19 Nov): /market-leadership "Market Leadership & Risk" (nav: Market Snapshot group; home favourite). One command centre,
+  USA + India judged separately. Server `/api/market/leadership-risk?market=us|india` (swr `leadership-risk:v1:<US|IN>`, 30 min):
+  lib/market-leadership/{core,server,brief}.ts. Benchmarks ^GSPC + ^IXIC / ^NSEI + ^CRSLDX (Yahoo range=2y, relay fallback; a session
+  still trading is dropped). Distribution day = down ≥ 0.2% on higher volume than the day before, alive 25 sessions or until a 5%
+  rally (stalling days not counted). Rally attempt / follow-through after a 7%+ fall: day 4+, ≥ 1.25% on higher volume. Breadth +
+  leaders from the stock-screener snapshot (Technicals data): liquid universe (US $300M / $2M a day; India ₹500 Cr / ₹1 Cr a day);
+  leaders = top 5% (15–60) of the larger liquid set by run-up price-a-year-ago → 52-week high (≥ 50%), so broken ex-leaders stay
+  counted; states Healthy / Under pressure / Broken / Recovering. Regime is multi-factor (trend, drawdown, distribution, breadth,
+  leaders, volatility, rally) and reports missing inputs; posture is a condition reading, never a cash %. Daily breadth record
+  `mlr:breadth:v1:<m>` (one point a snapshot day, 120 kept) for the 5/10/20-session trend. Themes, survival map, radar, transitions,
+  cross-market table (CROSS_PAIRS, only real counterparts) come from Theme Rotation + theme-cycle classify (`survivalClass`).
+  Historical table = theme-cycle episodes. Not buy / sell signals.
