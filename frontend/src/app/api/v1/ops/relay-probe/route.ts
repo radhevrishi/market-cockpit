@@ -22,6 +22,16 @@ async function probe(label: string, run: () => Promise<Response>) {
 export async function GET(req: NextRequest) {
   if (!(await siteAuthOk(req))) return NextResponse.json({ ok: false, error: 'owner only' }, { status: 401 });
   const { isProxyConfigured, proxiedFetch } = await import('@/lib/proxy-fetch');
+  // ?nsePaths=a|b — test NSE /api/ paths (no cookie and with the homepage cookie). Only nseindia.com /api/ paths.
+  const paths = (req.nextUrl.searchParams.get('nsePaths') || '').split('|').map((x) => x.trim()).filter((x) => /^\/api\/[A-Za-z0-9/_.\-?=&%]+$/.test(x)).slice(0, 6);
+  if (paths.length) {
+    const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36';
+    let cookie = '';
+    try { const h = await fetch('https://www.nseindia.com/', { headers: { 'User-Agent': UA, Accept: 'text/html' }, signal: AbortSignal.timeout(8_000) }); cookie = ((h.headers as any).getSetCookie?.() || []).map((c: string) => c.split(';')[0]).join('; '); } catch {}
+    const one = async (p: string, ck: string) => { const t0 = Date.now(); try { const r = await fetch(`https://www.nseindia.com${p}`, { headers: { 'User-Agent': UA, Accept: 'application/json', Referer: 'https://www.nseindia.com/', ...(ck ? { Cookie: ck } : {}) }, signal: AbortSignal.timeout(8_000), cache: 'no-store' }); const t = await r.text(); let shape = ''; try { const j = JSON.parse(t); shape = Array.isArray(j) ? `array ${j.length}` : Object.keys(j).map((k) => `${k}:${Array.isArray(j[k]) ? j[k].length : typeof j[k]}`).join(','); } catch { shape = 'not json'; } return { path: p, cookie: !!ck, status: r.status, ms: Date.now() - t0, shape, head: t.slice(0, 200) }; } catch (e: any) { return { path: p, cookie: !!ck, ms: Date.now() - t0, error: String(e?.message || e) }; } };
+    const res = await Promise.all(paths.flatMap((p) => [one(p, ''), one(p, cookie)]));
+    return NextResponse.json({ ok: true, nse: res });
+  }
   const now = new Date(); const from = new Date(now.getTime() - 3 * 86_400_000);
   const nseUrl = `https://www.nseindia.com/api/corporate-announcements?index=equities&from_date=${ddmmyyyy(from)}&to_date=${ddmmyyyy(now)}`;
   const H = { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' };
