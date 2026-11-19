@@ -24,12 +24,16 @@ export async function GET(req: NextRequest) {
   const { isProxyConfigured, proxiedFetch } = await import('@/lib/proxy-fetch');
   const now = new Date(); const from = new Date(now.getTime() - 3 * 86_400_000);
   const nseUrl = `https://www.nseindia.com/api/corporate-announcements?index=equities&from_date=${ddmmyyyy(from)}&to_date=${ddmmyyyy(now)}`;
-  const symUrl = 'https://www.nseindia.com/api/corporates-announcements?index=equities&symbol=TATATECH';
   const H = { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' };
+  const sym = (req.nextUrl.searchParams.get('symbol') || 'TATATECH').toUpperCase().replace(/[^A-Z0-9&-]/g, '');
+  const oneDay = `https://www.nseindia.com/api/corporate-announcements?index=equities&from_date=${ddmmyyyy(now)}&to_date=${ddmmyyyy(now)}`;
   const out = await Promise.all([
+    probe('NSE home page (cookie step)', () => fetch('https://www.nseindia.com/', { headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36', Accept: 'text/html' }, signal: AbortSignal.timeout(12_000) })),
+    probe('NSE direct (one day)', () => fetch(oneDay, { headers: H, signal: AbortSignal.timeout(12_000) })),
+    probe(`NSE direct corporate-announcements symbol ${sym}`, () => fetch(`https://www.nseindia.com/api/corporate-announcements?index=equities&symbol=${sym}`, { headers: H, signal: AbortSignal.timeout(12_000) })),
+    probe(`NSE direct corporates-announcements symbol ${sym}`, () => fetch(`https://www.nseindia.com/api/corporates-announcements?index=equities&symbol=${sym}`, { headers: H, signal: AbortSignal.timeout(12_000) })),
     probe('NSE direct (all equities, 3 days)', () => fetch(nseUrl, { headers: H, signal: AbortSignal.timeout(12_000) })),
     isProxyConfigured() ? probe('NSE via relay (all equities, 3 days)', () => proxiedFetch(nseUrl, { signal: AbortSignal.timeout(20_000) })) : Promise.resolve({ label: 'relay', error: 'PROXY_URL / PROXY_SECRET not set' }),
-    isProxyConfigured() ? probe('NSE via relay (one symbol)', () => proxiedFetch(symUrl, { signal: AbortSignal.timeout(20_000) })) : Promise.resolve(null),
   ]);
   return NextResponse.json({ ok: true, relayConfigured: isProxyConfigured(), probes: out.filter(Boolean) });
 }
