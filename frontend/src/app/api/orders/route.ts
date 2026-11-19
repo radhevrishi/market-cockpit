@@ -116,7 +116,7 @@ async function fetchNewsCounts(symbols: string[]): Promise<Map<string, number>> 
       const batch = symbols.slice(i, i + batchSize);
 
       const data = await nseApiFetch(
-        `/api/corporates-announcements?index=equities&from_date=${getDateDaysAgo(30)}&to_date=${getTodayDate()}`,
+        `/api/corporate-announcements?index=equities&from_date=${getDateDaysAgo(30)}&to_date=${getTodayDate()}`,
         300000
       );
 

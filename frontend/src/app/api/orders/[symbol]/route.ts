@@ -49,7 +49,7 @@ export async function GET(request: Request, props: { params: Promise<{ symbol: s
     const [blockData, bulkData, announcementsData] = await Promise.all([
       nseApiFetch('/api/block-deal', 60000),
       nseApiFetch('/api/bulk-deal', 60000),
-      nseApiFetch(`/api/corporates-announcements?index=equities&symbol=${encodeURIComponent(symbol)}`, 300000),
+      nseApiFetch(`/api/corporate-announcements?index=equities&symbol=${encodeURIComponent(symbol)}`, 300000),
     ]);
 
     // Filter deals for this symbol

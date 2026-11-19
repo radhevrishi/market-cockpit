@@ -35,5 +35,9 @@ export async function GET(req: NextRequest) {
     probe('NSE direct (all equities, 3 days)', () => fetch(nseUrl, { headers: H, signal: AbortSignal.timeout(12_000) })),
     isProxyConfigured() ? probe('NSE via relay (all equities, 3 days)', () => proxiedFetch(nseUrl, { signal: AbortSignal.timeout(20_000) })) : Promise.resolve({ label: 'relay', error: 'PROXY_URL / PROXY_SECRET not set' }),
   ]);
-  return NextResponse.json({ ok: true, relayConfigured: isProxyConfigured(), probes: out.filter(Boolean) });
+  // the app's own feed function for single days (what the India scans call), timed
+  const feed = await import('@/lib/nse-bse-feed');
+  const days = [0, 1, 2].map((k) => new Date(now.getTime() + 5.5 * 3_600_000 - k * 86_400_000).toISOString().slice(0, 10));
+  const appFeed = await Promise.all(days.map(async (d) => { const t0 = Date.now(); try { const r: any = await feed.fetchNSEAnnouncements({ fromIso: d, toIso: d }); return { day: d, ms: Date.now() - t0, source: r?.source, via: r?.via, rows: (r?.filings || []).length, reason: r?.reason }; } catch (e: any) { return { day: d, ms: Date.now() - t0, error: String(e?.message || e) }; } }));
+  return NextResponse.json({ ok: true, relayConfigured: isProxyConfigured(), probes: out.filter(Boolean), appFeed });
 }

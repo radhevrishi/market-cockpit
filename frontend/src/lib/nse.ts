@@ -249,7 +249,7 @@ export async function nseApiFetch(path: string, cacheTtl = 60000): Promise<any> 
 /** zzz1286 — NSE filing / announcement paths through the mc-proxy relay (Cloudflare egress with its own NSE cookie).
  *  null when the path is not a filings path, the relay is not set up, or it also fails / returns nothing. */
 export function nseRelayEligible(path: string): boolean {
-  return /^\/api\/(corporate-announcements|corporates-announcements|corporates-financial-results|corporate-board-meetings|corporates-board-meetings)\b/.test(path);
+  return /^\/api\/(corporate-announcements|corporates-financial-results|corporate-board-meetings|corporates-board-meetings)\b/.test(path);
 }
 async function nseRelayJson(path: string): Promise<any | null> {
   if (!nseRelayEligible(path)) return null;
@@ -633,7 +633,7 @@ export async function fetchStockChart(symbol: string) {
 
 // Fetch corporate announcements for a company
 export async function fetchCorporateAnnouncements(symbol: string) {
-  return nseApiFetch(`/api/corporates-announcements?index=equities&symbol=${encodeURIComponent(symbol)}`, 1800000);
+  return nseApiFetch(`/api/corporate-announcements?index=equities&symbol=${encodeURIComponent(symbol)}`, 1800000);
 }
 
 // Fetch corporate announcements filtered by category (Board Meetings with Financial Results)

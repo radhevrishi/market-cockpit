@@ -12,9 +12,17 @@ test('zzz1286: NSE announcements try the mc-proxy relay before giving up on a re
 
 test('zzz1286: the NSE funnel uses the relay only for filing / announcement paths', async () => {
   const { nseRelayEligible } = await import('../nse');
-  assert.equal(nseRelayEligible('/api/corporates-announcements?index=equities&symbol=AZAD'), true);
+  assert.equal(nseRelayEligible('/api/corporate-announcements?index=equities&symbol=AZAD'), true);
   assert.equal(nseRelayEligible('/api/corporate-announcements?index=equities&from_date=01-11-2026'), true);
   assert.equal(nseRelayEligible('/api/corporates-financial-results?index=equities'), true);
   assert.equal(nseRelayEligible('/api/equity-stockIndices?index=NIFTY%2050'), false);
   assert.equal(nseRelayEligible('/api/quote-equity?symbol=AZAD'), false);
+});
+
+test('zzz1286: no caller uses the 404 path corporates-announcements (NSE serves corporate-announcements)', () => {
+  const root = path.join(__dirname, '..', '..');
+  const bad: string[] = [];
+  const walk = (d: string) => { for (const f of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, f.name); if (f.isDirectory()) { if (!/__tests__|node_modules|relay-probe/.test(p)) walk(p); } else if (/\.tsx?$/.test(f.name) && fs.readFileSync(p, 'utf8').includes('/api/corporates-announcements')) bad.push(p); } };
+  walk(root);
+  assert.deepEqual(bad, []);
 });

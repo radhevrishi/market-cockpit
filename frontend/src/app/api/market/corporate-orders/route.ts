@@ -633,7 +633,7 @@ export async function GET(request: Request): Promise<NextResponse<CorporateOrder
           batch.map(async sym => {
             try {
               const data = await nseApiFetch(
-                `/api/corporates-announcements?index=equities&symbol=${encodeURIComponent(sym)}`,
+                `/api/corporate-announcements?index=equities&symbol=${encodeURIComponent(sym)}`,
                 300000
               );
 
