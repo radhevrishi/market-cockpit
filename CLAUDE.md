@@ -4339,7 +4339,7 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   still trading is dropped). Distribution day = down ≥ 0.2% on higher volume than the day before, alive 25 sessions or until a 5%
   rally (stalling days not counted). Rally attempt / follow-through after a 7%+ fall: day 4+, ≥ 1.25% on higher volume. Breadth +
   leaders from the stock-screener snapshot (Technicals data): liquid universe (US $300M / $2M a day; India ₹500 Cr / ₹1 Cr a day);
-  leaders = top 5% (15–60) of the larger liquid set by run-up price-a-year-ago → 52-week high (≥ 50%), so broken ex-leaders stay
+  leaders = top 6% (15–40) of LARGE liquid names (US $10B + $100M a day; India ₹10,000 Cr + ₹25 Cr a day) by run-up price-a-year-ago → 52-week high (≥ 40%), so broken ex-leaders stay
   counted; states Healthy / Under pressure / Broken / Recovering. Regime is multi-factor (trend, drawdown, distribution, breadth,
   leaders, volatility, rally) and reports missing inputs; posture is a condition reading, never a cash %. Daily breadth record
   `mlr:breadth:v1:<m>` (one point a snapshot day, 120 kept) for the 5/10/20-session trend. Themes, survival map, radar, transitions,

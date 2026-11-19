@@ -146,7 +146,10 @@ export function benchRead(name: string, b: Bars): BenchRead | null {
 // ── breadth over the screener universe ──────────────────────────────────────
 export interface Row { t: string; n?: string; px?: number; chg?: number; mc?: number; avgVol30?: number; sma21?: number; sma50?: number; sma200?: number; sma50P?: number; sma200P?: number; hi52?: number; lo52?: number; perf1W?: number; perf1M?: number; perf3M?: number; perf6M?: number; perf1Y?: number; twSt?: number; ind?: string; sec?: string; [k: string]: unknown }
 export const LIQ = { US: { mc: 300, adv: 2e6 }, IN: { mc: 500, adv: 1e7 } } as const;   // US $M / $ a day; India ₹ Cr / ₹ a day
-export const LEADER_LIQ = { US: { mc: 2000, adv: 20e6 }, IN: { mc: 2000, adv: 10e7 } } as const;
+// Leaders are the institutional names that carried the last advance (O'Neil's sense): large and liquid, so one biotech spike
+// cannot fill the list. Emerging names use a lower bar (EMERGE_LIQ) — new leadership often starts smaller.
+export const LEADER_LIQ = { US: { mc: 10_000, adv: 100e6 }, IN: { mc: 10_000, adv: 25e7 } } as const;
+export const EMERGE_LIQ = { US: { mc: 2000, adv: 20e6 }, IN: { mc: 2000, adv: 10e7 } } as const;
 export const traded = (r: Row) => (num(r.px) && num(r.avgVol30) ? r.px * r.avgVol30 : null);
 export function liquid(r: Row, m: Mkt, lim: { mc: number; adv: number } = LIQ[m]): boolean {
   return num(r.px) && num(r.mc) && r.mc >= lim.mc && (traded(r) ?? 0) >= lim.adv;
@@ -200,9 +203,9 @@ export function leaderState(r: Row): { state: LeaderState; why: string } {
   return { state: 'HEALTHY', why: `above its 50- and 200-day lines${dd != null ? `, ${dd.toFixed(0)}% off its high` : ''}` };
 }
 export function pickLeaders(rows: Row[], m: Mkt, rsMap: Map<string, number>, benchM1: number | null): { leaders: Leader[]; universe: number; rule: string } {
-  const pool = rows.filter((r) => liquid(r, m, LEADER_LIQ[m])).map((r) => ({ r, up: runUpOf(r) })).filter((x): x is { r: Row; up: number } => x.up != null && x.up >= 50);
+  const pool = rows.filter((r) => liquid(r, m, LEADER_LIQ[m])).map((r) => ({ r, up: runUpOf(r) })).filter((x): x is { r: Row; up: number } => x.up != null && x.up >= 40);
   const universe = rows.filter((r) => liquid(r, m, LEADER_LIQ[m])).length;
-  const k = Math.max(15, Math.min(60, Math.round(universe * 0.05)));
+  const k = Math.max(15, Math.min(40, Math.round(universe * 0.06)));
   pool.sort((a, b) => b.up - a.up);
   const leaders = pool.slice(0, k).map(({ r, up }) => {
     const s = leaderState(r);
@@ -216,8 +219,8 @@ export function pickLeaders(rows: Row[], m: Mkt, rsMap: Map<string, number>, ben
       ...s,
     };
   });
-  const cap = m === 'US' ? '$2B and $20M traded a day' : '₹2,000 Cr and ₹10 Cr traded a day';
-  return { leaders, universe, rule: `Top 5% (${k}) of ${universe} liquid companies (market cap ≥ ${cap}) by run-up into their 52-week high (price a year ago → high), run-up ≥ 50%.` };
+  const cap = m === 'US' ? '$10B and $100M traded a day' : '₹10,000 Cr and ₹25 Cr traded a day';
+  return { leaders, universe, rule: `Top 6% (${k}) of ${universe} large, liquid companies (market cap ≥ ${cap}) by run-up into their 52-week high (price a year ago → high), run-up ≥ 40%. Chosen by the run-up, so leaders that have since broken stay counted.` };
 }
 export interface LeaderHealth { n: number; healthy: number; pressure: number; broken: number; recovering: number; above50: number; above200: number; newHighs: number; newLows: number | null; rsUp: number; rsDown: number; healthyPct: number | null; deterioratingPct: number | null; concentration: 'broad' | 'narrow' | 'very narrow' | null }
 export function leaderHealth(L: Leader[]): LeaderHealth {
@@ -240,7 +243,7 @@ export interface Emerging { t: string; n: string; ind: string | null; rs: number
 export function emergingNames(rows: Row[], m: Mkt, rsMap: Map<string, number>, leaderSet: Set<string>, benchM1: number | null, max = 15): Emerging[] {
   const out: Emerging[] = [];
   for (const r of rows) {
-    if (!liquid(r, m, LEADER_LIQ[m]) || leaderSet.has(r.t)) continue;
+    if (!liquid(r, m, EMERGE_LIQ[m]) || leaderSet.has(r.t)) continue;
     const rs = rsMap.get(r.t.toUpperCase());
     if (rs == null || rs < 85 || !num(r.hi52) || !num(r.sma50) || !num(r.sma200)) continue;
     const dd = (1 - r.px! / r.hi52) * 100;

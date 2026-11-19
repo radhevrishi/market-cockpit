@@ -52,13 +52,13 @@ test('zzz1290: follow-through needs a live rally attempt and day 4+ with ≥ 1.2
   assert.equal(rallyRead(bars(Array.from({ length: 60 }, (_, i) => 100 + i * 0.1))).state, 'no-correction');
 });
 
-function row(t: string, o: Partial<Row>): Row { return { t, n: t, px: 100, mc: 5000, avgVol30: 1e6, sma21: 95, sma50: 90, sma200: 80, sma50P: 89, hi52: 102, lo52: 60, perf1Y: 20, perf1M: 5, perf3M: 10, perf6M: 15, chg: 1, ...o }; }
+function row(t: string, o: Partial<Row>): Row { return { t, n: t, px: 100, mc: 50000, avgVol30: 3e6, sma21: 95, sma50: 90, sma200: 80, sma50P: 89, hi52: 102, lo52: 60, perf1Y: 20, perf1M: 5, perf3M: 10, perf6M: 15, chg: 1, ...o }; }
 
 test('zzz1290: leaders are chosen by run-up INTO the high, so a broken former leader still counts', () => {
   assert.equal(Math.round(runUpOf(row('A', { px: 50, hi52: 200, perf1Y: 0 }))!), 300);   // 50 a year ago → 200 high
   const rows: Row[] = [];
   for (let i = 0; i < 400; i++) rows.push(row(`X${i}`, { perf1Y: 5 }));
-  rows.push(row('BROKE', { px: 60, hi52: 200, perf1Y: 20, sma50: 80, sma200: 90 }));     // ran 50 → 200, now under both lines
+  rows.push(row('BROKE', { px: 60, hi52: 200, perf1Y: 20, avgVol30: 4e6, sma50: 80, sma200: 90 }));     // ran 50 → 200, now under both lines
   rows.push(row('HOLD', { px: 195, hi52: 200, perf1Y: 160, sma50: 170, sma200: 120 }));
   const { leaders, universe } = pickLeaders(rows, 'US', new Map(), 2);
   assert.equal(universe, 402);
