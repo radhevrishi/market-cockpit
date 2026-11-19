@@ -224,6 +224,10 @@ export async function nseApiFetch(path: string, cacheTtl = 60000): Promise<any> 
           }
           // Cookie-refresh retry also failed — fall through to negcache.
         }
+        // zzz1286 — company filings / announcements: NSE refuses this server, so the mc-proxy relay is tried before giving up
+        // (only these paths, so price polling never runs through the relay).
+        const relayed = await nseRelayJson(path);
+        if (relayed != null) { setCache(cacheKey, relayed); return relayed; }
         negCacheSet(cacheKey, NSE_NEG_CACHE_MS, `HTTP ${res.status}`);
         return null;
       }
@@ -234,10 +238,30 @@ export async function nseApiFetch(path: string, cacheTtl = 60000): Promise<any> 
     } catch (e: any) {
       // AbortError → timeout; everything else → network/parse failure.
       const reason = e?.name === 'AbortError' ? 'timeout' : (e?.message || 'network');
+      const relayed = await nseRelayJson(path);   // zzz1286
+      if (relayed != null) { setCache(cacheKey, relayed); return relayed; }
       negCacheSet(cacheKey, NSE_NEG_CACHE_MS, reason);
       return null;
     }
   });
+}
+
+/** zzz1286 — NSE filing / announcement paths through the mc-proxy relay (Cloudflare egress with its own NSE cookie).
+ *  null when the path is not a filings path, the relay is not set up, or it also fails / returns nothing. */
+export function nseRelayEligible(path: string): boolean {
+  return /^\/api\/(corporate-announcements|corporates-announcements|corporates-financial-results|corporate-board-meetings|corporates-board-meetings)\b/.test(path);
+}
+async function nseRelayJson(path: string): Promise<any | null> {
+  if (!nseRelayEligible(path)) return null;
+  try {
+    const { isProxyConfigured, proxiedFetch } = await import('./proxy-fetch');
+    if (!isProxyConfigured()) return null;
+    const res = await proxiedFetch(`${NSE_BASE}${path}`, { signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) return null;
+    const j: any = await res.json().catch(() => null);
+    const rows = Array.isArray(j) ? j : Array.isArray(j?.data) ? j.data : null;
+    return rows && rows.length ? j : null;
+  } catch { return null; }
 }
 
 // ======= PUBLIC API FUNCTIONS =======

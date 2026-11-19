@@ -381,12 +381,17 @@ export async function fetchNSEAnnouncements(opts: {
         // Stale / missing session — refresh the cookie once and retry.
         res = await doFetch(await nseCookies(true));
       }
+      let data: any = null;
       if (!res.ok) {
-        const reason = `NSE HTTP ${res.status}`;
-        negCacheSet(dedupKey, ANNOUNCEMENT_NEG_CACHE_MS, reason);
-        return partial(reason);
-      }
-      const data = await res.json();
+        // zzz1286 — NSE refuses this server (403); the mc-proxy relay (Cloudflare egress, keeps its own NSE cookie) is tried
+        // before giving up. Without it India filing coverage fell to 1 of 14 days whenever the GitHub collector was silent.
+        data = await nseAnnouncementsViaRelay(url);
+        if (data == null) {
+          const reason = `NSE HTTP ${res.status}`;
+          negCacheSet(dedupKey, ANNOUNCEMENT_NEG_CACHE_MS, reason);
+          return partial(reason);
+        }
+      } else data = await res.json();
       const entries: Array<Record<string, any>> = Array.isArray(data)
         ? data
         : Array.isArray((data as any)?.data) ? (data as any).data : [];
@@ -411,6 +416,19 @@ export async function fetchNSEAnnouncements(opts: {
       return partial(reason);
     }
   });
+}
+
+/** zzz1286 — the NSE announcements call through the mc-proxy relay; null when the relay is not set up or also fails. */
+async function nseAnnouncementsViaRelay(url: string): Promise<any | null> {
+  try {
+    const { isProxyConfigured, proxiedFetch } = await import('./proxy-fetch');
+    if (!isProxyConfigured()) return null;
+    const res = await proxiedFetch(url, { signal: AbortSignal.timeout(15_000), cache: 'no-store' });
+    if (!res.ok) return null;
+    const j: any = await res.json().catch(() => null);
+    const rows = Array.isArray(j) ? j : Array.isArray(j?.data) ? j.data : null;
+    return rows && rows.length ? rows : null;
+  } catch { return null; }
 }
 
 // ─── BSE adapter (best-effort) ─────────────────────────────────────────────

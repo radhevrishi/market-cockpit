@@ -4286,3 +4286,9 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
 - zzz1285 (19 Nov): Conviction Beats preset India + USA: CFO/PAT min 0.5 (was 0.7) and Rule of 40 min 20 (was 40), at the owner's
   request; every other preset field unchanged. INDIA_PRESET (lib/quality-preset) + US_PRESET (conviction-beats-us); a US saved filter
   still on the old preset (cfoPatMin 0.7) is read as the preset and moves to the new values. Alerts / briefs follow the same constants.
+- zzz1286 (19 Nov): tab sweep (54 pages loaded in the owner's browser). Root cause behind empty Signals, Theme Rotation "Catalysts no
+  data", Growth Guidance "1 of 14 India days", AI Gainers "filing source could not be reached": NSE refuses Railway (HTTP 403) and the
+  GitHub collectors are silent since 29 Oct (CRON_SECRET mismatch — owner action). Now NSE filing / announcement calls fall back to the
+  mc-proxy relay (Cloudflare egress, own NSE cookie): `fetchNSEAnnouncements` (nse-bse-feed, `nseAnnouncementsViaRelay`) and the
+  `nseApiFetch` funnel for filing paths only (`nseRelayEligible` — never price paths). EO calendar: a future day with nothing
+  announced says "None announced yet" (was amber "Data unavailable").

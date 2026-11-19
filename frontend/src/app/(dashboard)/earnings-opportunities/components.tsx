@@ -345,6 +345,9 @@ export function CalendarView({ data, loading, from, to, onPickDate }: { data: Ca
                 {items.length === 0 ? (
                   ingestedSet.has(d) ? (
                     <span title="Ingested for this date - no results filed (confirmed zero)" style={{ fontSize: 11.5, color: 'var(--mc-text-4)' }}>No filings</span>
+                  ) : d > new Date(Date.now() + 5.5 * 3_600_000).toISOString().slice(0, 10) ? (
+                    // zzz1286 — a future day with no announced board meeting is not missing data
+                    <span title="No results meeting announced for this day yet — companies usually announce 5-7 days ahead" style={{ fontSize: 11.5, color: 'var(--mc-text-4)' }}>None announced yet</span>
                   ) : (
                     <span title="Data unavailable - this date was never ingested (outside NSE source window). Not zero." style={{ fontSize: 11.5, fontWeight: 700, color: '#B45309' }}>Data unavailable</span>
                   )
