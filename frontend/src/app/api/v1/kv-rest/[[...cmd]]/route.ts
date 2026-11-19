@@ -6,6 +6,8 @@
 import { NextResponse } from 'next/server';
 import { kvBackend, kvGetRaw, kvSet, kvDel, kvExistsMany } from '@/lib/kv';
 import { hasServiceKey, safeEqual } from '@/lib/site-auth';
+import { pgKv } from '@/lib/kv-pg';
+import { journalScript } from '@/lib/kv-relay-journal';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
@@ -36,6 +38,21 @@ async function run(cmd: Array<string | number>): Promise<{ result?: unknown; err
       for (let i = 3; i < cmd.length - 1; i++) if (String(cmd[i]).toUpperCase() === 'EX') ex = Number(cmd[i + 1]) || undefined;
       await kvSet(key, String(cmd[2] ?? ''), ex);
       return { result: 'OK' };
+    }
+    // zzz1288 — the guidance-docs collector's delivery journal (.github/scripts/lib/guidance-delivery.mjs): set commands and its
+    // two scripts. Only on the Postgres store (the relay serves nothing else once Upstash is gone).
+    const pg = kvBackend() === 'pg' ? pgKv() : null;
+    if (pg) {
+      if (op === 'SMEMBERS') return { result: await pg.smembers(key) };
+      if (op === 'SCARD') return { result: await pg.scard(key) };
+      if (op === 'SREM') return { result: await pg.srem(key, cmd.slice(2).map(String)) };
+      if (op === 'SADD') { let n = 0; for (const m of cmd.slice(2)) n += await pg.sadd(key, String(m)); return { result: n }; }
+      if (op === 'EXPIRE') return { result: await pg.expire(key, Number(cmd[2])) };
+      if (op === 'EVAL') {
+        const kind = journalScript(String(cmd[1] || ''));
+        if (!kind || Number(cmd[2]) !== 2) return { error: 'ERR script not supported by the relay' };
+        return { result: await pg.journal(kind, String(cmd[3]), String(cmd[4]), cmd.slice(5).map(String)) };
+      }
     }
     return { error: `ERR command ${op} not supported by the relay` };
   } catch (e: any) { return { error: `ERR ${String(e?.message || e).slice(0, 160)}` }; }

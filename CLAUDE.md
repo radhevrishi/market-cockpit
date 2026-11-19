@@ -4310,3 +4310,8 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   (lib/nse) reads `/api/snapshot-capital-market-largedeal` (BULK_DEALS_DATA / BLOCK_DEALS_DATA, rows given the old field names
   too) — used by Smart Money (now shows the last session's deals after the close), Signals compute + read, /api/orders.
   Probe: `/api/v1/ops/relay-probe?nsePaths=/api/a|/api/b` tests NSE paths with and without the cookie.
+- zzz1288 (19 Nov): owner fixed GitHub's CRON_SECRET — collectors say "service key accepted" again (backup, FII/DII, corp filings
+  pass). Scrape Guidance Docs then failed "Delivery journal HTTP 400": its journal (.github/scripts/lib/guidance-delivery.mjs) uses
+  SMEMBERS / SCARD / SREM / SADD / EXPIRE and two EVAL scripts that the Upstash-compatible relay (/api/v1/kv-rest) never served after
+  the move to Postgres. Relay now serves them on the pg store (`PgKv.smembers/scard/srem/journal`; scripts recognised by
+  `journalScript` in lib/kv-relay-journal.ts — route files may not export helpers).

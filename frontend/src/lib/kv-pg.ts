@@ -185,6 +185,42 @@ export class PgKv {
     const r = await this.q(`INSERT INTO kv_set (k, m) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING m`, [key, member]);
     return r.length;
   }
+  // zzz1288 — set reads for the collectors' delivery journal (relay SMEMBERS / SCARD / SREM). A member whose set has expired is gone.
+  async smembers(key: string): Promise<string[]> {
+    const r = await this.q<{ m: string }>(`SELECT m FROM kv_set WHERE k = $1 AND (exp IS NULL OR exp > now())`, [key]);
+    return r.map((x) => x.m);
+  }
+  async scard(key: string): Promise<number> {
+    const r = await this.q<{ n: string }>(`SELECT count(*)::text AS n FROM kv_set WHERE k = $1 AND (exp IS NULL OR exp > now())`, [key]);
+    return Number(r[0]?.n || 0);
+  }
+  async srem(key: string, members: string[]): Promise<number> {
+    if (!members.length) return 0;
+    const r = await this.q(`DELETE FROM kv_set WHERE k = $1 AND m = ANY($2::text[]) RETURNING m`, [key, members]);
+    return r.length;
+  }
+  /** zzz1288 — the collectors' journal scripts, in one transaction: enqueue = SET item EX ttl + SADD index + EXPIRE index;
+   *  ack = SREM index + DEL item. */
+  async journal(kind: 'enqueue' | 'ack', item: string, index: string, args: string[]): Promise<number> {
+    await this.ensure();
+    const c: PoolClient = await (await this.getPool()).connect();
+    try {
+      await c.query('BEGIN');
+      if (kind === 'enqueue') {
+        const [text, ttl, id] = args;
+        const exp = expOf(Number(ttl));
+        await c.query(`INSERT INTO kv_store (k, v, exp) VALUES ($1, $2, $3) ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v, exp = EXCLUDED.exp`, [item, text, exp]);
+        await c.query(`INSERT INTO kv_set (k, m, exp) VALUES ($1, $2, $3) ON CONFLICT (k, m) DO UPDATE SET exp = EXCLUDED.exp`, [index, id, exp]);
+        await c.query(`UPDATE kv_set SET exp = $2 WHERE k = $1`, [index, exp]);
+      } else {
+        const [id] = args;
+        await c.query(`DELETE FROM kv_set WHERE k = $1 AND m = $2`, [index, id]);
+        await c.query(`DELETE FROM kv_store WHERE k = $1`, [item]);
+      }
+      await c.query('COMMIT');
+      return 1;
+    } catch (e) { await c.query('ROLLBACK').catch(() => {}); throw e; } finally { c.release(); }
+  }
   async existsMany(keys: string[]): Promise<boolean[]> {
     if (!keys.length) return [];
     const rows = await this.q<{ k: string }>(`SELECT k FROM kv_store WHERE k = ANY($1::text[]) AND ${LIVE}`, [keys]);
