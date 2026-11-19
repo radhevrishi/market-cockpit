@@ -301,7 +301,7 @@ async function fetchWatchlistNews(watchlist: string[]): Promise<NewsItem[]> {
   try {
     const results = await Promise.allSettled(
       watchlist.slice(0, 10).map(async (symbol) => {
-        const data = await nseApiFetch(`/api/corporates-announcements?index=equities&symbol=${encodeURIComponent(symbol)}`, 30000);
+        const data = await nseApiFetch(`/api/corporate-announcements?index=equities&symbol=${encodeURIComponent(symbol)}`, 30000);
         const items = (Array.isArray(data) ? data : data?.data || []).slice(0, 2);
         return items.map((item: any) => ({
           title: `${symbol}: ${item.desc || item.subject || 'Corporate Announcement'}`,
