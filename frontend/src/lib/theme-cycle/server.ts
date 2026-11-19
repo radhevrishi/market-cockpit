@@ -22,20 +22,30 @@ export interface CyclePayload {
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36';
 
-async function dailyHistory(symbol: string, fromUnix = 915148800 /* 1999-01-01 */): Promise<DaySeries | null> {
+const FAILS = new Map<string, string>();
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function dailyHistory(symbol: string, fromUnix = 0): Promise<DaySeries | null> {
   const p2 = Math.floor(Date.now() / 1000) + 86_400;
-  for (const host of ['query1', 'query2']) {
-    try {
-      const r = await fetch(`https://${host}.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${fromUnix}&period2=${p2}&interval=1d&includePrePost=false`,
-        { headers: { 'User-Agent': UA, Accept: 'application/json' }, signal: AbortSignal.timeout(20_000), cache: 'no-store' });
-      if (!r.ok) continue;
-      const j: any = await r.json();
-      const res = j?.chart?.result?.[0];
-      if (!res?.timestamp?.length) continue;
-      const s = seriesFromTs(res.timestamp, res.indicators?.quote?.[0]?.close || []);
-      if (s.d.length >= 200) return s;
-    } catch { /* next host */ }
+  const why: string[] = [];
+  for (let attempt = 0; attempt < 3; attempt++) {
+    for (const host of ['query1', 'query2']) {
+      try {
+        // Same request shape as the charts page (lib/chart-data): period1/period2 keep the bars DAILY.
+        const r = await fetch(`https://${host}.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${fromUnix}&period2=${p2}&interval=1d&includePrePost=false&events=div%2Csplit`,
+          { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(20_000), cache: 'no-store' });
+        if (!r.ok) { why.push(`${host} ${r.status}`); continue; }
+        const j: any = await r.json();
+        const res = j?.chart?.result?.[0];
+        if (!res?.timestamp?.length) { why.push(`${host} empty`); continue; }
+        const s = seriesFromTs(res.timestamp, res.indicators?.quote?.[0]?.close || []);
+        if (s.d.length >= 200) { FAILS.delete(symbol); return s; }
+        why.push(`${host} ${s.d.length} bars`);
+      } catch (e: any) { why.push(`${host} ${String(e?.name || e).slice(0, 30)}`); }
+    }
+    await sleep(1500 * (attempt + 1));
   }
+  FAILS.set(symbol, why.slice(-3).join(', '));
   return null;
 }
 
@@ -51,11 +61,14 @@ export async function buildCyclePayload(market: 'india' | 'us'): Promise<CyclePa
   const symbols = new Set<string>([set.bench]);
   for (const s of set.sectors) { if (s.index) symbols.add(s.index); (s.basket || []).forEach((b) => symbols.add(b)); }
   const list = [...symbols];
-  const got = await pool(list, 6, (s) => dailyHistory(s));
+  const bench0 = await dailyHistory(set.bench);
+  const rest = list.filter((x) => x !== set.bench);
+  const got0 = await pool(rest, 3, (s) => dailyHistory(s));
+  const got = list.map((x) => (x === set.bench ? bench0 : got0[rest.indexOf(x)]));
   const by = new Map<string, DaySeries>();
   list.forEach((s, i) => { if (got[i]) by.set(s, got[i]!); });
   const bench = by.get(set.bench);
-  if (!bench) throw new Error(`benchmark ${set.bench} history unavailable`);
+  if (!bench) throw new Error(`benchmark ${set.bench} history unavailable (${FAILS.get(set.bench) || 'no answer'})`);
   const missing: string[] = [];
   const sectors: HistSector[] = set.sectors.map((s) => {
     const index = s.index ? by.get(s.index) || null : null;
