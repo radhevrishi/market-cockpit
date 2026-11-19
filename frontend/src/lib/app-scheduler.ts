@@ -480,7 +480,7 @@ function screenerBuildJob(market: 'IN' | 'US'): (ctx: JobCtx) => Promise<JobOutc
 export const APP_JOBS: readonly AppJob[] = [
   // vercel-cron-bridge.yml — POST for /api/v1/* and /api/market/*, GET for /api/bot/* (their POST is the Telegram webhook)
   { name: 'refresh-earnings-calendar', crons: ['7 1 * * *'], timeoutMs: 6 * MIN, workflow: BRIDGE, does: 'POST /api/v1/cron/refresh-earnings-calendar', run: http('POST', '/api/v1/cron/refresh-earnings-calendar', 240_000) },
-  { name: 'intelligence-compute', crons: ['7 4 * * 1-5'], timeoutMs: 6 * MIN, workflow: BRIDGE, does: 'POST /api/market/intelligence/compute', run: http('POST', '/api/market/intelligence/compute', 240_000) },
+  { name: 'intelligence-compute', crons: ['7 4 * * 1-5', '7 7 * * 1-5', '7 10 * * 1-5', '37 12 * * 1-5'], timeoutMs: 6 * MIN, workflow: BRIDGE, does: 'POST /api/market/intelligence/compute', run: http('POST', '/api/market/intelligence/compute', 240_000) },
   { name: 'earnings-guidance-ingest', crons: ['15 4 * * 1-5'], timeoutMs: 6 * MIN, workflow: BRIDGE, does: 'POST /api/market/earnings-guidance/ingest', run: http('POST', '/api/market/earnings-guidance/ingest', 240_000) },
   { name: 'movers-alert', crons: ['35 4 * * 1-5'], timeoutMs: 6 * MIN, workflow: BRIDGE, does: 'GET /api/bot/movers-alert?mode=full', run: http('GET', '/api/bot/movers-alert?mode=full', 240_000) },
   { name: 'watchlist-alert', crons: ['50 4 * * 1-5'], timeoutMs: 6 * MIN, workflow: BRIDGE, does: 'GET /api/bot/watchlist-alert?mode=full', run: http('GET', '/api/bot/watchlist-alert?mode=full', 240_000) },

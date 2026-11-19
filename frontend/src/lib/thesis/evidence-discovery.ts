@@ -622,6 +622,9 @@ export async function fetchBseAnnouncementsLite(ticker: string, scripHint: strin
     if (!got.body) { if (page === 1) return { items: [], code: sc.code, error: `BSE scrip ${sc.code}: ${got.outcome}` }; break; }
     let j: any = null;
     try { j = JSON.parse(got.body); } catch { j = null; }
+    // zzz1287: BSE answers a refused server with the bare string "No Record Found!" (not a JSON table) — that is "could not check",
+    // never "nothing filed". A real reply is an object with a Table array, even when it is empty.
+    if (page === 1 && (j == null || typeof j !== 'object')) return { items: [], code: sc.code, error: `BSE scrip ${sc.code}: no table in the reply (${String(got.body).slice(0, 40)})` };
     const table: BseAnnouncement[] = Array.isArray(j?.Table) ? j.Table : [];
     if (!table.length) break;
     rows.push(...table);

@@ -32,5 +32,11 @@ test('zzz1287: NSE announcements are tried without a cookie first, then with one
   const a = src.indexOf("await doFetch('')"), b = src.indexOf('await doFetch(await nseCookies())'), c = src.indexOf('nseAnnouncementsViaRelay(url)', b);
   assert.ok(a > 0 && b > a && c > b);
   const nse = fs.readFileSync(path.join(__dirname, '..', 'nse.ts'), 'utf8');
-  assert.match(nse, /zzz1287[\s\S]*headers: HEADERS, signal: AbortSignal\.timeout\(6_000\)/);
+  assert.match(nse, /if \(nseRelayEligible\(path\)\) \{\s*const direct = await nseFilingDirect\(path\)/);
+  assert.match(nse, /async function nseFilingDirect[\s\S]*headers: HEADERS, signal: AbortSignal\.timeout\(6_000\)/);
+});
+
+test('zzz1287: a BSE reply without a table is "could not check", not "nothing filed"', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'thesis', 'evidence-discovery.ts'), 'utf8');
+  assert.match(src, /page === 1 && \(j == null \|\| typeof j !== 'object'\)\) return \{ items: \[\], code: sc\.code, error:/);
 });

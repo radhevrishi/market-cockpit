@@ -4297,3 +4297,10 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   `fetchNSEAnnouncements` tries no cookie (6 s) → cached cookie (6 s) → relay; `nseApiFetch` filing paths try a no-cookie direct call
   before the relay. The per-company NSE address is `/api/corporate-announcements` (the old `corporates-announcements` was a 404 in 6
   places, incl. bot portfolio/watchlist alerts). Owner-only `/api/v1/ops/relay-probe?symbol=X` times every step + the app's own feed.
+  zzz1287b/c: `nseApiFetch` filing paths try `nseFilingDirect` (no cookie, 6 s; an array reply even empty is a real answer) BEFORE the
+  cookie call. BSE refuses this server: a reply without a JSON table (bare "No Record Found!") is now an error ("could not check"),
+  not "nothing filed" (`fetchBseAnnouncementsLite`). AI Gainers India asks NSE whenever BSE's list is empty, and an NSE read with
+  nothing in the window counts as a checked source (was DATA UNAVAILABLE "Filing source could not be reached").
+  Signals (intelligence-compute) rebuilds 4×/weekday (04:07, 07:07, 10:07, 12:37 UTC; was once at 04:07). 76 raw signals →
+  30 monitor after the feed fix; 43 HEURISTIC-value templates + 30 governance stay hidden by design (precision rules, P0848).
+  BSE's API also refuses the mc-proxy relay (Akamai Access Denied) — BSE-only data needs the GitHub collectors (CRON_SECRET).

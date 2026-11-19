@@ -619,9 +619,11 @@ async function research(req: NextRequest, body: any) {
         if (bse.items.length || (bse.code && !bse.error)) cr.sources.push('BSE corporate announcements');
         else if (bse.error) cr.errors.push(bse.error);
         // zzz785: screener.in and BSE both silent → NSE's own list for the symbol.
-        if (!announcements.length && (cr.secondaryUnavailable || bse.error)) {
+        // zzz1287: BSE refuses this server (empty table / 'No Record Found!'), so an empty BSE list now also asks NSE (answers in ~1 s).
+        if (!bse.items.length || (!announcements.length && (cr.secondaryUnavailable || bse.error))) {
           const nse = await withDeadline(fetchNseAnnouncementsLite(u.ticker, IN_BACKDROP_DAYS + 1, now), 13_000, { items: [], error: 'NSE timed out' });
           if (nse.items.length) { announcements = mergeAnnouncements(announcements, nse.items); cr.sources.push('NSE corporate announcements'); }
+          else if (!nse.error) cr.sources.push('NSE corporate announcements');   // zzz1287: NSE read, nothing in the window = checked, not unreachable
           else if (nse.error) cr.errors.push(nse.error);
         }
         // Screener is secondary: with an exchange list in hand its failure is
