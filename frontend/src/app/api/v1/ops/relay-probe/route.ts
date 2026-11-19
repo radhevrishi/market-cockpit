@@ -39,5 +39,16 @@ export async function GET(req: NextRequest) {
   const feed = await import('@/lib/nse-bse-feed');
   const days = [0, 1, 2].map((k) => new Date(now.getTime() + 5.5 * 3_600_000 - k * 86_400_000).toISOString().slice(0, 10));
   const appFeed = await Promise.all(days.map(async (d) => { const t0 = Date.now(); try { const r: any = await feed.fetchNSEAnnouncements({ fromIso: d, toIso: d }); return { day: d, ms: Date.now() - t0, source: r?.source, via: r?.via, rows: (r?.filings || []).length, reason: r?.reason }; } catch (e: any) { return { day: d, ms: Date.now() - t0, error: String(e?.message || e) }; } }));
-  return NextResponse.json({ ok: true, relayConfigured: isProxyConfigured(), probes: out.filter(Boolean), appFeed });
+  // BSE: raw direct + raw relay for yesterday, then the app's own BSE feed
+  const y = days[1].replace(/-/g, '');
+  const bseUrl = `https://api.bseindia.com/BseIndiaAPI/api/AnnGetData/w?pageno=1&strCat=-1&strPrevDate=${y}&strScrip=&strSearch=P&strToDate=${y}&strType=C`;
+  const bseH = { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36', Accept: 'application/json', Referer: 'https://www.bseindia.com/', Origin: 'https://www.bseindia.com' };
+  const bseRaw = async (label: string, f: () => Promise<Response>) => { const t0 = Date.now(); try { const r = await f(); const txt = await r.text(); let rows: number | null = null; try { const j = JSON.parse(txt); rows = Array.isArray(j?.Table) ? j.Table.length : null; } catch {} return { label, status: r.status, rows, ms: Date.now() - t0, head: txt.slice(0, 160) }; } catch (e: any) { return { label, ms: Date.now() - t0, error: String(e?.message || e) }; } };
+  const pu = (process.env.PROXY_URL || '').replace(/\/$/, '');
+  const bse = await Promise.all([
+    bseRaw('BSE direct', () => fetch(bseUrl, { headers: bseH, signal: AbortSignal.timeout(12_000), cache: 'no-store' })),
+    pu && process.env.PROXY_SECRET ? bseRaw('BSE via relay', () => fetch(`${pu}/proxy?url=${encodeURIComponent(bseUrl)}`, { headers: { 'x-proxy-secret': process.env.PROXY_SECRET || '', Accept: 'application/json' }, signal: AbortSignal.timeout(25_000), cache: 'no-store' })) : Promise.resolve({ label: 'BSE via relay', error: 'not configured' }),
+  ]);
+  const bseApp = await Promise.all(days.map(async (d) => { const t0 = Date.now(); try { const r: any = await feed.fetchBSEAnnouncements({ fromIso: d, toIso: d, pages: 2 }); return { day: d, ms: Date.now() - t0, source: r?.source, via: r?.via, rows: (r?.filings || []).length, reason: r?.reason }; } catch (e: any) { return { day: d, error: String(e?.message || e) }; } }));
+  return NextResponse.json({ ok: true, relayConfigured: isProxyConfigured(), probes: out.filter(Boolean), appFeed, bse, bseApp });
 }
