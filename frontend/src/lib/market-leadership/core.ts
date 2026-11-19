@@ -311,6 +311,12 @@ export function regimeOf(b: BenchRead | null, br: Breadth | null, lh: LeaderHeal
     if (hp != null && hp < 40) reasons.push(`only ${hp}% of leaders healthy`);
     if (!reasons.length) reasons.push('trend intact but breadth / leaders not confirming');
   } else { regime = 'MIXED'; reasons.push('signals disagree'); }
+  // supporting evidence for a weak regime — the label never rests on one line
+  if (['MARKET_CORRECTION', 'SEVERE_CORRECTION', 'BEAR_MARKET'].includes(regime)) {
+    if (dist != null && dist >= 4 && !reasons.some((x) => x.includes('distribution'))) reasons.push(`${dist} distribution days`);
+    if (hp != null && hp < 35) reasons.push(`only ${hp}% of leaders healthy`);
+    if (bp50 != null && bp50 < 45) reasons.push(`${bp50}% of stocks above their 50-day`);
+  }
   return { regime, label: REGIME_LABEL[regime], factors: f, reasons, complete: missing.length === 0, missing };
 }
 
