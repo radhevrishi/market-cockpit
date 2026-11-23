@@ -111,6 +111,13 @@ async function annual(m: LabMarket, t: string, fresh = false): Promise<Ann> {
   return { rows: inAnnualRows(raw), source: 'screener.in company page (yearly profit & loss, cash flow, balance sheet)', sharesNow, q, notes: freshNote ? [freshNote] : [], name: raw?.name ?? null, shpQ: raw?.shpQ ?? null,
     industry: raw?.industry ?? raw?.sector ?? null, roce: typeof raw?.roce === 'number' ? raw.roce : null, lastResult: Array.isArray(raw?.ann) && raw.ann[0]?.d ? String(raw.ann[0].d).slice(0, 10) : null };
 }
+/** zzz1300 — no results date anywhere: the latest quarter's end + 45 days (the Indian filing deadline), if that is past. */
+function qResultGuess(q: QIn | undefined): string | null {
+  const e = q?.rev?.length ? q.rev[q.rev.length - 1].e : null;
+  if (!e || (q?.rev?.length ?? 0) < 4) return null;
+  const t = Date.parse(e) + 45 * 86_400_000;
+  return Number.isFinite(t) && t <= Date.now() ? new Date(t).toISOString().slice(0, 10) : null;
+}
 interface Daily { t: string[]; c: number[]; h: number[]; l: number[]; v: number[]; name?: string | null }
 const isoOf = (x: number) => new Date(x < 1e11 ? x * 1000 : x).toISOString().slice(0, 10);
 async function daily(m: LabMarket, t: string): Promise<Daily | null> {
@@ -198,6 +205,19 @@ async function labCardIn(m: LabMarket, t: string, fresh = false): Promise<LabCar
   // zzz1300 — figures the snapshot lacks (BSE-only names, new listings, missing averages) are worked out from the company's own
   // daily prices, field by field; P/E and ROE from the last full year when the snapshot has none
   let ownRow: any = row ? { ...row } : null;
+  // P/E, ROE and ROCE from the yearly figures — they need no price history (new listings too)
+  const fillYearly = (o: any, filled: string[]) => {
+    const put = (k: string, v: number | null, label: string) => { if (typeof o[k] !== 'number' && v != null && Number.isFinite(v)) { o[k] = v; filled.push(label); } };
+    const lastY = [...ann.rows].reverse().find((r) => typeof r.netIncome === 'number');
+    if (cap != null && lastY?.netIncome != null && lastY.netIncome > 0) put('pe', cap / lastY.netIncome, `P/E (on ${lastY.label} profit)`);
+    if (lastY?.netIncome != null && typeof (lastY as any).equity === 'number' && (lastY as any).equity > 0) put('roeFY', (lastY.netIncome / (lastY as any).equity) * 100, `ROE (${lastY.label})`);
+    if (typeof o.roceTTM !== 'number' && typeof o.roceFY !== 'number' && typeof ann.roce === 'number') { o.roceFY = ann.roce; filled.push('ROCE (screener.in page)'); }
+  };
+  if (!(d && d.c.length >= 50) && ownRow) {
+    const filled: string[] = [];
+    fillYearly(ownRow, filled);
+    if (filled.length) notes.push(`not in the screener snapshot for this company — worked out here: ${filled.join(', ')}${d ? `; only ${d.c.length} trading days of prices, too few for the 50-day / 200-day averages` : ''}`);
+  }
   if (d && d.c.length >= 50) {
     const avg = (n: number) => (d.c.length >= n ? d.c.slice(-n).reduce((a, b) => a + b, 0) / n : null);
     const o: any = ownRow ?? {};
@@ -206,10 +226,6 @@ async function labCardIn(m: LabMarket, t: string, fresh = false): Promise<LabCar
     put('px', d.c[d.c.length - 1], 'price');
     put('sma50', avg(50), '50-day'); put('sma150', avg(150), '150-day'); put('sma200', avg(200), '200-day');
     put('hi52', Math.max(...d.c.slice(-250)), '52-week high');
-    const lastY = [...ann.rows].reverse().find((r) => typeof r.netIncome === 'number');
-    if (cap != null && lastY?.netIncome != null && lastY.netIncome > 0) put('pe', cap / lastY.netIncome, `P/E (on ${lastY.label} profit)`);
-    if (lastY?.netIncome != null && typeof (lastY as any).equity === 'number' && (lastY as any).equity > 0) put('roeFY', (lastY.netIncome / (lastY as any).equity) * 100, `ROE (${lastY.label})`);
-    if (typeof o.roceTTM !== 'number' && typeof o.roceFY !== 'number' && typeof ann.roce === 'number') { o.roceFY = ann.roce; filled.push('ROCE (screener.in page)'); }
     if (st == null && d.c.length >= 200) {
       try {
         const { stageFromDaily } = await import('../stage-analysis');
@@ -218,6 +234,7 @@ async function labCardIn(m: LabMarket, t: string, fresh = false): Promise<LabCar
       } catch { /* stage stays unknown */ }
     }
     ownRow = o;
+    fillYearly(o, filled);
     if (filled.length) notes.push(`${row ? 'not in the screener snapshot for this company' : 'not in the screener snapshot'} — worked out here: ${filled.join(', ')}${row ? '' : '; no relative-strength rank'}`);
   }
   const prices: Array<{ t: string; c: number }> = [];
@@ -240,7 +257,7 @@ async function labCardIn(m: LabMarket, t: string, fresh = false): Promise<LabCar
   const e0 = eps[Math.max(0, eps.length - 4)], e1 = eps[eps.length - 1];
   const yrs = eps.length - 1 - Math.max(0, eps.length - 4);
   const epsCagr3 = e0 && e1 && yrs > 0 && e0.eps! > 0 && e1.eps! > 0 ? Math.round((Math.pow(e1.eps! / e0.eps!, 1 / yrs) - 1) * 1000) / 10 : null;
-  card.extras = labExtras({ row: ownRow ?? row, epsCagr3, lastResult: rec?.resultDate ?? ann.lastResult ?? null, guidanceUp: rec?.guidanceUp ?? null, shpQ: ann.shpQ ?? null, stage: st, rsRatio: rs?.ratio ?? null });
+  card.extras = labExtras({ row: ownRow ?? row, epsCagr3, lastResult: rec?.resultDate ?? ann.lastResult ?? qResultGuess(ann.q), guidanceUp: rec?.guidanceUp ?? null, shpQ: ann.shpQ ?? null, stage: st, rsRatio: rs?.ratio ?? null });
   if (card.extras.stageCheck.text) card.notes = [...(card.notes || []), card.extras.stageCheck.text];
   return card;
 }
