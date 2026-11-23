@@ -15,6 +15,8 @@ test('red-flag combinations fire only when every part is there; missing figures 
   assert.deepEqual(ids({ accel: 'accelerating', gmChg: -3 }), ['R3']);
   assert.deepEqual(ids({ accel: 'accelerating', omChg: -3 }), ['R3']);         // gross margin missing → operating margin
   assert.deepEqual(ids({ accel: 'steady', gmChg: -3 }), []);
+  assert.deepEqual(ids({ accel: 'accelerating', gmChg: -2, omChg: 2 }), []);   // operating margin made it up
+  assert.deepEqual(ids({ accel: 'accelerating', gmChg: -2, omChg: 0.5 }), ['R3']);
   assert.deepEqual(ids({ r40: 55, de: 1.6 }), ['R4']);
   assert.deepEqual(ids({ rs: 90, squeeze: 'High' }), ['R4']);
 });

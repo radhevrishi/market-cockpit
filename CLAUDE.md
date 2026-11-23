@@ -4426,3 +4426,7 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   restore (`company-lab/marks.ts`, keys mc:company-lab:marks:v1 + :view:v1, vault-synced). Views: All / Strong only / Exclude
   rejected / Red flags / Rejected — table and cards both. Not in our data: forward P/E, EV/EBIT, moat, order book, capacity, pledge,
   auditor, related-party deals. Concall Intelligence ↔ Earnings Hub Concall AI now link to each other.
+- zzz1298 (23 Nov): Company Lab "Bought growth" (R3) no longer fires when operating margin rose 1 pt or more despite the gross-margin
+  dip (mix / scale). Scheduled task "Procurement Bottleneck Engine USA" (Mon 12:41 Berlin, US small / mid caps, Drive state
+  procurement_engine_state_us.json) created alongside the India one.
+

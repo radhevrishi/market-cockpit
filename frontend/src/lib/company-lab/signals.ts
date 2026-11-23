@@ -36,7 +36,9 @@ export function labSignals(x: SignalInput): Signal[] {
   if (strongEps && fin(x.dilution) && x.dilution >= 10 && weakCash)
     out.push({ id: 'R2', kind: 'red', label: 'Paper earnings', why: `EPS ${x.epsSwing === 'loss-to-profit' ? 'turned to profit' : `+${Math.round(x.epsG!)}%`}, shares +${x.dilution}% in 3 yrs, CFO/PAT ${x.cfoPat}×`, response: 'Work out cash per share before trusting the headline earnings.' });
   const marginDrop = fin(x.gmChg) ? (x.gmChg <= -1.5 ? `gross margin ${r1(x.gmChg)} pts` : null) : fin(x.omChg) && x.omChg <= -2 ? `operating margin ${r1(x.omChg)} pts (gross margin not reported)` : null;
-  if (x.accel === 'accelerating' && marginDrop)
+  // zzz1298 — a gross-margin dip that operating margin more than made up (+1 pt or more) is mix / scale, not growth bought with price
+  const opCovers = fin(x.gmChg) && fin(x.omChg) && x.omChg >= 1;
+  if (x.accel === 'accelerating' && marginDrop && !opCovers)
     out.push({ id: 'R3', kind: 'red', label: 'Bought growth', why: `sales speeding up while ${marginDrop} vs a year ago`, response: 'Check price / mix, input costs, or low-margin volume chasing.' });
   const hot = (fin(x.r40) && x.r40 >= 40) || (fin(x.rs) && x.rs >= 80);
   const weakBs = (fin(x.de) && x.de > 1) || x.squeeze === 'High';
