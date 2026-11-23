@@ -410,8 +410,14 @@ export default function CompanyLabPage() {
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    let saved: Array<{ m: Mkt; t: string }> = [];
+    let saved: Array<{ m: Mkt; t: string; s?: 1 }> = [];
     try { const v = JSON.parse(localStorage.getItem(LIST_KEY) || '[]'); if (Array.isArray(v)) saved = v.filter((x) => x && (x.m === 'IN' || x.m === 'US') && typeof x.t === 'string'); } catch { /* fresh */ }
+    // zzz1292 — entries the first loader filed under the USA although they are India holdings: back to India, own market only
+    try {
+      const hold: any[] = JSON.parse(localStorage.getItem('mc_portfolio_holdings') || '[]');
+      const inBook = new Set((Array.isArray(hold) ? hold : []).filter((h) => (h?.market ?? 'IN') !== 'US').map((h) => String(h?.symbol || '').toUpperCase()));
+      saved = saved.map((e) => (e.m === 'US' && inBook.has(e.t) ? { ...e, m: 'IN' as Mkt, s: 1 as const } : e));
+    } catch { /* keep */ }
     // ?add=US:NVT,IN:AEROFLEX from other pages
     try {
       const add = new URLSearchParams(window.location.search).get('add');

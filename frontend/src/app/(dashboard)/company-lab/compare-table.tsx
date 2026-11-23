@@ -231,8 +231,14 @@ function readSources(usBook: string[]): Source[] {
   const cl = fromLs('mc:chart-watchlists:v1');
   const lists: any[] = Array.isArray(cl) ? cl : Array.isArray(cl?.lists) ? cl.lists : [];
   lists.forEach((l, i) => {
-    const rows: any[] = Array.isArray(l?.items) ? l.items : Array.isArray(l?.rows) ? l.rows : Array.isArray(l?.symbols) ? l.symbols : [];
-    const es = uniq(rows.map((r) => { const t = clean(r?.symbol ?? r?.ticker ?? r); const ex = String(r?.exchange || r?.market || '').toUpperCase(); return { m: (/NSE|BSE|^IN$/.test(ex) || !ex ? 'IN' : 'US') as 'IN' | 'US', t, ...(ex ? { s: 1 as const } : {}) }; }));
+    // chart lists: { name, sections: [{ items: [{ m: 'IN' | 'US', t }] }] } (older shapes: items / rows / symbols)
+    const rows: any[] = Array.isArray(l?.sections) ? l.sections.flatMap((sc: any) => (Array.isArray(sc?.items) ? sc.items : []))
+      : Array.isArray(l?.items) ? l.items : Array.isArray(l?.rows) ? l.rows : Array.isArray(l?.symbols) ? l.symbols : [];
+    const es = uniq(rows.map((r) => {
+      const t = clean(r?.t ?? r?.symbol ?? r?.ticker ?? r);
+      const ex = String(r?.m ?? r?.exchange ?? r?.market ?? '').toUpperCase();
+      return { m: (/NSE|BSE|^IN$/.test(ex) || !ex ? 'IN' : 'US') as 'IN' | 'US', t, ...(ex ? { s: 1 as const } : {}) };
+    }).filter((e) => e.t && !/^(CNX|NIFTY|SENSEX|\^)/.test(e.t)));
     if (es.length) out.push({ id: `chart-${i}`, label: `📈 ${String(l?.name || l?.title || `Chart list ${i + 1}`).slice(0, 28)}`, entries: es });
   });
   return out;
