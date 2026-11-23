@@ -6,7 +6,7 @@ import { dailyHistory } from '../theme-cycle/server';
 import { HISTORY_SETS } from '../theme-cycle/universe';
 import { periodReturns, weeklyCloses, marketCycles, themeBoard, type Cycle, type PerfKey, type ThemePerf, type DaySeries } from './perf';
 
-export const PERF_VERSION = 1;
+export const PERF_VERSION = 2;
 type M = 'us' | 'india';
 const INDICES: Record<M, Array<{ s: string; name: string; kind: 'Broad' | 'Size' | 'Sector' | 'Style' }>> = {
   us: [
@@ -22,12 +22,12 @@ const INDICES: Record<M, Array<{ s: string; name: string; kind: 'Broad' | 'Size'
   ],
   india: [
     { s: '^NSEI', name: 'Nifty 50', kind: 'Broad' }, { s: '^BSESN', name: 'Sensex', kind: 'Broad' }, { s: '^CRSLDX', name: 'Nifty 500', kind: 'Broad' },
-    { s: '^NSMIDCP', name: 'Nifty Next 50', kind: 'Size' }, { s: 'NIFTY_MIDCAP_100.NS', name: 'Nifty Midcap 100', kind: 'Size' }, { s: '^CNXSC', name: 'Nifty Smallcap 100', kind: 'Size' },
+    { s: '^NSMIDCP', name: 'Nifty Next 50', kind: 'Size' }, { s: '^NSEMDCP50', name: 'Nifty Midcap 50', kind: 'Size' }, { s: 'HDFCSML250.NS', name: 'Nifty Smallcap 250 (ETF)', kind: 'Size' },
     { s: '^NSEBANK', name: 'Bank', kind: 'Sector' }, { s: '^CNXIT', name: 'IT', kind: 'Sector' }, { s: '^CNXAUTO', name: 'Auto', kind: 'Sector' },
     { s: '^CNXPHARMA', name: 'Pharma', kind: 'Sector' }, { s: '^CNXFMCG', name: 'FMCG', kind: 'Sector' }, { s: '^CNXMETAL', name: 'Metal', kind: 'Sector' },
     { s: '^CNXREALTY', name: 'Realty', kind: 'Sector' }, { s: '^CNXENERGY', name: 'Energy', kind: 'Sector' }, { s: '^CNXINFRA', name: 'Infrastructure', kind: 'Sector' },
-    { s: '^CNXPSE', name: 'PSE', kind: 'Sector' }, { s: '^CNXPSUBANK', name: 'PSU Bank', kind: 'Sector' }, { s: '^CNXMEDIA', name: 'Media', kind: 'Sector' },
-    { s: '^CNXCONSUM', name: 'Consumption', kind: 'Sector' }, { s: '^CNXMNC', name: 'MNC', kind: 'Sector' }, { s: '^CNXSERVICE', name: 'Services', kind: 'Sector' },
+    { s: '^CNXPSE', name: 'PSE', kind: 'Sector' }, { s: '^CNXPSUBANK', name: 'PSU Bank', kind: 'Sector' },
+    { s: '^CNXCONSUM', name: 'Consumption', kind: 'Sector' }, { s: '^CNXMNC', name: 'MNC', kind: 'Sector' },
   ],
 };
 export interface IndexPerf { s: string; name: string; kind: string; last: number | null; at: string | null; r: Record<PerfKey, number | null>; spark: number[] }

@@ -54,23 +54,30 @@ const fmtMon = (d?: string | null) => (d ? new Date(`${d}T00:00:00Z`).toLocaleDa
 const days = (a: string, b: string) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
 
 // ── data hooks ─────────────────────────────────────────────────────────────
-function useLR(reload: number) {
+function useLR(reload: number, poll = 0) {
   const [d, setD] = useState<Record<Market, LR | null>>({ us: null, india: null });
   const [err, setErr] = useState<Record<Market, string | null>>({ us: null, india: null });
   const [tick, setTick] = useState(0);
+  const lastReload = React.useRef(0);
+  const staleTries = React.useRef(0);
   useEffect(() => {
     let dead = false;
+    const force = reload !== lastReload.current; lastReload.current = reload;
     (['us', 'india'] as Market[]).forEach(async (m) => {
       try {
-        const r = await fetch(`/api/market/leadership-risk?market=${m}${reload ? '&refresh=1' : ''}`, { cache: 'no-store', signal: AbortSignal.timeout(70_000) });
+        const r = await fetch(`/api/market/leadership-risk?market=${m}${force && reload ? '&refresh=1' : ''}`, { cache: 'no-store', signal: AbortSignal.timeout(70_000) });
         const j = (await r.json()) as LR;
         if (dead) return;
-        if (j.ok) { setD((x) => ({ ...x, [m]: j })); setErr((x) => ({ ...x, [m]: null })); }
+        if (j.ok) {
+          setD((x) => ({ ...x, [m]: j })); setErr((x) => ({ ...x, [m]: null }));
+          // zzz1291 — an old copy was served while the server rebuilds: ask again shortly so the page never sits on it
+          if ((j.ageMin ?? 0) > 45 && staleTries.current < 4) { staleTries.current++; setTimeout(() => !dead && setTick((t) => t + 1), 75_000); }
+        }
         else { setErr((x) => ({ ...x, [m]: j.error || 'unavailable' })); setTimeout(() => !dead && setTick((t) => t + 1), 30_000); }
       } catch { if (!dead) { setErr((x) => ({ ...x, [m]: 'Request timed out — retrying.' })); setTimeout(() => !dead && setTick((t) => t + 1), 30_000); } }
     });
     return () => { dead = true; };
-  }, [reload, tick]);
+  }, [reload, tick, poll]);
   return { d, err };
 }
 function useCycleHist() {
@@ -245,7 +252,8 @@ export default function MarketLeadership() {
   const [reload, setReload] = useState(0);
   const [sel, setSel] = useState<Market>('us');
   useEffect(() => { try { const r = new URLSearchParams(window.location.search).get('market'); if (r === 'india' || r === 'us') setSel(r); } catch { /* ignore */ } }, []);
-  const { d: lr, err } = useLR(reload);
+  const [poll, setPoll] = useState(0);
+  const { d: lr, err } = useLR(reload, poll);
   const us = useThemeSide('us'), ind = useThemeSide('india');
   const hist = useCycleHist();
   const side = sel === 'us' ? us : ind;
@@ -256,8 +264,8 @@ export default function MarketLeadership() {
   useEffect(() => { try { const t = new URLSearchParams(window.location.search).get('tab'); if (t && TABS.some(([k]) => k === t)) setTab(t as Tab); } catch { /* ignore */ } }, []);
   const pickTab = (t: Tab) => { setTab(t); try { const u = new URL(window.location.href); u.searchParams.set('tab', t); window.history.replaceState(null, '', u.toString()); } catch { /* ignore */ } };
   // zzz1291 — always live: everything re-reads every 10 minutes while the page is open (the server caches keep it cheap)
-  useEffect(() => { const id = setInterval(() => { if (document.visibilityState === 'visible') setReload((r) => r + 1); }, 10 * 60_000); return () => clearInterval(id); }, []);
-  const perf = usePerf(sel, reload);
+  useEffect(() => { const id = setInterval(() => { if (document.visibilityState === 'visible') setPoll((r) => r + 1); }, 10 * 60_000); return () => clearInterval(id); }, []);
+  const perf = usePerf(sel, reload + poll);
   const perfTheme = useMemo(() => new Map((perf.d?.themes || []).map((t) => [t.id, t])), [perf.d]);
 
   const themeBrief = (s: ThemeSide) => {
