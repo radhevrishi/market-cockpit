@@ -402,7 +402,7 @@ function MultiFcf({ cards }: { cards: LabCard[] }) {
 }
 
 export default function CompanyLabPage() {
-  const [list, setList] = useState<Array<{ m: Mkt; t: string }>>([]);
+  const [list, setList] = useState<Array<{ m: Mkt; t: string; s?: 1 }>>([]);
   const [input, setInput] = useState('');
   const [mkt, setMkt] = useState<Mkt>('IN');
   const [cards, setCards] = useState<Record<string, LabCard>>({});
@@ -421,25 +421,30 @@ export default function CompanyLabPage() {
   }, []);
   useEffect(() => { try { localStorage.setItem(LIST_KEY, JSON.stringify(list)); } catch { /* not kept */ } }, [list]);
 
-  const load = useCallback(async (entries: Array<{ m: Mkt; t: string }>, fresh = false) => {
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const load = useCallback(async (entries: Array<{ m: Mkt; t: string; s?: 1 }>, fresh = false) => {
     const need = fresh ? entries : entries.filter((e) => !cards[key(e)]);
     if (!need.length) return;
     setBusy(true); setErr(null);
+    let done = 0; setProgress({ done: 0, total: need.length });
     try {
-      for (const m of ['IN', 'US'] as Mkt[]) {
-        const ts = need.filter((e) => e.m === m).map((e) => e.t);
+      // zzz1292 — names from a list that says its market (books, watchlist) are looked up ONLY there (strict)
+      for (const m of ['IN', 'US'] as Mkt[]) for (const strict of [true, false]) {
+        const ts = need.filter((e) => e.m === m && !!e.s === strict).map((e) => e.t);
         for (let i = 0; i < ts.length; i += 8) {
-          const r = await fetch(`/api/v1/company-lab?market=${m}&tickers=${encodeURIComponent(ts.slice(i, i + 8).join(','))}${fresh ? '&fresh=1' : ''}`, fresh ? { cache: 'no-store' } : undefined).catch(() => null);
+          const part = ts.slice(i, i + 8);
+          const r = await fetch(`/api/v1/company-lab?market=${m}&tickers=${encodeURIComponent(part.join(','))}${fresh ? '&fresh=1' : ''}${strict ? '&strict=1' : ''}`, fresh ? { cache: 'no-store' } : undefined).catch(() => null);
           const j: any = r ? await r.json().catch(() => null) : null;
+          done += part.length; setProgress({ done, total: need.length });
           if (!j?.ok) { setErr(j?.error || `Could not load (HTTP ${r?.status ?? '—'})`); continue; }
           const got = j.cards as LabCard[];
-          setCards((prev) => { const n = { ...prev }; for (const c of got) { n[`${m}:${c.ticker}`] = c; n[`${c.market}:${c.ticker}`] = c; } return n; });
-          // typed under the wrong market (SPOT with India selected): keep it under the market it was found in
-          const moved = got.filter((c) => c.ok && c.market !== m);
-          if (moved.length) setList((l) => { const out: Array<{ m: Mkt; t: string }> = []; for (const e of l) { const mv = moved.find((c) => c.ticker === e.t && e.m === m); const ne = mv ? { m: mv.market as Mkt, t: e.t } : e; if (!out.some((x) => key(x) === key(ne))) out.push(ne); } return out; });
+          // cards come back in the order asked; a ticker read as another symbol (typo, alias) is filed under the one asked AND the real one
+          setCards((prev) => { const n = { ...prev }; got.forEach((c, k) => { n[`${m}:${part[k]}`] = c; n[`${c.market}:${c.ticker}`] = c; }); return n; });
+          const renamed = got.map((c, k) => ({ c, asked: part[k] })).filter((x) => x.c.ok && (x.c.ticker !== x.asked || x.c.market !== m));
+          if (renamed.length) setList((l) => { const out: Array<{ m: Mkt; t: string; s?: 1 }> = []; for (const e of l) { const mv = renamed.find((x) => x.asked === e.t && e.m === m); const ne = mv ? { ...e, m: mv.c.market as Mkt, t: mv.c.ticker } : e; if (!out.some((x) => key(x) === key(ne))) out.push(ne); } return out; });
         }
       }
-    } finally { setBusy(false); }
+    } finally { setBusy(false); setProgress(null); }
   }, [cards]);
   useEffect(() => { if (list.length) void load(list); }, [list]);   // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -449,14 +454,14 @@ export default function CompanyLabPage() {
     setList((l) => { const next = l.slice(); for (const p of parts) if (!next.some((x) => key(x) === key(p))) next.push(p); return next; });
     setInput('');
   };
-  const addMany = (es: Array<{ m: Mkt; t: string }>, replace: boolean) => setList((l) => { const next = replace ? [] : l.slice(); for (const p of es) if (!next.some((x) => key(x) === key(p))) next.push(p); return next; });
+  const addMany = (es: Array<{ m: Mkt; t: string; s?: 1 }>, replace: boolean) => setList((l) => { const next = replace ? [] : l.slice(); for (const p of es) if (!next.some((x) => key(x) === key(p))) next.push(p); return next; });
   const [refreshedAt, setRefreshedAt] = useState<string | null>(null);
   const refresh = async () => { await load(list, true); setRefreshedAt(new Date().toLocaleTimeString()); };
   const remove = (e: { m: Mkt; t: string }) => setList((l) => l.filter((x) => key(x) !== key(e)));
   const shown = useMemo(() => list.map((e) => cards[key(e)]).filter(Boolean) as LabCard[], [list, cards]);
 
   return (
-    <div style={{ padding: '16px 18px', display: 'grid', gap: 12, maxWidth: 1680, margin: '0 auto', width: '100%' }}>
+    <div style={{ padding: '14px 16px', display: 'grid', gap: 12, width: '100%', minWidth: 0, boxSizing: 'border-box' }}>
       <div>
         <h1 style={{ fontSize: 24, fontWeight: 900, margin: 0 }}>🧪 Company Lab</h1>
         <div style={{ fontSize: 14, color: R.dim, marginTop: 4 }}>Add one company or several — India or USA. Each gets the FCF checklist with its four plots, price charts against revenue / EPS growth, FCF margin and FCF per share, Stage 2 (trend template, relative strength vs the index, breakout), and links to everything else the portal knows about it. A ticker typed under the wrong market is found in the other one.</div>
@@ -470,7 +475,7 @@ export default function CompanyLabPage() {
           aria-label="Companies to add" style={{ flex: '1 1 280px', fontSize: 14, padding: '7px 10px', borderRadius: 8, border: `1px solid ${R.border}`, background: 'transparent', color: R.text }} />
         <button type="button" onClick={add} disabled={!input.trim()} style={{ fontSize: 14, fontWeight: 900, padding: '7px 16px', borderRadius: 8, cursor: input.trim() ? 'pointer' : 'not-allowed', border: `1px solid ${R.green}`, background: tint(R.green, 12), color: R.green }}>＋ Add</button>
         {list.length > 0 && <button type="button" onClick={() => setList([])} style={{ fontSize: 12.5, padding: '6px 10px', borderRadius: 8, cursor: 'pointer', border: `1px solid ${R.border}`, background: 'transparent', color: R.faint }}>Clear all</button>}
-        {busy && <span style={{ fontSize: 13, color: R.faint }}>Reading figures… (first look at a company takes up to half a minute)</span>}
+        {busy && <span style={{ fontSize: 13, color: R.faint }}>Reading figures{progress ? ` — ${progress.done} of ${progress.total} companies` : ''}… (first look at a company takes up to half a minute)</span>}
       </div>
       <div style={{ border: `1px solid ${R.border}`, borderRadius: 10, padding: 10, background: R.bg }}>
         <BookLoader busy={busy} onAdd={addMany} onRefresh={() => void refresh()} />

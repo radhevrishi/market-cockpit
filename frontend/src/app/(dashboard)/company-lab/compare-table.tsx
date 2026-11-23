@@ -25,8 +25,8 @@ export const COLS: Col[] = [
   { id: 'fcfChecks', group: 'Free cash flow', h: 'FCF checks', tip: 'FCF checklist items passed ÷ items that could be checked', cell: (c) => `${c.fcf.passed}/${c.fcf.known}`, sort: (c) => (c.fcf.known ? c.fcf.passed / c.fcf.known : -1) },
   { id: 'fcfM', group: 'Free cash flow', h: 'FCF margin', tip: 'Latest full year: FCF ÷ revenue', cell: (c) => <span style={{ color: col(last(c)?.fcfM, (x) => x >= 10, (x) => x < 0) }}>{pct(last(c)?.fcfM)}</span>, sort: (c) => last(c)?.fcfM ?? -999 },
   { id: 'fcfY', group: 'Free cash flow', h: 'FCF yield', tip: "Latest full year FCF ÷ today's market cap", cell: (c) => pct(yieldOf(c)), sort: (c) => yieldOf(c) ?? -999 },
-  { id: 'gap', group: 'Free cash flow', h: 'FCF/share vs price (3 yr)', tip: 'FCF per share change vs share price change over up to three full years. ◆ = cash up 30%+, price flat (≤ +10%): a research lead, not a buy signal.', cell: (c) => { const g = gapOf(c); return g.fcfPsG == null ? '—' : <span title={g.from ? `from ${g.from}` : ''} style={{ color: g.flag ? R.cyan : R.text, fontWeight: g.flag ? 800 : 400 }}>{g.flag ? '◆ ' : ''}{pct(g.fcfPsG)} / {pct(g.priceG)}</span>; }, sort: (c) => { const g = gapOf(c); return g.fcfPsG != null && g.priceG != null ? g.fcfPsG - g.priceG : -999; } },
-  { id: 'r40', group: 'Growth', h: 'Rule of 40', tip: "Latest quarter's revenue growth vs the same quarter a year earlier + FCF margin (last 4 quarters, else latest year). 40+ passes.", cell: (c) => { const r = Q(c)?.r40; return r?.value == null ? '—' : <span title={`${pct(r.revYoY)} revenue (${r.quarter}) + ${pct(r.fcfMargin)} FCF margin (${r.fcfFrom})`} style={{ fontWeight: 800, color: r.value >= 40 ? R.green : r.value >= 20 ? R.amber : R.red }}>{r.value.toFixed(0)} <span style={{ fontWeight: 400, color: R.faint, fontSize: 12 }}>= {r.revYoY?.toFixed(0)}+{r.fcfMargin?.toFixed(0)}</span></span>; }, sort: (c) => Q(c)?.r40.value ?? -999 },
+  { id: 'gap', group: 'Free cash flow', h: 'FCF/share vs price (3 yr)', tip: 'FCF per share change vs share price change over up to three full years. ◆ = cash up 30%+, price flat (≤ +10%): a research lead, not a buy signal.', cell: (c) => { const g = gapOf(c); if (g.fcfPsG == null) return <span title={g.why} style={{ color: R.faint, fontSize: 12 }}>{g.short}</span>; return g.fcfPsG > 500 ? <span title={`FCF per share ${pct(g.fcfPsG)} from a tiny starting figure — not meaningful`} style={{ color: R.faint, fontSize: 12 }}>low base</span> : <span title={g.from ? `from ${g.from}` : ''} style={{ color: g.flag ? R.cyan : R.text, fontWeight: g.flag ? 800 : 400 }}>{g.flag ? '◆ ' : ''}{pct(g.fcfPsG)} / {pct(g.priceG)}</span>; }, sort: (c) => { const g = gapOf(c); return g.fcfPsG != null && g.priceG != null ? g.fcfPsG - g.priceG : -999; } },
+  { id: 'r40', group: 'Growth', h: 'Rule of 40', tip: "Latest quarter's revenue growth vs the same quarter a year earlier + FCF margin (last 4 quarters, else latest year). 40+ passes.", cell: (c) => { const r = Q(c)?.r40; return r?.value == null ? '—' : <span title={`${pct(r.revYoY)} revenue (${r.quarter}) + ${pct(r.fcfMargin)} FCF margin (${r.fcfFrom})`} style={{ fontWeight: 800, color: r.value >= 40 ? R.green : r.value >= 20 ? R.amber : R.red }}>{r.value.toFixed(0)} <span style={{ fontWeight: 400, color: R.faint, fontSize: 12 }}>= {r.revYoY?.toFixed(0)} {(r.fcfMargin ?? 0) < 0 ? '−' : '+'} {Math.abs(r.fcfMargin ?? 0).toFixed(0)}</span></span>; }, sort: (c) => Q(c)?.r40.value ?? -999 },
   { id: 'revQ', group: 'Growth', h: 'Revenue YoY (qtr)', tip: 'Latest quarter vs the same quarter a year earlier', cell: (c) => pct(Q(c)?.r40.revYoY), sort: (c) => Q(c)?.r40.revYoY ?? -999 },
   { id: 'accel', group: 'Growth', h: 'Growth trend (last 4 qtrs)', tip: 'Year-on-year revenue growth of the last four quarters, oldest → newest', cell: (c) => { const a = Q(c)?.accel; if (!a) return '—'; const s = ACC[a.state]; return <span title={a.text}><span style={{ color: s.c, fontWeight: 800 }}>{s.t}</span> <span style={{ color: R.faint, fontSize: 12 }}>{a.last.map((v) => (v == null ? '·' : v.toFixed(0))).join(' → ')}</span></span>; }, sort: (c) => { const a = Q(c)?.accel; return a?.state === 'accelerating' ? 2 : a?.state === 'steady' ? 1 : a?.state === 'decelerating' ? 0 : -1; } },
   { id: 'revG', group: 'Growth', h: 'Revenue growth (yr)', tip: 'Latest full year vs the year before', cell: (c) => pct(last(c)?.revG), sort: (c) => last(c)?.revG ?? -999 },
@@ -39,21 +39,58 @@ export const COLS: Col[] = [
   { id: 'squeeze', group: 'Cash squeeze', h: 'Cash squeeze', tip: 'Six checks: cash, capex, operating cash, FCF, debt, receivables vs revenue. 3+ warnings = look closer.', cell: (c) => { const s = Q(c)?.squeeze; if (!s) return '—'; return <span title={s.items.filter((i) => i.state === 'warn').map((i) => `⚠ ${i.label}: ${i.value}`).join('\n') || 'no warnings'} style={{ color: LEVEL_C[s.level], fontWeight: 800 }}>{s.level}{s.level !== 'Unknown' ? ` ${s.warns}/${s.known}` : ''}{s.keyCombo ? ' ⚡' : ''}</span>; }, sort: (c) => { const s = Q(c)?.squeeze; return s && s.level !== 'Unknown' ? -s.warns : -99; } },
   { id: 'capexOcf', group: 'Cash squeeze', h: 'Capex ÷ OCF', tip: 'Capital spending ÷ operating cash (last 4 quarters; India: whole investing outflow)', cell: (c) => { const v = Q(c)?.squeeze.ratios.capexToOcf; return v == null ? '—' : <span style={{ color: col(v, (x) => x <= 50, (x) => x > 100) }}>{v.toFixed(0)}%</span>; }, sort: (c) => -(Q(c)?.squeeze.ratios.capexToOcf ?? 999) },
   { id: 'runway', group: 'Cash squeeze', h: 'Cash runway', tip: 'Quarters of cash left at the current free-cash burn (only when FCF is negative)', cell: (c) => { const v = Q(c)?.squeeze.ratios.runwayQ; return v == null ? <span style={{ color: R.faint }}>no burn</span> : <span style={{ color: v < 6 ? R.red : v < 12 ? R.amber : R.text }}>{v.toFixed(1)} qtrs</span>; }, sort: (c) => Q(c)?.squeeze.ratios.runwayQ ?? 999 },
-  { id: 'stage', group: 'Technicals', h: 'Stage', tip: 'Weekly Stage Analysis', cell: (c) => (c.stage.st != null ? `Stage ${c.stage.st}` : '—'), sort: (c) => (c.stage.st === 2 ? 2 : c.stage.st === 1 ? 1 : 0) },
+  { id: 'stage', group: 'Technicals', h: 'Stage', tip: 'Weekly Stage Analysis', cell: (c) => (c.stage.st != null ? `Stage ${c.stage.st}` : <span title="Weekly Stage Analysis needs about 30 completed weeks of prices" style={{ color: R.faint, fontSize: 12 }}>{c.listedDays != null && c.listedDays < 400 ? 'new listing' : 'no weekly data'}</span>), sort: (c) => (c.stage.st === 2 ? 2 : c.stage.st === 1 ? 1 : 0) },
   { id: 'tt', group: 'Technicals', h: 'Trend template', tip: 'Minervini trend template rules met', cell: (c) => `${c.stage.tt ?? c.trend.filter((r) => r.ok).length}/6`, sort: (c) => c.stage.tt ?? c.trend.filter((r) => r.ok).length },
   { id: 'rsIdx', group: 'Technicals', h: 'RS vs index', tip: 'Stock return ÷ index return', cell: (c) => (c.rs?.ratio == null ? '—' : `${c.rs.ratio.toFixed(2)}×`), sort: (c) => c.rs?.ratio ?? -1 },
-  { id: 'rs', group: 'Technicals', h: 'RS', tip: 'RS rating 1–99', cell: (c) => (c.stage.rsR == null ? '—' : String(Math.round(c.stage.rsR))), sort: (c) => c.stage.rsR ?? -1 },
+  { id: 'rs', group: 'Technicals', h: 'RS', tip: 'RS rating 1–99', cell: (c) => (c.stage.rsR == null ? <span title="Not enough price history for an RS rating" style={{ color: R.faint, fontSize: 12 }}>{c.listedDays != null && c.listedDays < 400 ? 'new listing' : '—'}</span> : String(Math.round(c.stage.rsR))), sort: (c) => c.stage.rsR ?? -1 },
 ];
 const DEFAULT = ['fcfChecks', 'fcfM', 'fcfY', 'gap', 'r40', 'accel', 'gm', 'om', 'dil', 'cfoPat', 'de', 'squeeze', 'stage', 'rs'];
 const GROUPS = Array.from(new Set(COLS.map((c) => c.group)));
 
+// zzz1292 — column layouts: ready-made ones + the owner's own, saved by name (synced to his account), last one used reopens
+const LAYOUTS_KEY = 'mc:company-lab:layouts:v1';
+type Layout = { cols: string[]; sort?: string; desc?: boolean };
+const PRESETS: Record<string, Layout> = {
+  'Overview': { cols: DEFAULT, sort: 'r40', desc: true },
+  'Cash quality': { cols: ['fcfChecks', 'fcfM', 'fcfY', 'gap', 'cfoPat', 'de', 'dil', 'squeeze', 'capexOcf', 'runway'], sort: 'fcfChecks', desc: true },
+  'Growth': { cols: ['r40', 'revQ', 'accel', 'revG', 'epsG', 'gm', 'om', 'stage', 'rs'], sort: 'r40', desc: true },
+  'Technicals': { cols: ['stage', 'tt', 'rsIdx', 'rs', 'r40', 'accel'], sort: 'rs', desc: true },
+  'Everything': { cols: COLS.map((c) => c.id), sort: 'r40', desc: true },
+};
+interface LayoutStore { active: string; custom: Record<string, Layout> }
+const readLayouts = (): LayoutStore => {
+  try {
+    const v = JSON.parse(localStorage.getItem(LAYOUTS_KEY) || 'null');
+    if (v && typeof v === 'object' && v.custom) return { active: String(v.active || 'Overview'), custom: v.custom };
+    const old = JSON.parse(localStorage.getItem(COLS_KEY) || 'null');   // the single saved column set of the first version
+    if (Array.isArray(old) && old.length) return { active: 'My columns', custom: { 'My columns': { cols: old } } };
+  } catch { /* fresh */ }
+  return { active: 'Overview', custom: {} };
+};
+const writeLayouts = (v: LayoutStore) => { try { localStorage.setItem(LAYOUTS_KEY, JSON.stringify(v)); } catch { /* not kept */ } };
+
 export function Compare({ cards }: { cards: LabCard[] }) {
+  const [store, setStore] = useState<LayoutStore>({ active: 'Overview', custom: {} });
   const [on, setOn] = useState<string[]>(DEFAULT);
   const [sortId, setSortId] = useState('r40');
   const [desc, setDesc] = useState(true);
   const [pick, setPick] = useState(false);
-  useEffect(() => { try { const v = JSON.parse(localStorage.getItem(COLS_KEY) || 'null'); if (Array.isArray(v) && v.length) setOn(v.filter((x) => COLS.some((c) => c.id === x))); } catch { /* default */ } }, []);
-  const save = (v: string[]) => { setOn(v); try { localStorage.setItem(COLS_KEY, JSON.stringify(v)); } catch { /* not kept */ } };
+  const [naming, setNaming] = useState<string | null>(null);
+  const apply = (name: string, st: LayoutStore) => {
+    const l = st.custom[name] ?? PRESETS[name] ?? PRESETS.Overview;
+    setOn(l.cols.filter((x) => COLS.some((c) => c.id === x))); if (l.sort) setSortId(l.sort); if (l.desc != null) setDesc(l.desc);
+  };
+  useEffect(() => { const st = readLayouts(); setStore(st); apply(st.active, st); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  const choose = (name: string) => { const st = { ...store, active: name }; setStore(st); writeLayouts(st); apply(name, st); };
+  const isCustom = !!store.custom[store.active];
+  const dirty = (() => { const l = store.custom[store.active] ?? PRESETS[store.active]; return !l || l.cols.join() !== on.join() || (l.sort && l.sort !== sortId) || (l.desc != null && l.desc !== desc); })();
+  const saveAs = (name: string) => {
+    const n = name.trim().slice(0, 40); if (!n || PRESETS[n]) return;
+    const st = { active: n, custom: { ...store.custom, [n]: { cols: on, sort: sortId, desc } } }; setStore(st); writeLayouts(st); setNaming(null);
+  };
+  const updateCurrent = () => { if (!isCustom) return; const st = { ...store, custom: { ...store.custom, [store.active]: { cols: on, sort: sortId, desc } } }; setStore(st); writeLayouts(st); };
+  const remove = (name: string) => { const c = { ...store.custom }; delete c[name]; const st = { active: store.active === name ? 'Overview' : store.active, custom: c }; setStore(st); writeLayouts(st); if (store.active === name) apply('Overview', st); };
+  const save = (v: string[]) => setOn(v);
   const cols = COLS.filter((c) => on.includes(c.id));
   const ok = cards.filter((c) => c.ok);
   const sc = COLS.find((c) => c.id === sortId) ?? cols[0];
@@ -61,11 +98,22 @@ export function Compare({ cards }: { cards: LabCard[] }) {
   if (ok.length < 1) return null;
   const groupSpans = GROUPS.map((g) => ({ g, n: cols.filter((c) => c.group === g).length })).filter((x) => x.n);
   return (
-    <div style={{ border: `1px solid ${R.border}`, borderRadius: 10, background: R.bg }}>
+    <div style={{ border: `1px solid ${R.border}`, borderRadius: 10, background: R.bg, minWidth: 0, maxWidth: '100%' }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '8px 10px', borderBottom: `1px solid ${R.border}` }}>
         <b style={{ fontSize: 14 }}>Side by side · {ok.length} companies</b>
+        <span style={{ fontSize: 12, color: R.faint, marginLeft: 6 }}>LAYOUT</span>
+        {[...Object.keys(PRESETS), ...Object.keys(store.custom)].map((n) => (
+          <span key={n} style={{ display: 'inline-flex', alignItems: 'center', borderRadius: 999, border: `1px solid ${store.active === n ? R.green : R.border}`, background: store.active === n ? tint(R.green, 12) : 'transparent' }}>
+            <button type="button" onClick={() => choose(n)} title={store.custom[n] ? 'Your saved layout' : 'Ready-made layout'} style={{ fontSize: 12.5, fontWeight: 800, padding: '3px 10px', border: 'none', background: 'transparent', cursor: 'pointer', color: store.active === n ? R.green : R.dim }}>{store.custom[n] ? '★ ' : ''}{n}</button>
+            {store.custom[n] ? <button type="button" title="Delete this layout" onClick={() => remove(n)} style={{ border: 'none', background: 'transparent', color: R.faint, cursor: 'pointer', paddingRight: 8 }}>✕</button> : null}
+          </span>
+        ))}
+        {dirty && isCustom ? <button type="button" onClick={updateCurrent} style={{ fontSize: 12.5, fontWeight: 800, padding: '3px 10px', borderRadius: 8, cursor: 'pointer', border: `1px solid ${R.amber}`, background: tint(R.amber, 10), color: R.amber }}>💾 Update “{store.active}”</button> : null}
+        {naming == null
+          ? <button type="button" onClick={() => setNaming('')} style={{ fontSize: 12.5, fontWeight: 800, padding: '3px 10px', borderRadius: 8, cursor: 'pointer', border: `1px solid ${R.green}`, background: 'transparent', color: R.green }}>＋ Save as new layout</button>
+          : <span style={{ display: 'inline-flex', gap: 4 }}><input autoFocus value={naming} onChange={(e) => setNaming(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') saveAs(naming); if (e.key === 'Escape') setNaming(null); }} placeholder="Layout name" style={{ fontSize: 12.5, padding: '3px 8px', borderRadius: 6, border: `1px solid ${R.border}`, background: 'transparent', color: R.text, width: 150 }} /><button type="button" onClick={() => saveAs(naming)} style={{ fontSize: 12.5, fontWeight: 800, padding: '3px 10px', borderRadius: 6, cursor: 'pointer', border: `1px solid ${R.green}`, background: tint(R.green, 12), color: R.green }}>Save</button><button type="button" onClick={() => setNaming(null)} style={{ fontSize: 12.5, border: 'none', background: 'transparent', color: R.faint, cursor: 'pointer' }}>Cancel</button></span>}
         <button type="button" onClick={() => setPick((p) => !p)} style={{ fontSize: 13, fontWeight: 800, padding: '4px 10px', borderRadius: 8, cursor: 'pointer', border: `1px solid ${R.cyan}`, background: tint(R.cyan, pick ? 14 : 6), color: R.cyan }}>⚙ Columns ({cols.length}/{COLS.length})</button>
-        {pick && <button type="button" onClick={() => save(DEFAULT)} style={{ fontSize: 12.5, padding: '4px 8px', borderRadius: 8, cursor: 'pointer', border: `1px solid ${R.border}`, background: 'transparent', color: R.faint }}>Reset</button>}
+        {pick && <button type="button" onClick={() => apply(store.active, store)} style={{ fontSize: 12.5, padding: '4px 8px', borderRadius: 8, cursor: 'pointer', border: `1px solid ${R.border}`, background: 'transparent', color: R.faint }}>Undo changes</button>}
       </div>
       {pick && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 10, padding: 10, borderBottom: `1px solid ${R.border}`, background: R.bg2 }}>
@@ -111,7 +159,7 @@ export function Compare({ cards }: { cards: LabCard[] }) {
         </table>
       </div>
       <div style={{ fontSize: 12.5, color: R.faint, padding: '6px 10px', lineHeight: 1.5 }}>
-        Click a column to sort (again to flip). Hover a heading or a value for how it is worked out. ⚡ = rising capex + worsening free cash flow + falling cash together.
+        Click a column to sort (again to flip). Layouts and your own saved ones are kept with your account and the last one used opens next time. Hover a heading or a value for how it is worked out. ⚡ = rising capex + worsening free cash flow + falling cash together.
         India: cash flow and balance sheet are yearly on screener.in, so its squeeze check is yearly and receivables are not known.
         <br />◆ A rising FCF/share line with a flat share price is a research lead — not an automatic undervaluation signal. The market may be anticipating weaker future economics.
       </div>
@@ -166,40 +214,60 @@ export function QuarterPanel({ c }: { c: LabCard }) {
   );
 }
 
-type Entry = { m: 'IN' | 'US'; t: string };
-const clean = (s: string) => String(s || '').toUpperCase().trim().replace(/^(NSE|BSE|NASDAQ|NYSE|AMEX|US|IN):/, '').replace(/\.(NS|BO)$/, '').replace(/[^A-Z0-9&.\-]/g, '');
-/** One-button loaders: the watchlist, the India book and the US book, plus Refresh (latest filings). */
+type Entry = { m: 'IN' | 'US'; t: string; s?: 1 };
+const clean = (s: string) => String(s || '').toUpperCase().trim().replace(/^(NSE|BSE|NASDAQ|NYSE|AMEX|US|IN):/, '').replace(/\.(NS|BO)$/, '').replace(/-(BE|EQ|SM|ST)$/, '').replace(/[^A-Z0-9&.\-]/g, '');
+type Source = { id: string; label: string; entries: Entry[]; note?: string };
+const fromLs = (k: string): any => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } };
+const uniq = (es: Entry[]) => { const out: Entry[] = []; for (const e of es) if (e.t && !out.some((x) => x.m === e.m && x.t === e.t)) out.push(e); return out; };
+/** zzz1292 — every list the owner keeps, with its market: holdings (India / US), the US book, the watchlist, each chart list. */
+function readSources(usBook: string[]): Source[] {
+  const out: Source[] = [];
+  const hold: any[] = Array.isArray(fromLs('mc_portfolio_holdings')) ? fromLs('mc_portfolio_holdings') : [];
+  out.push({ id: 'in-book', label: '💼 India book', entries: uniq(hold.filter((h) => (h?.market ?? 'IN') !== 'US').map((h) => ({ m: 'IN' as const, t: clean(h?.symbol), s: 1 as const }))) });
+  out.push({ id: 'us-book', label: '💼 US book', entries: uniq([...hold.filter((h) => h?.market === 'US').map((h) => clean(h?.symbol)), ...usBook].map((t) => ({ m: 'US' as const, t, s: 1 as const }))) });
+  const wl: any[] = Array.isArray(fromLs('mc_watchlist_tickers')) ? fromLs('mc_watchlist_tickers') : [];
+  // the watchlist holds bare symbols: NSE symbols and BSE codes are India; a name that is not found in India is looked up in the USA
+  out.push({ id: 'watch', label: '📋 My watchlist', entries: uniq(wl.map((x) => ({ m: 'IN' as const, t: clean(typeof x === 'string' ? x : x?.ticker ?? x?.symbol) }))), note: 'symbols without a market: India first, then the USA' });
+  const cl = fromLs('mc:chart-watchlists:v1');
+  const lists: any[] = Array.isArray(cl) ? cl : Array.isArray(cl?.lists) ? cl.lists : [];
+  lists.forEach((l, i) => {
+    const rows: any[] = Array.isArray(l?.items) ? l.items : Array.isArray(l?.rows) ? l.rows : Array.isArray(l?.symbols) ? l.symbols : [];
+    const es = uniq(rows.map((r) => { const t = clean(r?.symbol ?? r?.ticker ?? r); const ex = String(r?.exchange || r?.market || '').toUpperCase(); return { m: (/NSE|BSE|^IN$/.test(ex) || !ex ? 'IN' : 'US') as 'IN' | 'US', t, ...(ex ? { s: 1 as const } : {}) }; }));
+    if (es.length) out.push({ id: `chart-${i}`, label: `📈 ${String(l?.name || l?.title || `Chart list ${i + 1}`).slice(0, 28)}`, entries: es });
+  });
+  return out;
+}
+/** One-click loading from one or several of the owner's lists at once, plus Refresh (latest filings). */
 export function BookLoader({ onAdd, onRefresh, busy }: { onAdd: (e: Entry[], replace: boolean) => void; onRefresh: () => void; busy: boolean }) {
+  const [usBook, setUsBook] = useState<string[]>([]);
+  const [sel, setSel] = useState<string[]>([]);
+  const [replace, setReplace] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
-  const [replace, setReplace] = useState(false);
-  const fromLs = (k: string): any[] => { try { const v = JSON.parse(localStorage.getItem(k) || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } };
-  const watch = () => {
-    const out: Entry[] = [];
-    for (const x of fromLs('mc_watchlist_tickers')) { const t = clean(typeof x === 'string' ? x : x?.ticker ?? x?.symbol); if (t) out.push({ m: /^\d+$/.test(t) ? 'IN' : 'IN', t }); }
-    // chart watchlists carry the exchange
-    try { const lists = JSON.parse(localStorage.getItem('mc:chart-watchlists:v1') || 'null'); const all: any[] = Array.isArray(lists) ? lists : Array.isArray(lists?.lists) ? lists.lists : []; for (const l of all) for (const r of (l?.items || l?.rows || [])) { const t = clean(r?.symbol ?? r?.ticker ?? r); if (!t) continue; const ex = String(r?.exchange || r?.market || '').toUpperCase(); const m = /NSE|BSE|IN/.test(ex) ? 'IN' : ex ? 'US' : 'IN'; if (!out.some((e) => e.t === t)) out.push({ m, t }); } } catch { /* none */ }
-    setMsg(out.length ? `Watchlist: ${out.length} names (a name not found in India is looked up in the USA)` : 'Watchlist is empty in this browser');
-    if (out.length) onAdd(out, replace);
-  };
-  const book = async (m: 'IN' | 'US') => {
-    const out: Entry[] = [];
-    for (const h of fromLs('mc_portfolio_holdings')) { const t = clean(h?.symbol); if (t && (h?.market ?? 'IN') === m) out.push({ m, t }); }
-    if (m === 'US') {
-      try { const r = await fetch('/api/v1/us-book', { cache: 'no-store' }); const j: any = await r.json(); for (const h of j?.book?.holdings || j?.holdings || []) { const t = clean(h?.ticker); if (t && !out.some((e) => e.t === t)) out.push({ m: 'US', t }); } } catch { /* local only */ }
-    }
-    setMsg(out.length ? `${m === 'IN' ? 'India' : 'US'} book: ${out.length} holdings` : `No ${m === 'IN' ? 'India' : 'US'} holdings found`);
-    if (out.length) onAdd(out, replace);
-  };
-  const btn = (t: string, f: () => void, c: string) => <button type="button" disabled={busy} onClick={f} style={{ fontSize: 13, fontWeight: 800, padding: '5px 11px', borderRadius: 8, cursor: busy ? 'wait' : 'pointer', border: `1px solid ${c}`, background: tint(c, 8), color: c }}>{t}</button>;
+  useEffect(() => {
+    try { const v = JSON.parse(localStorage.getItem('mc:company-lab:sources:v1') || '[]'); if (Array.isArray(v)) setSel(v); } catch { /* none */ }
+    fetch('/api/v1/us-book', { cache: 'no-store' }).then((r) => r.json()).then((j: any) => setUsBook((j?.book?.holdings || j?.holdings || []).map((h: any) => clean(h?.ticker)).filter(Boolean))).catch(() => { /* local only */ });
+  }, []);
+  const sources = useMemo(() => (typeof window === 'undefined' ? [] : readSources(usBook)), [usBook]);
+  const toggle = (id: string) => setSel((v) => { const n = v.includes(id) ? v.filter((x) => x !== id) : [...v, id]; try { localStorage.setItem('mc:company-lab:sources:v1', JSON.stringify(n)); } catch { /* not kept */ } return n; });
+  const picked = uniq(sources.filter((s) => sel.includes(s.id)).flatMap((s) => s.entries));
+  const go = () => { if (!picked.length) return; onAdd(picked, replace); setMsg(`${replace ? 'Showing' : 'Added'} ${picked.length} companies from ${sources.filter((s) => sel.includes(s.id)).map((s) => s.label.replace(/^\S+\s/, '')).join(' + ')}`); };
   return (
-    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-      <span style={{ fontSize: 12.5, fontWeight: 900, color: R.faint }}>ONE CLICK:</span>
-      {btn('📋 My watchlist', watch, R.cyan)}
-      {btn('💼 India book', () => void book('IN'), R.green)}
-      {btn('💼 US book', () => void book('US'), R.green)}
-      {btn('🔄 Refresh all — latest filings', onRefresh, R.amber)}
-      <label style={{ fontSize: 12.5, color: R.dim, display: 'inline-flex', gap: 5, cursor: 'pointer' }}><input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} /> replace the list (else add)</label>
-      {msg && <span style={{ fontSize: 12.5, color: R.dim }}>{msg}</span>}
+    <div style={{ display: 'grid', gap: 8 }}>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+        <span style={{ fontSize: 12.5, fontWeight: 900, color: R.faint }}>LOAD FROM (pick one or more):</span>
+        {sources.map((s) => {
+          const on = sel.includes(s.id);
+          return <button key={s.id} type="button" onClick={() => toggle(s.id)} title={s.note || `${s.entries.length} companies`} disabled={!s.entries.length}
+            style={{ fontSize: 13, fontWeight: 800, padding: '5px 11px', borderRadius: 999, cursor: s.entries.length ? 'pointer' : 'not-allowed', border: `1px solid ${on ? R.cyan : R.border}`, background: on ? tint(R.cyan, 14) : 'transparent', color: !s.entries.length ? R.faint : on ? R.cyan : R.dim }}>
+            {on ? '☑ ' : '☐ '}{s.label} <span style={{ fontWeight: 600, opacity: 0.8 }}>{s.entries.length}</span></button>;
+        })}
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <button type="button" disabled={busy || !picked.length} onClick={go} style={{ fontSize: 13.5, fontWeight: 900, padding: '6px 14px', borderRadius: 8, cursor: busy || !picked.length ? 'not-allowed' : 'pointer', border: `1px solid ${R.green}`, background: tint(R.green, 14), color: R.green }}>▶ Load {picked.length || ''} {picked.length === 1 ? 'company' : 'companies'}</button>
+        <label style={{ fontSize: 12.5, color: R.dim, display: 'inline-flex', gap: 5, cursor: 'pointer' }}><input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} /> replace the current list</label>
+        <button type="button" disabled={busy} onClick={onRefresh} title="Read every company again from the newest filings (SEC / screener.in now, not the weekly copy)" style={{ fontSize: 13, fontWeight: 800, padding: '5px 11px', borderRadius: 8, cursor: busy ? 'wait' : 'pointer', border: `1px solid ${R.amber}`, background: tint(R.amber, 8), color: R.amber }}>🔄 Refresh all — latest filings</button>
+        {msg && <span style={{ fontSize: 12.5, color: R.dim }}>{msg}</span>}
+      </div>
     </div>
   );
 }

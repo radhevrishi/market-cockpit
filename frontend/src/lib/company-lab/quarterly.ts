@@ -211,36 +211,36 @@ export function squeeze(q: QIn): QuarterReport['squeeze'] {
     period = lastE ? `last 4 quarters to ${lastE} vs the 4 before` : 'quarterly filings';
     const cashNow = lastE ? instAt(q.cash, lastE) : null, cashYa = lastE ? instAt(q.cash, new Date(dt(lastE) - 365 * DAY).toISOString().slice(0, 10), 25) : null;
     const cg = g(cashNow, cashYa);
-    add('cash', 'Cash falling fast', cg == null ? null : cg <= -25, cg == null ? 'not known' : `${pctTxt(cg)} in a year`, 'Cash and equivalents now vs a year earlier; a fall of a quarter or more is a warning.');
+    add('cash', 'Cash balance', cg == null ? null : cg <= -25, cg == null ? 'not known' : `${pctTxt(cg)} in a year`, 'Cash and equivalents now vs a year earlier; a fall of a quarter or more is a warning.');
     const xg = x && x0 && x0.v > 0 ? r1((x.v / x0.v - 1) * 100) : null, cgx = c && c0 && c0.v > 0 ? r1((c.v / c0.v - 1) * 100) : null;
-    add('capex', 'Capex surging without the cash to match', xg == null ? null : xg >= 50 && (cgx == null || cgx < xg / 2 || (f ?? 0) < 0), xg == null ? 'not known' : `capex ${pctTxt(xg)}${cgx != null ? `, operating cash ${pctTxt(cgx)}` : ''}`, 'Capital spending up 50%+ while operating cash grows far less (or free cash flow is negative).');
-    add('ocf', 'Operating cash flow deteriorating', c && c0 ? c.v < c0.v * 0.95 || c.v < 0 : null, c && c0 ? `${fmt(c.v)} vs ${fmt(c0.v)} a year before` : 'not known', 'Cash from operations over the last four quarters vs the four before.');
-    add('fcf', 'Free cash flow worsening', f != null && f0 != null ? f < f0 && (f < 0 || f < f0 * 0.8) : null, f != null && f0 != null ? `${fmt(f)} vs ${fmt(f0)} a year before` : 'not known', 'Operating cash − capex over four quarters; a deeper burn or a fall of 20%+ is a warning.');
+    add('capex', 'Capex', xg == null ? null : xg >= 50 && (cgx == null || cgx < xg / 2 || (f ?? 0) < 0), xg == null ? 'not known' : `capex ${pctTxt(xg)}${cgx != null ? `, operating cash ${pctTxt(cgx)}` : ''}`, 'Capital spending up 50%+ while operating cash grows far less (or free cash flow is negative).');
+    add('ocf', 'Operating cash flow', c && c0 ? c.v < c0.v * 0.95 || c.v < 0 : null, c && c0 ? `${fmt(c.v)} vs ${fmt(c0.v)} a year before` : 'not known', 'Cash from operations over the last four quarters vs the four before.');
+    add('fcf', 'Free cash flow', f != null && f0 != null ? f < f0 && (f < 0 || f < f0 * 0.8) : null, f != null && f0 != null ? `${fmt(f)} vs ${fmt(f0)} a year before` : 'not known', 'Operating cash − capex over four quarters; a deeper burn or a fall of 20%+ is a warning.');
     const dNow = lastE ? instAt(q.debt, lastE) : null, dYa = lastE ? instAt(q.debt, new Date(dt(lastE) - 365 * DAY).toISOString().slice(0, 10), 25) : null;
     const dg = dYa != null && dNow != null ? (dYa > 0 ? r1((dNow / dYa - 1) * 100) : dNow > 0 ? 100 : 0) : null;
-    add('debt', 'Debt rising fast', dg == null ? null : dg >= 30 && (dNow ?? 0) > 0, dg == null ? 'not known' : `${pctTxt(dg)} in a year`, 'Total debt now vs a year earlier; 30%+ more borrowing is a warning (more so alongside cash burn).');
+    add('debt', 'Debt', dg == null ? null : dg >= 30 && (dNow ?? 0) > 0, dg == null ? 'not known' : `${pctTxt(dg)} in a year`, 'Total debt now vs a year earlier; 30%+ more borrowing is a warning (more so alongside cash burn).');
     // receivables vs revenue, latest quarter vs the same quarter a year earlier
     const rq = q.rev[q.rev.length - 1], rq0 = rq ? yearBefore(q.rev, rq.e) : null;
     revG = rq && rq0 ? g(rq.v, rq0.v) : null;
     const rcN = rq ? instAt(q.recv, rq.e) : null, rcY = rq ? instAt(q.recv, new Date(dt(rq.e) - 365 * DAY).toISOString().slice(0, 10), 25) : null;
     recvG = g(rcN, rcY);
-    add('recv', 'Receivables growing much faster than revenue', recvG == null || revG == null ? null : recvG - revG >= 20, recvG == null ? 'not known' : `receivables ${pctTxt(recvG)} vs revenue ${pctTxt(revG)}`, 'Customers paying more slowly: receivables growing 20+ points faster than sales.');
+    add('recv', 'Receivables vs revenue', recvG == null || revG == null ? null : recvG - revG >= 20, recvG == null ? 'not known' : `receivables ${pctTxt(recvG)} vs revenue ${pctTxt(revG)}`, 'Customers paying more slowly: receivables growing 20+ points faster than sales.');
     capexToOcf = c && x && c.v > 0 ? r1((x.v / c.v) * 100) : null;
     runwayQ = f != null && f < 0 && cashNow != null ? r1(cashNow / (-f / 4)) : null;
   } else if (q.yearly && q.yearly.ends.length >= 2) {
     const Y = q.yearly, n = Y.ends.length - 1, p = n - 1;
     period = `full years ${Y.labels[p]} → ${Y.labels[n]} (India: cash flow and balance sheet are yearly)`;
     const cg = g(Y.cash[n], Y.cash[p]);
-    add('cash', 'Cash falling fast', cg == null ? null : cg <= -25, cg == null ? 'not known' : `${pctTxt(cg)} in a year`, 'Cash and equivalents at the year end vs the year before.');
+    add('cash', 'Cash balance', cg == null ? null : cg <= -25, cg == null ? 'not known' : `${pctTxt(cg)} in a year`, 'Cash and equivalents at the year end vs the year before.');
     const inv = Y.inv[n], inv0 = Y.inv[p];
     const ig = fin(inv) && fin(inv0) && inv0 < 0 ? r1((inv / inv0 - 1) * 100) : null;
-    add('capex', 'Investment spending surging (investing cash)', ig == null ? null : ig >= 50 && (Y.fcf[n] ?? 0) < 0, ig == null ? 'not known' : `investing outflow ${pctTxt(ig)}`, 'screener.in prints no capex line, so the whole investing outflow is used (it includes acquisitions and investments).');
-    add('ocf', 'Operating cash flow deteriorating', fin(Y.cfo[n]) && fin(Y.cfo[p]) ? Y.cfo[n]! < Y.cfo[p]! * 0.95 || Y.cfo[n]! < 0 : null, fin(Y.cfo[n]) && fin(Y.cfo[p]) ? `${fmt(Y.cfo[n]!)} vs ${fmt(Y.cfo[p]!)}` : 'not known', 'Cash from operations this year vs last.');
-    add('fcf', 'Free cash flow worsening', fin(Y.fcf[n]) && fin(Y.fcf[p]) ? Y.fcf[n]! < Y.fcf[p]! && (Y.fcf[n]! < 0 || Y.fcf[n]! < Y.fcf[p]! * 0.8) : null, fin(Y.fcf[n]) && fin(Y.fcf[p]) ? `${fmt(Y.fcf[n]!)} vs ${fmt(Y.fcf[p]!)}` : 'not known', 'Operating + investing cash (approximation).');
+    add('capex', 'Investing spend', ig == null ? null : ig >= 50 && (Y.fcf[n] ?? 0) < 0, ig == null ? 'not known' : `investing outflow ${ig >= 0 ? 'up' : 'down'} ${Math.abs(ig).toFixed(0)}%`, 'screener.in prints no capex line, so the whole investing outflow is used (it includes acquisitions and investments).');
+    add('ocf', 'Operating cash flow', fin(Y.cfo[n]) && fin(Y.cfo[p]) ? Y.cfo[n]! < Y.cfo[p]! * 0.95 || Y.cfo[n]! < 0 : null, fin(Y.cfo[n]) && fin(Y.cfo[p]) ? `${fmt(Y.cfo[n]!)} vs ${fmt(Y.cfo[p]!)}` : 'not known', 'Cash from operations this year vs last.');
+    add('fcf', 'Free cash flow', fin(Y.fcf[n]) && fin(Y.fcf[p]) ? Y.fcf[n]! < Y.fcf[p]! && (Y.fcf[n]! < 0 || Y.fcf[n]! < Y.fcf[p]! * 0.8) : null, fin(Y.fcf[n]) && fin(Y.fcf[p]) ? `${fmt(Y.fcf[n]!)} vs ${fmt(Y.fcf[p]!)}` : 'not known', 'Operating + investing cash (approximation).');
     const dg = fin(Y.debt[n]) && fin(Y.debt[p]) ? (Y.debt[p]! > 0 ? r1((Y.debt[n]! / Y.debt[p]! - 1) * 100) : Y.debt[n]! > 0 ? 100 : 0) : null;
-    add('debt', 'Debt rising fast', dg == null ? null : dg >= 30 && (Y.debt[n] ?? 0) > 0, dg == null ? 'not known' : `${pctTxt(dg)} in a year`, 'Borrowings at the year end vs the year before.');
+    add('debt', 'Debt', dg == null ? null : dg >= 30 && (Y.debt[n] ?? 0) > 0, dg == null ? 'not known' : `${pctTxt(dg)} in a year`, 'Borrowings at the year end vs the year before.');
     revG = g(Y.rev[n], Y.rev[p]);
-    add('recv', 'Receivables growing much faster than revenue', null, 'not on screener.in', 'Receivables are not kept for India companies.');
+    add('recv', 'Receivables vs revenue', null, 'not on screener.in', 'Receivables are not kept for India companies.');
     capexToOcf = fin(Y.cfo[n]) && Y.cfo[n]! > 0 && fin(inv) && inv < 0 ? r1((-inv / Y.cfo[n]!) * 100) : null;
     runwayQ = fin(Y.fcf[n]) && Y.fcf[n]! < 0 && fin(Y.cash[n]) ? r1(Y.cash[n]! / (-Y.fcf[n]! / 4)) : null;
   }
@@ -261,6 +261,8 @@ export function dilution(rows: AnnualRow[]): QuarterReport['dilution'] {
   const pct = r1((last.v / first.v - 1) * 100);
   const perYear = r1((Math.pow(last.v / first.v, 1 / yrs) - 1) * 100);
   const est = rows.some((r) => r.shares == null && r.sharesEst != null);
+  // profit ÷ EPS breaks on a bonus issue / split / listing (screener.in does not restate old EPS): a jump of 60%+ is not read as dilution
+  if (est && Math.abs(pct) >= 60) return { pct: null, years: yrs, perYear: null, text: `share count estimate jumped ${pct > 0 ? '+' : ''}${pct}% ${first.l} → ${last.l} — likely a bonus issue, split or listing (profit ÷ EPS), not read as dilution` };
   return { pct, years: yrs, perYear, text: `${pct > 0 ? '+' : ''}${pct}% shares ${first.l} → ${last.l} (${perYear > 0 ? '+' : ''}${perYear}% a year)${est ? ' — estimated from profit ÷ EPS' : ''}${pct >= 10 ? ' · diluting' : pct <= -3 ? ' · buying back' : ''}` };
 }
 export function cfoPat(rows: AnnualRow[]): QuarterReport['cfoPat'] {
@@ -285,12 +287,14 @@ export function deOf(rows: AnnualRow[]): QuarterReport['de'] {
  * (today vs the start year's year-end) moved less than +10%. A research lead, never a buy reading — the market may be
  * expecting weaker economics ahead.
  */
-export function fcfPriceGap(years: Array<{ label: string; fcfPs: number | null; priceAtEnd: number | null }>, priceNow: number | null): { fcfPsG: number | null; priceG: number | null; from: string | null; flag: boolean } {
+export function fcfPriceGap(years: Array<{ label: string; fcfPs: number | null; priceAtEnd: number | null }>, priceNow: number | null): { fcfPsG: number | null; priceG: number | null; from: string | null; flag: boolean; short: string; why: string } {
   const ys = years.filter((y) => fin(y.fcfPs));
-  if (ys.length < 2) return { fcfPsG: null, priceG: null, from: null, flag: false };
+  if (ys.length < 2) return { fcfPsG: null, priceG: null, from: null, flag: false, short: 'too few years', why: 'needs at least two years with free cash flow per share' };
+  const l = ys[ys.length - 1], f = ys[Math.max(0, ys.length - 4)];
+  if (!(l.fcfPs! > 0) || !(f.fcfPs! > 0)) return { fcfPsG: null, priceG: null, from: f.label, flag: false, short: l.fcfPs! <= 0 ? 'FCF negative' : 'FCF was negative', why: `free cash flow per share ${f.label} ${f.fcfPs} → ${l.label} ${l.fcfPs}: a change from or to a negative figure is not a growth rate` };
   const last = ys[ys.length - 1], first = ys[Math.max(0, ys.length - 4)];
   const fcfPsG = first.fcfPs! > 0 && last.fcfPs! > 0 ? r1((last.fcfPs! / first.fcfPs! - 1) * 100) : null;
   const p0 = first.priceAtEnd, p1 = fin(priceNow) ? priceNow : last.priceAtEnd;
   const priceG = fin(p0) && fin(p1) && p0 > 0 ? r1((p1 / p0 - 1) * 100) : null;
-  return { fcfPsG, priceG, from: first.label, flag: fcfPsG != null && priceG != null && fcfPsG >= 30 && priceG <= 10 };
+  return { fcfPsG, priceG, from: first.label, flag: fcfPsG != null && priceG != null && fcfPsG >= 30 && priceG <= 10, short: '—', why: priceG == null ? `no share price at the ${first.label} year end (listed later)` : '' };
 }

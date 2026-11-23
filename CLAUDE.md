@@ -4369,3 +4369,13 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   (`LEADER_MIN_LISTED_DAYS`, `recentLeft`), < 1 year marked `listedMonths`; LR_VERSION 3. US `fcfPsG` now up to 3 fiscal years
   (`fcfPsY` = years used). India cycles before 2011 led by equal-weight baskets (marked *, hindsight); long histories kept 12 h;
   PERF_VERSION 3. Company Lab: more debt tags (current-only debt counted).
+- zzz1292 (23 Nov): Company Lab owner fixes. Full-width page (no centred max width; table card min-width 0 so it scrolls inside, not off
+  the right edge). Column LAYOUTS (`compare-table.tsx`): ready-made Overview / Cash quality / Growth / Technicals / Everything + the
+  owner's own saved by name, update / delete, last one used reopens; key `mc:company-lab:layouts:v1` (old `:cols:v1` read once) and the
+  list `mc:company-lab:v1` are now synced user-state keys (both key lists). Loader: pick one or more lists (India book, US book,
+  watchlist, every chart list) → one Load; selection kept (`mc:company-lab:sources:v1`). Book / exchange-tagged entries carry `s: 1`
+  → `?strict=1`: looked up only in their own market (India book names were being moved to the USA). `resolveLabTicker`: alias table
+  (IHCL → INDHOTEL …) or the ONE listed symbol one letter away, said on the card; else "did you mean …". Cards are filed under the
+  ticker asked. RS rating falls back to `rsRanks`; Stage / RS blanks say "new listing" (card `listedDays`). Dilution estimate that
+  jumps 60%+ (bonus / listing) is not called dilution; FCF/share vs price blank says why (FCF negative, too few years, low base).
+  Cash-squeeze items have neutral labels ("Cash balance", "Debt" …). Rule of 40 shown "57 − 10".

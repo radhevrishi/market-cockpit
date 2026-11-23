@@ -23,6 +23,10 @@ export interface LabCard {
   quarter?: QuarterReport;
   /** zzz1291 — data repairs and gaps said plainly */
   notes?: string[];
+  /** zzz1292 — close symbols when a ticker is not found */
+  suggest?: string[];
+  /** zzz1292 — days since listing (screener ipoD), when known */
+  listedDays?: number | null;
 }
 const memo = new Map<string, { at: number; card: LabCard }>();
 const TTL = 30 * 60_000;
@@ -33,7 +37,12 @@ export const cleanLabTicker = (t: string) => String(t || '').toUpperCase().trim(
 async function snapRow(m: LabMarket, t: string): Promise<any | null> {
   const { getSnapshot } = await import('../screener/snapshot-cache');
   const s = await getSnapshot(m);
-  return (s?.rows || []).find((r: any) => String(r?.t).toUpperCase() === t) || null;
+  const row = (s?.rows || []).find((r: any) => String(r?.t).toUpperCase() === t) || null;
+  // zzz1292 — no stored RS rating: the same 1–99 rank the screener pages use (3M / 6M / 1Y returns inside this market)
+  if (row && typeof row.rsR !== 'number') {
+    try { const { rsRanks } = await import('../screener/rs-rank'); const v = rsRanks((s?.rows || []) as any).get(t); if (typeof v === 'number') return { ...row, rsR: v }; } catch { /* none */ }
+  }
+  return row;
 }
 type Ann = { rows: AnnualRow[]; source: string; sharesNow: number | null; q?: QIn; notes?: string[] };
 async function annual(m: LabMarket, t: string, fresh = false): Promise<Ann> {
@@ -167,6 +176,7 @@ async function labCardIn(m: LabMarket, t: string, fresh = false): Promise<LabCar
   const card: LabCard = {
     market: m, ticker: t, ok: true, name: row?.n ?? null, industry: row?.ind ?? row?.sec ?? null, cap, price: typeof row?.px === 'number' ? row.px : d ? d.c[d.c.length - 1] : null,
     currency: cur, unit,
+    listedDays: typeof row?.ipoD === 'number' ? Math.floor(Date.now() / 86_400_000) - row.ipoD : null,
     stage: { st, weeks: row?.twWk ?? null, health: row?.twH ?? null, mrs: row?.mrs ?? null, rsR: row?.rsR ?? null, tt: row?.tt ?? null },
     years, rows: ann.rows, fcf, trend, breakout: bo,
     prices, ma: d ? maSeries(d.t, d.c) : [], rs, verdict: stage2Verdict(trend, rs, bo),
@@ -180,17 +190,45 @@ async function labCardIn(m: LabMarket, t: string, fresh = false): Promise<LabCar
 }
 
 /** One company. Not found under the market asked → the other market is tried (SPOT / HIMS typed with India selected). */
-export async function labCard(m: LabMarket, tickerIn: string, fresh = false): Promise<LabCard> {
-  const t = cleanLabTicker(tickerIn);
-  const k = `${m}:${t}`;
+/** zzz1292 — common short names / typos of Indian symbols as people write them (portfolio entries, chat). */
+const IN_ALIASES: Record<string, string> = { IHCL: 'INDHOTEL', SONACOMSTAR: 'SONACOMS', RBZJEWELS: 'RBZJEWEL', RBZ: 'RBZJEWEL', TATAMOTORS: 'TMPV', ZOMATO: 'ETERNAL', MINDTREE: 'LTIM' };
+const lev = (a: string, b: string): number => {
+  if (Math.abs(a.length - b.length) > 2) return 9;
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return d[a.length][b.length];
+};
+/** The listed symbol a mistyped ticker most likely means: an alias, else the ONE symbol one letter away (two or more = ask). */
+export async function resolveLabTicker(m: LabMarket, t: string): Promise<{ t: string; note: string | null; suggest: string[] }> {
+  if (m === 'IN' && IN_ALIASES[t]) return { t: IN_ALIASES[t], note: `${t} read as ${IN_ALIASES[t]}`, suggest: [] };
+  try {
+    const { getSnapshot } = await import('../screener/snapshot-cache');
+    const rows: any[] = (await getSnapshot(m))?.rows || [];
+    if (rows.some((r) => String(r?.t).toUpperCase() === t)) return { t, note: null, suggest: [] };
+    const near = rows.map((r) => String(r?.t || '').toUpperCase()).filter((x) => x && x[0] === t[0] && lev(x, t) <= 2).map((x) => ({ x, d: lev(x, t) })).sort((a, b) => a.d - b.d);
+    const one = near.filter((n) => n.d === 1);
+    if (one.length === 1) return { t: one[0].x, note: `${t} is not a listed symbol — read as ${one[0].x}`, suggest: [] };
+    return { t, note: null, suggest: near.slice(0, 4).map((n) => n.x) };
+  } catch { return { t, note: null, suggest: [] }; }
+}
+
+export async function labCard(m: LabMarket, tickerIn: string, fresh = false, strict = false): Promise<LabCard> {
+  const t0 = cleanLabTicker(tickerIn);
+  const res = t0 ? await resolveLabTicker(m, t0) : { t: t0, note: null, suggest: [] as string[] };
+  const t = res.t;
+  const k = `${m}:${t}:${strict ? 1 : 0}`;
   const hit = memo.get(k);
   if (!fresh && hit && Date.now() - hit.at < TTL) return hit.card;
   let card = await labCardIn(m, t, fresh);
-  if (!card.ok && t) {
+  // the other market only for a ticker typed by hand (strict = it came from a list that already says its market)
+  if (!card.ok && t && !strict) {
     const other: LabMarket = m === 'US' ? 'IN' : 'US';
     const alt = await labCardIn(other, t, fresh);
     if (alt.ok) card = { ...alt, movedFrom: m };
   }
+  if (res.note && card.ok) card = { ...card, notes: [res.note, ...(card.notes || [])] };
+  if (!card.ok) card = { ...card, ticker: t0, error: `${t0} not found in the ${m === 'US' ? 'US' : 'India'} data${strict ? '' : ' or the other market'}${res.suggest.length ? ` — did you mean ${res.suggest.join(', ')}?` : ' — check the symbol'}`, suggest: res.suggest };
   if (memo.size > 300) memo.clear();
   memo.set(k, { at: Date.now(), card });
   return card;

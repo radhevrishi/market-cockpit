@@ -54,3 +54,17 @@ test('cash up, price flat lead', () => {
   assert.equal(fcfPriceGap(ys, 53).flag, true);
   assert.equal(fcfPriceGap(ys, 80).flag, false);
 });
+test('zzz1292: dilution estimate that jumps 60%+ (bonus / listing) is not read as dilution; gap says why it is blank', async () => {
+  const { dilution: dil, fcfPriceGap: gap } = await import('../company-lab/quarterly');
+  const rows = [row(2023, { shares: null, sharesEst: 1 }), row(2024, { shares: null, sharesEst: 1.1 }), row(2025, { shares: null, sharesEst: 20 })];
+  assert.equal(dil(rows).pct, null); assert.match(dil(rows).text, /bonus issue/);
+  assert.equal(gap([{ label: 'FY24', fcfPs: -1, priceAtEnd: 10 }, { label: 'FY25', fcfPs: 2, priceAtEnd: 10 }], 12).short, 'FCF was negative');
+});
+test('zzz1292: wired — layouts, strict book loads, synced keys', () => {
+  const fs = require('node:fs'); const path = require('node:path');
+  const read = (p: string) => fs.readFileSync(path.join(__dirname, '..', '..', p), 'utf8');
+  assert.match(read('app/(dashboard)/company-lab/compare-table.tsx'), /mc:company-lab:layouts:v1/);
+  assert.match(read('app/(dashboard)/company-lab/page.tsx'), /strict=1/);
+  assert.match(read('lib/user-vault-keys.ts'), /mc:company-lab:layouts:v1/);
+  assert.match(read('lib/user-state-store.ts'), /mc:company-lab:layouts:v1/);
+});
