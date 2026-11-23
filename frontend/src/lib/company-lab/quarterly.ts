@@ -25,8 +25,8 @@ export interface SqueezeItem { id: string; label: string; state: Flag; value: st
 export interface QuarterReport {
   basis: 'quarterly' | 'yearly';
   points: QPoint[];                         // last 8 quarters, oldest first
-  r40: { value: number | null; revYoY: number | null; fcfMargin: number | null; fcfFrom: string; quarter: string | null };
-  accel: { state: 'accelerating' | 'decelerating' | 'steady' | 'unknown'; text: string; last: Array<number | null> };
+  r40: { value: number | null; revYoY: number | null; fcfMargin: number | null; fcfFrom: string; quarter: string | null; revFrom?: 'quarter' | 'year'; lowBase?: boolean };
+  accel: { state: 'accelerating' | 'decelerating' | 'steady' | 'uneven' | 'unknown'; text: string; last: Array<number | null> };
   gm: { now: number | null; yearAgo: number | null; trend: 'up' | 'down' | 'flat' | 'unknown'; label: string };
   om: { now: number | null; yearAgo: number | null; trend: 'up' | 'down' | 'flat' | 'unknown'; label: string };
   squeeze: { items: SqueezeItem[]; warns: number; known: number; level: 'Low' | 'Watch' | 'High' | 'Unknown'; keyCombo: boolean;
@@ -168,9 +168,7 @@ export function quarterReport(q: QIn, rows: AnnualRow[]): QuarterReport {
   let accel: QuarterReport['accel'];
   if (known.length < 2) accel = { state: 'unknown', text: 'needs two quarters with a year-earlier quarter', last: yoy.slice(-4) };
   else {
-    const a = known[known.length - 1], b = known[known.length - 2], c = known.length >= 3 ? known[known.length - 3] : null;
-    const state = a - b >= 2 && (c == null || b >= c - 2) ? 'accelerating' : b - a >= 2 && (c == null || c >= b - 2) ? 'decelerating' : 'steady';
-    accel = { state, text: `${known.slice(-4).map((v) => pctTxt(v)).join(' → ')} (quarter vs same quarter a year earlier)`, last: yoy.slice(-4) };
+    accel = { ...accelOf(known.slice(-4)), last: yoy.slice(-4) };
   }
   // FCF margin: last four quarters, else the latest full year
   let fcfMargin: number | null = null, fcfFrom = 'not known';
@@ -182,7 +180,17 @@ export function quarterReport(q: QIn, rows: AnnualRow[]): QuarterReport {
     const L = [...rows].reverse().find((r) => fin(r.fcf) && fin(r.revenue) && r.revenue! > 0);
     if (L) { fcfMargin = r1((L.fcf! / L.revenue!) * 100); fcfFrom = `full year ${L.label}${L.fcfApprox ? ' (≈ operating cash)' : ''}${q.basis === 'yearly' ? ' — operating + investing cash' : ''}`; }
   }
-  const r40 = { value: lastYoY != null && fcfMargin != null ? r1(lastYoY + fcfMargin) : null, revYoY: lastYoY, fcfMargin, fcfFrom, quarter: [...points].reverse().find((p) => p.revYoY != null)?.label ?? null };
+  // zzz1293 — no quarters (a foreign filer that files only yearly, or quarters not tagged): the latest full year's revenue growth
+  let revYoY = lastYoY, revFrom: 'quarter' | 'year' = 'quarter', quarter = [...points].reverse().find((p) => p.revYoY != null)?.label ?? null;
+  if (revYoY == null) {
+    const ok = rows.filter((r) => fin(r.revenue) && r.revenue! > 0);
+    const L = ok[ok.length - 1], P = ok[ok.length - 2];
+    if (L && P) { revYoY = g(L.revenue, P.revenue); revFrom = 'year'; quarter = `full year ${L.label}`; }
+  }
+  // a quarter growing 100%+ off a year-earlier quarter that had itself fallen 20%+ (or a tiny base) is flagged, not trusted at face value
+  const prevYoY = known.length >= 2 ? known[known.length - 2] : null;
+  const lowBase = revYoY != null && (revYoY >= 100 || (revYoY >= 50 && prevYoY != null && prevYoY <= -20));
+  const r40 = { value: revYoY != null && fcfMargin != null ? r1(revYoY + fcfMargin) : null, revYoY, fcfMargin, fcfFrom, quarter, revFrom, lowBase };
   // margins: now vs the same quarter a year earlier
   const marg = (k: 'gm' | 'om') => {
     const p = [...points].reverse().find((x) => fin(x[k]));
@@ -211,14 +219,14 @@ export function squeeze(q: QIn): QuarterReport['squeeze'] {
     period = lastE ? `last 4 quarters to ${lastE} vs the 4 before` : 'quarterly filings';
     const cashNow = lastE ? instAt(q.cash, lastE) : null, cashYa = lastE ? instAt(q.cash, new Date(dt(lastE) - 365 * DAY).toISOString().slice(0, 10), 25) : null;
     const cg = g(cashNow, cashYa);
-    add('cash', 'Cash balance', cg == null ? null : cg <= -25, cg == null ? 'not known' : `${pctTxt(cg)} in a year`, 'Cash and equivalents now vs a year earlier; a fall of a quarter or more is a warning.');
+    add('cash', 'Cash balance', cg == null ? null : cg <= -25, cg == null ? 'not known' : bigMove(cg, cashYa!, cashNow!, fmtUs), 'Cash and equivalents now vs a year earlier; a fall of a quarter or more is a warning.');
     const xg = x && x0 && x0.v > 0 ? r1((x.v / x0.v - 1) * 100) : null, cgx = c && c0 && c0.v > 0 ? r1((c.v / c0.v - 1) * 100) : null;
     add('capex', 'Capex', xg == null ? null : xg >= 50 && (cgx == null || cgx < xg / 2 || (f ?? 0) < 0), xg == null ? 'not known' : `capex ${pctTxt(xg)}${cgx != null ? `, operating cash ${pctTxt(cgx)}` : ''}`, 'Capital spending up 50%+ while operating cash grows far less (or free cash flow is negative).');
-    add('ocf', 'Operating cash flow', c && c0 ? c.v < c0.v * 0.95 || c.v < 0 : null, c && c0 ? `${fmt(c.v)} vs ${fmt(c0.v)} a year before` : 'not known', 'Cash from operations over the last four quarters vs the four before.');
-    add('fcf', 'Free cash flow', f != null && f0 != null ? f < f0 && (f < 0 || f < f0 * 0.8) : null, f != null && f0 != null ? `${fmt(f)} vs ${fmt(f0)} a year before` : 'not known', 'Operating cash − capex over four quarters; a deeper burn or a fall of 20%+ is a warning.');
+    add('ocf', 'Operating cash flow', c && c0 ? c.v < c0.v * 0.95 || c.v < 0 : null, c && c0 ? `${fmtUs(c.v)} vs ${fmtUs(c0.v)} a year before` : 'not known', 'Cash from operations over the last four quarters vs the four before.');
+    add('fcf', 'Free cash flow', f != null && f0 != null ? f < f0 && (f < 0 || f < f0 * 0.8) : null, f != null && f0 != null ? `${fmtUs(f)} vs ${fmtUs(f0)} a year before` : 'not known', 'Operating cash − capex over four quarters; a deeper burn or a fall of 20%+ is a warning.');
     const dNow = lastE ? instAt(q.debt, lastE) : null, dYa = lastE ? instAt(q.debt, new Date(dt(lastE) - 365 * DAY).toISOString().slice(0, 10), 25) : null;
     const dg = dYa != null && dNow != null ? (dYa > 0 ? r1((dNow / dYa - 1) * 100) : dNow > 0 ? 100 : 0) : null;
-    add('debt', 'Debt', dg == null ? null : dg >= 30 && (dNow ?? 0) > 0, dg == null ? 'not known' : `${pctTxt(dg)} in a year`, 'Total debt now vs a year earlier; 30%+ more borrowing is a warning (more so alongside cash burn).');
+    add('debt', 'Debt', dg == null ? null : dg >= 30 && (dNow ?? 0) > 0, dg == null ? 'not known' : bigMove(dg, dYa!, dNow!, fmtUs), 'Total debt now vs a year earlier; 30%+ more borrowing is a warning (more so alongside cash burn).');
     // receivables vs revenue, latest quarter vs the same quarter a year earlier
     const rq = q.rev[q.rev.length - 1], rq0 = rq ? yearBefore(q.rev, rq.e) : null;
     revG = rq && rq0 ? g(rq.v, rq0.v) : null;
@@ -231,14 +239,16 @@ export function squeeze(q: QIn): QuarterReport['squeeze'] {
     const Y = q.yearly, n = Y.ends.length - 1, p = n - 1;
     period = `full years ${Y.labels[p]} → ${Y.labels[n]} (India: cash flow and balance sheet are yearly)`;
     const cg = g(Y.cash[n], Y.cash[p]);
-    add('cash', 'Cash balance', cg == null ? null : cg <= -25, cg == null ? 'not known' : `${pctTxt(cg)} in a year`, 'Cash and equivalents at the year end vs the year before.');
+    add('cash', 'Cash balance', cg == null ? null : cg <= -25, cg == null ? 'not known' : bigMove(cg, Y.cash[p]!, Y.cash[n]!, fmtIn), 'Cash and equivalents at the year end vs the year before (screener.in cash only — investments are not counted).');
     const inv = Y.inv[n], inv0 = Y.inv[p];
     const ig = fin(inv) && fin(inv0) && inv0 < 0 ? r1((inv / inv0 - 1) * 100) : null;
-    add('capex', 'Investing spend', ig == null ? null : ig >= 50 && (Y.fcf[n] ?? 0) < 0, ig == null ? 'not known' : `investing outflow ${ig >= 0 ? 'up' : 'down'} ${Math.abs(ig).toFixed(0)}%`, 'screener.in prints no capex line, so the whole investing outflow is used (it includes acquisitions and investments).');
-    add('ocf', 'Operating cash flow', fin(Y.cfo[n]) && fin(Y.cfo[p]) ? Y.cfo[n]! < Y.cfo[p]! * 0.95 || Y.cfo[n]! < 0 : null, fin(Y.cfo[n]) && fin(Y.cfo[p]) ? `${fmt(Y.cfo[n]!)} vs ${fmt(Y.cfo[p]!)}` : 'not known', 'Cash from operations this year vs last.');
-    add('fcf', 'Free cash flow', fin(Y.fcf[n]) && fin(Y.fcf[p]) ? Y.fcf[n]! < Y.fcf[p]! && (Y.fcf[n]! < 0 || Y.fcf[n]! < Y.fcf[p]! * 0.8) : null, fin(Y.fcf[n]) && fin(Y.fcf[p]) ? `${fmt(Y.fcf[n]!)} vs ${fmt(Y.fcf[p]!)}` : 'not known', 'Operating + investing cash (approximation).');
+    const invTxt = ig == null ? 'not known' : fin(inv) && inv > 0 ? `turned into a net inflow (${fmtIn(inv0!)} → +${fmtIn(inv)})` : Math.abs(ig) >= 300 ? `investing outflow ${fmtIn(-inv0!)} → ${fmtIn(-inv!)}` : `investing outflow ${ig >= 0 ? 'up' : 'down'} ${Math.abs(ig).toFixed(0)}%`;
+    add('capex', 'Investing spend', ig == null ? null : ig >= 50 && (Y.fcf[n] ?? 0) < 0, invTxt, 'screener.in prints no capex line, so the whole investing outflow is used (it includes acquisitions and investments).');
+    add('ocf', 'Operating cash flow', fin(Y.cfo[n]) && fin(Y.cfo[p]) ? Y.cfo[n]! < Y.cfo[p]! * 0.95 || Y.cfo[n]! < 0 : null, fin(Y.cfo[n]) && fin(Y.cfo[p]) ? `${fmtIn(Y.cfo[n]!)} vs ${fmtIn(Y.cfo[p]!)}` : 'not known', 'Cash from operations this year vs last.');
+    add('fcf', 'Free cash flow', fin(Y.fcf[n]) && fin(Y.fcf[p]) ? Y.fcf[n]! < Y.fcf[p]! && (Y.fcf[n]! < 0 || Y.fcf[n]! < Y.fcf[p]! * 0.8) : null, fin(Y.fcf[n]) && fin(Y.fcf[p]) ? `${fmtIn(Y.fcf[n]!)} vs ${fmtIn(Y.fcf[p]!)}` : 'not known', 'Operating + investing cash (approximation).');
     const dg = fin(Y.debt[n]) && fin(Y.debt[p]) ? (Y.debt[p]! > 0 ? r1((Y.debt[n]! / Y.debt[p]! - 1) * 100) : Y.debt[n]! > 0 ? 100 : 0) : null;
-    add('debt', 'Debt', dg == null ? null : dg >= 30 && (Y.debt[n] ?? 0) > 0, dg == null ? 'not known' : `${pctTxt(dg)} in a year`, 'Borrowings at the year end vs the year before.');
+    // a jump from almost no debt (₹4 Cr → ₹141 Cr) is said in money; 30%+ more borrowing is a warning only when the new debt is not tiny
+    add('debt', 'Debt', dg == null ? null : dg >= 30 && (Y.debt[n] ?? 0) > 0 && !(fin(Y.rev[n]) && Y.debt[n]! < Y.rev[n]! * 0.02), dg == null ? 'not known' : bigMove(dg, Y.debt[p]!, Y.debt[n]!, fmtIn), 'Borrowings at the year end vs the year before (debt under 2% of a year’s sales is not counted as a warning).');
     revG = g(Y.rev[n], Y.rev[p]);
     add('recv', 'Receivables vs revenue', null, 'not on screener.in', 'Receivables are not kept for India companies.');
     capexToOcf = fin(Y.cfo[n]) && Y.cfo[n]! > 0 && fin(inv) && inv < 0 ? r1((-inv / Y.cfo[n]!) * 100) : null;
@@ -246,11 +256,36 @@ export function squeeze(q: QIn): QuarterReport['squeeze'] {
   }
   const warns = items.filter((i) => i.state === 'warn').length, knownN = items.filter((i) => i.state !== 'unknown').length;
   const keyCombo = ['capex', 'fcf', 'cash'].every((id) => items.find((i) => i.id === id)?.state === 'warn');
-  const level = knownN < 3 ? 'Unknown' : warns >= 3 || keyCombo ? 'High' : warns === 2 ? 'Watch' : 'Low';
+  // zzz1293 — "High" needs at least four of the six checks known (3 warnings out of 3 known is a Watch, not a verdict)
+  const level = knownN < 3 ? 'Unknown' : keyCombo || (warns >= 3 && knownN >= 4) ? 'High' : warns >= 2 ? 'Watch' : 'Low';
   return { items, warns, known: knownN, level, keyCombo, ratios: { capexToOcf, runwayQ, recvG, revG }, period };
 }
 
-function fmt(v: number): string { const a = Math.abs(v), s = v < 0 ? '−' : ''; return a >= 1000 ? `${s}${(a / 1000).toFixed(1)}k` : `${s}${a.toFixed(a >= 100 ? 0 : 1)}`; }
+/** India figures are ₹ crore. */
+export function fmtIn(v: number): string { const a = Math.abs(v), s = v < 0 ? '−' : ''; return `${s}₹${a >= 100 ? Math.round(a).toLocaleString('en-IN') : a.toFixed(a >= 10 ? 0 : 1)} Cr`; }
+/** US figures are dollars. */
+export function fmtUs(v: number): string { const a = Math.abs(v), s = v < 0 ? '−' : ''; return a >= 1e9 ? `${s}$${(a / 1e9).toFixed(2)}B` : a >= 1e6 ? `${s}$${(a / 1e6).toFixed(a >= 1e8 ? 0 : 1)}M` : `${s}$${Math.round(a / 1e3)}K`; }
+/** A change of 300%+ (or from almost nothing) is said in money, not as a percentage. */
+function bigMove(pc: number, before: number, now: number, f: (v: number) => string): string { return Math.abs(pc) >= 300 ? `${f(before)} → ${f(now)} in a year` : `${pctTxt(pc)} in a year`; }
+
+/**
+ * zzz1293 — the growth trend over the last four quarters' year-on-year growth (oldest → newest).
+ * uneven: two or more direction changes across a 50-point spread, or a jump of 50%+ right after a quarter that fell 20%+
+ * (the year-earlier base was weak). Otherwise the latest quarter vs the average of the two before it: 5+ points higher
+ * (and not 5+ below the quarter just before) = speeding up; 5+ lower = slowing.
+ */
+export function accelOf(v: number[]): { state: 'accelerating' | 'decelerating' | 'steady' | 'uneven' | 'unknown'; text: string } {
+  const text = `${v.map((x) => pctTxt(x)).join(' → ')} (quarter vs same quarter a year earlier)`;
+  if (v.length < 2) return { state: 'unknown', text: 'needs two quarters with a year-earlier quarter' };
+  const a = v[v.length - 1], b = v[v.length - 2];
+  const spread = Math.max(...v) - Math.min(...v);
+  let turns = 0; for (let i = 2; i < v.length; i++) if (Math.sign(v[i] - v[i - 1]) * Math.sign(v[i - 1] - v[i - 2]) < 0) turns++;
+  if ((turns >= 2 && spread >= 50) || (b <= -20 && a >= 50)) return { state: 'uneven', text: `${text} — uneven, read with care` };
+  const base = v.length >= 3 ? (v[v.length - 2] + v[v.length - 3]) / 2 : b;
+  if (a - base >= 5 && a >= b - 5) return { state: 'accelerating', text };
+  if (base - a >= 5 && a <= b + 5) return { state: 'decelerating', text };
+  return { state: 'steady', text };
+}
 
 /** Share count change over (up to) three years: diluted shares (USA) or profit ÷ EPS (India, an estimate). */
 export function dilution(rows: AnnualRow[]): QuarterReport['dilution'] {

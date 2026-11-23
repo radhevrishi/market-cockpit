@@ -8,12 +8,12 @@
 //     earnings, guidance, conviction and decision pages, and add-to-watchlist.
 // The owner's old Python scripts (FCF checklist, growth vs price, Stage2.py), done from the portal's own data (lib/company-lab).
 // ═══════════════════════════════════════════════════════════════════════════
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import NavLink from '@/components/NavLink';
 import { R, tint } from '@/components/special-situations/radar-tokens';
 import { WatchlistButton } from '@/app/(dashboard)/news/components';
 import type { LabCard } from '@/lib/company-lab/server';
-import { Compare, QuarterPanel, BookLoader } from './compare-table';
+import { Compare, QuarterPanel, BookLoader, ScoreBadge, scoreOf } from './compare-table';
 
 type Mkt = 'IN' | 'US';
 const LIST_KEY = 'mc:company-lab:v1';
@@ -185,6 +185,23 @@ function takeCapexDebt(y: LabCard['years'], india: boolean): string {
   return parts.length ? `${lead}${last!.label}: ${parts.join('; ')}.${india ? ' India: no capex line on screener.in, so only debt is shown.' : ''}` : 'Shown only in years when free cash flow was positive.';
 }
 
+/** zzz1293 — the overall score with its four parts */
+function ScoreStrip({ c }: { c: LabCard }) {
+  const s = scoreOf(c);
+  return (
+    <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', border: `1px solid ${R.border}`, borderRadius: 8, padding: '6px 10px' }}>
+      <span style={{ fontSize: 12, fontWeight: 900, color: R.faint, letterSpacing: '0.5px' }}>OVERALL SCORE</span>
+      <ScoreBadge c={c} big />
+      {s.pillars.map((p) => (
+        <span key={p.id} title={p.why.join('\n') || 'no figures'} style={{ fontSize: 12.5, color: R.dim, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          {p.label} <span style={{ display: 'inline-block', width: 54, height: 6, borderRadius: 3, background: tint(R.faint, 25), position: 'relative' }}><span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${p.score ?? 0}%`, borderRadius: 3, background: p.score == null ? 'transparent' : p.score >= 65 ? R.green : p.score >= 45 ? R.amber : R.red }} /></span>
+          <b style={{ color: R.text }}>{p.score ?? '—'}</b><span style={{ color: R.faint, fontSize: 11 }}>×{p.weight}</span>
+        </span>
+      ))}
+      {s.caps.length ? <span style={{ fontSize: 12, color: R.amber }}>{s.caps.join(' · ')}</span> : null}
+    </div>
+  );
+}
 function Card({ c, onRemove }: { c: LabCard; onRemove: () => void }) {
   const [open, setOpen] = useState<'cash' | 'fcf' | 'growth' | 'stage' | 'years'>('cash');
   if (!c.ok) {
@@ -230,6 +247,7 @@ function Card({ c, onRemove }: { c: LabCard; onRemove: () => void }) {
         {c.record?.tier && chip(`Last result ${c.record.tier}${c.record.resultDate ? ` · ${c.record.resultDate}` : ''}`, /BLOCKBUSTER|STRONG/.test(c.record.tier) ? R.green : /AVOID/.test(c.record.tier) ? R.red : R.amber, 'Latest graded result on the bench')}
         {c.record && c.record.guidance > 0 && chip(`Guidance on file ${c.record.guidance}`, R.cyan, 'Active company guidance in the guidance universe')}
       </div>
+      <ScoreStrip c={c} />
       <div style={{ fontSize: 14.5, lineHeight: 1.5 }}>{c.summary}</div>
       {!!c.notes?.length && <div style={{ fontSize: 12.5, color: R.amber, lineHeight: 1.45 }}>{c.notes.map((n) => <div key={n}>ⓘ {n}</div>)}</div>}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 13 }}>
@@ -428,9 +446,12 @@ export default function CompanyLabPage() {
   useEffect(() => { try { localStorage.setItem(LIST_KEY, JSON.stringify(list)); } catch { /* not kept */ } }, [list]);
 
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  // zzz1293 — a newer load (another list picked, Refresh) stops the one running: its leftover batches are not read
+  const gen = useRef(0);
   const load = useCallback(async (entries: Array<{ m: Mkt; t: string; s?: 1 }>, fresh = false) => {
     const need = fresh ? entries : entries.filter((e) => !cards[key(e)]);
-    if (!need.length) return;
+    const my = ++gen.current;
+    if (!need.length) { setBusy(false); setProgress(null); return; }
     setBusy(true); setErr(null);
     let done = 0; setProgress({ done: 0, total: need.length });
     try {
@@ -438,9 +459,11 @@ export default function CompanyLabPage() {
       for (const m of ['IN', 'US'] as Mkt[]) for (const strict of [true, false]) {
         const ts = need.filter((e) => e.m === m && !!e.s === strict).map((e) => e.t);
         for (let i = 0; i < ts.length; i += 8) {
+          if (my !== gen.current) return;
           const part = ts.slice(i, i + 8);
           const r = await fetch(`/api/v1/company-lab?market=${m}&tickers=${encodeURIComponent(part.join(','))}${fresh ? '&fresh=1' : ''}${strict ? '&strict=1' : ''}`, fresh ? { cache: 'no-store' } : undefined).catch(() => null);
           const j: any = r ? await r.json().catch(() => null) : null;
+          if (my !== gen.current) return;
           done += part.length; setProgress({ done, total: need.length });
           if (!j?.ok) { setErr(j?.error || `Could not load (HTTP ${r?.status ?? '—'})`); continue; }
           const got = j.cards as LabCard[];
@@ -450,7 +473,7 @@ export default function CompanyLabPage() {
           if (renamed.length) setList((l) => { const out: Array<{ m: Mkt; t: string; s?: 1 }> = []; for (const e of l) { const mv = renamed.find((x) => x.asked === e.t && e.m === m); const ne = mv ? { ...e, m: mv.c.market as Mkt, t: mv.c.ticker } : e; if (!out.some((x) => key(x) === key(ne))) out.push(ne); } return out; });
         }
       }
-    } finally { setBusy(false); setProgress(null); }
+    } finally { if (my === gen.current) { setBusy(false); setProgress(null); } }
   }, [cards]);
   useEffect(() => { if (list.length) void load(list); }, [list]);   // eslint-disable-line react-hooks/exhaustive-deps
 

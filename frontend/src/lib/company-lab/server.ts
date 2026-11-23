@@ -37,14 +37,18 @@ export const cleanLabTicker = (t: string) => String(t || '').toUpperCase().trim(
 async function snapRow(m: LabMarket, t: string): Promise<any | null> {
   const { getSnapshot } = await import('../screener/snapshot-cache');
   const s = await getSnapshot(m);
-  const row = (s?.rows || []).find((r: any) => String(r?.t).toUpperCase() === t) || null;
+  // zzz1293 — class shares are written MOG-A, MOG.A or MOG/A depending on the source
+  const forms = Array.from(new Set([t, t.replace(/[-./]/g, '.'), t.replace(/[-./]/g, '-'), t.replace(/[-./]/g, '/'), t.replace(/[-./]/g, '')]));
+  const rows0 = s?.rows || [];
+  let row: any = null;
+  for (const f of forms) { row = rows0.find((r: any) => String(r?.t).toUpperCase() === f) || null; if (row) break; }
   // zzz1292 — no stored RS rating: the same 1–99 rank the screener pages use (3M / 6M / 1Y returns inside this market)
   if (row && typeof row.rsR !== 'number') {
     try { const { rsRanks } = await import('../screener/rs-rank'); const v = rsRanks((s?.rows || []) as any).get(t); if (typeof v === 'number') return { ...row, rsR: v }; } catch { /* none */ }
   }
   return row;
 }
-type Ann = { rows: AnnualRow[]; source: string; sharesNow: number | null; q?: QIn; notes?: string[] };
+type Ann = { rows: AnnualRow[]; source: string; sharesNow: number | null; q?: QIn; notes?: string[]; name?: string | null };
 async function annual(m: LabMarket, t: string, fresh = false): Promise<Ann> {
   if (m === 'US') {
     const { tickerToCik, companyFacts, sharesOutstandingFromFacts, forgetCompanyFacts } = await import('../us-edgar');
@@ -73,15 +77,24 @@ async function annual(m: LabMarket, t: string, fresh = false): Promise<Ann> {
     if (brk.rows.some((r) => r.fcfApprox)) notes.push(`free cash flow ≈ operating cash in ${brk.rows.filter((r) => r.fcfApprox).map((r) => r.label).join(', ')}: the company stopped reporting a capex line and its capex had been under 1% of sales`);
     let q: QIn | undefined;
     try { q = toUsd === 1 ? usQuarterInputs(facts) : undefined; } catch { q = undefined; }
-    return { rows: brk.rows, source: `SEC company facts (10-K / 20-F full years${basis.tax === 'ifrs-full' ? ', IFRS' : ''}${note})`, sharesNow: sh != null ? sh / 1e6 : null, q, notes };
+    // zzz1293 — figures that stop years ago (a company that moved its listing or files elsewhere now) are said, not shown as current
+    const lastEnd = brk.rows[brk.rows.length - 1]?.end;
+    if (lastEnd && Date.now() - Date.parse(lastEnd) > 2 * 365 * 86_400_000) notes.push(`the newest yearly figures in the SEC data are for ${brk.rows[brk.rows.length - 1].label} — the company may no longer file full figures with the SEC, so these are old`);
+    if (q && !q.rev.length) notes.push('no quarterly figures in the SEC data (a foreign company that files only yearly) — Rule of 40 uses the latest full year; margins and the cash-squeeze check need quarters');
+    return { rows: brk.rows, source: `SEC company facts (10-K / 20-F full years${basis.tax === 'ifrs-full' ? ', IFRS' : ''}${note})`, sharesNow: sh != null ? sh / 1e6 : null, q, notes, name: facts?.entityName ?? null };
   }
   const { dbQuery } = await import('../db');
   const r = await dbQuery<{ payload: any }>(`SELECT payload FROM screener_store WHERE market = 'IN' AND ticker = $1 AND kind = 'fund'`, [t]).catch(() => []);
   let raw = fresh ? null : r[0]?.payload?.raw ?? null;
+  let freshNote = '';
   if (fresh) {   // zzz1291 — Refresh: read the company page now so a result filed this week is in
     const { readCompany } = await import('../screener/in-build');
     const got = await withTimeout(readCompany(t), 25_000, { err: 'timeout' } as any);
-    raw = got?.raw ?? r[0]?.payload?.raw ?? null;
+    const kept = r[0]?.payload?.raw ?? null;
+    // zzz1293 — a page that came back thin (screener.in slow or refusing) never replaces the kept copy
+    const yrs = (x: any) => (x?.T?.a?.headers?.length ?? 0);
+    raw = got?.raw && yrs(got.raw) >= Math.max(1, yrs(kept) - 1) ? got.raw : kept;
+    if (raw === kept && kept) freshNote = 'screener.in did not answer in full just now — the kept copy of its page is used';
   }
   if (!raw) {
     // not in the stock-screener universe yet: read the company page once (kept like the build does)
@@ -92,7 +105,7 @@ async function annual(m: LabMarket, t: string, fresh = false): Promise<Ann> {
   if (!raw) return { rows: [], source: 'screener.in page not available', sharesNow: null };
   const sharesNow = raw.price && raw.mcapCr ? raw.mcapCr / raw.price : null;   // crore shares
   let q: QIn | undefined; try { q = inQuarterInputs(raw); } catch { q = undefined; }
-  return { rows: inAnnualRows(raw), source: 'screener.in company page (yearly profit & loss, cash flow, balance sheet)', sharesNow, q, notes: [] };
+  return { rows: inAnnualRows(raw), source: 'screener.in company page (yearly profit & loss, cash flow, balance sheet)', sharesNow, q, notes: freshNote ? [freshNote] : [], name: raw?.name ?? null };
 }
 interface Daily { t: string[]; c: number[]; h: number[]; l: number[]; v: number[] }
 const isoOf = (x: number) => new Date(x < 1e11 ? x * 1000 : x).toISOString().slice(0, 10);
@@ -174,7 +187,7 @@ async function labCardIn(m: LabMarket, t: string, fresh = false): Promise<LabCar
   const prices: Array<{ t: string; c: number }> = [];
   if (d) d.c.forEach((c, i) => { if ((d.c.length - 1 - i) % 5 === 0) prices.push({ t: d.t[i], c }); });
   const card: LabCard = {
-    market: m, ticker: t, ok: true, name: row?.n ?? null, industry: row?.ind ?? row?.sec ?? null, cap, price: typeof row?.px === 'number' ? row.px : d ? d.c[d.c.length - 1] : null,
+    market: m, ticker: t, ok: true, name: row?.n ?? ann.name ?? null, industry: row?.ind ?? row?.sec ?? null, cap, price: typeof row?.px === 'number' ? row.px : d ? d.c[d.c.length - 1] : null,
     currency: cur, unit,
     listedDays: typeof row?.ipoD === 'number' ? Math.floor(Date.now() / 86_400_000) - row.ipoD : null,
     stage: { st, weeks: row?.twWk ?? null, health: row?.twH ?? null, mrs: row?.mrs ?? null, rsR: row?.rsR ?? null, tt: row?.tt ?? null },
@@ -230,7 +243,9 @@ export async function labCard(m: LabMarket, tickerIn: string, fresh = false, str
     if (alt.ok) card = { ...alt, movedFrom: m, notes: [`filed under ${m === 'US' ? 'the USA' : 'India'} in your list, found in ${other === 'US' ? 'the USA' : 'India'}`, ...(alt.notes || [])] };
   }
   if (res.note && card.ok) card = { ...card, notes: [res.note, ...(card.notes || [])] };
-  if (!card.ok) card = { ...card, ticker: t0, error: `${t0} not found in the ${m === 'US' ? 'US' : 'India'} data${strict ? '' : ' or the other market'}${res.suggest.length ? ` — did you mean ${res.suggest.join(', ')}?` : ' — check the symbol'}`, suggest: res.suggest };
+  // zzz1293 — 0ZQ / 3N8 / K3R: short codes with a digit are European exchange codes (Frankfurt / XETRA), not US tickers
+  const euro = m === 'US' && /^[A-Z0-9]{2,4}$/.test(t0) && /\d/.test(t0);
+  if (!card.ok) card = { ...card, ticker: t0, error: euro ? `${t0} looks like a European exchange code (Frankfurt / XETRA), not a US ticker — add the company under its US symbol (or its home-market symbol) instead` : `${t0} not found in the ${m === 'US' ? 'US' : 'India'} data${strict ? '' : ' or the other market'}${res.suggest.length ? ` — did you mean ${res.suggest.join(', ')}?` : ' — check the symbol'}`, suggest: euro ? [] : res.suggest };
   if (memo.size > 300) memo.clear();
   memo.set(k, { at: Date.now(), card });
   return card;

@@ -6,12 +6,46 @@ import { useEffect, useMemo, useState } from 'react';
 import { R, tint } from '@/components/special-situations/radar-tokens';
 import type { LabCard } from '@/lib/company-lab/server';
 import { fcfPriceGap, type QuarterReport } from '@/lib/company-lab/quarterly';
+import { labScore, type LabScore } from '@/lib/company-lab/score';
 
 const COLS_KEY = 'mc:company-lab:cols:v1';
 const pct = (v: number | null | undefined) => (v == null ? '—' : `${v > 0 ? '+' : ''}${v.toFixed(1)}%`);
 const capText = (c: LabCard) => (c.cap == null ? 'size n/a' : c.market === 'IN' ? `₹${Math.round(c.cap).toLocaleString('en-IN')} Cr` : c.cap >= 1000 ? `$${(c.cap / 1000).toFixed(1)}B` : `$${Math.round(c.cap)}M`);
 const LEVEL_C: Record<string, string> = { Low: R.green, Watch: R.amber, High: R.red, Unknown: R.faint };
-const ACC: Record<string, { t: string; c: string }> = { accelerating: { t: '▲ speeding up', c: R.green }, decelerating: { t: '▼ slowing', c: R.red }, steady: { t: '● steady', c: R.dim }, unknown: { t: '—', c: R.faint } };
+const ACC: Record<string, { t: string; c: string }> = { accelerating: { t: '▲ speeding up', c: R.green }, decelerating: { t: '▼ slowing', c: R.red }, steady: { t: '● steady', c: R.dim }, uneven: { t: '≈ uneven', c: R.amber }, unknown: { t: '—', c: R.faint } };
+const GRADE_C: Record<string, string> = { A: R.green, B: R.cyan, C: R.amber, D: R.red, '—': R.faint };
+/** zzz1293 — EPS growth said plainly when it crosses zero or comes off a tiny base */
+export function epsGrowthOf(c: LabCard): { v: number | null; text: string; swing: 'loss-to-profit' | 'profit-to-loss' | null } {
+  const ys = c.years.filter((y) => y.eps != null);
+  const L = ys[ys.length - 1], P = ys[ys.length - 2];
+  if (!L || !P) return { v: null, text: '—', swing: null };
+  if (P.eps! > 0 && L.eps! <= 0) return { v: null, text: 'profit → loss', swing: 'profit-to-loss' };
+  if (P.eps! <= 0 && L.eps! > 0) return { v: null, text: 'loss → profit', swing: 'loss-to-profit' };
+  if (P.eps! <= 0 && L.eps! <= 0) return { v: null, text: L.eps! > P.eps! ? 'loss narrowed' : 'loss widened', swing: null };
+  const v = L.epsG;
+  if (v != null && v > 300) return { v, text: 'low base', swing: null };
+  return { v, text: v == null ? '—' : pct(v), swing: null };
+}
+const scoreMemo = new WeakMap<LabCard, LabScore>();
+/** zzz1293 — the one overall score (lib/company-lab/score.ts) from what the card already holds */
+export function scoreOf(c: LabCard): LabScore {
+  const hit = scoreMemo.get(c); if (hit) return hit;
+  const q = c.quarter, y = c.years[c.years.length - 1], e = epsGrowthOf(c);
+  const s = labScore({
+    revQ: q?.r40.revFrom === 'quarter' ? q.r40.revYoY : null, revQLowBase: !!q?.r40.lowBase, accel: q?.accel.state === 'unknown' ? null : q?.accel.state ?? null,
+    epsG: e.text === 'low base' ? 100 : e.v, epsSwing: e.swing, revY: y?.revG ?? null, r40: q?.r40.value ?? null,
+    om: q?.om.now ?? null, omChg: q?.om.now != null && q.om.yearAgo != null ? q.om.now - q.om.yearAgo : null, gmChg: q?.gm.now != null && q.gm.yearAgo != null ? q.gm.now - q.gm.yearAgo : null,
+    fcfPassed: c.fcf.passed, fcfKnown: c.fcf.known, fcfM: y?.fcfM ?? null, cfoPat: q?.cfoPat.latest ?? null, de: q?.de.value ?? null,
+    squeeze: q?.squeeze.level ?? null, squeezeCombo: !!q?.squeeze.keyCombo, dilution: q?.dilution.pct ?? null,
+    stage: c.stage.st, tt: c.stage.tt ?? (c.trend.length ? c.trend.filter((r) => r.ok).length : null), rs: c.stage.rsR,
+  });
+  scoreMemo.set(c, s); return s;
+}
+export function ScoreBadge({ c, big }: { c: LabCard; big?: boolean }) {
+  const s = scoreOf(c);
+  const tip = [`Overall ${s.score ?? '—'} (${s.grade})`, ...s.pillars.map((p) => `${p.label} ${p.score ?? '—'} (weight ${p.weight}): ${p.why.join(', ') || 'no figures'}`), ...s.caps].join('\n');
+  return <span title={tip} style={{ fontWeight: 900, fontSize: big ? 15 : 13.5, color: GRADE_C[s.grade], whiteSpace: 'nowrap' }}>{s.score ?? '—'} <span style={{ fontSize: big ? 12.5 : 11.5, padding: '0 5px', borderRadius: 5, border: `1px solid ${GRADE_C[s.grade]}` }}>{s.grade}</span>{s.caps.length ? <span style={{ color: R.faint, fontWeight: 400 }}> ⓘ</span> : null}</span>;
+}
 const TR: Record<string, string> = { up: '▲', down: '▼', flat: '●', unknown: '' };
 
 type Col = { id: string; group: string; h: string; tip: string; cell: (c: LabCard) => React.ReactNode; sort: (c: LabCard) => number };
@@ -22,15 +56,15 @@ const gapOf = (c: LabCard) => fcfPriceGap(c.years, c.price);
 const col = (v: number | null | undefined, good: (x: number) => boolean, bad: (x: number) => boolean) => (v == null ? R.faint : good(v) ? R.green : bad(v) ? R.red : R.text);
 
 export const COLS: Col[] = [
+  { id: 'score', group: 'Overall', h: 'Overall score', tip: 'One balanced score 0–100: growth 35, price strength 25, margin momentum 15, safety (cash, debt, squeeze, dilution) 25. Weak growth caps it at 60, weak safety at 65, a Stage 4 chart at 55. Hover a score for its parts.', cell: (c) => <ScoreBadge c={c} />, sort: (c) => scoreOf(c).score ?? -1 },
   { id: 'fcfChecks', group: 'Free cash flow', h: 'FCF checks', tip: 'FCF checklist items passed ÷ items that could be checked', cell: (c) => `${c.fcf.passed}/${c.fcf.known}`, sort: (c) => (c.fcf.known ? c.fcf.passed / c.fcf.known : -1) },
   { id: 'fcfM', group: 'Free cash flow', h: 'FCF margin', tip: 'Latest full year: FCF ÷ revenue', cell: (c) => <span style={{ color: col(last(c)?.fcfM, (x) => x >= 10, (x) => x < 0) }}>{pct(last(c)?.fcfM)}</span>, sort: (c) => last(c)?.fcfM ?? -999 },
   { id: 'fcfY', group: 'Free cash flow', h: 'FCF yield', tip: "Latest full year FCF ÷ today's market cap", cell: (c) => pct(yieldOf(c)), sort: (c) => yieldOf(c) ?? -999 },
-  { id: 'gap', group: 'Free cash flow', h: 'FCF/share vs price (3 yr)', tip: 'FCF per share change vs share price change over up to three full years. ◆ = cash up 30%+, price flat (≤ +10%): a research lead, not a buy signal.', cell: (c) => { const g = gapOf(c); if (g.fcfPsG == null) return <span title={g.why} style={{ color: R.faint, fontSize: 12 }}>{g.short}</span>; return g.fcfPsG > 500 ? <span title={`FCF per share ${pct(g.fcfPsG)} from a tiny starting figure — not meaningful`} style={{ color: R.faint, fontSize: 12 }}>low base</span> : <span title={g.from ? `from ${g.from}` : ''} style={{ color: g.flag ? R.cyan : R.text, fontWeight: g.flag ? 800 : 400 }}>{g.flag ? '◆ ' : ''}{pct(g.fcfPsG)} / {pct(g.priceG)}</span>; }, sort: (c) => { const g = gapOf(c); return g.fcfPsG != null && g.priceG != null ? g.fcfPsG - g.priceG : -999; } },
-  { id: 'r40', group: 'Growth', h: 'Rule of 40', tip: "Latest quarter's revenue growth vs the same quarter a year earlier + FCF margin (last 4 quarters, else latest year). 40+ passes.", cell: (c) => { const r = Q(c)?.r40; return r?.value == null ? '—' : <span title={`${pct(r.revYoY)} revenue (${r.quarter}) + ${pct(r.fcfMargin)} FCF margin (${r.fcfFrom})`} style={{ fontWeight: 800, color: r.value >= 40 ? R.green : r.value >= 20 ? R.amber : R.red }}>{r.value.toFixed(0)} <span style={{ fontWeight: 400, color: R.faint, fontSize: 12 }}>= {r.revYoY?.toFixed(0)} {(r.fcfMargin ?? 0) < 0 ? '−' : '+'} {Math.abs(r.fcfMargin ?? 0).toFixed(0)}</span></span>; }, sort: (c) => Q(c)?.r40.value ?? -999 },
+  { id: 'r40', group: 'Growth', h: 'Rule of 40', tip: "Latest quarter's revenue growth vs the same quarter a year earlier + FCF margin (last 4 quarters, else latest year). 40+ passes.", cell: (c) => { const r = Q(c)?.r40; return r?.value == null ? '—' : <span title={`${pct(r.revYoY)} revenue (${r.quarter}) + ${pct(r.fcfMargin)} FCF margin (${r.fcfFrom})${r.lowBase ? '\n⚠ the revenue growth comes off a weak or tiny year-earlier quarter — do not read it at face value' : ''}`} style={{ fontWeight: 800, color: r.lowBase ? R.amber : r.value >= 40 ? R.green : r.value >= 20 ? R.amber : R.red }}>{r.lowBase ? '⚠ ' : ''}{r.value.toFixed(0)} <span style={{ fontWeight: 400, color: R.faint, fontSize: 12 }}>= {r.revYoY?.toFixed(0)} {(r.fcfMargin ?? 0) < 0 ? '−' : '+'} {Math.abs(r.fcfMargin ?? 0).toFixed(0)}</span></span>; }, sort: (c) => Q(c)?.r40.value ?? -999 },
   { id: 'revQ', group: 'Growth', h: 'Revenue YoY (qtr)', tip: 'Latest quarter vs the same quarter a year earlier', cell: (c) => pct(Q(c)?.r40.revYoY), sort: (c) => Q(c)?.r40.revYoY ?? -999 },
   { id: 'accel', group: 'Growth', h: 'Growth trend (last 4 qtrs)', tip: 'Year-on-year revenue growth of the last four quarters, oldest → newest', cell: (c) => { const a = Q(c)?.accel; if (!a) return '—'; const s = ACC[a.state]; return <span title={a.text}><span style={{ color: s.c, fontWeight: 800 }}>{s.t}</span> <span style={{ color: R.faint, fontSize: 12 }}>{a.last.map((v) => (v == null ? '·' : v.toFixed(0))).join(' → ')}</span></span>; }, sort: (c) => { const a = Q(c)?.accel; return a?.state === 'accelerating' ? 2 : a?.state === 'steady' ? 1 : a?.state === 'decelerating' ? 0 : -1; } },
   { id: 'revG', group: 'Growth', h: 'Revenue growth (yr)', tip: 'Latest full year vs the year before', cell: (c) => pct(last(c)?.revG), sort: (c) => last(c)?.revG ?? -999 },
-  { id: 'epsG', group: 'Growth', h: 'EPS growth (yr)', tip: 'Latest full year vs the year before', cell: (c) => pct(last(c)?.epsG), sort: (c) => last(c)?.epsG ?? -999 },
+  { id: 'epsG', group: 'Growth', h: 'EPS growth (yr)', tip: 'Latest full year vs the year before. A move across zero is said in words (loss → profit), and growth over 300% as “low base”.', cell: (c) => { const e = epsGrowthOf(c); return <span title={e.v != null ? pct(e.v) : ''} style={{ color: e.swing === 'profit-to-loss' ? R.red : e.swing === 'loss-to-profit' ? R.green : e.v == null ? R.faint : e.v >= 25 ? R.green : e.v < 0 ? R.red : R.text, fontSize: e.v == null || e.text === 'low base' ? 12 : undefined }}>{e.text}</span>; }, sort: (c) => { const e = epsGrowthOf(c); return e.swing === 'loss-to-profit' ? 500 : e.swing === 'profit-to-loss' ? -500 : e.v ?? -999; } },
   { id: 'gm', group: 'Margins', h: 'Gross margin', tip: 'Latest quarter, and the move vs the same quarter a year earlier', cell: (c) => { const g = Q(c)?.gm; return g?.now == null ? '—' : <span title={g.label}>{g.now.toFixed(1)}% <span style={{ color: g.trend === 'up' ? R.green : g.trend === 'down' ? R.red : R.faint }}>{TR[g.trend]}{g.yearAgo != null ? ` ${(g.now - g.yearAgo) > 0 ? '+' : ''}${(g.now - g.yearAgo).toFixed(1)}` : ''}</span></span>; }, sort: (c) => Q(c)?.gm.now ?? -999 },
   { id: 'om', group: 'Margins', h: 'Operating margin', tip: 'Latest quarter, and the move vs the same quarter a year earlier', cell: (c) => { const g = Q(c)?.om; return g?.now == null ? '—' : <span title={g.label}>{g.now.toFixed(1)}% <span style={{ color: g.trend === 'up' ? R.green : g.trend === 'down' ? R.red : R.faint }}>{TR[g.trend]}{g.yearAgo != null ? ` ${(g.now - g.yearAgo) > 0 ? '+' : ''}${(g.now - g.yearAgo).toFixed(1)}` : ''}</span></span>; }, sort: (c) => Q(c)?.om.now ?? -999 },
   { id: 'dil', group: 'Quality', h: 'Dilution (3 yr)', tip: 'Change in share count over up to three years (positive = more shares)', cell: (c) => { const d = Q(c)?.dilution; return d?.pct == null ? '—' : <span title={d.text} style={{ color: d.pct >= 10 ? R.red : d.pct >= 4 ? R.amber : d.pct <= -3 ? R.green : R.text }}>{pct(d.pct)}</span>; }, sort: (c) => -(Q(c)?.dilution.pct ?? 999) },
@@ -43,31 +77,36 @@ export const COLS: Col[] = [
   { id: 'tt', group: 'Technicals', h: 'Trend template', tip: 'Minervini trend template rules met', cell: (c) => `${c.stage.tt ?? c.trend.filter((r) => r.ok).length}/6`, sort: (c) => c.stage.tt ?? c.trend.filter((r) => r.ok).length },
   { id: 'rsIdx', group: 'Technicals', h: 'RS vs index', tip: 'Stock return ÷ index return', cell: (c) => (c.rs?.ratio == null ? '—' : `${c.rs.ratio.toFixed(2)}×`), sort: (c) => c.rs?.ratio ?? -1 },
   { id: 'rs', group: 'Technicals', h: 'RS', tip: 'RS rating 1–99', cell: (c) => (c.stage.rsR == null ? <span title="Not enough price history for an RS rating" style={{ color: R.faint, fontSize: 12 }}>{c.listedDays != null && c.listedDays < 400 ? 'new listing' : '—'}</span> : String(Math.round(c.stage.rsR))), sort: (c) => c.stage.rsR ?? -1 },
+  { id: 'gap', group: 'Research lead', h: 'FCF/share vs price (3 yr)', tip: 'FCF per share change vs share price change over up to three full years. ◆ = cash up 30%+, price flat (≤ +10%): a research lead, not a buy signal.', cell: (c) => { const g = gapOf(c); if (g.fcfPsG == null) return <span title={g.why} style={{ color: R.faint, fontSize: 12 }}>{g.short}</span>; return g.fcfPsG > 500 ? <span title={`FCF per share ${pct(g.fcfPsG)} from a tiny starting figure — not meaningful`} style={{ color: R.faint, fontSize: 12 }}>low base</span> : <span title={g.from ? `from ${g.from}` : ''} style={{ color: g.flag ? R.cyan : R.text, fontWeight: g.flag ? 800 : 400 }}>{g.flag ? '◆ ' : ''}{pct(g.fcfPsG)} / {pct(g.priceG)}</span>; }, sort: (c) => { const g = gapOf(c); return g.fcfPsG != null && g.priceG != null ? g.fcfPsG - g.priceG : -999; } },
 ];
-const DEFAULT = ['fcfChecks', 'fcfM', 'fcfY', 'gap', 'r40', 'accel', 'gm', 'om', 'dil', 'cfoPat', 'de', 'squeeze', 'stage', 'rs'];
+const DEFAULT = ['score', 'fcfChecks', 'fcfM', 'fcfY', 'r40', 'accel', 'gm', 'om', 'dil', 'cfoPat', 'de', 'squeeze', 'stage', 'rs', 'gap'];
 const GROUPS = Array.from(new Set(COLS.map((c) => c.group)));
 
 // zzz1292 — column layouts: ready-made ones + the owner's own, saved by name (synced to his account), last one used reopens
 const LAYOUTS_KEY = 'mc:company-lab:layouts:v1';
 type Layout = { cols: string[]; sort?: string; desc?: boolean };
 const PRESETS: Record<string, Layout> = {
-  'Overview': { cols: DEFAULT, sort: 'r40', desc: true },
-  'Cash quality': { cols: ['fcfChecks', 'fcfM', 'fcfY', 'gap', 'cfoPat', 'de', 'dil', 'squeeze', 'capexOcf', 'runway'], sort: 'fcfChecks', desc: true },
-  'Growth': { cols: ['r40', 'revQ', 'accel', 'revG', 'epsG', 'gm', 'om', 'stage', 'rs'], sort: 'r40', desc: true },
-  'Technicals': { cols: ['stage', 'tt', 'rsIdx', 'rs', 'r40', 'accel'], sort: 'rs', desc: true },
-  'Everything': { cols: COLS.map((c) => c.id), sort: 'r40', desc: true },
+  'Overview': { cols: DEFAULT, sort: 'score', desc: true },
+  'Cash quality': { cols: ['score', 'fcfChecks', 'fcfM', 'fcfY', 'gap', 'cfoPat', 'de', 'dil', 'squeeze', 'capexOcf', 'runway'], sort: 'fcfChecks', desc: true },
+  'Growth': { cols: ['score', 'r40', 'revQ', 'accel', 'revG', 'epsG', 'gm', 'om', 'stage', 'rs'], sort: 'r40', desc: true },
+  'Technicals': { cols: ['score', 'stage', 'tt', 'rsIdx', 'rs', 'r40', 'accel'], sort: 'rs', desc: true },
+  'Everything': { cols: COLS.map((c) => c.id), sort: 'score', desc: true },
 };
-interface LayoutStore { active: string; custom: Record<string, Layout> }
+interface LayoutStore { active: string; custom: Record<string, Layout>; scoreAdded?: boolean }
 const readLayouts = (): LayoutStore => {
   try {
     const v = JSON.parse(localStorage.getItem(LAYOUTS_KEY) || 'null');
-    if (v && typeof v === 'object' && v.custom) return { active: String(v.active || 'Overview'), custom: v.custom };
+    if (v && typeof v === 'object' && v.custom) {
+      // zzz1293 — the new overall score joins every saved layout once (it can be switched off again)
+      if (!v.scoreAdded) { for (const l of Object.values(v.custom) as Layout[]) if (Array.isArray(l?.cols) && !l.cols.includes('score')) l.cols = ['score', ...l.cols]; v.scoreAdded = true; try { localStorage.setItem(LAYOUTS_KEY, JSON.stringify(v)); } catch { /* not kept */ } }
+      return { active: String(v.active || 'Overview'), custom: v.custom, scoreAdded: true };
+    }
     const old = JSON.parse(localStorage.getItem(COLS_KEY) || 'null');   // the single saved column set of the first version
     if (Array.isArray(old) && old.length) return { active: 'My columns', custom: { 'My columns': { cols: old } } };
   } catch { /* fresh */ }
   return { active: 'Overview', custom: {} };
 };
-const writeLayouts = (v: LayoutStore) => { try { localStorage.setItem(LAYOUTS_KEY, JSON.stringify(v)); } catch { /* not kept */ } };
+const writeLayouts = (v: LayoutStore) => { try { localStorage.setItem(LAYOUTS_KEY, JSON.stringify({ ...v, scoreAdded: true })); } catch { /* not kept */ } };
 
 export function Compare({ cards }: { cards: LabCard[] }) {
   const [store, setStore] = useState<LayoutStore>({ active: 'Overview', custom: {} });
@@ -220,11 +259,13 @@ type Source = { id: string; label: string; entries: Entry[]; note?: string };
 const fromLs = (k: string): any => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } };
 const uniq = (es: Entry[]) => { const out: Entry[] = []; for (const e of es) if (e.t && !out.some((x) => x.m === e.m && x.t === e.t)) out.push(e); return out; };
 /** zzz1292 — every list the owner keeps, with its market: holdings (India / US), the US book, the watchlist, each chart list. */
+/** a saved holding with a quantity of zero (sold) is not part of the book */
+const held = (h: any) => { const q = Number(h?.quantity ?? h?.qty ?? h?.shares); return !(Number.isFinite(q) && q <= 0) && !h?.sold && !h?.closed; };
 function readSources(usBook: string[]): Source[] {
   const out: Source[] = [];
   const hold: any[] = Array.isArray(fromLs('mc_portfolio_holdings')) ? fromLs('mc_portfolio_holdings') : [];
-  out.push({ id: 'in-book', label: '💼 India book', entries: uniq(hold.filter((h) => (h?.market ?? 'IN') !== 'US').map((h) => ({ m: 'IN' as const, t: clean(h?.symbol), s: 1 as const }))) });
-  out.push({ id: 'us-book', label: '💼 US book', entries: uniq([...hold.filter((h) => h?.market === 'US').map((h) => clean(h?.symbol)), ...usBook].map((t) => ({ m: 'US' as const, t, s: 1 as const }))) });
+  out.push({ id: 'in-book', label: '💼 India book', entries: uniq(hold.filter((h) => (h?.market ?? 'IN') !== 'US' && held(h)).map((h) => ({ m: 'IN' as const, t: clean(h?.symbol), s: 1 as const }))) });
+  out.push({ id: 'us-book', label: '💼 US book', entries: uniq([...hold.filter((h) => h?.market === 'US' && held(h)).map((h) => clean(h?.symbol)), ...usBook].map((t) => ({ m: 'US' as const, t, s: 1 as const }))) });
   const wl: any[] = Array.isArray(fromLs('mc_watchlist_tickers')) ? fromLs('mc_watchlist_tickers') : [];
   // the watchlist holds bare symbols: NSE symbols and BSE codes are India; a name that is not found in India is looked up in the USA
   out.push({ id: 'watch', label: '📋 My watchlist', entries: uniq(wl.map((x) => ({ m: 'IN' as const, t: clean(typeof x === 'string' ? x : x?.ticker ?? x?.symbol) }))), note: 'symbols without a market: India first, then the USA' });
@@ -271,7 +312,7 @@ export function BookLoader({ onAdd, onRefresh, busy }: { onAdd: (e: Entry[], rep
         {sources.some((s) => s.id.startsWith('chart-')) ? <button type="button" onClick={() => setMore((v) => !v)} style={{ fontSize: 12.5, padding: '4px 10px', borderRadius: 999, cursor: 'pointer', border: `1px dashed ${R.border}`, background: 'transparent', color: R.dim }}>{more ? '▴ fewer lists' : `▾ chart lists (${sources.filter((s) => s.id.startsWith('chart-')).length})`}</button> : null}
       </div>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-        <button type="button" disabled={busy || !picked.length} onClick={go} style={{ fontSize: 13.5, fontWeight: 900, padding: '6px 14px', borderRadius: 8, cursor: busy || !picked.length ? 'not-allowed' : 'pointer', border: `1px solid ${R.green}`, background: tint(R.green, 14), color: R.green }}>▶ Load {picked.length || ''} {picked.length === 1 ? 'company' : 'companies'}</button>
+        <button type="button" disabled={!picked.length} onClick={go} title={busy ? 'Stops the reading that is running and loads these instead' : undefined} style={{ fontSize: 13.5, fontWeight: 900, padding: '6px 14px', borderRadius: 8, cursor: !picked.length ? 'not-allowed' : 'pointer', border: `1px solid ${R.green}`, background: tint(R.green, 14), color: R.green }}>▶ Load {picked.length || ''} {picked.length === 1 ? 'company' : 'companies'}</button>
         <label style={{ fontSize: 12.5, color: R.dim, display: 'inline-flex', gap: 5, cursor: 'pointer' }}><input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} /> replace the current list</label>
         <button type="button" disabled={busy} onClick={onRefresh} title="Read every company again from the newest filings (SEC / screener.in now, not the weekly copy)" style={{ fontSize: 13, fontWeight: 800, padding: '5px 11px', borderRadius: 8, cursor: busy ? 'wait' : 'pointer', border: `1px solid ${R.amber}`, background: tint(R.amber, 8), color: R.amber }}>🔄 Refresh all — latest filings</button>
         {msg && <span style={{ fontSize: 12.5, color: R.dim }}>{msg}</span>}
