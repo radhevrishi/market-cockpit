@@ -4406,3 +4406,13 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   (raw.shpQ; pledge not in data). Stage check: Stage 2 5%+ under the 30-week line this week = broken (score treats as Stage 3,
   cap 65); Stage 2 with RS vs index < 1 = lagging (counts 60 not 100). Score now Growth 30 · Price 20 · Margin 10 · Safety 20
   (+ promoter selling) · Capital efficiency 10 · Valuation & entry 10. New columns + layout "Valuation & entry".
+- zzz1296 (23 Nov): PAGES MERGED INTO WORKSPACES (owner: "club duplicates, best way"). `components/Workspace.tsx` = one page with
+  tabs; each tab is the UNCHANGED old page module (next/dynamic), tab in `?view=` (market-snapshot / earnings-hub / concall-intel keep
+  `?tab=`), other address values left alone, a tool that rewrites the address without the tab gets it put back, `keep` tabs stay
+  mounted (calculators), live tabs unmount (no hidden polling). Hosts: /alerts-center, /valuation, /screeners, /journal, /guidance,
+  /bottlenecks, /theme-library, /simulators; /market-snapshot gained in-play / breadth / rrg; /earnings-hub gained PEAD (its guidance
+  tab moved to /guidance?view=signals); /concall-intel gained "Company library" (company-intel). `lib/page-merges.ts` PAGE_MERGES:
+  old address → workspace tab; proxy forwards with 307 BEFORE the login gate keeping every query value (`mergedTarget`); NavLink
+  rewrites merged links directly (`currentAddress`); hubFor resolves old addresses. Old page files must stay (the hosts import them).
+  Adding a page to a workspace = tab in the host + PAGE_MERGES entry (test zzz1296-page-merges). Kept separate on purpose:
+  market-cycles (static handbook) vs Market Leadership cycles tab; Company Lab vs Stock Sheet (different jobs).

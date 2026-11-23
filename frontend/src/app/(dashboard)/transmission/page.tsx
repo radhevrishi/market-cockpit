@@ -550,6 +550,8 @@ export default function TransmissionPage() {
   // URL persistence
   useEffect(() => {
     const params = new URLSearchParams();
+    // zzz1296 — inside the Bottlenecks workspace the tab lives in ?view=; keep it
+    { const v = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('view') : null; if (v) params.set('view', v); }
     if (category !== 'ALL') params.set('cat', category);
     if (sensitivity !== 'ALL') params.set('sens', sensitivity);
     if (sectorSearch) params.set('sector', sectorSearch);

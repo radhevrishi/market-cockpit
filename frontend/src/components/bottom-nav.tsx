@@ -169,11 +169,11 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { label: 'News',     icon: '📰', url: '/news',              match: ['/news', '/in-play', '/news-alerts', '/bottleneck-intel', '/critical-themes'] },
-  { label: 'Earnings', icon: '💰', url: '/earnings-hub',      match: ['/earnings', '/calendars', '/guidance-extractor', '/earnings-trigger', '/us-earnings-opportunities', '/us-conviction-beats'] },
+  { label: 'News',     icon: '📰', url: '/news',              match: ['/news', '/bottlenecks', '/theme-library'] },
+  { label: 'Earnings', icon: '💰', url: '/earnings-hub',      match: ['/earnings', '/calendars', '/guidance', '/earnings-trigger', '/us-earnings-opportunities', '/us-conviction-beats'] },
   { label: 'Intel',    icon: '🎙', url: '/concall-intel',     match: ['/concall-intel', '/company-intel', '/capex-tracker', '/multibagger', '/playbook'] },
-  { label: 'Events',   icon: '⚡', url: '/special-situations', match: ['/special-situations', '/movers', '/heatmap', '/breadth'] },
-  { label: 'Book',     icon: '💼', url: '/portfolio',         match: ['/portfolio', '/watchlists', '/decisions', '/alerts', '/buy-strategy', '/investing-os'] },
+  { label: 'Events',   icon: '⚡', url: '/special-situations', match: ['/special-situations', '/market-snapshot'] },
+  { label: 'Book',     icon: '💼', url: '/portfolio',         match: ['/portfolio', '/watchlists', '/journal', '/alerts-center', '/investing-os'] },
 ];
 
 function detectActive(path: string): number {

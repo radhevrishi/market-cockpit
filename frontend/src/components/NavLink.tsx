@@ -6,6 +6,7 @@
 import Link from 'next/link';
 import { forwardRef, useContext, useRef, type ComponentProps, type FocusEvent, type MouseEvent, type PointerEvent, type TouchEvent } from 'react';
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime';
+import { currentAddress } from '@/lib/page-merges';
 import { makeIntentPrefetcher, type IntentPrefetcher } from '@/lib/intent-prefetch';
 
 type LinkProps = ComponentProps<typeof Link>;
@@ -28,7 +29,9 @@ function hrefString(href: LinkProps['href']): string | null {
 }
 
 const NavLink = forwardRef<HTMLAnchorElement, LinkProps>(function NavLink(props, ref) {
-  const { href, prefetch, onMouseEnter, onMouseLeave, onFocus, onPointerDown, onTouchStart, ...rest } = props;
+  const { href: href0, prefetch, onMouseEnter, onMouseLeave, onFocus, onPointerDown, onTouchStart, ...rest } = props;
+  // zzz1296 — a link to a page that was merged into a workspace goes straight to its tab (no forwarding hop)
+  const href = typeof href0 === 'string' ? currentAddress(href0) : href0;
   // Read from context (null outside the App Router, e.g. in tests) instead of useRouter(), which throws there.
   const router = useContext(AppRouterContext);
   const latest = useRef({ href, router });

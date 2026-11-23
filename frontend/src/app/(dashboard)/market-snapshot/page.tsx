@@ -1,115 +1,34 @@
 'use client';
-
 // ═══════════════════════════════════════════════════════════════════════════
-// MARKET SNAPSHOT — patch 0090
+// MARKET SNAPSHOT — patch 0090, widened in zzz1296
 //
-// Merges /heatmap and /movers into a single tab with a toggle.  Both tabs draw
-// from the same /api/market/quotes endpoint with different visual treatment;
-// keeping them as separate sidebar entries was redundant.
-//
-// The original routes /heatmap and /movers are KEPT alive for deeplink
-// compatibility — this page just dynamic-imports their components and
-// conditionally renders one based on a ?tab=heatmap|movers URL param.
-// Only the active tab mounts, so the hidden tab does not run its queries.
+// Heatmap + Movers (patch 0090) plus Live In Play, Breadth and RRG: every "how is the market moving today" view in one
+// page (components/Workspace). The tab stays in ?tab= (old links /market-snapshot?tab=movers keep working); the old
+// addresses /heatmap, /movers, /in-play, /breadth, /rrg forward here (lib/page-merges). Each tab is the unchanged page
+// module; only the open tab is mounted, so hidden tabs do not poll.
 // ═══════════════════════════════════════════════════════════════════════════
-
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense } from 'react';
 import dynamic from 'next/dynamic';
-import { Grid3X3, TrendingUp } from 'lucide-react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import Workspace, { TabLoading, type WorkspaceTab } from '@/components/Workspace';
 
-const HeatmapPage = dynamic(() => import('../heatmap/page'), {
-  ssr: false,
-  loading: () => <PanelLoader label="Heatmap" />,
-});
-const MoversPage = dynamic(() => import('../movers/page'), {
-  ssr: false,
-  loading: () => <PanelLoader label="Movers" />,
-});
+const HeatmapPage = dynamic(() => import('../heatmap/page'), { ssr: false, loading: () => <TabLoading label="Heatmap" /> });
+const MoversPage = dynamic(() => import('../movers/page'), { ssr: false, loading: () => <TabLoading label="Movers" /> });
+const InPlayPage = dynamic(() => import('../in-play/page'), { ssr: false, loading: () => <TabLoading label="In Play" /> });
+const BreadthPage = dynamic(() => import('../breadth/page'), { ssr: false, loading: () => <TabLoading label="Breadth" /> });
+const RrgPage = dynamic(() => import('../rrg/page'), { ssr: false, loading: () => <TabLoading label="RRG" /> });
 
-type Tab = 'heatmap' | 'movers';
-
-function PanelLoader({ label }: { label: string }) {
-  return (
-    <div style={{ padding: 24, color: 'var(--mc-text-4)', fontSize: 12 }}>
-      Loading {label}…
-    </div>
-  );
-}
+const TABS: WorkspaceTab[] = [
+  { id: 'movers', label: 'Movers', hint: 'Top gainers and losers with the reason for each move, circuit limits and your book marked.', C: MoversPage },
+  { id: 'heatmap', label: 'Heatmap', hint: 'Nifty 50 / Midcap 150 / Smallcap 150 as a treemap by % change; post-results colouring.', C: HeatmapPage },
+  { id: 'inplay', label: 'In play', hint: 'News, results and price movers together as one live feed — India, USA and global.', C: InPlayPage },
+  { id: 'breadth', label: 'Breadth', hint: 'How many stocks are taking part: one market-health score with its parts and history.', C: BreadthPage },
+  { id: 'rrg', label: 'Sector rotation (RRG)', hint: 'Which sectors are leading, weakening, lagging or improving against the index.', C: RrgPage },
+];
 
 export default function MarketSnapshotPage() {
-  const searchParams = useSearchParams();
-  const router = useRouter();
-  const initialTab = (searchParams?.get('tab') as Tab) || 'heatmap';
-  const [active, setActive] = useState<Tab>(initialTab);
-
-  // Keep URL in sync so a refresh / share preserves the active sub-tab
-  useEffect(() => {
-    const sp = new URLSearchParams(searchParams?.toString() || '');
-    if (sp.get('tab') !== active) {
-      sp.set('tab', active);
-      router.replace(`/market-snapshot?${sp.toString()}`, { scroll: false });
-    }
-  }, [active, searchParams, router]);
-
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      {/* Tab bar */}
-      <div
-        style={{
-          backgroundColor: 'var(--mc-bg-1)',
-          borderBottom: '1px solid var(--mc-border-1)',
-          padding: '10px 16px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          flexShrink: 0,
-        }}
-      >
-        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--mc-cyan)', letterSpacing: '0.6px', marginRight: 12 }}>
-          📊 MARKET SNAPSHOT
-        </span>
-        {([
-          { id: 'heatmap', label: 'Heatmap', Icon: Grid3X3 },
-          { id: 'movers',  label: 'Movers',  Icon: TrendingUp },
-        ] as const).map(({ id, label, Icon }) => {
-          const isActive = active === id;
-          return (
-            <button
-              key={id}
-              onClick={() => setActive(id)}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '6px 12px',
-                borderRadius: 8,
-                border: isActive ? '1px solid color-mix(in srgb, var(--mc-accent) 38%, transparent)' : '1px solid var(--mc-bg-4)',
-                backgroundColor: isActive ? 'color-mix(in srgb, var(--mc-accent) 13%, transparent)' : 'transparent',
-                color: isActive ? '#38A9E8' : 'var(--mc-text-3)',
-                fontSize: 12,
-                fontWeight: 700,
-                letterSpacing: '0.4px',
-                cursor: 'pointer',
-                transition: 'all 0.15s',
-              }}
-            >
-              <Icon style={{ width: 14, height: 14 }} />
-              {label.toUpperCase()}
-            </button>
-          );
-        })}
-        <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--mc-text-4)' }}>
-          Same data — different lens. Heatmap = sector treemap · Movers = top gainers / losers grid.
-        </span>
-      </div>
-
-      {/* Active panel */}
-      <div style={{ flex: 1, overflowY: 'auto' }}>
-        <Suspense fallback={<PanelLoader label={active} />}>
-          {active === 'heatmap' ? <HeatmapPage /> : <MoversPage />}
-        </Suspense>
-      </div>
-    </div>
+    <Suspense fallback={<TabLoading label="Market Snapshot" />}>
+      <Workspace title="📊 Market Snapshot" blurb="How the market is moving today — movers, heatmap, live news, breadth and sector rotation." tabs={TABS} param="tab" />
+    </Suspense>
   );
 }

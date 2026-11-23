@@ -1,3 +1,4 @@
+import { mergedTarget } from '@/lib/page-merges';
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { checkRateLimit } from '@/lib/rateLimit';
@@ -55,12 +56,11 @@ const CHEAP_CACHED_ROUTES = [
 //   /my-book       → /portfolio
 //   /concall-ai    → /earnings-analysis (the Concall AI tab)
 const SLUG_REDIRECTS: Record<string, string> = {
-  '/activity': '/activity-log',
-  '/strategic-vis': '/strategic-visibility',
+  '/activity': '/journal?view=timeline',
+  '/strategic-vis': '/bottlenecks?view=contracts',
   '/calendar': '/calendars',
-  '/guidance': '/earnings-hub?tab=guidance',
   '/my-book': '/portfolio',
-  '/concall-ai': '/earnings-analysis',
+  '/concall-ai': '/earnings-hub?tab=concall',
   '/re-rating': '/rerating',
   '/super-investors': '/smart-money',   // zzz935: Super Investors removed (owner, 7 Oct) — old bookmarks land on Smart Money
 };
@@ -97,6 +97,10 @@ export async function proxy(req: NextRequest) {
     const url = new URL(target, req.url);
     return NextResponse.redirect(url, 308);
   }
+  // zzz1296 — pages merged into workspaces (lib/page-merges): forward to the workspace tab, keeping the address values.
+  // 307 (not 308): a merge may be undone, and browsers cache 308s for good.
+  const merged = mergedTarget(normalisedPath, req.nextUrl.search);
+  if (merged) return NextResponse.redirect(new URL(merged, req.url), 307);
 
   if (path.startsWith('/api/')) noteRequest(path, isService(req) ? 'service' : req.cookies.get(SITE_COOKIE)?.value ? 'owner' : 'anon');
   if (!path.startsWith('/api/')) {

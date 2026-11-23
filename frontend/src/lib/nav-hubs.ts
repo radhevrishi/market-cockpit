@@ -12,6 +12,8 @@
 // A test (zzz1294-nav-hubs) checks that every page of the old sidebar and every old favourite is in a hub.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { mergedTarget } from './page-merges';
+
 export interface HubTab {
   /** the sub-tab's own link; for an India / USA pair this is the India one */
   href: string;
@@ -31,7 +33,7 @@ export const HUBS: Hub[] = [
       { href: '/cockpit', label: 'Action Cockpit' },
       { href: '/', label: 'Home Dashboard' },
       { href: '/orders', label: 'Signals', more: [{ href: '/signals', label: 'Signals board' }] },
-      { href: '/alerts', label: 'Alerts', more: [{ href: '/news-alerts', label: 'News alerts' }, { href: '/eo-alerts', label: 'Earnings alerts' }] },
+      { href: '/alerts-center', label: 'Alerts' },
       { href: '/weekly-review', label: 'Weekly Review' },
       { href: '/calendars', label: 'Calendar' },
     ],
@@ -41,15 +43,14 @@ export const HUBS: Hub[] = [
     tabs: [
       { href: '/earnings-opportunities', label: 'Earnings Ops', us: '/us-earnings-opportunities' },
       { href: '/watchlists?tab=conviction', label: 'Conviction Beats', us: '/us-conviction-beats' },
-      { href: '/guidance-upgrades', label: 'Guidance Upgrades' },
-      { href: '/growth-guidance', label: 'Growth Guidance' },
+      { href: '/guidance', label: 'Guidance' },
       { href: '/ai-gainers', label: 'AI Daily Gainers' },
       { href: '/transformational-gainers', label: 'Transformational Gainers' },
       { href: '/concall-intel?tab=radar', label: 'Transformation Radar' },
-      { href: '/concall-intel', label: 'Concall Intelligence', more: [{ href: '/guidance-extractor', label: 'Guidance Extractor' }, { href: '/company-intel', label: 'Company Intelligence' }] },
+      { href: '/concall-intel', label: 'Concall Intelligence', more: [{ href: '/concall-intel?tab=library', label: 'Company library' }] },
       { href: '/search-docs', label: 'Document Search' },
       { href: '/ai-desk', label: 'AI Research Desk' },
-      { href: '/earnings-hub', label: 'Earnings Hub', more: [{ href: '/earnings', label: 'Earnings Scan' }, { href: '/earnings-analysis', label: 'Earnings Analysis (AI)' }, { href: '/earnings-guidance', label: 'Earnings Guidance' }, { href: '/pead-tracker', label: 'PEAD Drift Tracker' }, { href: '/earnings-scan', label: 'Earnings Scan (new)' }] },
+      { href: '/earnings-hub', label: 'Earnings Hub', more: [{ href: '/earnings-scan', label: 'Earnings Scan (new)' }] },
     ],
   },
   {
@@ -61,16 +62,15 @@ export const HUBS: Hub[] = [
       { href: '/exit-radar', label: 'Exit Radar' },
       { href: '/fundamentals?scope=portfolio', label: 'Portfolio Fundamentals', more: [{ href: '/fundamentals', label: 'Fundamentals' }, { href: '/fundamentals?scope=watchlist', label: 'Watchlist fundamentals' }] },
       { href: '/watchlists', label: 'Watchlist' },
-      { href: '/price-alerts', label: 'Price Alerts' },
-      { href: '/decisions', label: 'Decision Logbook', more: [{ href: '/activity-log', label: 'Activity Log' }, { href: '/thesis', label: 'Thesis Tracker' }] },
+      { href: '/alerts-center?view=price', label: 'Price Alerts' },
+      { href: '/journal', label: 'Journal' },
       { href: '/risk', label: 'Risk Desk', more: [{ href: '/position-sizing', label: 'Position Sizing' }, { href: '/coffee-can', label: 'Coffee Can' }, { href: '/tax-planner', label: 'Tax Planner' }, { href: '/book-watch', label: 'Book Watch' }] },
     ],
   },
   {
-    id: 'discover', label: 'Discover', icon: '🔍', home: '/stock-screener', blurb: 'Find new names: screens, the lab, radars, multibaggers.',
+    id: 'discover', label: 'Discover', icon: '🔍', home: '/screeners', blurb: 'Find new names: screens, the lab, radars, multibaggers.',
     tabs: [
-      { href: '/stock-screener', label: 'Stock Screener', more: [{ href: '/screener-screens', label: 'Screener.in Screens' }, { href: '/screener', label: 'Screener (old)' }] },
-      { href: '/pine-screener', label: 'Pine Screener', more: [{ href: '/pine-screener?screen=mtf-aligned', label: 'Weekly + Monthly aligned' }, { href: '/pine-screener?screen=mtf-eo-strong', label: 'W+M + Strong result' }] },
+      { href: '/screeners', label: 'Screeners', more: [{ href: '/screeners?view=patterns&screen=mtf-aligned', label: 'Weekly + Monthly aligned' }, { href: '/screeners?view=patterns&screen=mtf-eo-strong', label: 'W+M + Strong result' }] },
       { href: '/company-lab', label: 'Company Lab', more: [{ href: '/stock-sheet', label: 'Stock Sheet' }] },
       { href: '/multibagger', label: 'Multibagger', more: [{ href: '/multibagger/screens', label: 'Auto Screens' }, { href: '/rerating', label: 'Re-rating' }, { href: '/capex-tracker', label: 'Capex Tracker' }] },
       { href: '/hundred-baggers', label: 'Future 100-baggers' },
@@ -84,7 +84,7 @@ export const HUBS: Hub[] = [
     tabs: [
       { href: '/charts', label: 'Charts + Watchlist', more: [{ href: '/charts/grid', label: 'Multi-chart · Intraday' }] },
       { href: '/multibagger?tab=technicals-ind', label: 'Technicals', us: '/multibagger?tab=technicals-usa' },
-      { href: '/movers', label: 'Movers', more: [{ href: '/in-play', label: 'Live In Play' }, { href: '/heatmap', label: 'Heatmap' }] },
+      { href: '/market-snapshot?tab=movers', label: 'Movers' },
       { href: '/cheat-entry', label: 'Cheat Entry' },
       { href: '/bounce-desk', label: 'Bounce Desk' },
       { href: '/volume-rules', label: 'Volume Rules' },
@@ -94,22 +94,21 @@ export const HUBS: Hub[] = [
     id: 'markets', label: 'Markets & News', icon: '🌐', home: '/market-leadership', blurb: 'The market regime, money flows, themes and the news.',
     tabs: [
       { href: '/market-leadership', label: 'Market Leadership & Risk' },
-      { href: '/multibagger?tab=theme-rotation', label: 'Theme Rotation', more: [{ href: '/themes', label: 'Themes' }, { href: '/critical-themes', label: 'Critical Themes' }] },
+      { href: '/multibagger?tab=theme-rotation', label: 'Theme Rotation', more: [{ href: '/theme-library', label: 'Theme library' }] },
       { href: '/market-cycles', label: 'Market Cycles' },
       { href: '/fii-dii', label: 'FII / DII Flows', more: [{ href: '/smart-money', label: 'Smart Money' }, { href: '/ipos', label: 'IPOs' }] },
-      { href: '/market-snapshot', label: 'Market Snapshot', more: [{ href: '/breadth', label: 'Breadth' }, { href: '/rrg', label: 'RRG' }] },
+      { href: '/market-snapshot', label: 'Market Snapshot' },
       { href: '/news', label: 'News Feed', more: [{ href: '/news-triage', label: 'News Triage' }] },
-      { href: '/bottleneck-intel', label: 'Bottleneck Intel', more: [{ href: '/bottleneck-workbench', label: 'Bottleneck Workbench' }, { href: '/transmission', label: 'Transmission' }, { href: '/strategic-visibility', label: 'Strategic Visibility' }] },
+      { href: '/bottlenecks', label: 'Bottlenecks' },
       { href: '/budget-intel', label: 'Budget Intel' },
       { href: 'https://www.ibef.org/news/past-news', label: 'IBEF', ext: true },
     ],
   },
   {
-    id: 'tools', label: 'Tools & Learn', icon: '🧮', home: '/valuation-calc', blurb: 'Valuation, simulators and the playbooks.',
+    id: 'tools', label: 'Tools & Learn', icon: '🧮', home: '/valuation', blurb: 'Valuation, simulators and the playbooks.',
     tabs: [
-      { href: '/valuation-calc', label: 'Valuation Calc', more: [{ href: '/auto-valuation', label: 'Auto-Valuation' }, { href: '/valuations', label: 'Valuations' }, { href: '/valuation-bands', label: 'Valuation Bands' }] },
-      { href: '/return-simulator', label: 'Return Simulator' },
-      { href: '/smallcap-simulator', label: 'Simulators', us: '/qqq-simulator', more: [{ href: '/historical-returns', label: 'Historical Returns' }, { href: '/portfolio-simulator', label: 'Portfolio Simulator' }, { href: '/monte-carlo', label: 'Monte Carlo' }, { href: '/buy-strategy', label: 'Buy Strategy' }] },
+      { href: '/valuation', label: 'Valuation' },
+      { href: '/simulators', label: 'Simulators' },
       { href: '/playbook', label: 'Playbook', more: [{ href: '/playbook#stress', label: 'Stress' }, { href: '/winning-playbook', label: 'Winning Playbook' }, { href: '/gautam-baid', label: 'Baid Playbook' }] },
       { href: '/investing-os', label: 'Investing OS', more: [{ href: '/journey', label: 'The Journey' }] },
       { href: '/learn', label: 'Learn', more: [{ href: '/earnings-trigger', label: 'Earnings Trigger' }, { href: '/earnings-trigger-masterclass', label: 'ET Masterclass' }, { href: '/earnings-mastery', label: 'Earnings Mastery' }, { href: '/bottom-picking', label: 'Bottom Picking' }, { href: '/double-bottom', label: 'Double Bottom' }, { href: '/fan-principle', label: 'Fan Principle' }] },
@@ -140,12 +139,15 @@ export function linkMatch(link: string, path: string, search: string, hash = '')
   for (const [k, v] of want) { if (cur.get(k) !== v) return -1; n += 2; }
   if (lh) { if (hash.replace(/^#/, '') !== lh) return -1; n += 2; }
   // a link without a query loses to the same page opened on one of its own tabs (?tab=… / ?screen=… / ?scope=…)
-  if (!lq) for (const k of ['tab', 'screen', 'scope', 'choke']) if (cur.has(k)) n -= 1;
+  if (!lq) for (const k of ['tab', 'screen', 'scope', 'choke', 'view']) if (cur.has(k)) n -= 1;
   return n;
 }
 
 /** The hub and sub-tab of the current address (most specific match), or null. */
-export function hubFor(path: string, search = '', hash = ''): { hub: Hub; tab: HubTab; link: string; market: 'IN' | 'US' | null } | null {
+export function hubFor(path0: string, search0 = '', hash = ''): { hub: Hub; tab: HubTab; link: string; market: 'IN' | 'US' | null } | null {
+  // zzz1296 — an old address of a merged page counts as its workspace tab
+  const moved = mergedTarget(path0, search0);
+  const [path, search = ''] = moved ? moved.split('?') : [path0, search0];
   let best: { hub: Hub; tab: HubTab; link: string; market: 'IN' | 'US' | null; s: number } | null = null;
   for (const hub of HUBS) for (const tab of hub.tabs) for (const link of tabLinks(tab)) {
     const s = linkMatch(link, path, search, hash);

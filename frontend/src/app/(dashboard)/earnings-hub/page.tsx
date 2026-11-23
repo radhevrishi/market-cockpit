@@ -28,10 +28,11 @@ import { getConvictionTickers } from '@/lib/conviction-beats';
 
 const CalendarPage  = dynamic(() => import('../calendars/page'),         { ssr: false, loading: () => <PanelLoader label="Calendar" /> });
 const ScanPage      = dynamic(() => import('../earnings/page'),          { ssr: false, loading: () => <PanelLoader label="Scan" /> });
-const GuidancePage  = dynamic(() => import('../earnings-guidance/page'), { ssr: false, loading: () => <PanelLoader label="Guidance" /> });
+// zzz1296 — the Guidance tab moved to the Guidance workspace (/guidance?view=signals); PEAD drift tracker joined here.
+const PeadPage      = dynamic(() => import('../pead-tracker/page'),      { ssr: false, loading: () => <PanelLoader label="PEAD drift" /> });
 const ConcallAIPage = dynamic(() => import('../earnings-analysis/page'), { ssr: false, loading: () => <PanelLoader label="Concall AI" /> });
 
-type Tab = 'calendar' | 'scan' | 'guidance' | 'concall';
+type Tab = 'calendar' | 'scan' | 'concall' | 'pead';
 
 const TABS: ReadonlyArray<{
   id: Tab;
@@ -41,8 +42,8 @@ const TABS: ReadonlyArray<{
 }> = [
   { id: 'calendar', label: 'Calendar',   Icon: Calendar,   tagline: 'Monthly earnings calendar — what reports, when, with quality grade' },
   { id: 'scan',     label: 'Scan',       Icon: LineChart,  tagline: 'Quarterly Revenue / Margin / EPS grid for portfolio + watchlist' },
-  { id: 'guidance', label: 'Guidance',   Icon: BarChart3,  tagline: 'Last-45-day guidance signals — revenue / margin / capex / operating leverage' },
   { id: 'concall',  label: 'Concall AI', Icon: Microscope, tagline: 'Upload concall transcript or filing PDF — AI institutional report' },
+  { id: 'pead',     label: 'PEAD drift', Icon: BarChart3,  tagline: 'Does the post-results score predict the next 30 days of drift on your Conviction bench?' },
 ];
 
 function PanelLoader({ label }: { label: string }) {
@@ -56,7 +57,10 @@ function PanelLoader({ label }: { label: string }) {
 export default function EarningsHubPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const initial = (searchParams?.get('tab') as Tab) || 'calendar';
+  const rawTab = searchParams?.get('tab');
+  const initial = (TABS.some((t) => t.id === rawTab) ? rawTab : 'calendar') as Tab;
+  // zzz1296 — old ?tab=guidance links open the Guidance workspace's result-signals tab
+  useEffect(() => { if (rawTab === 'guidance') router.replace('/guidance?view=signals'); }, [rawTab, router]);
   const [active, setActive] = useState<Tab>(initial);
   // PATCH 0273 — track Conviction Beats bench count + live-sync across tabs.
   const [convictionCount, setConvictionCount] = useState<number>(0);
@@ -205,8 +209,8 @@ export default function EarningsHubPage() {
         <Suspense fallback={<PanelLoader label={activeMeta.label} />}>
           {active === 'calendar' && <CalendarPage />}
           {active === 'scan'     && <ScanPage />}
-          {active === 'guidance' && <GuidancePage />}
           {active === 'concall'  && <ConcallAIPage />}
+          {active === 'pead'     && <PeadPage />}
         </Suspense>
       </div>
     </div>

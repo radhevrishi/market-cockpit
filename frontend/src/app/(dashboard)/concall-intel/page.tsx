@@ -11,6 +11,9 @@
 // Plus the original manual transcript-paste analyser below.
 // ═══════════════════════════════════════════════════════════════════════════
 
+// zzz1296 — Company Intelligence (per-company document library) is a tab here now; /company-intel forwards to ?tab=library.
+import dynamic from 'next/dynamic';
+const CompanyLibrary = dynamic(() => import('../company-intel/page'), { ssr: false, loading: () => <div style={{ padding: 24, fontSize: 12, color: 'var(--mc-text-4)' }}>Loading company library…</div> });
 import { useState, useEffect } from 'react';
 import type { Analysis } from './types';
 import { LiveBullishFeed } from './LiveBullishFeed';
@@ -128,12 +131,12 @@ export default function ConcallIntelPage() {
   // surface untouched; Analytics tab mounts a brand-new component that
   // fetches all 4 endpoints and renders an institutional-format
   // consolidated dashboard.
-  const [tab, setTab] = useState<'live' | 'analytics' | 'transform' | 'radar'>('live');
+  const [tab, setTab] = useState<'live' | 'analytics' | 'transform' | 'radar' | 'library'>('live');
   // zzz433 — honor ?tab= deep-link (e.g. Daily Signal Inbox → /concall-intel?tab=radar)
   useEffect(() => {
     try {
       const q = new URLSearchParams(window.location.search).get('tab');
-      if (q === 'radar' || q === 'transform' || q === 'analytics' || q === 'live') setTab(q);
+      if (q === 'radar' || q === 'transform' || q === 'analytics' || q === 'live' || q === 'library') setTab(q);
     } catch { /* noop */ }
   }, []);
 
@@ -207,6 +210,7 @@ export default function ConcallIntelPage() {
           { id: 'analytics', label: '📊 Analytics',   hint: 'Institutional-format consolidated dashboard' },
           { id: 'transform', label: '🚀 Transformation', hint: 'Multibagger transformation-hunting framework — auto-radar runs on any analysed transcript' },
           { id: 'radar',     label: '🔭 Radar',          hint: 'Auto-scans EVERY concall in the live feed for transformation patterns — ranked leaderboard, no pasting' },
+          { id: 'library',   label: '📚 Company library', hint: 'Your uploaded transcripts and decks per company, the guidance table and capacity use (was Company Intelligence)' },
         ] as const).map((t) => {
           const isActive = tab === t.id;
           return (
@@ -229,7 +233,9 @@ export default function ConcallIntelPage() {
         })}
       </div>
 
-      {tab === 'radar' ? (
+      {tab === 'library' ? (
+        <CompanyLibrary />
+      ) : tab === 'radar' ? (
         <TransformationScreenerTab />
       ) : tab === 'transform' ? (
         <TransformationFrameworkTab lastRadar={result?.transformation ?? null} lastTicker={result?.ticker ?? ''} />
