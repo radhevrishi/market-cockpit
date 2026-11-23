@@ -22,6 +22,19 @@ export default function CompanyIntelligencePage() {
   const [signals, setSignals] = useState<Signal[]>([]);
   const [trends, setTrends] = useState<CompanyTrend[]>([]);
   const [expandedTrends, setExpandedTrends] = useState<Set<string>>(new Set());
+  // zzz1300 — today's price move per company, so a "Bullish" stack on a stock that fell hard is shown as contradicted
+  const [dayMove, setDayMove] = useState<Record<string, number>>({});
+  useEffect(() => {
+    let off = false;
+    fetch('/api/market/quotes?market=india').then((r) => (r.ok ? r.json() : null)).then((j: any) => {
+      if (off || !j) return;
+      const rows: any[] = j?.stocks || j?.quotes || j?.data || [];
+      const m: Record<string, number> = {};
+      for (const r of rows) { const t = String(r?.ticker || r?.symbol || '').toUpperCase(); const c = Number(r?.changePercent ?? r?.pChange); if (t && Number.isFinite(c)) m[t] = c; }
+      setDayMove(m);
+    }).catch(() => { /* no prices — chips show filings only */ });
+    return () => { off = true; };
+  }, []);
   const [bias, setBias] = useState<DailyBias | null>(null);
   const [stats, setStats] = useState<any>(null);
   // FIX: Only show loading spinner on first ever load (no cache).
@@ -846,7 +859,14 @@ export default function CompanyIntelligencePage() {
                   <div style={{ fontSize: '11px', color: TEXT2, marginBottom: '2px', textTransform: 'capitalize' }}>{t.company}</div>
                   <div style={{ display: 'flex', gap: '10px', fontSize: '10px' }}>
                     <span style={{ color: stackColor }}>{t.signalCount} signal{t.signalCount !== 1 ? 's' : ''} {isExpanded ? '▾' : '▸ tap to expand'}</span>
-                    <span style={{ color: sentimentColor(t.netSentiment) }}>{t.netSentiment}</span>
+                    {(() => {
+                      const mv = dayMove[String(t.symbol).toUpperCase()];
+                      const clash = mv != null && ((t.netSentiment === 'Bullish' && mv <= -5) || (t.netSentiment === 'Bearish' && mv >= 5));
+                      return <>
+                        <span style={{ color: clash ? YELLOW : sentimentColor(t.netSentiment) }} title={clash ? `Filings read ${t.netSentiment}, but the price moved ${mv.toFixed(1)}% today — the market disagrees` : 'Direction of the filings'}>{clash ? `Filings ${t.netSentiment.toLowerCase()} · price disagrees` : t.netSentiment}</span>
+                        {mv != null && <span style={{ color: mv > 0 ? GREEN : mv < 0 ? RED : TEXT3, fontWeight: 700 }}>{mv > 0 ? '+' : ''}{mv.toFixed(1)}% today</span>}
+                      </>;
+                    })()}
                     <span style={{ color: impactColor(t.topImpact) }}>{t.topImpact}</span>
                     <span style={{ color: TEXT3 }}>Top: {t.maxScore ?? t.avgScore}</span>
                     <span style={{ color: TEXT3 }}>Avg: {t.avgScore}</span>

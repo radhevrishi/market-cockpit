@@ -12,22 +12,22 @@ const DOT: Record<PushState, string> = {
 };
 
 const CSS = `
-.mcpn{background:#fff;color:#111827;border:1px solid #e5e7eb;border-radius:12px;padding:14px 16px;margin-bottom:14px}
-.mcpn.on{border-color:#bbf7d0;background:#f0fdf4}
+.mcpn{background:var(--mc-bg-1);color:var(--mc-text-0);border:1px solid var(--mc-border-1);border-radius:12px;padding:14px 16px;margin-bottom:14px}
+.mcpn.on{border-color:color-mix(in srgb, var(--mc-bullish) 40%, transparent);background:color-mix(in srgb, var(--mc-bullish) 8%, var(--mc-bg-1))}
 .mcpn h2{font-size:16px;margin:0;font-weight:800;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .mcpn-dot{width:10px;height:10px;border-radius:50%;display:inline-block;flex:none}
 .mcpn-state{font-size:14px;font-weight:700}
-.mcpn-detail{color:#4b5563;font-size:13px;margin:6px 0 0;line-height:1.45}
-.mcpn-steps{margin:8px 0 0;padding-left:20px;font-size:14px;line-height:1.5;color:#111827}
+.mcpn-detail{color:var(--mc-text-2);font-size:13px;margin:6px 0 0;line-height:1.45}
+.mcpn-steps{margin:8px 0 0;padding-left:20px;font-size:14px;line-height:1.5;color:var(--mc-text-0)}
 .mcpn-steps li{margin-bottom:4px}
 .mcpn-btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
-.mcpn-btn{border:1px solid #d1d5db;background:#fff;color:#111827;border-radius:10px;padding:9px 14px;cursor:pointer;font-weight:700;font-size:14px;min-height:42px}
+.mcpn-btn{border:1px solid var(--mc-border-2);background:var(--mc-bg-1);color:var(--mc-text-0);border-radius:10px;padding:9px 14px;cursor:pointer;font-weight:700;font-size:14px;min-height:42px}
 .mcpn-btn.pri{background:#2563eb;border-color:#2563eb;color:#fff}
 .mcpn-btn:disabled{opacity:.6;cursor:default}
-.mcpn-note{margin-top:10px;font-size:13px;white-space:pre-line;border-radius:8px;padding:8px 10px;background:#f3f4f6;color:#111827}
-.mcpn-note.bad{background:#fef2f2;color:#991b1b}
+.mcpn-note{margin-top:10px;font-size:13px;white-space:pre-line;border-radius:8px;padding:8px 10px;background:var(--mc-bg-2);color:var(--mc-text-0)}
+.mcpn-note.bad{background:color-mix(in srgb, var(--mc-bearish) 10%, var(--mc-bg-1));color:var(--mc-bearish)}
 .mcpn-note.good{background:#ecfdf5;color:#065f46}
-.mcpn-c{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;flex-wrap:wrap}
+.mcpn-c{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--mc-border-1);font-size:13px;flex-wrap:wrap}
 .mcpn-c .mcpn-btn{padding:5px 10px;min-height:32px;font-size:12px}
 @media (max-width:520px){.mcpn-btns .mcpn-btn{flex:1 1 100%}}
 `;
@@ -79,7 +79,7 @@ export default function PhoneNotifications({ compact = false }: { compact?: bool
         <style>{CSS}</style>
         <span className="mcpn-dot" style={{ background: DOT[state] }} aria-hidden />
         <span style={{ fontWeight: 700 }}>📱 Phone:</span>
-        <span style={{ color: '#374151' }}>{state === 'on' ? 'on' : state === 'off' ? 'off' : t.title}</span>
+        <span style={{ color: 'var(--mc-text-1)' }}>{state === 'on' ? 'on' : state === 'off' ? 'off' : t.title}</span>
         <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
           {canTurnOn ? <button type="button" className="mcpn-btn pri" disabled={!!busy} onClick={() => void on()}>{busy === 'on' ? '…' : 'Turn on'}</button>
             : state === 'on' ? <button type="button" className="mcpn-btn" disabled={!!busy} onClick={() => void test()}>{busy === 'test' ? '…' : 'Test'}</button>

@@ -47,21 +47,21 @@ const CSS = `
 .mcab-btn{position:relative;background:none;border:1px solid var(--mc-bg-4);border-radius:10px;padding:6px 9px;cursor:pointer;color:var(--mc-text-2);font-size:16px;line-height:1;min-width:38px;min-height:36px}
 .mcab-btn.has{border-color:#dc2626}
 .mcab-badge{position:absolute;top:-8px;right:-8px;background:#dc2626;color:#fff;border-radius:11px;font-size:11px;font-weight:800;padding:2px 6px;min-width:20px;text-align:center;line-height:16px;border:2px solid var(--mc-bg-1,#fff);font-variant-numeric:tabular-nums}
-.mcab-panel{position:absolute;right:0;top:calc(100% + 8px);width:380px;max-width:calc(100vw - 24px);background:#fff;color:#111827;border:1px solid #e5e7eb;border-radius:12px;box-shadow:0 14px 34px rgba(0,0,0,.2);z-index:900;font-size:13px;overflow:hidden}
-.mcab-head{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid #e5e7eb;gap:8px}
+.mcab-panel{position:absolute;right:0;top:calc(100% + 8px);width:380px;max-width:calc(100vw - 24px);background:var(--mc-bg-1);color:var(--mc-text-0);border:1px solid var(--mc-border-1);border-radius:12px;box-shadow:0 14px 34px rgba(0,0,0,.2);z-index:900;font-size:13px;overflow:hidden}
+.mcab-head{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid var(--mc-border-1);gap:8px}
 .mcab-head b{font-size:15px}
 .mcab-link{border:none;background:none;color:#2563eb;cursor:pointer;font-weight:700;font-size:13px;padding:4px 2px;text-decoration:none}
 .mcab-list{max-height:min(420px,60vh);overflow-y:auto}
-.mcab-row{padding:9px 12px;border-bottom:1px solid #f3f4f6;display:grid;gap:2px}
+.mcab-row{padding:9px 12px;border-bottom:1px solid var(--mc-border-1);display:grid;gap:2px}
 .mcab-row.unread{background:#eff6ff;border-left:3px solid #2563eb;padding-left:9px}
 .mcab-top{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
-.mcab-tk{font-weight:800;color:#111827;text-decoration:none}
+.mcab-tk{font-weight:800;color:var(--mc-text-0);text-decoration:none}
 .mcab-tk:hover{text-decoration:underline}
-.mcab-mk{font-size:10px;font-weight:800;color:#4b5563;border:1px solid #d1d5db;border-radius:4px;padding:0 4px}
+.mcab-mk{font-size:10px;font-weight:800;color:var(--mc-text-2);border:1px solid var(--mc-border-2);border-radius:4px;padding:0 4px}
 .mcab-up{color:#15803d;font-weight:700}.mcab-dn{color:#b91c1c;font-weight:700}
-.mcab-cond{color:#111827}
-.mcab-sub{color:#6b7280;font-size:12px}
-.mcab-empty{padding:14px;color:#4b5563;line-height:1.45}
+.mcab-cond{color:var(--mc-text-0)}
+.mcab-sub{color:var(--mc-text-3);font-size:12px}
+.mcab-empty{padding:14px;color:var(--mc-text-2);line-height:1.45}
 @media (max-width:768px){
   .mcab-panel{position:fixed;left:8px;right:8px;top:56px;width:auto;max-width:none}
   .mcab-list{max-height:calc(100vh - 220px)}

@@ -216,7 +216,7 @@ async function labCardIn(m: LabMarket, t: string, fresh = false): Promise<LabCar
   if (!(d && d.c.length >= 50) && ownRow) {
     const filled: string[] = [];
     fillYearly(ownRow, filled);
-    if (filled.length) notes.push(`not in the screener snapshot for this company — worked out here: ${filled.join(', ')}${d ? `; only ${d.c.length} trading days of prices, too few for the 50-day / 200-day averages` : ''}`);
+    if (filled.length) notes.push(`missing from the screener snapshot — worked out here: ${filled.join(', ')}${d ? `; only ${d.c.length} trading days of prices, too few for the 50-day / 200-day averages` : ''}`);
   }
   if (d && d.c.length >= 50) {
     const avg = (n: number) => (d.c.length >= n ? d.c.slice(-n).reduce((a, b) => a + b, 0) / n : null);
@@ -235,7 +235,7 @@ async function labCardIn(m: LabMarket, t: string, fresh = false): Promise<LabCar
     }
     ownRow = o;
     fillYearly(o, filled);
-    if (filled.length) notes.push(`${row ? 'not in the screener snapshot for this company' : 'not in the screener snapshot'} — worked out here: ${filled.join(', ')}${row ? '' : '; no relative-strength rank'}`);
+    if (filled.length) notes.push(`${row ? 'missing from the screener snapshot' : 'company not in the screener snapshot'} — worked out here: ${filled.join(', ')}${row ? '' : '; no relative-strength rank'}`);
   }
   const prices: Array<{ t: string; c: number }> = [];
   if (d) d.c.forEach((c, i) => { if ((d.c.length - 1 - i) % 5 === 0) prices.push({ t: d.t[i], c }); });

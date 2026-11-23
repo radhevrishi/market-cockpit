@@ -23,6 +23,8 @@ import { logSignals } from '@/lib/signal-log'; // zzz524 — feed the Signal Sco
 import { getEngineViews, openPassport } from '@/lib/engines'; // zzz525 — conflicts panel
 import { computeVerdict } from '@/lib/verdict';
 import { getConvictionList } from '@/lib/conviction-beats';
+import { getUsConvictionList } from '@/lib/conviction-beats-us';
+import { maEntry, MA_LABEL } from '@/lib/ma-entries';
 import { listAutoValuations } from '@/lib/auto-valuation-store';
 import { getThesisList } from '@/lib/thesis-store';
 
@@ -52,6 +54,7 @@ interface Signal {
   chg?: number | null;
   held?: boolean;
   group?: string;          // rows with the same group sit in one table
+  market?: 'IN' | 'US';
 }
 
 const SEV_META: Record<Sev, { label: string; color: string; blurb: string }> = {
@@ -103,6 +106,9 @@ export default function CockpitPage() {
   const [counts, setCounts] = useState({ held: 0, bench: 0, theses: 0 });
   const [notify, setNotify] = useState(false);
   const [builtAt, setBuiltAt] = useState<string>('');
+  const [mkt, setMkt] = useState<'ALL' | 'IN' | 'US'>('ALL');   // zzz1300 — India / USA / both
+  useEffect(() => { try { const v = localStorage.getItem('mc:cockpit:market:v1'); if (v === 'IN' || v === 'US' || v === 'ALL') setMkt(v); } catch { /* */ } }, []);
+  const pickMkt = (v: 'ALL' | 'IN' | 'US') => { setMkt(v); try { localStorage.setItem('mc:cockpit:market:v1', v); } catch { /* */ } };
 
   useEffect(() => { setMounted(true); }, []);
 
@@ -123,16 +129,38 @@ export default function CockpitPage() {
     for (const b of bench) benchByTicker.set(norm(b.ticker), b);
     const benchSet = new Set(benchByTicker.keys());
     const universe = Array.from(new Set([...held, ...benchSet])).filter(Boolean);
+    // zzz1300 — USA: holdings (this browser's US rows + the US book) and the US Conviction Beats bench
+    const heldUs = new Set<string>();
+    for (const [k, h] of heldMap) if ((h as any)?.market === 'US') heldUs.add(norm(k));
+    try {
+      const j = await fetch('/api/v1/us-book', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+      for (const h of j?.book?.holdings || j?.holdings || []) if (h?.ticker && !(Number(h?.quantity ?? h?.shares ?? 1) <= 0)) heldUs.add(norm(h.ticker));
+    } catch { /* local only */ }
+    for (const t of heldUs) held.add(t);
+    let usBench: any[] = [];
+    try { usBench = getUsConvictionList(); } catch { /* */ }
+    const usBenchBy = new Map<string, any>();
+    for (const b of usBench) if (b?.ticker) usBenchBy.set(norm(b.ticker), b);
+    const inHeld = [...held].filter((t) => !heldUs.has(t));
 
     let theses: any[] = [];
     try { theses = getThesisList(); } catch { /* */ }
     let vals: any[] = [];
     try { vals = listAutoValuations(); } catch { /* */ }
 
-    setCounts({ held: held.size, bench: benchSet.size, theses: theses.length });
+    setCounts({ held: held.size, bench: benchSet.size + usBenchBy.size, theses: theses.length });
 
     // ── Parallel remote fetches (all optional) ───────────────────────────
-    const [quoteMap, grades, rotIN, rotUS, cal] = await Promise.all([
+    const slimRows = async (market: 'IN' | 'US', tickers: string[]): Promise<any[]> => {
+      const out: any[] = [];
+      for (let i = 0; i < tickers.length; i += 300) {
+        const part = tickers.slice(i, i + 300);
+        const j = await fetch(`/api/v1/stock-screener?market=${market}&tickers=${encodeURIComponent(part.join(','))}`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+        for (const r of j?.rows || []) out.push(r);
+      }
+      return out;
+    };
+    const [quoteMap, grades, rotIN, rotUS, cal, slimIn, slimUs] = await Promise.all([
       fetchQuoteMap(),
       universe.length
         ? fetch(`/api/v1/portfolio/earnings-grades?tickers=${encodeURIComponent(universe.join(','))}`, { cache: 'no-store' })
@@ -145,6 +173,8 @@ export default function CockpitPage() {
         const to = new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10);
         return fetch(`/api/v1/earnings/calendar?from=${from}&to=${to}`, { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null);
       })(),
+      slimRows('IN', Array.from(new Set([...inHeld, ...benchSet]))),
+      slimRows('US', Array.from(new Set([...heldUs, ...usBenchBy.keys()]))),
     ]);
 
     // ── 1. Thesis breaches (sell-discipline) — highest priority ──────────
@@ -250,7 +280,7 @@ export default function CockpitPage() {
           if (yoursIn.length) {
             sig.push({
               id: `theme-trim-${region}-${th.id}`, sev: 'act', priority: 70,
-              icon: '✂️', kind: 'THEME', title: `${th.emoji || ''} ${th.name} is rotating OUT — you're exposed`,
+              icon: '✂️', kind: 'THEME', market: region === 'india' ? 'IN' : 'US', title: `${th.emoji || ''} ${th.name} is rotating OUT — you're exposed`,
               detail: `${yoursIn.join(', ')} sit in this theme (${th.verdict}). Rotation says trim / tighten stops.`,
               href: `/multibagger?tab=theme-rotation&region=${region}`,
             });
@@ -259,7 +289,7 @@ export default function CockpitPage() {
           // Held-in-theme opportunities rank above pure new ones.
           themeAdds.push({
             id: `theme-add-${region}-${th.id}`, sev: 'info', priority: (yoursIn.length ? 30 : 20) + (th.conviction ? th.conviction / 10 : 0),
-            icon: '➕', kind: 'THEME', group: 'Themes rotating in', name: `${th.emoji || ''} ${th.name}`.trim(),
+            icon: '➕', kind: 'THEME', market: region === 'india' ? 'IN' : 'US', group: 'Themes rotating in', name: `${th.emoji || ''} ${th.name}`.trim(),
             note: `${region === 'india' ? '🇮🇳 India' : '🇺🇸 USA'} · ${th.verdict} · conviction ${th.conviction ?? '—'}/100${yoursIn.length ? ` · you hold ${yoursIn.join(', ')}` : ''}`,
             title: `${th.emoji || ''} ${th.name} rotating in — ${th.verdict}`,
             detail: `${region === 'india' ? '🇮🇳' : '🇺🇸'} conviction ${th.conviction ?? '—'}/100${yoursIn.length ? ` · you hold ${yoursIn.join(', ')}` : ' · new opportunity'}.`,
@@ -305,8 +335,8 @@ export default function CockpitPage() {
       const tk = norm(b.ticker);
       sig.push({
         id: `new-${tk}`, sev: 'info', priority: 15 + (b.composite_score ? b.composite_score / 12 : 0),
-        icon: '✨', kind: 'NEW IDEA', ticker: b.ticker, name: b.company || undefined, group: 'New on your bench (last 7 days)',
-        note: `${b.tier}${b.composite_score ? ` · score ${b.composite_score}` : ''}${b.sector ? ` · ${b.sector}` : ''} · graded ${age === 0 ? 'today' : age + 'd ago'}`,
+        icon: '✨', kind: 'NEW IDEA', ticker: b.ticker, name: b.company || undefined, market: 'IN', group: 'New on your India bench (last 7 days)',
+        note: `🇮🇳 ${b.tier}${b.composite_score ? ` · score ${b.composite_score}` : ''}${b.sector ? ` · ${b.sector}` : ''} · graded ${age === 0 ? 'today' : age + 'd ago'}`,
         title: `New on your bench: ${b.company || tk} — ${b.tier}`,
         detail: `Graded ${age === 0 ? 'today' : age + 'd ago'}${b.composite_score ? ` · score ${b.composite_score}` : ''}${b.sector ? ` · ${b.sector}` : ''}. Size it or pass.`,
         href: '/watchlists?tab=conviction',
@@ -322,23 +352,66 @@ export default function CockpitPage() {
       });
     }
 
-    // ── 7. Technical buy-zone (your names set up for an entry) ───────────
+    // ── 7. Moving-average entries (zzz1300): 21-day EMA, 50-day, 200-day — India + USA, held + bench ──
+    const seenEntry = new Set<string>();
+    const pushMa = (r: any, market: 'IN' | 'US') => {
+      const tk = norm(String(r?.t || ''));
+      if (!tk || seenEntry.has(`${market}:${tk}`)) return;
+      const e = maEntry(r);
+      if (!e) return;
+      seenEntry.add(`${market}:${tk}`);
+      const isHeld = market === 'US' ? heldUs.has(tk) : held.has(tk) && !heldUs.has(tk);
+      const name = r?.n || (market === 'US' ? usBenchBy.get(tk)?.company : benchByTicker.get(tk)?.company) || undefined;
+      const st = typeof r?.twSt === 'number' ? ` · Stage ${r.twSt}` : '';
+      const rs = typeof r?.rs === 'number' ? ` · RS ${r.rs}` : '';
+      sig.push({
+        id: `ma-${market}-${tk}`, sev: 'watch', priority: (isHeld ? 60 : 40) - Math.abs(e.pct),
+        icon: e.kind === 'sma200' ? '🛡' : '🎯', kind: 'ENTRY', ticker: tk, name, market, held: isHeld,
+        title: `${name || tk} is ${e.note}${isHeld ? ' (you hold this)' : ''}`,
+        detail: `${market === 'US' ? '🇺🇸' : '🇮🇳'} ${e.note}${st}${rs}. ${isHeld ? 'Add on strength or hold.' : 'On your bench — check the chart before starting a position.'}`,
+        note: `${market === 'US' ? '🇺🇸' : '🇮🇳'} ${e.note}${st}${rs}`,
+        group: MA_LABEL[e.kind],
+        href: `/charts?m=${market}&t=${encodeURIComponent(tk)}`,
+      });
+    };
+    for (const r of slimIn || []) pushMa(r, 'IN');
+    for (const r of slimUs || []) pushMa(r, 'US');
+    // the Technicals tab's own rows, for names the screener snapshot does not carry
     try {
       const bz = getTechBuyZone();
       for (const [tk, info] of bz) {
+        const market: 'IN' | 'US' = info.market === 'IND' ? 'IN' : 'US';
+        if (seenEntry.has(`${market}:${tk}`)) continue;
         const isHeld = held.has(tk);
-        const isBench = benchSet.has(tk);
-        if (!isHeld && !isBench) continue;
+        if (!isHeld && !benchSet.has(tk) && !usBenchBy.has(tk)) continue;
+        seenEntry.add(`${market}:${tk}`);
+        const note = `${market === 'US' ? '🇺🇸' : '🇮🇳'} ${String(info.note || '').replace(/ — Qulla entry/i, '')}`;
         sig.push({
-          id: `tech-${tk}`, sev: isHeld ? 'watch' : 'watch', priority: isHeld ? 52 : 48,
-          icon: '🎯', kind: 'ENTRY', ticker: tk, name: benchByTicker.get(tk)?.company || heldMap.get(tk)?.company || heldMap.get(tk)?.name || undefined,
-          note: String(info.note || '').replace(/ — Qulla entry/i, ''), group: isHeld ? 'Entries on names you hold' : 'Entries on your bench (not held)',
-          title: `${benchByTicker.get(tk)?.company || tk} is at a technical entry${isHeld ? ' (you hold this)' : ''}`,
-          detail: `${info.market === 'IND' ? '🇮🇳' : '🇺🇸'} ${info.note}. ${isHeld ? 'Add on strength or hold.' : 'On your bench — a clean setup to start a position.'}`,
-          href: `/multibagger?tab=technicals-${info.market === 'IND' ? 'ind' : 'usa'}`,
+          id: `tech-${tk}`, sev: 'watch', priority: isHeld ? 52 : 38,
+          icon: '🎯', kind: 'ENTRY', ticker: tk, market, held: isHeld, name: benchByTicker.get(tk)?.company || usBenchBy.get(tk)?.company || undefined,
+          title: `${tk} is at a technical entry${isHeld ? ' (you hold this)' : ''}`, detail: `${note} (from the Technicals tab).`, note,
+          group: /21-EMA/i.test(info.note) ? MA_LABEL.ema21 : MA_LABEL.sma50,
+          href: `/charts?m=${market}&t=${encodeURIComponent(tk)}`,
         });
       }
     } catch { /* tech rows not loaded */ }
+
+    // ── 7b. New on the US bench (last 7 days) ──
+    const usNew = usBench
+      .map((b) => ({ b, age: b.filing_date ? daysBetween(b.filing_date) : null }))
+      .filter(({ b, age }) => age != null && age >= 0 && age <= 7 && !heldUs.has(norm(b.ticker)) && (b.tier === 'BLOCKBUSTER' || b.tier === 'STRONG'))
+      .sort((a, z) => (z.b.composite_score || 0) - (a.b.composite_score || 0));
+    for (const { b, age } of usNew.slice(0, 12)) {
+      const tk = norm(b.ticker);
+      sig.push({
+        id: `new-us-${tk}`, sev: 'info', priority: 15 + (b.composite_score ? b.composite_score / 12 : 0),
+        icon: '✨', kind: 'NEW IDEA', ticker: b.ticker, name: b.company || undefined, market: 'US', group: 'New on your US bench (last 7 days)',
+        title: `New on your US bench: ${b.company || tk} — ${b.tier}`,
+        detail: `Reported ${age === 0 ? 'today' : age + 'd ago'}${b.composite_score ? ` · score ${b.composite_score}` : ''}${b.sector ? ` · ${b.sector}` : ''}.`,
+        note: `🇺🇸 ${b.tier}${b.composite_score ? ` · score ${b.composite_score}` : ''}${b.sector ? ` · ${b.sector}` : ''} · reported ${age === 0 ? 'today' : age + 'd ago'}`,
+        href: '/us-conviction-beats',
+      });
+    }
 
     // ── 8. A holding down hard today (needs a look) ──────────────────────
     for (const tk of held) {
@@ -346,7 +419,7 @@ export default function CockpitPage() {
       if (chg == null || chg > -6) continue;
       sig.push({
         id: `drop-${tk}`, sev: chg <= -9 ? 'act' : 'watch', priority: 55 + Math.min(20, Math.abs(chg)),
-        icon: '📉', kind: 'MOVE', ticker: tk, name: heldMap.get(tk)?.company || heldMap.get(tk)?.name || undefined,
+        icon: '📉', kind: 'MOVE', ticker: tk, market: quoteMap[tk]?.region === 'US' ? 'US' : 'IN', name: heldMap.get(tk)?.company || heldMap.get(tk)?.name || undefined,
         title: `${tk} is down ${Math.abs(chg).toFixed(1)}% today`,
         detail: `A sharp move on a name you hold. Check the news and your thesis before it becomes an emotional decision.`,
         href: `/news`,
@@ -358,7 +431,8 @@ export default function CockpitPage() {
       const k = norm(s.ticker);
       const q = quoteMap[k];
       if (s.chg == null && q?.chg != null) s.chg = q.chg;
-      s.held = held.has(k);
+      if (s.held == null) s.held = held.has(k);
+      if (s.name) s.name = s.name.replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"');
     }
 
     sig.sort((a, b) => {
@@ -441,15 +515,16 @@ export default function CockpitPage() {
     } catch { /* */ }
   }
 
+  const visible = useMemo(() => (mkt === 'ALL' ? signals : signals.filter((s) => !s.market || s.market === mkt)), [signals, mkt]);
   const grouped = useMemo(() => {
     const m: Record<Sev, Signal[]> = { act: [], watch: [], info: [] };
-    for (const s of signals) m[s.sev].push(s);
+    for (const s of visible) m[s.sev].push(s);
     return m;
-  }, [signals]);
+  }, [visible]);
 
   const actN = grouped.act.length;
   const kpi = useMemo(() => {
-    const k = (f: (s: Signal) => boolean) => signals.filter(f).length;
+    const k = (f: (s: Signal) => boolean) => visible.filter(f).length;
     return [
       { n: actN, l: 'need a decision', c: actN > 0 ? C.red : C.muted },
       { n: k((s) => s.kind === 'MOVE'), l: 'holdings moving hard', c: C.red },
@@ -460,7 +535,7 @@ export default function CockpitPage() {
       { n: k((s) => s.kind === 'NEW IDEA'), l: 'new ideas', c: C.saffron },
       { n: counts.held, l: `holdings · ${counts.bench} on bench`, c: C.text },
     ];
-  }, [signals, actN, counts]);
+  }, [visible, actN, counts]);
 
   const onDismiss = (id: string) => { try { dismiss('cockpit', id); build(); } catch {} };
 
@@ -472,7 +547,7 @@ export default function CockpitPage() {
 
   return (
     <div style={{ background: C.bg, color: C.text, minHeight: '100vh', padding: '16px 20px 64px' }}>
-      <div style={{ maxWidth: 1800, margin: '0 auto' }}>
+      <div style={{ width: '100%' }}>
 
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
@@ -487,6 +562,11 @@ export default function CockpitPage() {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', border: `1px solid ${C.border2}`, borderRadius: 6, overflow: 'hidden' }}>
+              {([['ALL', 'Both'], ['IN', '🇮🇳 India'], ['US', '🇺🇸 USA']] as const).map(([v, l]) => (
+                <button key={v} onClick={() => pickMkt(v)} style={{ ...btn, border: 'none', borderRadius: 0, background: mkt === v ? 'color-mix(in srgb, var(--mc-accent) 18%, transparent)' : C.card2, color: mkt === v ? C.text0 : C.muted }}>{l}</button>
+              ))}
+            </div>
             <button onClick={toggleNotify} title="Fire a browser notification each morning while the app is open"
               style={{ ...btn, border: `1px solid ${notify ? 'color-mix(in srgb, var(--mc-bullish) 45%, transparent)' : C.border2}`,
                 background: notify ? 'color-mix(in srgb, var(--mc-bullish) 12%, transparent)' : C.card2, color: notify ? C.green : C.muted }}>
@@ -632,7 +712,7 @@ function GroupTable({ title, rows, newIds, onDismiss }: { title: string; rows: S
               </NavLink>
             )}
             <NavLink href={r.href} style={{ color: hasTicker ? C.muted : C.text0, fontWeight: hasTicker ? 500 : 700, textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.title}>
-              {r.name || r.title}
+              {r.name || (r.ticker ? <span style={{ color: C.dim }}>—</span> : r.title)}
             </NavLink>
             <span style={{ color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.detail}>{r.note || r.detail}</span>
             {hasTicker && <span style={{ textAlign: 'right' }}><ChgCell v={r.chg} /></span>}

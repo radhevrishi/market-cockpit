@@ -14,6 +14,7 @@
  * - 'intelligence:meta' → { computedAt, signalCount, version, ttl }
  */
 
+import { roundTripDealKeys, dealPartyKey } from '@/lib/deal-round-trip';
 import { NextResponse } from 'next/server';
 import { nseApiFetch, fetchStockQuote, fetchNseLargeDeals } from '@/lib/nse';
 import { normalizeTicker } from '@/lib/tickers';
@@ -3613,7 +3614,13 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
 
   const dealDedupMap = new Map<string, IntelSignal>();
 
+  // zzz1300 — a buy AND a sell by the same party in the same company on the same day, of similar size, is intraday
+  // trading or market making (e.g. Graviton, Junomoneta): it says nothing about the company and is not a signal.
+  const roundTrips = roundTripDealKeys([...blockDeals, ...bulkDeals]);
+  if (roundTrips.size) debug.errors.push(`bulk/block deals skipped as same-day round trips (buy ≈ sell by one party): ${roundTrips.size}`);
+
   for (const deal of [...blockDeals, ...bulkDeals]) {
+    if (roundTrips.has(dealPartyKey(deal))) continue;
     const symbol = normalizeTicker(deal.symbol);
     if (!symbol) continue;
 

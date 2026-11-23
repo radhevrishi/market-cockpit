@@ -17,44 +17,44 @@ import PhoneNotifications from '@/components/alerts/PhoneNotifications';
 const CreateAlertDialog = dynamic(() => import('@/components/alerts/CreateAlertDialog'), { ssr: false });
 
 const CSS = `
-.pa{max-width:1200px;margin:0 auto;color:#111827;background:#f8fafc;padding:16px;min-height:100%;box-sizing:border-box}
+.pa{max-width:1200px;margin:0 auto;color:var(--mc-text-0);background:transparent;padding:16px;min-height:100%;box-sizing:border-box}
 .pa *{box-sizing:border-box}
-.pa-card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px 16px;margin-bottom:14px}
-.pa h1{font-size:22px;margin:0;font-weight:800;color:#111827}
-.pa-lede{color:#4b5563;font-size:13px;margin:4px 0 0;line-height:1.45}
+.pa-card{background:var(--mc-bg-1);border:1px solid var(--mc-border-1);border-radius:12px;padding:14px 16px;margin-bottom:14px}
+.pa h1{font-size:22px;margin:0;font-weight:800;color:var(--mc-text-0)}
+.pa-lede{color:var(--mc-text-2);font-size:13px;margin:4px 0 0;line-height:1.45}
 .pa-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-start;margin-bottom:14px}
-.pa-btn{border:1px solid #d1d5db;background:#fff;color:#111827;border-radius:8px;padding:7px 12px;cursor:pointer;font-weight:600;font-size:13px;min-height:36px}
+.pa-btn{border:1px solid var(--mc-border-2);background:var(--mc-bg-1);color:var(--mc-text-0);border-radius:8px;padding:7px 12px;cursor:pointer;font-weight:600;font-size:13px;min-height:36px}
 .pa-btn.pri{background:#2563eb;border-color:#2563eb;color:#fff}
 .pa-btn.sm{padding:4px 9px;font-size:12px;min-height:30px}
 .pa-btn:disabled{opacity:.6}
 .pa-chips{display:flex;gap:8px;flex-wrap:wrap}
-.pa-chip{border:1px solid #e5e7eb;border-radius:999px;padding:4px 11px;font-size:12px;background:#f9fafb;color:#374151;cursor:pointer}
+.pa-chip{border:1px solid var(--mc-border-1);border-radius:999px;padding:4px 11px;font-size:12px;background:var(--mc-bg-2);color:var(--mc-text-1);cursor:pointer}
 .pa-chip[aria-pressed=true]{background:#2563eb;color:#fff;border-color:#2563eb}
 .pa-sum{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:14px}
-.pa-tile{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px 12px;min-width:0}
-.pa-tile b{display:block;font-size:22px;font-weight:800;font-variant-numeric:tabular-nums;color:#111827}
-.pa-tile span{font-size:12px;color:#4b5563}
-.pa-tile.alert{border-color:#fecaca;background:#fef2f2}
-.pa-tile.alert b{color:#b91c1c}
+.pa-tile{background:var(--mc-bg-1);border:1px solid var(--mc-border-1);border-radius:12px;padding:10px 12px;min-width:0}
+.pa-tile b{display:block;font-size:22px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--mc-text-0)}
+.pa-tile span{font-size:12px;color:var(--mc-text-2)}
+.pa-tile.alert{border-color:color-mix(in srgb, var(--mc-bearish) 40%, transparent);background:color-mix(in srgb, var(--mc-bearish) 9%, var(--mc-bg-1))}
+.pa-tile.alert b{color:var(--mc-bearish)}
 .pa-chan{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
-.pa-ch{display:flex;gap:6px;align-items:center;border:1px solid #e5e7eb;background:#fff;border-radius:10px;padding:6px 10px;font-size:13px;min-width:0;max-width:100%}
-.pa-ch i{font-style:normal;color:#4b5563;overflow-wrap:anywhere}
+.pa-ch{display:flex;gap:6px;align-items:center;border:1px solid var(--mc-border-1);background:var(--mc-bg-1);border-radius:10px;padding:6px 10px;font-size:13px;min-width:0;max-width:100%}
+.pa-ch i{font-style:normal;color:var(--mc-text-2);overflow-wrap:anywhere}
 .pa-ch .dot{width:9px;height:9px;border-radius:50%;flex:none}
 .pa table{width:100%;border-collapse:collapse;font-size:13px}
-.pa th{text-align:left;color:#6b7280;font-weight:600;border-bottom:1px solid #e5e7eb;padding:6px 8px;white-space:nowrap}
-.pa td{border-bottom:1px solid #f3f4f6;padding:7px 8px;vertical-align:top}
+.pa th{text-align:left;color:var(--mc-text-3);font-weight:600;border-bottom:1px solid var(--mc-border-1);padding:6px 8px;white-space:nowrap}
+.pa td{border-bottom:1px solid var(--mc-border-1);padding:7px 8px;vertical-align:top}
 .pa-wrap{overflow-x:auto}
 .pa-st{font-weight:700;font-size:12px}
-.pa-st.active{color:#15803d}.pa-st.paused{color:#b45309}.pa-st.triggered{color:#2563eb}.pa-st.expired{color:#6b7280}
-.pa-sub{color:#6b7280;font-size:12px}
-.pa-err{color:#b91c1c;font-size:12px}
+.pa-st.active{color:var(--mc-bullish)}.pa-st.paused{color:var(--mc-warn)}.pa-st.triggered{color:var(--mc-accent)}.pa-st.expired{color:var(--mc-text-3)}
+.pa-sub{color:var(--mc-text-3);font-size:12px}
+.pa-err{color:var(--mc-bearish);font-size:12px}
 .pa-ctl{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
-.pa-ctl input,.pa-ctl select{border:1px solid #d1d5db;border-radius:8px;padding:6px 8px;font-size:13px;background:#fff;color:#111827;min-width:0;max-width:100%}
-.pa-unread{background:#eff6ff}
-.pa-tk{color:#2563eb;font-weight:800;text-decoration:none}
+.pa-ctl input,.pa-ctl select{border:1px solid var(--mc-border-2);border-radius:8px;padding:6px 8px;font-size:13px;background:var(--mc-bg-1);color:var(--mc-text-0);min-width:0;max-width:100%}
+.pa-unread{background:color-mix(in srgb, var(--mc-accent) 12%, transparent)}
+.pa-tk{color:var(--mc-accent);font-weight:800;text-decoration:none}
 .pa-tk:hover{text-decoration:underline}
 .pa-del{font-size:11px;font-weight:700;margin-right:6px}
-.pa-del.ok{color:#15803d}.pa-del.bad{color:#b91c1c}
+.pa-del.ok{color:var(--mc-bullish)}.pa-del.bad{color:var(--mc-bearish)}
 .pa-acts{display:flex;gap:6px;flex-wrap:wrap}
 @media (max-width:700px){
   .pa{padding:12px}
@@ -63,10 +63,10 @@ const CSS = `
   .pa-head>div:last-child .pa-btn{flex:1 1 auto}
   .pa-cards thead{display:none}
   .pa-cards,.pa-cards tbody,.pa-cards tr,.pa-cards td{display:block;width:100%}
-  .pa-cards tr{border:1px solid #e5e7eb;border-radius:10px;padding:8px 10px;margin-bottom:10px;background:#fff}
-  .pa-cards tr.pa-unread{background:#eff6ff;border-color:#bfdbfe}
+  .pa-cards tr{border:1px solid var(--mc-border-1);border-radius:10px;padding:8px 10px;margin-bottom:10px;background:var(--mc-bg-1)}
+  .pa-cards tr.pa-unread{background:color-mix(in srgb, var(--mc-accent) 12%, transparent);border-color:color-mix(in srgb, var(--mc-accent) 40%, transparent)}
   .pa-cards td{border:none;padding:3px 0;display:flex;gap:10px;justify-content:space-between;align-items:flex-start;text-align:right;overflow-wrap:anywhere}
-  .pa-cards td::before{content:attr(data-label);color:#6b7280;font-size:12px;font-weight:600;text-align:left;flex:none;min-width:70px}
+  .pa-cards td::before{content:attr(data-label);color:var(--mc-text-3);font-size:12px;font-weight:600;text-align:left;flex:none;min-width:70px}
   .pa-cards td.pa-main{display:block;text-align:left;font-size:14px}
   .pa-cards td.pa-main::before{content:none}
   .pa-cards td.pa-acts-cell{justify-content:flex-start}
@@ -282,7 +282,7 @@ export default function PriceAlertsPage() {
                       <td data-label="Message"><span>{e.message}<span className="pa-sub" style={{ display: 'block' }}>{e.condition}</span>
                         {del.length > 0 && <span style={{ display: 'block', marginTop: 2 }}>{del.map((d) => <span key={d.channel} className={`pa-del ${d.ok ? 'ok' : 'bad'}`} title={d.error || 'sent'}>{d.ok ? '✓' : '✗'} {CH_NAME[d.channel] || d.channel}</span>)}</span>}</span></td>
                       <td data-label="Price">{e.price != null ? `${e.market === 'IN' ? '₹' : '$'}${e.price.toFixed(2)}` : '—'}</td>
-                      <td data-label="Change" style={{ color: e.changePct == null ? undefined : e.changePct >= 0 ? '#15803d' : '#b91c1c', fontWeight: 700 }}>{e.changePct != null ? `${e.changePct >= 0 ? '+' : ''}${e.changePct.toFixed(2)}%` : '—'}</td>
+                      <td data-label="Change" style={{ color: e.changePct == null ? undefined : e.changePct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontWeight: 700 }}>{e.changePct != null ? `${e.changePct >= 0 ? '+' : ''}${e.changePct.toFixed(2)}%` : '—'}</td>
                       <td data-label="Alert"><span>{e.alertName}{e.list ? <span className="pa-sub" style={{ display: 'block' }}>{e.list}</span> : null}</span></td>
                     </tr>
                   );

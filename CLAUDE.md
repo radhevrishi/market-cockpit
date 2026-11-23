@@ -4441,6 +4441,14 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   screener.in for names outside the snapshot; card note lists what was worked out. Dilution text says "fell X%" (was "jumped -67%").
   Growth trend text adds `baseNote` (a 30%+ quarter after a year-earlier fall of 10%+ = weak base; last 3 quarters' revenue side by
   side). RACLGEAR checked: 21 → 52 → 31 → 14 is right (the 52 sat on a −18% Mar 25 quarter; revenue flat ₹132–137 Cr).
-  Daily Action Cockpit (/cockpit) redesigned: full width (≤ 1800 px), two columns (Act + Watch left; conflicts + FYI right), KPI strip
+  Daily Action Cockpit (/cockpit) redesigned: full window width (no 1800 px cap), two columns (Act + Watch left; conflicts + FYI right), KPI strip
   of 8, signals of one kind shown as compact tables (`group`, `name`, `note`, today's move `chg`, `held` dot) with show-all past 10;
   entries split held vs bench. Signal logic unchanged.
+- zzz1300d (23 Nov): Cockpit moving-average entries for India + USA (`lib/ma-entries.ts` `maEntry`: above the 200-day and within
+  −1.5/+4% of the 21-day EMA, −2/+4% of the 50-day, or a 200-day test −3/+4% while the 50-day is ≥ 97% of the 200-day; stage 4 out;
+  the closest line wins) from the slim screener answer (SLIM_CB now adds ema21, hi52), held + bench in both markets (US holdings from
+  /api/v1/us-book + US Conviction Beats); three tables (21-day / 50-day / 200-day); US new bench ideas; India / USA / Both switch
+  (`mc:cockpit:market:v1`); the Technicals-tab buy zone is only a fallback. Signals: same-day bulk/block round trips (one party buys and
+  sells within 20% of the same quantity — Graviton on APLAPOLLO) are not signals (`lib/deal-round-trip.ts`); signal stacks show today's
+  move and say "price disagrees" when filings read Bullish on a −5% day (or Bearish on +5%). Price alerts page, bell, dialog and phone
+  card use theme colours (were hard white in dark mode).
