@@ -4345,3 +4345,20 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   `mlr:breadth:v1:<m>` (one point a snapshot day, 120 kept) for the 5/10/20-session trend. Themes, survival map, radar, transitions,
   cross-market table (CROSS_PAIRS, only real counterparts) come from Theme Rotation + theme-cycle classify (`survivalClass`).
   Historical table = theme-cycle episodes. Not buy / sell signals.
+- zzz1291 (23 Nov): Company Lab + Market Leadership + screener.
+  Company Lab: `lib/company-lab/annual.ts` repairs (shares tagged in thousands rescaled `repairShares`; partnership units from 10-Q
+  year-to-date weighted counts; business break cut `businessBreak` (NBIS = Yandex years); FCF ≈ CFO when capex stops being tagged
+  and was < 1% of sales `capexGapFcf`; more debt tags; equity). `lib/company-lab/quarterly.ts` (pure): Rule of 40 = latest quarter
+  revenue YoY + FCF margin (4 quarters, else latest year), growth trend, gross / operating margin by quarter, cash-squeeze check
+  (6 items + capex÷OCF, runway, receivables vs revenue; 3+ warnings or capex+FCF+cash combo = High; India yearly, no receivables),
+  dilution (India: profit ÷ EPS), CFO/PAT, D/E (no debt line = "not found", never 0×), `fcfPriceGap`. Card `quarter` + `notes`.
+  `?fresh=1` re-reads SEC (`forgetCompanyFacts`) / screener.in page now. Page: `company-lab/compare-table.tsx` (column picker
+  `mc:company-lab:cols:v1`, per-company panel, watchlist / India book / US book buttons, Refresh all).
+  Screener: row field `fcfPsG` (USA last year vs year before; India 3 years ≈) + dual screen **"Cash Up, Price Flat"**
+  (`us-/in-cash-up-price-flat`). New FIELDS must be skipped in the zzz1006 fixture generator (random stream) and golden entries added.
+  Market Leadership: tabs Overview / Leaders / Themes & cycle / Performance / Market cycles / USA vs India (`?tab=`); leaders:
+  run-up not used when last year's price sits far under the 52-week low, Broken only below the 200-day line, healthy first;
+  `/api/market/leadership-perf` (`lib/market-leadership/perf{,-server}.ts`): indices 1D…1Y, themes with companies best first
+  (`memberScore`), cycles (weekly log, 20% turning points, led by sector histories, `FALL_CAUSES`). Best companies shown in radar,
+  damage table and the Theme Rotation CyclePanel. Page polls every 10 min without forcing rebuilds.
+  Tests zzz823 / zzz827 pin the clock (the PEAD drift reading decays with real time — they failed from ~20 Nov).
