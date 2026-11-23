@@ -40,7 +40,7 @@ interface AlertInstance {
 function useAlertRules() {
   return useQuery<AlertRule[]>({
     queryKey: ['alerts', 'rules'],
-    queryFn: async () => { const { data } = await api.get('/alerts/rules'); return data; },
+    queryFn: async () => { const { data } = await api.get('/alerts/rules'); return Array.isArray(data) ? data : []; }, // zzz1296 — the old rules service can answer with an error object
     staleTime: 30 * 60_000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
@@ -50,7 +50,7 @@ function useAlertRules() {
 function useAlertInstances() {
   return useQuery<AlertInstance[]>({
     queryKey: ['alerts', 'instances'],
-    queryFn: async () => { const { data } = await api.get('/alerts/instances?limit=30'); return data; },
+    queryFn: async () => { const { data } = await api.get('/alerts/instances?limit=30'); return Array.isArray(data) ? data : []; },
     // PATCH 0688 — was 30s; that's 120 hits/hour per open tab. Bumped to
     // 3min to stop burning Vercel free-tier CPU. Alerts are pushed via
     // browser Notification on rule-fire anyway, so polling is just a
@@ -366,7 +366,7 @@ export default function AlertsPage() {
     if (typeof window === 'undefined') return [];
     try {
       const raw = window.localStorage.getItem('mc:alert-rules-local');
-      return raw ? (JSON.parse(raw) as AlertRule[]) : [];
+      const v = raw ? JSON.parse(raw) : []; return Array.isArray(v) ? (v as AlertRule[]) : [];
     } catch {
       return [];
     }
@@ -392,7 +392,7 @@ export default function AlertsPage() {
 
   // PATCH 1087 — alerts localStorage fallback (CRIT-03)
   // Display source: server rules when healthy, localStorage rules when degraded.
-  const displayRules: AlertRule[] = localOnly ? localRules : (rules ?? []);
+  const displayRules: AlertRule[] = (() => { const v = localOnly ? localRules : rules; return Array.isArray(v) ? v : []; })();
 
   const toggleMutation = useMutation({
     mutationFn: async ({ id, is_active }: { id: string; is_active: boolean }) => {
@@ -427,7 +427,7 @@ export default function AlertsPage() {
   };
 
   const activeCount = displayRules.filter(r => r.is_active).length;
-  const triggeredToday = (instances ?? []).filter(i => {
+  const triggeredToday = (Array.isArray(instances) ? instances : []).filter(i => {
     const d = new Date(i.triggered_at);
     const now = new Date();
     return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
@@ -544,9 +544,9 @@ export default function AlertsPage() {
           )}
           {histLoading
             ? Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-16 rounded-xl" />)
-            : !(instances ?? []).length
+            : !(Array.isArray(instances) ? instances : []).length
             ? <p className="text-[#4A5B6C] text-sm text-center py-12">No alerts triggered in the last 30 days</p>
-            : (instances ?? []).map(inst => (
+            : (Array.isArray(instances) ? instances : []).map(inst => (
                 <div key={inst.id} className="bg-[#1A2B3C] border border-[#2A3B4C] rounded-xl px-4 py-3 flex items-start gap-3">
                   <div className="w-2 h-2 rounded-full bg-orange-400 mt-1.5 shrink-0" />
                   <div className="flex-1 min-w-0">
