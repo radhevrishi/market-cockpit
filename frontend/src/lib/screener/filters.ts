@@ -181,6 +181,7 @@ export const FIELDS: readonly FieldDef[] = [
   { key: 'ebitdaTTMYoY', label: 'EBITDA growth, TTM YoY', unit: '%', markets: BOTH, group: 'Growth', approxNote: { US: 'USA: operating profit + depreciation where filed, else operating profit' } },
   { key: 'ebitdaAYoY', label: 'EBITDA growth, annual YoY', unit: '%', markets: BOTH, group: 'Growth', approxNote: { US: 'USA: operating profit + depreciation where filed, else operating profit' } },
   // margins & returns
+  { key: 'fcfPsG', label: 'FCF per share growth', unit: '%', markets: BOTH, group: 'Growth', approxNote: { US: 'USA: latest full fiscal year vs the year before — (operating cash − capex) ÷ weighted diluted shares; blank unless both years are positive', IN: 'India: latest full year vs 3 years earlier — (operating + investing cash) ÷ shares worked out as net profit ÷ EPS; blank unless both years are positive' } },
   { key: 'fcfmTTM', label: 'FCF margin (latest full year)', unit: '%', markets: BOTH, group: 'Margins & returns', approxNote: { US: FCFM_US, IN: FCFM_IN } },
   { key: 'fcfmT', label: 'FCF margin, trailing 12 months (USA)', unit: '%', markets: ['US'], group: 'Margins & returns', approxNote: { US: FCFM_T_US } },
   { key: 'gmFY', label: 'Gross margin, FY', unit: '%', markets: BOTH, group: 'Margins & returns', approxNote: { IN: GP_IN } },
@@ -534,6 +535,7 @@ const S15: TvSector[] = allSectorsExcept('Energy Minerals', 'Finance', 'Health S
 const S15_IS: TvSector[] = allSectorsExcept('Energy Minerals', 'Finance', 'Health Services', 'Health Technology', 'Transportation', 'Non-Energy Minerals');
 
 // screens that exist for both markets in TradingView ([america, india]) — one copy per market
+const CASH_UP_NOTE = 'Free cash flow per share up 30%+ while the share price moved between −15% and +10% over the last year, FCF margin above 5%. A rising FCF/share line with a flat share price is a research lead — not an automatic undervaluation signal. The market may be anticipating weaker future economics: check why (one-off working-capital release, capex cut, cycle peak, lost customer) in Company Lab before acting.';
 function dual(id: string, name: string, f: (m: ScreenMarket) => Filter[], note?: Partial<Record<ScreenMarket, string>>): Screen[] {
   return (['US', 'IN'] as const).map((m) => ({ id: `${m === 'US' ? 'us' : 'in'}-${id}`, name, market: m, builtIn: true, filters: f(m), ...(note?.[m] ? { note: note[m] } : {}) }));
 }
@@ -610,6 +612,10 @@ const US_SCREENS: Screen[] = [
 /** zzz1069 — the plain explanation of the Volume Accumulation Leaders screen (both markets). */
 export const VOL_ACC_NOTE = 'Big money buying, confirmed by price and business. Accumulation grade A or B already means every volume check passed: at least 2 accumulation days and 2 more than distribution days in the last 25 sessions, 13-week money flow ≥ +0.10, up-day volume ≥ 1.3× down-day volume, On-Balance Volume rising, no distribution warning, close above its 50-session average and enough daily trading for institutions ($5 million / ₹3 crore a day). On top: an uptrend (50-day average above the 200-day, price above the 50-day), price within 25% of its 52-week high, RS Rating ≥ 70 and last quarter\'s sales up more than 10%. Open the "Volume" columns and sort by Accumulation score; a recent volume breakout or a quiet pullback is the entry to look for.';
 const DUAL_SCREENS: Screen[] = [
+  // zzz1291 — free cash flow per share rising while the price went nowhere: a research lead, never a buy signal
+  ...dual('cash-up-price-flat', 'Cash Up, Price Flat — FCF/share rising, price flat (research leads)', (m) => [
+    n('fcfPsG', 'ge', 30), btw('perf1Y', -15, 10), n('fcfmTTM', 'gt', 5), cap(m, 300e6, 500e9), n('avgVol60', 'gt', m === 'US' ? 200_000 : 50_000),
+  ], { US: CASH_UP_NOTE + ' USA: FCF per share is the latest fiscal year vs the year before.', IN: CASH_UP_NOTE + ' India: FCF per share is the latest year vs 3 years earlier, from operating + investing cash (approximate).' }),
   ...dual('qullamaggie-leaders', 'Qualmaggie Leader Stocks in Bearmarket or Corrections', (m) => [
     sec(...S15), n('revQYoY', 'gt', 20), cap(m, 300e6, 500e9), n('px', 'ge', 5), cmp('px', 'ge', 'ema21'), cmp('px', 'ge', 'ema50'), cmp('sma50', 'above', 'sma200'),
     cmp('sma150', 'ge', 'sma200'), n('avgVol10', 'gt', 100_000), cmp('sma50', 'above', 'sma100'), n('perf1Y', 'gt', 10), n('perf6M', 'gt', 20), n('perf3M', 'gt', 10),

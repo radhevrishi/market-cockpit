@@ -2,7 +2,9 @@
 // selection is one shared pass / fail / NOT CHECKED check; stale Special
 // Focus records are split off. Synthetic tickers only.
 
-import { test, describe } from 'node:test';
+import { test, describe, mock } from 'node:test';
+// zzz1291 — fixtures are filed 2026-08-10 and the post-results drift reading decays with the real clock: pin it
+mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-08-25T10:00:00Z') });
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';

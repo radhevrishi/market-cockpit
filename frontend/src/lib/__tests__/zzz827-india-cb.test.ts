@@ -3,7 +3,7 @@
 // keys), the "Why N names are hidden" report, stale tiers re-synced, words
 // instead of scores / buy-sell labels, and "&amp;" decoded. Synthetic tickers.
 
-import { test, describe } from 'node:test';
+import { test, describe, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -21,6 +21,8 @@ import { selectIndiaCb, cbViewRows, cbViewTag, cbViewLine, CB_VIEW_ALSO_HELD } f
 import { INDIA_PRESET } from '../quality-preset';
 import { driftWord } from '../india-eo-card-data';
 
+// zzz1291 — the fixtures are filed 2026-08-10; the post-results drift reading decays with the real clock, so the clock is pinned
+mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-08-25T10:00:00Z') });
 const read = (p: string) => readFileSync(join(__dirname, '..', '..', p), 'utf8');
 const readWatchlists = () => ['page.tsx', 'ConvictionBeatsPanel.tsx', 'ConvictionTable.tsx', 'HubFilterRail.tsx', 'EIEliteTab.tsx', 'components.tsx', 'useEnrichedConvictionCards.ts', 'helpers.ts', 'constants.ts', 'types.ts'].map((f) => read(`app/(dashboard)/watchlists/${f}`)).join('\n'); // zzz900 — page split into sibling modules
 const preset = { ...cbFiltersForOwner(false), mktCapMin: 3000 };   // zzz1068: the size floor defaults to Any size now; these tests pick ₹3k Cr

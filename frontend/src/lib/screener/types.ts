@@ -122,7 +122,8 @@ export interface ScreenRow {
   rvol?: number | null;      // relative volume: last session ÷ 50-session average
   'adv$'?: number | null;    // average daily traded value, 20 sessions (money: $ million / ₹ crore)
   ripB?: number | null;      // Ripster EMA clouds bullish (1 / 0)
-  fcfmTTM?: number | null;   // free-cash-flow margin % (≈ latest full year — see FIELDS)
+  fcfmTTM?: number | null;
+  fcfPsG?: number | null;    // zzz1291 — FCF per share growth (USA: last year vs the year before; India: 3 years, approx)   // free-cash-flow margin % (≈ latest full year — see FIELDS)
   fcfmAt?: string;            // zzz1044 (F03) — the fiscal year the FCF margin is for (US: year-end date; India: 'Mar 2026')
   r40?: number | null;       // revenue growth quarterly YoY + FCF margin (the owner's custom Rule of 40)
   // zzz1045e — USA only: TRUE trailing-12-month FCF margin (last four fiscal quarters, from year-to-date cash-flow totals; fcf-ttm.ts)

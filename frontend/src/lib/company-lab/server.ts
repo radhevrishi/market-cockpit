@@ -4,7 +4,8 @@
 // trend-template rules, breakout) and the company record (graded result, active guidance). Read-only; ≤ 8 companies a call;
 // answers kept 30 minutes per company.
 import { fcfReport, yearPoints, trendRules, breakout, labSummary, rsCumulative, maSeries, stage2Verdict, type AnnualRow, type FcfReport, type LabMarket, type RsCum, type TrendRule, type YearPoint } from './core';
-import { usAnnualRows, inAnnualRows } from './annual';
+import { usAnnualRows, inAnnualRows, businessBreak } from './annual';
+import { quarterReport, usQuarterInputs, inQuarterInputs, type QuarterReport, type QIn } from './quarterly';
 
 export interface LabCard {
   market: LabMarket; ticker: string; ok: boolean; error?: string;
@@ -18,6 +19,10 @@ export interface LabCard {
   movedFrom?: LabMarket;   // asked under the other market, not found there
   record: { tier: string | null; resultDate: string | null; guidance: number; events: number; summary: string[] } | null;
   summary: string; sources: string[]; builtAt: string;
+  /** zzz1291 — Rule of 40, growth acceleration, margins, cash-squeeze check, dilution, cash conversion, debt ÷ equity */
+  quarter?: QuarterReport;
+  /** zzz1291 — data repairs and gaps said plainly */
+  notes?: string[];
 }
 const memo = new Map<string, { at: number; card: LabCard }>();
 const TTL = 30 * 60_000;
@@ -30,11 +35,13 @@ async function snapRow(m: LabMarket, t: string): Promise<any | null> {
   const s = await getSnapshot(m);
   return (s?.rows || []).find((r: any) => String(r?.t).toUpperCase() === t) || null;
 }
-async function annual(m: LabMarket, t: string): Promise<{ rows: AnnualRow[]; source: string; sharesNow: number | null }> {
+type Ann = { rows: AnnualRow[]; source: string; sharesNow: number | null; q?: QIn; notes?: string[] };
+async function annual(m: LabMarket, t: string, fresh = false): Promise<Ann> {
   if (m === 'US') {
-    const { tickerToCik, companyFacts, sharesOutstandingFromFacts } = await import('../us-edgar');
+    const { tickerToCik, companyFacts, sharesOutstandingFromFacts, forgetCompanyFacts } = await import('../us-edgar');
     const cik = await tickerToCik(t);
     if (!cik) return { rows: [], source: 'SEC: ticker not found', sharesNow: null };
+    if (fresh) forgetCompanyFacts(cik);
     const facts = await companyFacts(cik);
     if (!facts) return { rows: [], source: 'SEC company facts not reachable', sharesNow: null };
     const sh = sharesOutstandingFromFacts(facts);
@@ -51,11 +58,22 @@ async function annual(m: LabMarket, t: string): Promise<{ rows: AnnualRow[]; sou
         else note = `; reported in ${basis.cur} (rate not available — figures NOT converted)`;
       } catch { note = `; reported in ${basis.cur} (figures NOT converted)`; }
     }
-    return { rows: usAnnualRows(facts, 10, toUsd), source: `SEC company facts (10-K / 20-F full years${basis.tax === 'ifrs-full' ? ', IFRS' : ''}${note})`, sharesNow: sh != null ? sh / 1e6 : null };
+    const brk = businessBreak(usAnnualRows(facts, 10, toUsd));
+    const notes: string[] = [];
+    if (brk.note) notes.push(brk.note);
+    if (brk.rows.some((r) => r.fcfApprox)) notes.push(`free cash flow ≈ operating cash in ${brk.rows.filter((r) => r.fcfApprox).map((r) => r.label).join(', ')}: the company stopped reporting a capex line and its capex had been under 1% of sales`);
+    let q: QIn | undefined;
+    try { q = toUsd === 1 ? usQuarterInputs(facts) : undefined; } catch { q = undefined; }
+    return { rows: brk.rows, source: `SEC company facts (10-K / 20-F full years${basis.tax === 'ifrs-full' ? ', IFRS' : ''}${note})`, sharesNow: sh != null ? sh / 1e6 : null, q, notes };
   }
   const { dbQuery } = await import('../db');
   const r = await dbQuery<{ payload: any }>(`SELECT payload FROM screener_store WHERE market = 'IN' AND ticker = $1 AND kind = 'fund'`, [t]).catch(() => []);
-  let raw = r[0]?.payload?.raw ?? null;
+  let raw = fresh ? null : r[0]?.payload?.raw ?? null;
+  if (fresh) {   // zzz1291 — Refresh: read the company page now so a result filed this week is in
+    const { readCompany } = await import('../screener/in-build');
+    const got = await withTimeout(readCompany(t), 25_000, { err: 'timeout' } as any);
+    raw = got?.raw ?? r[0]?.payload?.raw ?? null;
+  }
   if (!raw) {
     // not in the stock-screener universe yet: read the company page once (kept like the build does)
     const { readCompany } = await import('../screener/in-build');
@@ -64,7 +82,8 @@ async function annual(m: LabMarket, t: string): Promise<{ rows: AnnualRow[]; sou
   }
   if (!raw) return { rows: [], source: 'screener.in page not available', sharesNow: null };
   const sharesNow = raw.price && raw.mcapCr ? raw.mcapCr / raw.price : null;   // crore shares
-  return { rows: inAnnualRows(raw), source: 'screener.in company page (yearly profit & loss, cash flow, balance sheet)', sharesNow };
+  let q: QIn | undefined; try { q = inQuarterInputs(raw); } catch { q = undefined; }
+  return { rows: inAnnualRows(raw), source: 'screener.in company page (yearly profit & loss, cash flow, balance sheet)', sharesNow, q, notes: [] };
 }
 interface Daily { t: string[]; c: number[]; h: number[]; l: number[]; v: number[] }
 const isoOf = (x: number) => new Date(x < 1e11 ? x * 1000 : x).toISOString().slice(0, 10);
@@ -111,7 +130,7 @@ async function record(t: string): Promise<LabCard['record']> {
   } catch { return null; }
 }
 
-async function labCardIn(m: LabMarket, t: string): Promise<LabCard> {
+async function labCardIn(m: LabMarket, t: string, fresh = false): Promise<LabCard> {
   const cur = m === 'US' ? '$' : '₹', unit = m === 'US' ? '$ million' : '₹ crore';
   const idxName = m === 'US' ? 'S&P 500' : 'Nifty 50';
   const noRs: LabCard['rs'] = { ratio: null, stockRet: null, idxRet: null, ok: null, from: null, line: [], index: idxName };
@@ -119,9 +138,10 @@ async function labCardIn(m: LabMarket, t: string): Promise<LabCard> {
     stage: { st: null, weeks: null, health: null, mrs: null, rsR: null, tt: null }, years: [], rows: [], fcf: fcfReport([], null, ''), trend: [], breakout: { ok: null, value: '' },
     prices: [], ma: [], rs: noRs, verdict: { all: null, trendAndRs: null, text: '' }, record: null, summary: '', sources: [], builtAt: new Date().toISOString() });
   if (!t) return blank('not a ticker');
-  const [row, ann, d, rec, ix] = await Promise.all([withTimeout(snapRow(m, t), 15_000, null), withTimeout(annual(m, t), 40_000, { rows: [], source: 'yearly figures timed out', sharesNow: null }), daily(m, t), record(t), bench(m)]);
+  const [row, ann, d, rec, ix] = await Promise.all([withTimeout(snapRow(m, t), 15_000, null), withTimeout(annual(m, t, fresh), 40_000, { rows: [], source: 'yearly figures timed out', sharesNow: null }), daily(m, t), record(t), bench(m)]);
   if (!row && !ann.rows.length && !d) return blank(`${t} not found in the ${m === 'US' ? 'US' : 'India'} data — check the ticker and the market`);
-  const cap = typeof row?.mc === 'number' ? row.mc : null;
+  const notes: string[] = [...(ann.notes || [])];
+  let cap = typeof row?.mc === 'number' ? row.mc : null;
   const fcfBasis = m === 'US' ? 'operating cash − capital spending (company filings)' : 'operating cash + investing cash (approximation — screener.in prints no capex line)';
   // the close on or before a date (for the yield at each year end)
   const priceAt = (end: string): number | null => {
@@ -131,6 +151,9 @@ async function labCardIn(m: LabMarket, t: string): Promise<LabCard> {
     return k >= 0 && Date.parse(end) - Date.parse(d.t[k]) < 20 * 86_400_000 ? d.c[k] : null;
   };
   const sharesNow = ann.sharesNow ?? (cap != null && typeof row?.px === 'number' && row.px > 0 ? cap / row.px : null);
+  const lastPx = typeof row?.px === 'number' ? row.px : d ? d.c[d.c.length - 1] : null;
+  if (cap == null && sharesNow != null && lastPx != null) { cap = Math.round(sharesNow * lastPx); notes.push('market cap worked out as shares outstanding × last price (not in the screener snapshot)'); }
+  if (ann.rows.length && !ann.rows.some((r) => r.fcf != null)) notes.push('no free-cash-flow figures in the filings — the FCF charts are empty for this company');
   const years = yearPoints(ann.rows, sharesNow, priceAt);
   const fcf = fcfReport(ann.rows, cap, fcfBasis, years);
   const bars = d ? { c: d.c, h: d.h, l: d.l, v: d.v } : null;
@@ -149,20 +172,22 @@ async function labCardIn(m: LabMarket, t: string): Promise<LabCard> {
     record: rec, summary: labSummary(fcf, trend, st, typeof row?.tt === 'number' ? row.tt : null),
     sources: [ann.source, 'Stock screener snapshot (stage, RS rating, size)', `Daily prices (Yahoo / NSE), 10 years; ${idxName} for relative strength`],
     builtAt: new Date().toISOString(),
+    quarter: quarterReport(ann.q ?? { basis: 'yearly', rev: [], gp: [], op: [], cfo: [], capex: [], cash: new Map(), debt: new Map(), recv: new Map() }, ann.rows),
+    notes,
   };
   return card;
 }
 
 /** One company. Not found under the market asked → the other market is tried (SPOT / HIMS typed with India selected). */
-export async function labCard(m: LabMarket, tickerIn: string): Promise<LabCard> {
+export async function labCard(m: LabMarket, tickerIn: string, fresh = false): Promise<LabCard> {
   const t = cleanLabTicker(tickerIn);
   const k = `${m}:${t}`;
   const hit = memo.get(k);
-  if (hit && Date.now() - hit.at < TTL) return hit.card;
-  let card = await labCardIn(m, t);
+  if (!fresh && hit && Date.now() - hit.at < TTL) return hit.card;
+  let card = await labCardIn(m, t, fresh);
   if (!card.ok && t) {
     const other: LabMarket = m === 'US' ? 'IN' : 'US';
-    const alt = await labCardIn(other, t);
+    const alt = await labCardIn(other, t, fresh);
     if (alt.ok) card = { ...alt, movedFrom: m };
   }
   if (memo.size > 300) memo.clear();

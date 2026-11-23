@@ -13,6 +13,7 @@ import NavLink from '@/components/NavLink';
 import { R, tint } from '@/components/special-situations/radar-tokens';
 import { WatchlistButton } from '@/app/(dashboard)/news/components';
 import type { LabCard } from '@/lib/company-lab/server';
+import { Compare, QuarterPanel, BookLoader } from './compare-table';
 
 type Mkt = 'IN' | 'US';
 const LIST_KEY = 'mc:company-lab:v1';
@@ -185,7 +186,7 @@ function takeCapexDebt(y: LabCard['years'], india: boolean): string {
 }
 
 function Card({ c, onRemove }: { c: LabCard; onRemove: () => void }) {
-  const [open, setOpen] = useState<'fcf' | 'growth' | 'stage' | 'years'>('fcf');
+  const [open, setOpen] = useState<'cash' | 'fcf' | 'growth' | 'stage' | 'years'>('cash');
   if (!c.ok) {
     return (
       <div style={{ border: `1px solid ${tint(R.red, 40)}`, borderRadius: 10, padding: 12, background: R.bg }}>
@@ -208,7 +209,7 @@ function Card({ c, onRemove }: { c: LabCard; onRemove: () => void }) {
     ['📒 Decisions', '/decisions'],
   ];
   return (
-    <div data-lab-card style={{ border: `1px solid ${R.border}`, borderRadius: 12, padding: 14, background: R.bg, display: 'grid', gap: 10 }}>
+    <div data-lab-card id={`lab-${c.market}-${c.ticker}`} style={{ border: `1px solid ${R.border}`, borderRadius: 12, padding: 14, background: R.bg, display: 'grid', gap: 10 }}>
       <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
         <span style={{ fontSize: 19, fontWeight: 900 }}>{sym}</span>
         <span style={{ color: R.dim, fontSize: 14 }}>{c.name || ''}</span>
@@ -230,14 +231,16 @@ function Card({ c, onRemove }: { c: LabCard; onRemove: () => void }) {
         {c.record && c.record.guidance > 0 && chip(`Guidance on file ${c.record.guidance}`, R.cyan, 'Active company guidance in the guidance universe')}
       </div>
       <div style={{ fontSize: 14.5, lineHeight: 1.5 }}>{c.summary}</div>
+      {!!c.notes?.length && <div style={{ fontSize: 12.5, color: R.amber, lineHeight: 1.45 }}>{c.notes.map((n) => <div key={n}>ⓘ {n}</div>)}</div>}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 13 }}>
         {links.map(([t, h]) => <NavLink key={t} href={h} style={{ color: R.cyan, fontWeight: 700 }}>{t}</NavLink>)}
       </div>
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-        {([['fcf', '💵 FCF checklist'], ['growth', '📊 Price charts'], ['stage', '🧭 Stage 2 & trend'], ['years', '🗂 Yearly figures']] as const).map(([k, l]) => (
+        {([['cash', '🧮 Growth, margins & cash squeeze'], ['fcf', '💵 FCF checklist'], ['growth', '📊 Price charts'], ['stage', '🧭 Stage 2 & trend'], ['years', '🗂 Yearly figures']] as const).map(([k, l]) => (
           <button key={k} type="button" onClick={() => setOpen(k)} style={{ fontSize: 13, fontWeight: 800, padding: '4px 10px', borderRadius: 8, cursor: 'pointer', border: `1px solid ${open === k ? R.cyan : R.border}`, background: open === k ? tint(R.cyan, 12) : 'transparent', color: open === k ? R.cyan : R.dim }}>{l}</button>
         ))}
       </div>
+      {open === 'cash' && <QuarterPanel c={c} />}
       {open === 'fcf' && (
         <div style={{ display: 'grid', gap: 12 }}>
           {label(`FREE CASH FLOW PICTURE · FCF = ${c.fcf.fcfBasis}`)}
@@ -386,51 +389,14 @@ function MultiFcf({ cards }: { cards: LabCard[] }) {
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(330px, 1fr))', gap: 12 }}>
         {ok.map((c) => (
+          !c.years.some((y) => y.fcfPs != null) ? <div key={`${c.market}:${c.ticker}`} style={{ border: `1px dashed ${R.border}`, borderRadius: 8, padding: 14, fontSize: 13, color: R.faint }}><b style={{ color: R.text }}>{c.ticker}</b>{c.name ? ` · ${c.name}` : ''}<br />No free-cash-flow per share figures in the filings — nothing to plot.</div> :
           <LabChart key={`${c.market}:${c.ticker}`} title={`${c.ticker}${c.name ? ` · ${c.name}` : ''}`} h={190} logL={log} series={[
             { name: `Price (${c.currency})`, color: PRICE_C, axis: 'L', pts: pricePts(c) },
             { name: 'FCF per share', color: '#16A34A', axis: 'R', dots: true, width: 2.4, pts: yearPts(c, (y) => y.fcfPs) },
           ]} />
         ))}
       </div>
-    </div>
-  );
-}
-
-function Compare({ cards }: { cards: LabCard[] }) {
-  const [sortI, setSortI] = useState(0);
-  const ok = cards.filter((c) => c.ok);
-  if (ok.length < 2) return null;
-  const last = (c: LabCard) => c.years[c.years.length - 1];
-  const yieldOf = (c: LabCard) => { const y = last(c); return y?.fcf != null && c.cap ? (y.fcf / c.cap) * 100 : null; };
-  const cols: Array<[string, (c: LabCard) => React.ReactNode, (c: LabCard) => number]> = [
-    ['FCF checks', (c) => `${c.fcf.passed}/${c.fcf.known}`, (c) => (c.fcf.known ? c.fcf.passed / c.fcf.known : -1)],
-    ['FCF margin', (c) => pct(last(c)?.fcfM ?? null), (c) => last(c)?.fcfM ?? -999],
-    ['FCF yield', (c) => pct(yieldOf(c)), (c) => yieldOf(c) ?? -999],
-    ['Revenue growth (last yr)', (c) => pct(last(c)?.revG ?? null), (c) => last(c)?.revG ?? -999],
-    ['EPS growth (last yr)', (c) => pct(last(c)?.epsG ?? null), (c) => last(c)?.epsG ?? -999],
-    ['Stage', (c) => (c.stage.st != null ? `Stage ${c.stage.st}` : '—'), (c) => (c.stage.st === 2 ? 2 : c.stage.st === 1 ? 1 : 0)],
-    ['Trend template', (c) => `${c.stage.tt ?? c.trend.filter((r) => r.ok).length}/6`, (c) => c.stage.tt ?? c.trend.filter((r) => r.ok).length],
-    ['RS vs index', (c) => (c.rs?.ratio == null ? '—' : `${c.rs.ratio.toFixed(2)}×`), (c) => c.rs?.ratio ?? -1],
-    ['RS', (c) => num(c.stage.rsR, 0), (c) => c.stage.rsR ?? -1],
-  ];
-  const rows = ok.slice().sort((a, b) => cols[sortI][2](b) - cols[sortI][2](a));
-  return (
-    <div style={{ overflowX: 'auto', border: `1px solid ${R.border}`, borderRadius: 10, background: R.bg }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5 }}>
-        <thead><tr style={{ background: R.bg2 }}>
-          <th style={{ textAlign: 'left', padding: '6px 8px' }}>Company</th>
-          {cols.map(([h], i) => <th key={h} onClick={() => setSortI(i)} style={{ textAlign: 'right', padding: '6px 8px', cursor: 'pointer', color: i === sortI ? R.cyan : R.faint, whiteSpace: 'nowrap' }}>{h}{i === sortI ? ' ▾' : ''}</th>)}
-        </tr></thead>
-        <tbody>
-          {rows.map((c) => (
-            <tr key={`${c.market}:${c.ticker}`} style={{ borderTop: `1px solid ${R.border}` }}>
-              <td style={{ padding: '6px 8px' }}><b>{c.ticker}</b> <span style={{ color: R.faint }}>{c.market === 'US' ? '🇺🇸' : '🇮🇳'} {capText(c)}</span></td>
-              {cols.map(([h, f]) => <td key={h} style={{ textAlign: 'right', padding: '6px 8px' }}>{f(c)}</td>)}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <div style={{ fontSize: 12, color: R.faint, padding: '4px 8px' }}>Click a column to sort. FCF yield uses today&apos;s market cap and the latest full year.</div>
+      <div style={{ fontSize: 12.5, color: R.faint, marginTop: 6 }}>A rising FCF/share line with a flat share price is a research lead — not an automatic undervaluation signal. The market may be anticipating weaker future economics.</div>
     </div>
   );
 }
@@ -455,15 +421,15 @@ export default function CompanyLabPage() {
   }, []);
   useEffect(() => { try { localStorage.setItem(LIST_KEY, JSON.stringify(list)); } catch { /* not kept */ } }, [list]);
 
-  const load = useCallback(async (entries: Array<{ m: Mkt; t: string }>) => {
-    const need = entries.filter((e) => !cards[key(e)]);
+  const load = useCallback(async (entries: Array<{ m: Mkt; t: string }>, fresh = false) => {
+    const need = fresh ? entries : entries.filter((e) => !cards[key(e)]);
     if (!need.length) return;
     setBusy(true); setErr(null);
     try {
       for (const m of ['IN', 'US'] as Mkt[]) {
         const ts = need.filter((e) => e.m === m).map((e) => e.t);
         for (let i = 0; i < ts.length; i += 8) {
-          const r = await fetch(`/api/v1/company-lab?market=${m}&tickers=${encodeURIComponent(ts.slice(i, i + 8).join(','))}`).catch(() => null);
+          const r = await fetch(`/api/v1/company-lab?market=${m}&tickers=${encodeURIComponent(ts.slice(i, i + 8).join(','))}${fresh ? '&fresh=1' : ''}`, fresh ? { cache: 'no-store' } : undefined).catch(() => null);
           const j: any = r ? await r.json().catch(() => null) : null;
           if (!j?.ok) { setErr(j?.error || `Could not load (HTTP ${r?.status ?? '—'})`); continue; }
           const got = j.cards as LabCard[];
@@ -483,11 +449,14 @@ export default function CompanyLabPage() {
     setList((l) => { const next = l.slice(); for (const p of parts) if (!next.some((x) => key(x) === key(p))) next.push(p); return next; });
     setInput('');
   };
+  const addMany = (es: Array<{ m: Mkt; t: string }>, replace: boolean) => setList((l) => { const next = replace ? [] : l.slice(); for (const p of es) if (!next.some((x) => key(x) === key(p))) next.push(p); return next; });
+  const [refreshedAt, setRefreshedAt] = useState<string | null>(null);
+  const refresh = async () => { await load(list, true); setRefreshedAt(new Date().toLocaleTimeString()); };
   const remove = (e: { m: Mkt; t: string }) => setList((l) => l.filter((x) => key(x) !== key(e)));
   const shown = useMemo(() => list.map((e) => cards[key(e)]).filter(Boolean) as LabCard[], [list, cards]);
 
   return (
-    <div style={{ padding: '16px 18px', display: 'grid', gap: 12, maxWidth: 1200 }}>
+    <div style={{ padding: '16px 18px', display: 'grid', gap: 12, maxWidth: 1680, margin: '0 auto', width: '100%' }}>
       <div>
         <h1 style={{ fontSize: 24, fontWeight: 900, margin: 0 }}>🧪 Company Lab</h1>
         <div style={{ fontSize: 14, color: R.dim, marginTop: 4 }}>Add one company or several — India or USA. Each gets the FCF checklist with its four plots, price charts against revenue / EPS growth, FCF margin and FCF per share, Stage 2 (trend template, relative strength vs the index, breakout), and links to everything else the portal knows about it. A ticker typed under the wrong market is found in the other one.</div>
@@ -503,6 +472,10 @@ export default function CompanyLabPage() {
         {list.length > 0 && <button type="button" onClick={() => setList([])} style={{ fontSize: 12.5, padding: '6px 10px', borderRadius: 8, cursor: 'pointer', border: `1px solid ${R.border}`, background: 'transparent', color: R.faint }}>Clear all</button>}
         {busy && <span style={{ fontSize: 13, color: R.faint }}>Reading figures… (first look at a company takes up to half a minute)</span>}
       </div>
+      <div style={{ border: `1px solid ${R.border}`, borderRadius: 10, padding: 10, background: R.bg }}>
+        <BookLoader busy={busy} onAdd={addMany} onRefresh={() => void refresh()} />
+        {refreshedAt && <div style={{ fontSize: 12.5, color: R.dim, marginTop: 6 }}>Refreshed {refreshedAt}: every company read again from the newest filings (SEC / screener.in page now, not the weekly copy).</div>}
+      </div>
       {err && <div style={{ color: R.red, fontSize: 13 }}>{err}</div>}
       {list.length > 0 && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -510,7 +483,7 @@ export default function CompanyLabPage() {
         </div>
       )}
       {!list.length && <div style={{ fontSize: 14, color: R.faint, padding: 20, border: `1px dashed ${R.border}`, borderRadius: 10 }}>No companies yet. Type one or several tickers above and press Add. Your list is kept on this browser.</div>}
-      {shown.length >= 2 && <Fragment>{label('SIDE BY SIDE')}<Compare cards={shown} /><MultiFcf cards={shown} /></Fragment>}
+      {shown.length >= 1 && <Fragment><Compare cards={shown} />{shown.length >= 2 && <MultiFcf cards={shown} />}</Fragment>}
       <div style={{ display: 'grid', gap: 12 }}>
         {shown.map((c) => <Card key={`${c.market}:${c.ticker}`} c={c} onRemove={() => remove({ m: c.market, t: c.ticker })} />)}
       </div>

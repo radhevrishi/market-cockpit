@@ -11,6 +11,12 @@ export interface AnnualRow {
   revenue: number | null; netIncome: number | null; eps: number | null;
   cfo: number | null; capex: number | null; fcf: number | null;
   debt: number | null; shares: number | null; sbc: number | null;
+  /** zzz1291 — shareholders' equity at the year end (same unit). */
+  equity?: number | null;
+  /** zzz1291 — India: shares worked out as net profit ÷ EPS (crore), used only to read dilution. */
+  sharesEst?: number | null;
+  /** zzz1291 — FCF taken as operating cash because the company stopped tagging capex and its capex had been tiny (< 1% of sales). */
+  fcfApprox?: boolean;
 }
 export interface Check { id: string; label: string; state: 'pass' | 'fail' | 'unknown'; value: string; why: string }
 export interface FcfReport { checks: Check[]; passed: number; known: number; metrics: Array<{ label: string; value: string }>; fcfBasis: string }

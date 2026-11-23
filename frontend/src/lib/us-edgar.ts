@@ -731,6 +731,9 @@ export function factsEvictions(entries: ReadonlyArray<{ key: number; chars: numb
 }
 export function factsCacheStats(): { files: number; mbText: number; subs: number } { return { files: _facts.size, mbText: Math.round(_factsChars / 104857.6) / 10, subs: _subs.size }; }
 
+/** zzz1291 — drop one company's cached file so the next read downloads the newest filings (Company Lab "Refresh"). */
+export function forgetCompanyFacts(cikNum: number): void { const e = _facts.get(cikNum); if (e) { _factsChars -= e.chars; _facts.delete(cikNum); } }
+
 export async function companyFacts(cikNum: number): Promise<any | null> {
   const hit = _facts.get(cikNum);
   if (hit && Date.now() - hit.at < FACTS_TTL_MS) { _facts.delete(cikNum); _facts.set(cikNum, hit); return hit.data; }   // moved to "most recently used"

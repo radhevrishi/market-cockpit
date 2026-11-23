@@ -53,6 +53,8 @@ export interface InFigures {
   /** zzz984 — free-cash-flow margin of the latest full year, ≈ (cash from operations + cash from investing) ÷ sales; screener.in's
    *  page prints no capex line, and pages read before zzz984 kept no investing line (blank until re-read) */
   fcfmFY?: number | null;
+  /** zzz1291 — FCF per share growth over 3 years (approx: operating + investing cash / shares worked out as profit / EPS), % */
+  fcfPsG?: number | null;
   /** zzz1044 (F03) — the year of that margin ('Mar 2026') */
   fcfmAt?: string | null;
   /** zzz1231 — ROCE of the year before roceFY (screener.in ratios table), for "is ROCE expanding" */
@@ -328,6 +330,20 @@ export function inFiguresFromRaw(raw: InRaw): InFigures {
         out.fcfmAt = h;
         approx.push('fcfmTTM', 'r40');
         break;
+      }
+      // zzz1291 — FCF per share now vs 3 years earlier; crore shares = net profit ÷ EPS of the same year
+      const npR = row(A, 'Net Profit', 'Profit after tax'), epsR = row(A, 'EPS in Rs', 'EPS');
+      const ps = (h: string): number | null => {
+        const ci = CF.headers.indexOf(h), ai = A.headers.indexOf(h);
+        if (ci < 0 || ai < 0 || !npR || !epsR || !fin(cfo[ci]) || !fin(cfi[ci]) || !fin(npR[ai]) || !fin(epsR[ai])) return null;
+        const p = npR[ai] as number, e = epsR[ai] as number;
+        if (!(p > 0.5 && e > 0.05)) return null;
+        return ((cfo[ci] as number) + (cfi[ci] as number)) / (p / e);
+      };
+      const hs = CF.headers.filter((h) => monthIndex(h) != null && A.headers.includes(h) && !/TTM/i.test(h));
+      if (hs.length >= 4) {
+        const p1 = ps(hs[hs.length - 1]), p0 = ps(hs[hs.length - 4]);
+        if (p1 != null && p0 != null && p1 > 0 && p0 > 0) { out.fcfPsG = r1((p1 / p0 - 1) * 100); approx.push('fcfPsG'); }
       }
     }
   }

@@ -58,6 +58,6 @@ const read = (p: string) => fs.readFileSync(path.join(__dirname, '..', '..', p),
 test('wired: page, API, nav and home favourite', () => {
   assert.match(read('app/(dashboard)/DashboardClient.tsx'), /href: '\/company-lab'/);
   assert.match(read('app/(dashboard)/page.tsx'), /href: '\/company-lab', label: '🧪 Company Lab'/);
-  assert.match(read('app/api/v1/company-lab/route.ts'), /labCard\(market, t\)/);
+  assert.match(read('app/api/v1/company-lab/route.ts'), /labCard\(market, t[,)]/);
   assert.doesNotMatch(read('app/(dashboard)/company-lab/page.tsx'), /apikey|financialmodelingprep/i);
 });

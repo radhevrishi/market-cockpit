@@ -2519,5 +2519,19 @@
   "copy": "e3b0c44298fc1c149afbf4c8",
   "csv": "e3b0c44298fc1c149afbf4c8",
   "csvRows": 0
+ },
+ "us-cash-up-price-flat": {
+  "match": "0 of 1500 companies match",
+  "order": [],
+  "copy": "e3b0c44298fc1c149afbf4c8",
+  "csv": "e3b0c44298fc1c149afbf4c8",
+  "csvRows": 0
+ },
+ "in-cash-up-price-flat": {
+  "match": "0 of 1500 companies match",
+  "order": [],
+  "copy": "e3b0c44298fc1c149afbf4c8",
+  "csv": "e3b0c44298fc1c149afbf4c8",
+  "csvRows": 0
  }
 }
