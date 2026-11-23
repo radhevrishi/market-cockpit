@@ -30,9 +30,13 @@ export interface QuarterReport {
   gm: { now: number | null; yearAgo: number | null; trend: 'up' | 'down' | 'flat' | 'unknown'; label: string };
   om: { now: number | null; yearAgo: number | null; trend: 'up' | 'down' | 'flat' | 'unknown'; label: string };
   squeeze: { items: SqueezeItem[]; warns: number; known: number; level: 'Low' | 'Watch' | 'High' | 'Unknown'; keyCombo: boolean;
-    ratios: { capexToOcf: number | null; runwayQ: number | null; recvG: number | null; revG: number | null }; period: string };
+    ratios: { capexToOcf: number | null; runwayQ: number | null; recvG: number | null; revG: number | null }; period: string;
+    /** zzz1297 — latest cash balance (same unit as the yearly rows), for EV */
+    cashNow?: number | null };
   dilution: { pct: number | null; years: number; perYear: number | null; text: string };
-  cfoPat: { latest: number | null; three: number | null; text: string };
+  cfoPat: { latest: number | null; three: number | null; text: string;
+    /** zzz1297 — CFO ÷ profit each full year (oldest → newest, null = loss year) and its direction */
+    series?: Array<{ l: string; v: number | null }>; trend?: 'improving' | 'steady' | 'worsening' | 'unknown' };
   de: { value: number | null; text: string };
 }
 
@@ -210,6 +214,7 @@ function qLabel(e: string, basis: string): string {
 export function squeeze(q: QIn): QuarterReport['squeeze'] {
   const items: SqueezeItem[] = [];
   const add = (id: string, label: string, warn: boolean | null, value: string, why: string) => items.push({ id, label, state: warn == null ? 'unknown' : warn ? 'warn' : 'ok', value, why });
+  let cashOut: number | null = null;
   let capexToOcf: number | null = null, runwayQ: number | null = null, recvG: number | null = null, revG: number | null = null, period = '';
   if (q.basis === 'quarterly') {
     const c = ttmSum(q.cfo), c0 = c ? ttmSum(q.cfo, new Date(dt(c.e) - 365 * DAY).toISOString().slice(0, 10)) : null;
@@ -235,6 +240,7 @@ export function squeeze(q: QIn): QuarterReport['squeeze'] {
     add('recv', 'Receivables vs revenue', recvG == null || revG == null ? null : recvG - revG >= 20, recvG == null ? 'not known' : `receivables ${pctTxt(recvG)} vs revenue ${pctTxt(revG)}`, 'Customers paying more slowly: receivables growing 20+ points faster than sales.');
     capexToOcf = c && x && c.v > 0 ? r1((x.v / c.v) * 100) : null;
     runwayQ = f != null && f < 0 && cashNow != null ? r1(cashNow / (-f / 4)) : null;
+    cashOut = cashNow;
   } else if (q.yearly && q.yearly.ends.length >= 2) {
     const Y = q.yearly, n = Y.ends.length - 1, p = n - 1;
     period = `full years ${Y.labels[p]} → ${Y.labels[n]} (India: cash flow and balance sheet are yearly)`;
@@ -253,12 +259,13 @@ export function squeeze(q: QIn): QuarterReport['squeeze'] {
     add('recv', 'Receivables vs revenue', null, 'not on screener.in', 'Receivables are not kept for India companies.');
     capexToOcf = fin(Y.cfo[n]) && Y.cfo[n]! > 0 && fin(inv) && inv < 0 ? r1((-inv / Y.cfo[n]!) * 100) : null;
     runwayQ = fin(Y.fcf[n]) && Y.fcf[n]! < 0 && fin(Y.cash[n]) ? r1(Y.cash[n]! / (-Y.fcf[n]! / 4)) : null;
+    cashOut = fin(Y.cash[n]) ? Y.cash[n]! : null;
   }
   const warns = items.filter((i) => i.state === 'warn').length, knownN = items.filter((i) => i.state !== 'unknown').length;
   const keyCombo = ['capex', 'fcf', 'cash'].every((id) => items.find((i) => i.id === id)?.state === 'warn');
   // zzz1293 — "High" needs at least four of the six checks known (3 warnings out of 3 known is a Watch, not a verdict)
   const level = knownN < 3 ? 'Unknown' : keyCombo || (warns >= 3 && knownN >= 4) ? 'High' : warns >= 2 ? 'Watch' : 'Low';
-  return { items, warns, known: knownN, level, keyCombo, ratios: { capexToOcf, runwayQ, recvG, revG }, period };
+  return { items, warns, known: knownN, level, keyCombo, ratios: { capexToOcf, runwayQ, recvG, revG }, period, cashNow: cashOut };
 }
 
 /** India figures are ₹ crore. */
@@ -306,7 +313,15 @@ export function cfoPat(rows: AnnualRow[]): QuarterReport['cfoPat'] {
   const latest = L && L.netIncome! > 0 ? Math.round((L.cfo! / L.netIncome!) * 100) / 100 : null;
   const t3 = ok.slice(-3), sp = t3.reduce((a, r) => a + r.netIncome!, 0), sc = t3.reduce((a, r) => a + r.cfo!, 0);
   const three = t3.length === 3 && sp > 0 ? Math.round((sc / sp) * 100) / 100 : null;
-  return { latest, three, text: L ? (L.netIncome! <= 0 ? `loss in ${L.label} — ratio not meaningful` : `${latest}× in ${L.label}${three != null ? `, ${three}× over 3 years` : ''}`) : 'not known' };
+  // zzz1297 — the trend over up to five years: the last two years' average vs the years before (±0.2× = a real move)
+  const series = ok.slice(-5).map((r) => ({ l: r.label, v: r.netIncome! > 0 ? Math.round((r.cfo! / r.netIncome!) * 100) / 100 : null }));
+  const vals = series.map((x) => x.v).filter((v): v is number => v != null).map((v) => Math.max(-2, Math.min(4, v)));
+  let trend: 'improving' | 'steady' | 'worsening' | 'unknown' = 'unknown';
+  if (vals.length >= 3) {
+    const recent = (vals[vals.length - 1] + vals[vals.length - 2]) / 2, before = vals.slice(0, -2).reduce((a, v) => a + v, 0) / (vals.length - 2);
+    trend = recent - before >= 0.2 ? 'improving' : recent - before <= -0.2 ? 'worsening' : 'steady';
+  }
+  return { series, trend, latest, three, text: L ? (L.netIncome! <= 0 ? `loss in ${L.label} — ratio not meaningful` : `${latest}× in ${L.label}${three != null ? `, ${three}× over 3 years` : ''}`) : 'not known' };
 }
 export function deOf(rows: AnnualRow[]): QuarterReport['de'] {
   const L = [...rows].reverse().find((r) => fin(r.equity) || fin(r.debt));

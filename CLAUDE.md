@@ -4416,3 +4416,13 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   rewrites merged links directly (`currentAddress`); hubFor resolves old addresses. Old page files must stay (the hosts import them).
   Adding a page to a workspace = tab in the host + PAGE_MERGES entry (test zzz1296-page-merges). Kept separate on purpose:
   market-cycles (static handbook) vs Market Leadership cycles tab; Company Lab vs Stock Sheet (different jobs).
+- zzz1297 (23 Nov): Company Lab red flags + rejected list. `lib/company-lab/signals.ts` (pure): four red-flag COMBINATIONS (R1 cash
+  stress, R2 paper earnings, R3 bought growth, R4 fragile momentum) and two positives (P1 cash integrity, P2 operating inflection); a
+  missing figure never fires or earns one. Also `reinvestment` (Δprofit ÷ Δ(equity+debt), ≤ 3 yrs — profit-based stand-in for
+  incremental ROCE), `evFcf`, `impliedGrowth` (reverse DCF, 10 yrs, US 10%/3%, India 12%/5%). Score: red flag caps at 60; capital
+  pillar gets return on new capital; value pillar gets priced-in vs actual growth; entry prefers 0–12% over the 50-day line.
+  cfoPat now has `series` + `trend`; squeeze has `cashNow`. Table: Flags, CFO/PAT trend (sorts by latest), ROCE trend, Return on new
+  capital, EV/FCF, Growth priced in; red-flag names in red with ⚑. A red flag REJECTS automatically unless kept; owner can reject /
+  restore (`company-lab/marks.ts`, keys mc:company-lab:marks:v1 + :view:v1, vault-synced). Views: All / Strong only / Exclude
+  rejected / Red flags / Rejected — table and cards both. Not in our data: forward P/E, EV/EBIT, moat, order book, capacity, pledge,
+  auditor, related-party deals. Concall Intelligence ↔ Earnings Hub Concall AI now link to each other.

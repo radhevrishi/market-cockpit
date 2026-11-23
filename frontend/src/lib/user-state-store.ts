@@ -23,7 +23,7 @@ export const USER_STATE_KEYS = [
   'mc:stock-screens-hidden:v1',   // zzz1043 — built-in stock screens the owner removed from his list
   'mc:pine-screens:v1',    // zzz983 — saved Pine screens (chart-pattern screens)
   'mc:screen-shortlists:v1', 'mc:chart-drawing-sets:v1', 'mc:screen-review:v1',   // zzz969 — saved screener shortlists; named drawing sets per chart
-  'mc:company-lab:v1', 'mc:company-lab:layouts:v1',   // zzz1292 — Company Lab list + saved column layouts
+  'mc:company-lab:v1', 'mc:company-lab:layouts:v1', 'mc:company-lab:marks:v1', 'mc:company-lab:view:v1',   // zzz1292 — Company Lab list + saved column layouts
 ] as const;
 export type UserStateKey = (typeof USER_STATE_KEYS)[number];
 // zzz1071 — 8 MB (was 3 MB): the US Conviction Beats list (2.2 MB in the browser, over 3 MB once wrapped for sending) was refused

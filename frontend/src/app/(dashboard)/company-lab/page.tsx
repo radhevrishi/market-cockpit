@@ -13,7 +13,8 @@ import NavLink from '@/components/NavLink';
 import { R, tint } from '@/components/special-situations/radar-tokens';
 import { WatchlistButton } from '@/app/(dashboard)/news/components';
 import type { LabCard } from '@/lib/company-lab/server';
-import { Compare, QuarterPanel, BookLoader, ScoreBadge, scoreOf } from './compare-table';
+import { Compare, QuarterPanel, BookLoader, ScoreBadge, scoreOf, redOf, goodOf, signalsOf, derivedOf } from './compare-table';
+import { useLabMarks, rejectState, type LabView } from './marks';
 
 type Mkt = 'IN' | 'US';
 const LIST_KEY = 'mc:company-lab:v1';
@@ -200,12 +201,33 @@ function ExtrasStrip({ c }: { c: LabCard }) {
       {item('PEG', x.peg == null ? '—' : x.peg.toFixed(2), x.pegFrom ?? '', x.peg == null ? undefined : x.peg <= 1 ? R.green : x.peg > 2.5 ? R.red : undefined)}
       {item('ROCE', x.roce == null ? '—' : `${x.roce.toFixed(0)}%${x.roceFY != null && x.rocePrev != null ? ` (${x.rocePrev.toFixed(0)}→${x.roceFY.toFixed(0)})` : ''}`)}
       {item('ROE', f(x.roe, '%'))}
+      {(() => { const d = derivedOf(c); const cp = c.quarter?.cfoPat; return (<Fragment>
+        {item('Return on new capital', d.inc.pct == null ? '—' : `${d.inc.pct}%`, d.inc.text, d.inc.pct == null ? undefined : d.inc.pct >= 18 ? R.green : d.inc.pct < 8 ? R.red : undefined)}
+        {item('EV / FCF', d.ev.multiple == null ? '—' : `${d.ev.multiple.toFixed(0)}×`, 'enterprise value ÷ last full-year FCF')}
+        {item('Growth priced in', d.imp.g == null ? '—' : `${d.imp.g >= 150 ? '>150' : d.imp.g}% a yr`, d.imp.text)}
+        {cp?.series?.length ? item('CFO/PAT trend', `${cp.trend === 'improving' ? '▲' : cp.trend === 'worsening' ? '▼' : '●'} ${cp.series.map((p) => (p.v == null ? '·' : p.v.toFixed(1))).join('→')}`, cp.series.map((p) => `${p.l}: ${p.v ?? 'loss'}`).join(' · '), cp.trend === 'improving' ? R.green : cp.trend === 'worsening' ? R.red : undefined) : null}
+      </Fragment>); })()}
       {item('vs 50-day', f(x.ext50, '%', -0), 'over +25% = extended, wait for a base', x.ext50 != null && x.ext50 > 25 ? R.red : undefined)}
       {item('vs 52-wk high', f(x.fromHigh, '%'))}
       {item('Next result', x.daysToNext == null ? '—' : x.daysToNext <= 0 ? 'due now (est.)' : `~${x.daysToNext} days (est.)`, x.lastResult ? `last ${x.lastResult}` : '', x.daysToNext != null && x.daysToNext <= 10 ? R.amber : undefined)}
       {x.guidanceUp ? item('Guidance', `raised ${x.guidanceUp}`, '', R.green) : null}
       {x.prom != null ? item('Promoter', `${x.prom.toFixed(1)}%${x.promChg != null ? ` (${x.promChg > 0 ? '+' : ''}${x.promChg.toFixed(1)} in a year)` : ''}`, 'pledge not in our data', x.promChg != null && x.promChg <= -1 ? R.red : undefined) : null}
       {x.stageCheck.text ? item('Stage check', x.stageCheck.flag === 'broken' ? 'broken' : 'lagging', x.stageCheck.text, x.stageCheck.flag === 'broken' ? R.red : R.amber) : null}
+    </div>
+  );
+}
+
+// zzz1297 — red-flag / positive combinations, each with what to do
+function SignalStrip({ c }: { c: LabCard }) {
+  const s = signalsOf(c);
+  if (!s.length) return null;
+  return (
+    <div style={{ display: 'grid', gap: 4 }}>
+      {s.map((x) => (
+        <div key={x.id} style={{ fontSize: 13, border: `1px solid ${x.kind === 'red' ? R.red : R.green}`, borderRadius: 8, padding: '5px 10px', background: tint(x.kind === 'red' ? R.red : R.green, 6) }}>
+          <b style={{ color: x.kind === 'red' ? R.red : R.green }}>{x.kind === 'red' ? '⚑ RED FLAG' : '✓ POSITIVE'} · {x.label}</b> <span style={{ color: R.dim }}>— {x.why}.</span> <span style={{ color: R.text }}>{x.response}</span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -226,7 +248,7 @@ function ScoreStrip({ c }: { c: LabCard }) {
     </div>
   );
 }
-function Card({ c, onRemove }: { c: LabCard; onRemove: () => void }) {
+function Card({ c, onRemove, rejected, onMark }: { c: LabCard; onRemove: () => void; rejected?: ReturnType<typeof rejectState> | null; onMark?: (m: 'rejected' | 'kept' | null) => void }) {
   const [open, setOpen] = useState<'cash' | 'fcf' | 'growth' | 'stage' | 'years'>('cash');
   if (!c.ok) {
     return (
@@ -252,11 +274,16 @@ function Card({ c, onRemove }: { c: LabCard; onRemove: () => void }) {
   return (
     <div data-lab-card id={`lab-${c.market}-${c.ticker}`} style={{ border: `1px solid ${R.border}`, borderRadius: 12, padding: 14, background: R.bg, display: 'grid', gap: 10 }}>
       <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 19, fontWeight: 900 }}>{sym}</span>
-        <span style={{ color: R.dim, fontSize: 14 }}>{c.name || ''}</span>
+        <span style={{ fontSize: 19, fontWeight: 900, color: redOf(c).length ? R.red : undefined }}>{redOf(c).length ? '⚑ ' : ''}{sym}</span>
+        <span style={{ color: redOf(c).length ? R.red : R.dim, fontSize: 14 }}>{c.name || ''}</span>
+        {rejected?.rejected && <span style={{ fontSize: 12, fontWeight: 800, color: R.red, border: `1px solid ${R.red}`, borderRadius: 5, padding: '0 6px' }}>REJECTED{rejected.why === 'red-flag' ? ' · red flag' : ' · by you'}</span>}
+        {rejected?.kept && <span style={{ fontSize: 12, color: R.amber }}>kept despite a red flag</span>}
         <span style={{ color: R.faint, fontSize: 13 }}>{c.market === 'US' ? '🇺🇸' : '🇮🇳'} · {capText(c)}{c.price != null ? ` · ${c.currency}${num(c.price, 2)}` : ''}{c.industry ? ` · ${c.industry}` : ''}</span>
         <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6, alignItems: 'center' }}>
           <WatchlistButton ticker={c.market === 'US' ? sym : sym} />
+          {onMark && (rejected?.rejected
+            ? <button type="button" onClick={() => onMark(rejected.why === 'red-flag' ? 'kept' : null)} title={rejected.why === 'red-flag' ? 'Keep it despite the red flag' : 'Bring it back'} style={{ border: `1px solid ${R.border}`, background: 'transparent', color: R.dim, borderRadius: 6, cursor: 'pointer', padding: '2px 8px', fontSize: 12 }}>{rejected.why === 'red-flag' ? 'Keep' : '↺ Restore'}</button>
+            : <button type="button" onClick={() => onMark('rejected')} title="Reject this company (it leaves the Strong / Exclude-rejected views)" style={{ border: `1px solid ${R.border}`, background: 'transparent', color: R.faint, borderRadius: 6, cursor: 'pointer', padding: '2px 8px', fontSize: 12 }}>Reject</button>)}
           <button type="button" onClick={onRemove} title="Remove from the lab" style={{ border: `1px solid ${R.border}`, background: 'transparent', color: R.faint, borderRadius: 6, cursor: 'pointer', padding: '2px 8px' }}>✕</button>
         </span>
       </div>
@@ -272,6 +299,7 @@ function Card({ c, onRemove }: { c: LabCard; onRemove: () => void }) {
         {c.record && c.record.guidance > 0 && chip(`Guidance on file ${c.record.guidance}`, R.cyan, 'Active company guidance in the guidance universe')}
       </div>
       <ScoreStrip c={c} />
+      <SignalStrip c={c} />
       <ExtrasStrip c={c} />
       <div style={{ fontSize: 14.5, lineHeight: 1.5 }}>{c.summary}</div>
       {!!c.notes?.length && <div style={{ fontSize: 12.5, color: R.amber, lineHeight: 1.45 }}>{c.notes.map((n) => <div key={n}>ⓘ {n}</div>)}</div>}
@@ -512,7 +540,20 @@ export default function CompanyLabPage() {
   const [refreshedAt, setRefreshedAt] = useState<string | null>(null);
   const refresh = async () => { await load(list, true); setRefreshedAt(new Date().toLocaleTimeString()); };
   const remove = (e: { m: Mkt; t: string }) => setList((l) => l.filter((x) => key(x) !== key(e)));
-  const shown = useMemo(() => list.map((e) => cards[key(e)]).filter(Boolean) as LabCard[], [list, cards]);
+  const all = useMemo(() => list.map((e) => cards[key(e)]).filter(Boolean) as LabCard[], [list, cards]);
+  // zzz1297 — red-flag / strong-signal views and the rejected list (automatic on a red flag, or by hand)
+  const { marks, mark, view, setView } = useLabMarks();
+  const okAll = all.filter((c) => c.ok);
+  const rejOf = (c: LabCard) => rejectState(`${c.market}:${c.ticker}`, redOf(c).length, marks).rejected;
+  const counts = { all: okAll.length, strong: okAll.filter((c) => goodOf(c).length && !redOf(c).length && !rejOf(c)).length, red: okAll.filter((c) => redOf(c).length).length, rejected: okAll.filter(rejOf).length };
+  const shown = useMemo(() => all.filter((c) => {
+    if (!c.ok) return view === 'all';
+    if (view === 'strong') return goodOf(c).length > 0 && !redOf(c).length && !rejOf(c);
+    if (view === 'hide-rejected') return !rejOf(c);
+    if (view === 'rejected') return rejOf(c);
+    if (view === 'red') return redOf(c).length > 0;
+    return true;
+  }), [all, view, marks]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div style={{ padding: '14px 16px', display: 'grid', gap: 12, width: '100%', minWidth: 0, boxSizing: 'border-box' }}>
@@ -542,9 +583,25 @@ export default function CompanyLabPage() {
         </div>
       )}
       {!list.length && <div style={{ fontSize: 14, color: R.faint, padding: 20, border: `1px dashed ${R.border}`, borderRadius: 10 }}>No companies yet. Type one or several tickers above and press Add. Your list is kept on this browser.</div>}
-      {shown.length >= 1 && <Fragment><Compare cards={shown} />{shown.length >= 2 && <MultiFcf cards={shown} />}</Fragment>}
+      {okAll.length >= 1 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', fontSize: 13 }}>
+          <b style={{ color: R.dim, marginRight: 4 }}>Show</b>
+          {([
+            ['all', `All (${counts.all})`, 'Every company in the lab'],
+            ['strong', `✓ Strong only (${counts.strong})`, 'A positive combination (cash integrity or operating inflection), no red flag, not rejected'],
+            ['hide-rejected', `Exclude rejected (${counts.all - counts.rejected})`, 'Hide everything rejected — by a red flag or by you'],
+            ['red', `⚑ Red flags (${counts.red})`, 'Only companies with a red-flag combination'],
+            ['rejected', `Rejected (${counts.rejected})`, 'Rejected by a red flag (press keep to override) or by you (press ↺ to bring back)'],
+          ] as Array<[LabView, string, string]>).map(([v, label, tip]) => (
+            <button key={v} type="button" title={tip} onClick={() => setView(v)} style={{ fontSize: 12.5, fontWeight: view === v ? 900 : 700, padding: '4px 10px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${view === v ? (v === 'red' || v === 'rejected' ? R.red : v === 'strong' ? R.green : R.cyan) : R.border}`, background: 'transparent', color: view === v ? (v === 'red' || v === 'rejected' ? R.red : v === 'strong' ? R.green : R.cyan) : R.dim }}>{label}</button>
+          ))}
+          <span style={{ color: R.faint, fontSize: 12 }}>A red flag rejects a company automatically; press <b>keep</b> on its row once you have checked the reason away.</span>
+        </div>
+      )}
+      {okAll.length >= 1 && !shown.length && <div style={{ fontSize: 13.5, color: R.faint, padding: 14, border: `1px dashed ${R.border}`, borderRadius: 10 }}>No company matches this view.</div>}
+      {shown.length >= 1 && <Fragment><Compare cards={shown} marks={marks} onMark={mark} />{shown.length >= 2 && <MultiFcf cards={shown} />}</Fragment>}
       <div style={{ display: 'grid', gap: 12 }}>
-        {shown.map((c) => <Card key={`${c.market}:${c.ticker}`} c={c} onRemove={() => remove({ m: c.market, t: c.ticker })} />)}
+        {shown.map((c) => <Card key={`${c.market}:${c.ticker}`} c={c} onRemove={() => remove({ m: c.market, t: c.ticker })} rejected={c.ok ? rejectState(`${c.market}:${c.ticker}`, redOf(c).length, marks) : null} onMark={(m) => mark(`${c.market}:${c.ticker}`, m)} />)}
       </div>
     </div>
   );

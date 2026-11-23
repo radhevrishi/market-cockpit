@@ -7,6 +7,8 @@ import { R, tint } from '@/components/special-situations/radar-tokens';
 import type { LabCard } from '@/lib/company-lab/server';
 import { fcfPriceGap, type QuarterReport } from '@/lib/company-lab/quarterly';
 import { labScore, type LabScore } from '@/lib/company-lab/score';
+import { labSignals, reinvestment, evFcf, impliedGrowth, type Signal } from '@/lib/company-lab/signals';
+import { rejectState, type LabMark } from './marks';
 
 const COLS_KEY = 'mc:company-lab:cols:v1';
 const pct = (v: number | null | undefined) => (v == null ? '—' : `${v > 0 ? '+' : ''}${v.toFixed(1)}%`);
@@ -28,6 +30,29 @@ export function epsGrowthOf(c: LabCard): { v: number | null; text: string; swing
 }
 const scoreMemo = new WeakMap<LabCard, LabScore>();
 /** zzz1293 — the one overall score (lib/company-lab/score.ts) from what the card already holds */
+// zzz1297 — red-flag / positive combinations and the derived figures (reinvestment, EV/FCF, market-implied growth)
+const sigMemo = new WeakMap<LabCard, Signal[]>();
+export function signalsOf(c: LabCard): Signal[] {
+  const hit = sigMemo.get(c); if (hit) return hit;
+  const q = c.quarter, y = c.years[c.years.length - 1], e = epsGrowthOf(c);
+  const s = labSignals({
+    fcf: y?.fcf ?? null, cfoPat: q?.cfoPat.latest ?? null, squeeze: q?.squeeze.level ?? null,
+    epsG: e.text === 'low base' ? 100 : e.v, epsSwing: e.swing ?? null, dilution: q?.dilution.pct ?? null,
+    accel: q?.accel.state ?? null, gmChg: q?.gm.now != null && q.gm.yearAgo != null ? q.gm.now - q.gm.yearAgo : null, omChg: q?.om.now != null && q.om.yearAgo != null ? q.om.now - q.om.yearAgo : null,
+    r40: q?.r40.lowBase ? null : q?.r40.value ?? null, rs: c.stage.rsR, de: q?.de.value ?? null,
+  });
+  sigMemo.set(c, s); return s;
+}
+export const redOf = (c: LabCard) => signalsOf(c).filter((x) => x.kind === 'red');
+export const goodOf = (c: LabCard) => signalsOf(c).filter((x) => x.kind === 'good');
+const derMemo = new WeakMap<LabCard, { inc: ReturnType<typeof reinvestment>; ev: ReturnType<typeof evFcf>; imp: ReturnType<typeof impliedGrowth> }>();
+export function derivedOf(c: LabCard) {
+  const hit = derMemo.get(c); if (hit) return hit;
+  const L = c.rows[c.rows.length - 1], y = c.years[c.years.length - 1];
+  const ev = evFcf(c.cap, L?.debt ?? null, c.quarter?.squeeze.cashNow ?? null, y?.fcf ?? null);
+  const d = { inc: reinvestment(c.rows), ev, imp: impliedGrowth(ev.ev, y?.fcf ?? null, c.market === 'US' ? 'US' : 'IN') };
+  derMemo.set(c, d); return d;
+}
 export function scoreOf(c: LabCard): LabScore {
   const hit = scoreMemo.get(c); if (hit) return hit;
   const q = c.quarter, y = c.years[c.years.length - 1], e = epsGrowthOf(c);
@@ -41,6 +66,7 @@ export function scoreOf(c: LabCard): LabScore {
     rsRatio: c.rs?.ratio ?? null, stageFlag: c.extras?.stageCheck.flag ?? null, promChg: c.extras?.promChg ?? null,
     roce: c.extras?.roce ?? null, roceFY: c.extras?.roceFY ?? null, rocePrev: c.extras?.rocePrev ?? null, roe: c.extras?.roe ?? null,
     pe: c.extras?.pe ?? null, peg: c.extras?.peg ?? null, ext50: c.extras?.ext50 ?? null,
+    incRet: derivedOf(c).inc.pct, impliedG: derivedOf(c).imp.g, growthNow: y?.revG ?? null, redFlags: redOf(c).map((r) => r.label),
   });
   scoreMemo.set(c, s); return s;
 }
@@ -61,6 +87,7 @@ const col = (v: number | null | undefined, good: (x: number) => boolean, bad: (x
 
 export const COLS: Col[] = [
   { id: 'score', group: 'Overall', h: 'Overall score', tip: 'One balanced score 0–100: growth 30, price strength 20, margin momentum 10, safety (cash, debt, squeeze, dilution, promoter selling) 20, capital efficiency (ROCE) 10, valuation & entry (PEG, distance from the 50-day line) 10. Weak growth caps it at 60, weak safety at 65, a Stage 4 chart at 55, a Stage 2 broken this week at 65. Hover a score for its parts.', cell: (c) => <ScoreBadge c={c} />, sort: (c) => scoreOf(c).score ?? -1 },
+  { id: 'signals', group: 'Overall', h: 'Flags', tip: 'Red-flag and positive COMBINATIONS (one weak figure is noise, these together are not). ⚑ red = reject unless the reason is proven away; ✓ green = move on to business and valuation work. Hover for the figures and what to do.', cell: (c) => { const all = signalsOf(c); if (!all.length) return <span style={{ color: R.faint }}>—</span>; return <span style={{ display: 'inline-flex', gap: 4 }}>{all.map((x) => <span key={x.id} title={`${x.label}: ${x.why}\n→ ${x.response}`} style={{ fontSize: 11.5, fontWeight: 800, padding: '1px 6px', borderRadius: 5, color: x.kind === 'red' ? R.red : R.green, border: `1px solid ${x.kind === 'red' ? R.red : R.green}` }}>{x.kind === 'red' ? '⚑' : '✓'} {x.label}</span>)}</span>; }, sort: (c) => goodOf(c).length - 3 * redOf(c).length },
   { id: 'fcfChecks', group: 'Free cash flow', h: 'FCF checks', tip: 'FCF checklist items passed ÷ items that could be checked', cell: (c) => `${c.fcf.passed}/${c.fcf.known}`, sort: (c) => (c.fcf.known ? c.fcf.passed / c.fcf.known : -1) },
   { id: 'fcfM', group: 'Free cash flow', h: 'FCF margin', tip: 'Latest full year: FCF ÷ revenue', cell: (c) => <span style={{ color: col(last(c)?.fcfM, (x) => x >= 10, (x) => x < 0) }}>{pct(last(c)?.fcfM)}</span>, sort: (c) => last(c)?.fcfM ?? -999 },
   { id: 'fcfY', group: 'Free cash flow', h: 'FCF yield', tip: "Latest full year FCF ÷ today's market cap", cell: (c) => pct(yieldOf(c)), sort: (c) => yieldOf(c) ?? -999 },
@@ -73,6 +100,7 @@ export const COLS: Col[] = [
   { id: 'om', group: 'Margins', h: 'Operating margin', tip: 'Latest quarter, and the move vs the same quarter a year earlier', cell: (c) => { const g = Q(c)?.om; return g?.now == null ? '—' : <span title={g.label}>{g.now.toFixed(1)}% <span style={{ color: g.trend === 'up' ? R.green : g.trend === 'down' ? R.red : R.faint }}>{TR[g.trend]}{g.yearAgo != null ? ` ${(g.now - g.yearAgo) > 0 ? '+' : ''}${(g.now - g.yearAgo).toFixed(1)}` : ''}</span></span>; }, sort: (c) => Q(c)?.om.now ?? -999 },
   { id: 'dil', group: 'Quality', h: 'Dilution (3 yr)', tip: 'Change in share count over up to three years (positive = more shares)', cell: (c) => { const d = Q(c)?.dilution; return d?.pct == null ? '—' : <span title={d.text} style={{ color: d.pct >= 10 ? R.red : d.pct >= 4 ? R.amber : d.pct <= -3 ? R.green : R.text }}>{pct(d.pct)}</span>; }, sort: (c) => -(Q(c)?.dilution.pct ?? 999) },
   { id: 'cfoPat', group: 'Quality', h: 'CFO / PAT', tip: 'Operating cash ÷ net profit, latest year (3-year in the tooltip). Above 1 = profit backed by cash.', cell: (c) => { const x = Q(c)?.cfoPat; return x?.latest == null ? <span style={{ color: R.faint }} title={x?.text}>—</span> : <span title={x.text} style={{ color: col(x.latest, (v) => v >= 0.9, (v) => v < 0.6) }}>{x.latest.toFixed(2)}×</span>; }, sort: (c) => Q(c)?.cfoPat.latest ?? -999 },
+  { id: 'cfoTrend', group: 'Quality', h: 'CFO / PAT trend (yrs)', tip: 'Operating cash ÷ profit each full year, oldest → newest (· = loss year). Improving / worsening = the last two years vs the years before (±0.2×). Sorts by the latest year.', cell: (c) => { const x = Q(c)?.cfoPat; if (!x?.series?.length) return '—'; const t = x.trend ?? 'unknown'; const tc = t === 'improving' ? R.green : t === 'worsening' ? R.red : t === 'steady' ? R.text : R.faint; return <span title={x.series.map((p) => `${p.l}: ${p.v == null ? 'loss' : `${p.v}×`}`).join('\n')}><span style={{ color: tc, fontWeight: 800 }}>{t === 'improving' ? '▲ improving' : t === 'worsening' ? '▼ worsening' : t === 'steady' ? '● steady' : '—'}</span> <span style={{ color: R.faint, fontSize: 12 }}>{x.series.map((p) => (p.v == null ? '·' : p.v.toFixed(1))).join(' → ')}</span></span>; }, sort: (c) => Q(c)?.cfoPat.latest ?? -999 },
   { id: 'de', group: 'Quality', h: 'Debt ÷ equity', tip: 'Total debt ÷ shareholders’ equity, latest year end', cell: (c) => { const x = Q(c)?.de; return x?.value == null ? <span style={{ color: R.faint }} title={x?.text}>—</span> : <span title={x.text} style={{ color: col(x.value, (v) => v <= 0.5, (v) => v > 1.5) }}>{x.value.toFixed(2)}×</span>; }, sort: (c) => -(Q(c)?.de.value ?? 99) },
   { id: 'squeeze', group: 'Cash squeeze', h: 'Cash squeeze', tip: 'Six checks: cash, capex, operating cash, FCF, debt, receivables vs revenue. 3+ warnings = look closer.', cell: (c) => { const s = Q(c)?.squeeze; if (!s) return '—'; return <span title={s.items.filter((i) => i.state === 'warn').map((i) => `⚠ ${i.label}: ${i.value}`).join('\n') || 'no warnings'} style={{ color: LEVEL_C[s.level], fontWeight: 800 }}>{s.level}{s.level !== 'Unknown' ? ` ${s.warns}/${s.known}` : ''}{s.keyCombo ? ' ⚡' : ''}</span>; }, sort: (c) => { const s = Q(c)?.squeeze; return s && s.level !== 'Unknown' ? -s.warns : -99; } },
   { id: 'capexOcf', group: 'Cash squeeze', h: 'Capex ÷ OCF', tip: 'Capital spending ÷ operating cash (last 4 quarters; India: whole investing outflow)', cell: (c) => { const v = Q(c)?.squeeze.ratios.capexToOcf; return v == null ? '—' : <span style={{ color: col(v, (x) => x <= 50, (x) => x > 100) }}>{v.toFixed(0)}%</span>; }, sort: (c) => -(Q(c)?.squeeze.ratios.capexToOcf ?? 999) },
@@ -84,8 +112,12 @@ export const COLS: Col[] = [
   // zzz1295 — valuation, capital efficiency, entry, catalysts, ownership
   { id: 'pe', group: 'Valuation', h: 'P/E', tip: 'Trailing price ÷ earnings (stock screener). No forward P/E: we keep no analyst estimates.', cell: (c) => { const v = X(c)?.pe; return v == null ? <span style={{ color: R.faint }} title="loss-making or not known">—</span> : <span style={{ color: v > 80 ? R.red : v > 45 ? R.amber : R.text }}>{v.toFixed(0)}</span>; }, sort: (c) => -(X(c)?.pe ?? 9999) },
   { id: 'peg', group: 'Valuation', h: 'PEG', tip: 'P/E ÷ EPS growth (trailing 12 months, else 3-year). Under 1 = cheap for its growth, over 2.5 = priced for perfection.', cell: (c) => { const x = X(c); return x?.peg == null ? <span style={{ color: R.faint }}>—</span> : <span title={x.pegFrom ?? ''} style={{ fontWeight: 800, color: x.peg <= 1 ? R.green : x.peg <= 2 ? R.text : x.peg <= 3 ? R.amber : R.red }}>{x.peg.toFixed(2)}</span>; }, sort: (c) => -(X(c)?.peg ?? 99) },
+  { id: 'evFcf', group: 'Valuation', h: 'EV / FCF', tip: 'Enterprise value (market cap + debt − cash) ÷ latest full-year free cash flow. Blank when FCF is negative.', cell: (c) => { const v = derivedOf(c).ev.multiple; return v == null ? <span style={{ color: R.faint }}>—</span> : <span style={{ color: v <= 20 ? R.green : v > 60 ? R.red : R.text }}>{v.toFixed(0)}×</span>; }, sort: (c) => -(derivedOf(c).ev.multiple ?? 9999) },
+  { id: 'implied', group: 'Valuation', h: 'Growth priced in', tip: 'Reverse DCF: the yearly FCF growth for 10 years that today’s enterprise value pays for (USA 10% discount, 3% after; India 12%, 5%). Compare with the growth the company is actually showing — priced-in growth well below it leaves room.', cell: (c) => { const d = derivedOf(c).imp; const now = last(c)?.revG; if (d.g == null) return <span style={{ color: R.faint }} title={d.text}>—</span>; const gap = now != null ? now - d.g : null; return <span title={`${d.text}${now != null ? `\nrevenue growth now ${now}%` : ''}`} style={{ color: gap == null ? R.text : gap >= 10 ? R.green : gap <= -10 ? R.red : R.text }}>{d.g >= 150 ? '>150' : d.g}%{now != null ? <span style={{ color: R.faint, fontSize: 12 }}> vs {Math.round(now)}% now</span> : null}</span>; }, sort: (c) => { const d = derivedOf(c).imp.g, now = last(c)?.revG; return d == null ? -999 : now != null ? now - d : -d; } },
   { id: 'evRev', group: 'Valuation', h: 'EV / sales', tip: 'Enterprise value ÷ revenue (trailing 12 months)', cell: (c) => (X(c)?.evRev == null ? '—' : `${X(c)!.evRev!.toFixed(1)}×`), sort: (c) => -(X(c)?.evRev ?? 999) },
   { id: 'roce', group: 'Capital efficiency', h: 'ROCE', tip: 'Return on capital employed, trailing 12 months; the arrow compares the last full year with the year before', cell: (c) => { const x = X(c); if (x?.roce == null) return <span style={{ color: R.faint }}>—</span>; const d = x.roceFY != null && x.rocePrev != null ? x.roceFY - x.rocePrev : null; return <span title={x.roceFY != null && x.rocePrev != null ? `${x.rocePrev}% → ${x.roceFY}% (full years)` : ''} style={{ color: x.roce >= 20 ? R.green : x.roce < 10 ? R.red : R.text }}>{x.roce.toFixed(0)}% {d != null ? <span style={{ color: d >= 1 ? R.green : d <= -1 ? R.red : R.faint }}>{d >= 1 ? '▲' : d <= -1 ? '▼' : '●'}</span> : null}</span>; }, sort: (c) => X(c)?.roce ?? -99 },
+  { id: 'roceTrend', group: 'Capital efficiency', h: 'ROCE trend', tip: 'Year before → last full year → trailing 12 months. 18%+ is the target.', cell: (c) => { const x = X(c); const pts = [x?.rocePrev, x?.roceFY, x?.roce].filter((v): v is number => v != null); if (!pts.length) return '—'; const up = pts.length > 1 ? pts[pts.length - 1] - pts[0] : 0; return <span><span style={{ color: (x?.roce ?? 0) >= 18 ? R.green : (x?.roce ?? 0) < 10 ? R.red : R.text, fontWeight: 800 }}>{pts.map((v) => v.toFixed(0)).join(' → ')}%</span> <span style={{ color: up >= 2 ? R.green : up <= -2 ? R.red : R.faint }}>{up >= 2 ? '▲' : up <= -2 ? '▼' : '●'}</span></span>; }, sort: (c) => X(c)?.roce ?? -99 },
+  { id: 'incRet', group: 'Capital efficiency', h: 'Return on new capital', tip: 'Extra profit ÷ extra capital (equity + debt) over up to three years — a profit-based stand-in for incremental ROCE. 18%+ = growth that creates value.', cell: (c) => { const d = derivedOf(c).inc; return d.pct == null ? <span style={{ color: R.faint }} title={d.text}>—</span> : <span title={d.text} style={{ color: d.pct >= 18 ? R.green : d.pct < 8 ? R.red : R.text }}>{d.pct}%</span>; }, sort: (c) => derivedOf(c).inc.pct ?? -999 },
   { id: 'roe', group: 'Capital efficiency', h: 'ROE', tip: 'Return on equity', cell: (c) => (X(c)?.roe == null ? '—' : `${X(c)!.roe!.toFixed(0)}%`), sort: (c) => X(c)?.roe ?? -99 },
   { id: 'ext50', group: 'Entry', h: 'From 50-day', tip: 'Price vs its 50-day average. 0–10% above = near support; 25%+ = extended (wait for a base); below = under support.', cell: (c) => { const v = X(c)?.ext50; return v == null ? '—' : <span style={{ fontWeight: 800, color: v > 25 ? R.red : v > 12 ? R.amber : v >= -3 ? R.green : R.amber }}>{v > 0 ? '+' : ''}{v.toFixed(0)}%{v > 25 ? ' ext' : ''}</span>; }, sort: (c) => -Math.abs((X(c)?.ext50 ?? 99) - 5) },
   { id: 'fromHigh', group: 'Entry', h: 'From 52-wk high', tip: 'How far under the 52-week high (pivot area)', cell: (c) => { const v = X(c)?.fromHigh; return v == null ? '—' : <span style={{ color: v >= -10 ? R.green : v <= -30 ? R.red : R.text }}>{v.toFixed(0)}%</span>; }, sort: (c) => X(c)?.fromHigh ?? -999 },
@@ -95,7 +127,7 @@ export const COLS: Col[] = [
   { id: 'inst', group: 'Ownership', h: 'FII + DII', tip: 'Foreign + domestic institutional holding, latest quarter (India)', cell: (c) => (X(c)?.inst == null ? '—' : `${X(c)!.inst!.toFixed(1)}%`), sort: (c) => X(c)?.inst ?? -1 },
   { id: 'gap', group: 'Research lead', h: 'FCF/share vs price (3 yr)', tip: 'FCF per share change vs share price change over up to three full years. ◆ = cash up 30%+, price flat (≤ +10%): a research lead, not a buy signal.', cell: (c) => { const g = gapOf(c); if (g.fcfPsG == null) return <span title={g.why} style={{ color: R.faint, fontSize: 12 }}>{g.short}</span>; return g.fcfPsG > 500 ? <span title={`FCF per share ${pct(g.fcfPsG)} from a tiny starting figure — not meaningful`} style={{ color: R.faint, fontSize: 12 }}>low base</span> : <span title={g.from ? `from ${g.from}` : ''} style={{ color: g.flag ? R.cyan : R.text, fontWeight: g.flag ? 800 : 400 }}>{g.flag ? '◆ ' : ''}{pct(g.fcfPsG)} / {pct(g.priceG)}</span>; }, sort: (c) => { const g = gapOf(c); return g.fcfPsG != null && g.priceG != null ? g.fcfPsG - g.priceG : -999; } },
 ];
-const DEFAULT = ['score', 'fcfChecks', 'fcfM', 'fcfY', 'r40', 'accel', 'gm', 'om', 'dil', 'cfoPat', 'de', 'squeeze', 'roce', 'peg', 'ext50', 'nextRes', 'prom', 'stage', 'rs', 'gap'];
+const DEFAULT = ['score', 'signals', 'fcfChecks', 'fcfM', 'fcfY', 'r40', 'accel', 'gm', 'om', 'dil', 'cfoPat', 'cfoTrend', 'de', 'squeeze', 'roce', 'incRet', 'peg', 'implied', 'ext50', 'nextRes', 'prom', 'stage', 'rs', 'gap'];
 const GROUPS = Array.from(new Set(COLS.map((c) => c.group)));
 
 // zzz1292 — column layouts: ready-made ones + the owner's own, saved by name (synced to his account), last one used reopens
@@ -105,7 +137,7 @@ const PRESETS: Record<string, Layout> = {
   'Overview': { cols: DEFAULT, sort: 'score', desc: true },
   'Cash quality': { cols: ['score', 'fcfChecks', 'fcfM', 'fcfY', 'gap', 'cfoPat', 'de', 'dil', 'squeeze', 'capexOcf', 'runway'], sort: 'fcfChecks', desc: true },
   'Growth': { cols: ['score', 'r40', 'revQ', 'accel', 'revG', 'epsG', 'gm', 'om', 'stage', 'rs'], sort: 'r40', desc: true },
-  'Valuation & entry': { cols: ['score', 'pe', 'peg', 'evRev', 'roce', 'roe', 'ext50', 'fromHigh', 'nextRes', 'guideUp', 'stage', 'rs'], sort: 'score', desc: true },
+  'Valuation & entry': { cols: ['score', 'signals', 'pe', 'peg', 'evRev', 'evFcf', 'implied', 'roce', 'roceTrend', 'incRet', 'roe', 'ext50', 'fromHigh', 'nextRes', 'guideUp', 'stage', 'rs'], sort: 'score', desc: true },
   'Technicals': { cols: ['score', 'stage', 'ext50', 'fromHigh', 'tt', 'rsIdx', 'rs', 'r40', 'accel'], sort: 'rs', desc: true },
   'Everything': { cols: COLS.map((c) => c.id), sort: 'score', desc: true },
 };
@@ -125,7 +157,7 @@ const readLayouts = (): LayoutStore => {
 };
 const writeLayouts = (v: LayoutStore) => { try { localStorage.setItem(LAYOUTS_KEY, JSON.stringify({ ...v, scoreAdded: true })); } catch { /* not kept */ } };
 
-export function Compare({ cards }: { cards: LabCard[] }) {
+export function Compare({ cards, marks = {}, onMark }: { cards: LabCard[]; marks?: Record<string, { m: LabMark }>; onMark?: (key: string, m: LabMark | null) => void }) {
   const [store, setStore] = useState<LayoutStore>({ active: 'Overview', custom: {} });
   const [on, setOn] = useState<string[]>(DEFAULT);
   const [sortId, setSortId] = useState('r40');
@@ -205,8 +237,14 @@ export function Compare({ cards }: { cards: LabCard[] }) {
             {rows.map((c) => (
               <tr key={`${c.market}:${c.ticker}`} style={{ borderTop: `1px solid ${R.border}` }}>
                 <td style={{ padding: '6px 8px', position: 'sticky', left: 0, background: R.bg, whiteSpace: 'nowrap' }}>
-                  <a href={`#lab-${c.market}-${c.ticker}`} style={{ color: R.text, textDecoration: 'none' }}><b>{c.ticker}</b></a> <span style={{ color: R.faint, fontSize: 12 }}>{c.market === 'US' ? '🇺🇸' : '🇮🇳'} {capText(c)}</span>
-                  {c.name && <div style={{ fontSize: 12, color: R.dim, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.name}</div>}
+                  {(() => { const k = `${c.market}:${c.ticker}`, red = redOf(c), rj = rejectState(k, red.length, marks); return (
+                    <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center', marginRight: 4 }}>
+                      {onMark && (rj.rejected
+                        ? <button type="button" title={rj.why === 'red-flag' ? 'Rejected by a red flag — keep it anyway (you have checked the flag away)' : 'Rejected by you — bring it back'} onClick={() => onMark(k, rj.why === 'red-flag' ? 'kept' : null)} style={{ border: `1px solid ${R.border}`, background: 'transparent', color: R.dim, borderRadius: 5, cursor: 'pointer', fontSize: 11, padding: '0 5px' }}>{rj.why === 'red-flag' ? 'keep' : '↺'}</button>
+                        : <button type="button" title={rj.kept ? 'Kept despite a red flag — reject it after all' : 'Reject this company'} onClick={() => onMark(k, 'rejected')} style={{ border: `1px solid ${R.border}`, background: 'transparent', color: R.faint, borderRadius: 5, cursor: 'pointer', fontSize: 11, padding: '0 5px' }}>✕</button>)}
+                    </span>); })()}
+                  <a href={`#lab-${c.market}-${c.ticker}`} title={redOf(c).map((x) => `⚑ ${x.label}: ${x.why}`).join('\n')} style={{ color: redOf(c).length ? R.red : R.text, textDecoration: 'none' }}><b>{redOf(c).length ? '⚑ ' : ''}{c.ticker}</b></a> <span style={{ color: R.faint, fontSize: 12 }}>{c.market === 'US' ? '🇺🇸' : '🇮🇳'} {capText(c)}</span>
+                  {c.name && <div style={{ fontSize: 12, color: redOf(c).length ? R.red : R.dim, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.name}</div>}
                 </td>
                 {GROUPS.flatMap((g) => cols.filter((k) => k.group === g)).map((k, i, arr) => <td key={k.id} style={{ textAlign: 'right', padding: '6px 8px', whiteSpace: 'nowrap', borderLeft: i === 0 || arr[i - 1].group !== k.group ? `1px solid ${R.border}` : undefined }}>{k.cell(c)}</td>)}
               </tr>

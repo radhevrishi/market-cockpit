@@ -43,6 +43,8 @@ export interface ScoreInput {
   rsRatio?: number | null; stageFlag?: 'broken' | 'lagging' | null; promChg?: number | null;
   roce?: number | null; roceFY?: number | null; rocePrev?: number | null; roe?: number | null;
   pe?: number | null; peg?: number | null; ext50?: number | null;
+  /** zzz1297 */
+  incRet?: number | null; impliedG?: number | null; growthNow?: number | null; redFlags?: string[];
 }
 export interface Pillar { id: 'growth' | 'price' | 'margin' | 'safety' | 'capital' | 'value'; label: string; weight: number; score: number | null; known: number; total: number; why: string[] }
 export interface LabScore { score: number | null; grade: 'A' | 'B' | 'C' | 'D' | '—'; pillars: Pillar[]; caps: string[]; coverage: number; summary: string }
@@ -106,17 +108,24 @@ export function labScore(x: ScoreInput): LabScore {
   const roceL = fin(x.roce) ? ramp(x.roce, [[0, 10], [10, 40], [15, 60], [20, 75], [30, 92]]) : null;
   const roceD = fin(x.roceFY) && fin(x.rocePrev) ? ramp(x.roceFY - x.rocePrev, [[-8, 10], [-3, 35], [0, 60], [3, 80], [8, 95]]) : null;
   const roeL = fin(x.roe) ? ramp(x.roe, [[0, 10], [10, 45], [15, 65], [25, 90]]) : null;
+  const inc = fin(x.incRet) ? ramp(x.incRet, [[0, 10], [10, 40], [18, 65], [30, 90]]) : null;
   const capital = pillar('capital', 'Capital efficiency', 10, [
+    { v: inc, w: 2, why: `return on new capital ${fin(x.incRet) ? `${x.incRet}%` : '—'}` },
     { v: roceL, w: 3, why: `ROCE ${fin(x.roce) ? `${x.roce.toFixed(0)}%` : '—'}` },
     { v: roceD, w: 2, why: `ROCE ${fin(x.roceFY) && fin(x.rocePrev) ? `${x.rocePrev.toFixed(0)}% → ${x.roceFY.toFixed(0)}%` : 'trend —'}` },
     { v: roeL, w: 1, why: `ROE ${fin(x.roe) ? `${x.roe.toFixed(0)}%` : '—'}` },
   ]);
   // VALUATION & ENTRY — PEG (else P/E) and how far price is from its 50-day line (extended = worse entry)
   const val = fin(x.peg) ? ramp(x.peg, [[0.5, 95], [1, 85], [1.5, 70], [2.5, 40], [4, 15]]) : fin(x.pe) ? ramp(x.pe, [[10, 80], [25, 65], [50, 40], [100, 15]]) : null;
-  const ent = fin(x.ext50) ? ramp(x.ext50, [[-15, 35], [-5, 60], [0, 80], [10, 90], [20, 70], [35, 35], [60, 10]]) : null;
+  // the owner's entry window: 0% to +12% above the 50-day line is best
+  const ent = fin(x.ext50) ? ramp(x.ext50, [[-15, 30], [-5, 55], [0, 90], [12, 90], [20, 65], [35, 30], [60, 10]]) : null;
+  // what the price assumes vs what the company is doing: implied FCF growth well under today's growth = room
+  const gap = fin(x.impliedG) && fin(x.growthNow) ? x.growthNow - x.impliedG : null;
+  const imp = gap != null ? ramp(gap, [[-30, 10], [-10, 35], [0, 60], [10, 80], [25, 95]]) : null;
   const value = pillar('value', 'Valuation & entry', 10, [
     { v: val, w: 3, why: fin(x.peg) ? `PEG ${x.peg.toFixed(2)}` : `P/E ${fin(x.pe) ? x.pe.toFixed(0) : '—'}` },
     { v: ent, w: 2, why: `${fin(x.ext50) ? `${x.ext50 > 0 ? '+' : ''}${x.ext50.toFixed(0)}%` : '—'} from the 50-day line` },
+    { v: imp, w: 2, why: `price assumes ${fin(x.impliedG) ? `${x.impliedG}%` : '—'} FCF growth vs ${fin(x.growthNow) ? `${Math.round(x.growthNow)}%` : '—'} now` },
   ]);
   const pillars = [growth, price, margin, safety, capital, value];
   const known = pillars.filter((p) => p.score != null);
@@ -128,6 +137,7 @@ export function labScore(x: ScoreInput): LabScore {
   if (growth.score != null && growth.score < 30) cap(60, 'growth weak — capped at 60');
   if (safety.score != null && safety.score < 30) cap(65, 'cash / balance sheet weak — capped at 65');
   if (x.stage === 4) cap(55, 'Stage 4 downtrend — capped at 55');
+  if (x.redFlags?.length) cap(60, `red flag: ${x.redFlags.join(', ')} — capped at 60`);
   if (x.stageFlag === 'broken') cap(65, 'Stage 2 broken this week (under the 30-week line) — capped at 65');
   const inputs = pillars.reduce((a, p) => a + p.total, 0), have = pillars.reduce((a, p) => a + p.known, 0);
   const coverage = Math.round((have / inputs) * 100) / 100;

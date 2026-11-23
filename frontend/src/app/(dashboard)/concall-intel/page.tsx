@@ -271,6 +271,10 @@ export default function ConcallIntelPage() {
         Note: tone is computed from a positive/negative/defensive lexicon (no LLM). Treat ±5 differences as noise — only ±15 changes reflect real shifts. Use the cue counts (📈/📉/🛡) for the actual signal.
       </p>
 
+      {/* zzz1297 — the two concall readers do different jobs; say which is which */}
+      <div style={{ fontSize: 12, color: 'var(--mc-text-3)', margin: '0 0 10px', padding: '6px 10px', border: '1px dashed var(--mc-bg-4)', borderRadius: 8 }}>
+        This box is the quick, free tone check (word lists, no AI). For a full read of a transcript or results PDF — guidance, numbers, risks and a valuation — use <a href="/earnings-hub?tab=concall" style={{ color: 'var(--mc-cyan)', fontWeight: 800 }}>Earnings Hub → Concall AI →</a>
+      </div>
       {/* ── Input ───────────────────────────────────────────────────── */}
       <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 10, padding: '14px 18px', marginBottom: 14 }}>
         <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>

@@ -2164,6 +2164,10 @@ export default function EarningsAnalysisPage() {
         <p style={{fontSize:F.xs,color:MUTED,margin:0}}>
           Enter a ticker for instant analysis from FMP structured data · or upload a PDF for manual filings
         </p>
+        {/* zzz1297 — cross-link to the other concall reader */}
+        <p style={{fontSize:F.xs,color:MUTED,margin:'4px 0 0'}}>
+          Live bullish concall filings, the Transformation Radar and a quick free tone check live in <a href="/concall-intel" style={{color:'var(--mc-cyan)',fontWeight:800}}>Concall Intelligence →</a>
+        </p>
       </div>
 
       {/* PATCH 0680 — Bridge to Auto-Valuation. User wanted both analyses
