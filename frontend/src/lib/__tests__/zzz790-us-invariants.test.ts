@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { isProtectedApi, PROTECTED_API_PREFIXES } from '../site-auth';
+import { navSrc } from './fixtures/nav-src';   // zzz1294
 
 const SRC = join(__dirname, '..', '..');
 const read = (p: string) => readFileSync(join(SRC, p), 'utf8');
@@ -55,12 +56,12 @@ describe('no price in the US thesis engine', () => {
 
 describe('navigation and favourites', () => {
   test('both US pages in the sidebar, next to the India ones, labelled India / US', () => {
-    const nav = read('app/(dashboard)/DashboardClient.tsx');
-    const i = (h: string) => nav.indexOf(`href: '${h}'`);
+    const nav = navSrc();
+    const i = (h: string) => nav.lastIndexOf(`href: '${h}'`);   // zzz1294: the hub entries (last)
     for (const h of ['/portfolio', '/us-portfolio-book', '/portfolio-catalysts', '/us-portfolio-catalysts']) assert.ok(i(h) > 0, h);
     assert.match(nav, /label: 'US Portfolio Book'/);
     assert.match(nav, /label: 'US Portfolio Catalysts'/);
-    assert.match(nav, /label: 'Portfolio \(India\)'/);
+    assert.match(nav, /label: 'Portfolio( Book)? \(India\)'/);
     assert.match(nav, /label: 'Portfolio Catalysts \(India\)'/);
     assert.ok(i('/us-portfolio-book') > i('/portfolio') && i('/us-portfolio-book') < i('/portfolio-catalysts'));
     assert.ok(i('/us-portfolio-catalysts') > i('/portfolio-catalysts') && i('/us-portfolio-catalysts') < i('/exit-radar'));

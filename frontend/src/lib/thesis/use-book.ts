@@ -65,6 +65,10 @@ export interface BookRow {
   preset?: PresetLabel | null;
   /** zzz811: which list put a bench name here ("Conviction Beats (India)"). */
   benchSource?: string | null;
+  /** zzz1293 — on the owner's watchlist (mc_watchlist_tickers) */
+  watch?: boolean;
+  /** zzz1293 — here ONLY because of the watchlist (not held, not on Conviction Beats): shown in the Watchlist view only */
+  watchOnly?: boolean;
   market: 'IN' | 'US';
   graded: any | null;
   tier: string | null;
@@ -535,6 +539,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
       // book's bench flags, minus the owner's removals, minus what he holds.
       // No preset gate: every name joins; the preset is a label on its card.
       let candidates: string[] = [];
+      const watchExtra = new Set<string>();
       let heldOnCb = 0;
       let cbInfo: CbCriteriaInfo | null = null;
       let cbPassing: string[] = [];
@@ -584,10 +589,27 @@ export function useBook(opts?: { includeBench?: boolean }) {
           return out;
         });
         cbPassing = sel.passing.map((s) => heldByKey.get(heldKey(s)) || s);
+
+        // ── zzz1293 — THE WATCHLIST IS READ TOO. Names on it that are neither held nor on Conviction Beats join the
+        // universe (so their evidence is read like every other name) but are marked watchOnly: the book / bench /
+        // Conviction Beats counts stay exactly as before and they show in the Watchlist view.
+        let wl: string[] = [];
+        try { const v = JSON.parse(localStorage.getItem('mc_watchlist_tickers') || '[]'); if (Array.isArray(v)) wl = v.map((x: any) => String(typeof x === 'string' ? x : x?.ticker ?? x?.symbol ?? '').toUpperCase().replace(/^(NSE|BSE):/, '').replace(/\.(NS|BO)$/, '').trim()).filter((x) => /^[A-Z0-9&-]{2,20}$/.test(x)); } catch { wl = []; }
+        const wlKeys = new Set(wl.map((t) => heldKey(t)));
+        const inUni = new Set([...universe.keys()].map((t) => heldKey(t)));
+        const extra = Array.from(new Set(wl.filter((t) => !inUni.has(heldKey(t)))));
+        if (extra.length) { universe = bookUniverse(resolved.names, [...candidates, ...extra]); paint(universe); }
+        const extraSet = new Set(extra);
+        for (const x of extra) watchExtra.add(x);
+        setRows((cur) => {
+          const out = { ...cur };
+          for (const [s0, r] of Object.entries(out)) { const w = wlKeys.has(heldKey(s0)); if (w || r.watch) out[s0] = { ...r, watch: w, watchOnly: extraSet.has(s0) }; }
+          return out;
+        });
       }
 
       setNote((n) => ({
-        ...n, ...originCounts(universe.values()), serverError: resolved.serverError, cb: cbInfo, heldOnCb, cbPassing, resolved,
+        ...n, ...originCounts([...universe.entries()].filter(([k]) => !watchExtra.has(k)).map(([, v]) => v)), serverError: resolved.serverError, cb: cbInfo, heldOnCb, cbPassing, resolved,
       }));
 
       // ── STAGE 3 — graded rows for everything, and the preset gate.

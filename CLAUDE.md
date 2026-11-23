@@ -4379,3 +4379,21 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   ticker asked. RS rating falls back to `rsRanks`; Stage / RS blanks say "new listing" (card `listedDays`). Dilution estimate that
   jumps 60%+ (bonus / listing) is not called dilution; FCF/share vs price blank says why (FCF negative, too few years, low base).
   Cash-squeeze items have neutral labels ("Cash balance", "Debt" …). Rule of 40 shown "57 − 10".
+- zzz1293 (23 Nov): Company Lab overall score (`lib/company-lab/score.ts`, pure): Growth 35 · Price strength 25 · Margin momentum
+  15 · Safety 25; caps: growth < 30 → ≤ 60, safety < 30 → ≤ 65, Stage 4 → ≤ 55, < half the inputs known → pulled to 50. Weights
+  from a check of last year's winners in the screener snapshot (top 10% by 1-year return, small + mid caps): growth 1.5–1.8×
+  more common among winners, FCF margin LESS common (0.7–0.8×), D/E no difference — so safety only pulls a score down. It is a
+  description of winners, not a forward test (no point-in-time history). Column 'score' first in every layout (custom layouts
+  get it once, `scoreAdded`), strip on each card. `accelOf` adds 'uneven' (two turns over a 50-pt spread, or +50% after a
+  −20% quarter); Rule of 40 `lowBase` flag and full-year fallback (foreign filers with no 10-Q); EPS across zero in words;
+  squeeze High needs ≥ 4 known; moves ≥ 300% shown in money (`fmtIn` ₹ Cr / `fmtUs` $); Load cancels a running read (gen ref);
+  sold holdings (quantity ≤ 0) out of the book loader; fresh screener.in read thinner than the kept copy is ignored.
+  Portfolio Catalysts: 📋 Watchlist view — watchlist names not held / not on Conviction Beats join the universe as `watchOnly`
+  rows (read like the rest) but appear only in that view, so book / bench / CB counts are unchanged.
+- zzz1294 (23 Nov): navigation = SEVEN hubs (`lib/nav-hubs.ts`): Today · Earnings · My Book · Discover · Charts · Markets &
+  News · Tools & Learn (+ a System group). No URL moved (no redirects needed). `HubTabs` (components/HubTabs.tsx) sits above
+  every page: hubs, the current hub's sub-tabs, an IN / US switch for twins (`us`), and a tab's extra pages / presets (`more`).
+  The sidebar NAV_GROUPS is generated from HUBS. Home favourites = hub tiles (`_home/HubTiles.tsx`); the 57 old chips are under
+  "All shortcuts". Sidebar favourites migrate once to the hub homes (`mc.navFavourites.hubs.v1`, old list kept in
+  `mc.navFavourites.v1.before-hubs`). Wiring tests read `__tests__/fixtures/nav-src.ts` (DashboardClient + nav-hubs + hub links
+  written as sidebar entries). A new page must be added to a hub (test zzz1294-nav-hubs checks old pages and favourites).

@@ -80,8 +80,25 @@ function applyOffers(cur: string[]): string[] {
   return next;
 }
 
+// zzz1294 — favourites become the seven main hubs (sub-tabs live inside each hub). Done once per browser; the list
+// before the change is kept under BEFORE_HUBS_KEY. Starring / unstarring after that works as before.
+const HUBS_DONE_KEY = 'mc.navFavourites.hubs.v1';
+const BEFORE_HUBS_KEY = 'mc.navFavourites.v1.before-hubs';
+export const HUB_HOMES: readonly string[] = ['/cockpit', '/earnings-opportunities', '/portfolio', '/stock-screener', '/charts', '/market-leadership', '/valuation-calc'];
+function migrateToHubs(): void {
+  try {
+    if (window.localStorage.getItem(HUBS_DONE_KEY)) return;
+    const raw = window.localStorage.getItem(KEY);
+    if (raw !== null) window.localStorage.setItem(BEFORE_HUBS_KEY, raw);
+    window.localStorage.setItem(KEY, JSON.stringify([...HUB_HOMES]));
+    window.localStorage.setItem(OFFERED_KEY, JSON.stringify([...OFFER_ALL]));
+    window.localStorage.setItem(HUBS_DONE_KEY, '1');
+  } catch { /* shortcut only */ }
+}
+
 function read(): string[] {
   if (typeof window === 'undefined') return [];
+  migrateToHubs();
   try {
     const raw = window.localStorage.getItem(KEY);
     if (raw === null) {

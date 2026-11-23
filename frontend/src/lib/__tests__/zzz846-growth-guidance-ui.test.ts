@@ -5,6 +5,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import * as T from '../growth-guidance-types';
 import * as F from '../growth-guidance-format';
+import { navSrc } from './fixtures/nav-src';   // zzz1294
 
 const SRC = join(__dirname, '..', '..');
 const read = (p: string) => readFileSync(join(SRC, p), 'utf8');
@@ -198,8 +199,8 @@ describe('nav wiring', () => {
     assert.ok(!offerLine.includes('growth-guidance'));
   });
   test('sidebar, bottom nav and home chip list the page', () => {
-    const nav = read('app/(dashboard)/DashboardClient.tsx');
-    assert.equal(nav.split("href: '/growth-guidance'").length - 1, 2);
+    const nav = navSrc();
+    assert.ok(nav.split("href: '/growth-guidance'").length - 1 >= 2);
     assert.ok(read('app/(dashboard)/page.tsx').includes("href: '/growth-guidance'"));
   });
 });

@@ -7,6 +7,7 @@ import { fmtBeforeAfter, fmtDelta, showsDecision, applyFilters, gapNote, metricF
 import { overlayBook } from '../guidance-upgrades-book';
 import { parseWindow, parseMarket, gradedRowToCandidate, dedupeCandidates } from '../guidance-upgrades-candidates';
 import { isProtectedApi } from '../site-auth';
+import { navSrc } from './fixtures/nav-src';   // zzz1294
 
 const SRC = join(__dirname, '..', '..');
 const read = (p: string) => readFileSync(join(SRC, p), 'utf8');
@@ -48,8 +49,8 @@ describe('structure', () => {
     assert.equal(isProtectedApi('/api/v1/guidance-upgrades'), false);
   });
   test('nav, favourites and home chip contain /guidance-upgrades', () => {
-    const nav = read('app/(dashboard)/DashboardClient.tsx');
-    assert.equal(nav.split("href: '/guidance-upgrades'").length - 1, 2, 'both nav arrays');
+    const nav = navSrc();
+    assert.ok(nav.split("href: '/guidance-upgrades'").length - 1 >= 2, 'both nav arrays');
     const fav = read('lib/nav-favourites.ts');
     assert.ok(fav.includes("'/guidance-upgrades'"));
     assert.match(fav, /const OFFER: readonly string\[\] = \['\/portfolio-catalysts', '\/exit-radar', '\/ai-gainers', '\/concall-intel\?tab=radar',/);

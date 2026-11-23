@@ -7,6 +7,7 @@ import { MIGRATIONS, migrationsValid } from '../db-migrate';
 import { APP_JOBS, sessionDatesBack } from '../app-scheduler';
 import { MB_TOOL } from '../transformational/ai';
 import { isStrictSchema, toStrictSchema } from '../ai-schemas';
+import { navSrc } from './fixtures/nav-src';   // zzz1294
 
 const inItem = (over: any = {}) => ({
   ticker: 'GRWRHITECH', company: 'Garware Hi-Tech Films', market: 'IN', eventClass: 'CONFIRMED_MATERIAL', direction: 'positive',
@@ -90,7 +91,7 @@ test('wiring: migration, archive hook, daily job, AI tool strict, nav + favourit
   assert.ok(isStrictSchema(toStrictSchema(MB_TOOL.input_schema as any) as any));
   const src = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8');
   assert.match(src('../../app/api/v1/ai-gainers/research/route.ts'), /archiveView\(view, market, date/);
-  assert.match(src('../../app/(dashboard)/DashboardClient.tsx'), /\/transformational-gainers/);
+  assert.match(navSrc(), /\/transformational-gainers/);
   assert.match(src('../../app/(dashboard)/page.tsx'), /'\/transformational-gainers', label: '🧬 Transformational Gainers'/);
   assert.match(src('../../components/ai-gainers/ResearchCard.tsx'), /<TgCardBadge it=\{it\} \/>/);
   assert.match(src('../site-auth.ts'), /'\/api\/v1\/transformational'/);

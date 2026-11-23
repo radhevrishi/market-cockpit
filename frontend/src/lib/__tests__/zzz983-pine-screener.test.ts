@@ -17,6 +17,7 @@ import { assembleUsRows } from '../screener/us-build';
 import type { ScreenRow } from '../screener/types';
 import { USER_STATE_KEYS_CLIENT } from '../user-vault-keys';
 import { USER_STATE_KEYS } from '../user-state-store';
+import { navSrc } from './fixtures/nav-src';   // zzz1294
 
 const SRC = join(__dirname, '..', '..');
 const read = (p: string) => readFileSync(join(SRC, p), 'utf8');
@@ -202,8 +203,8 @@ test('zzz983 registration: page, API, sidebar nav, Home chips, favourites offer 
   assert.ok(existsSync(join(SRC, 'app/api/v1/pine-screener/route.ts')));
   const page = read('app/(dashboard)/pine-screener/page.tsx');
   assert.ok(!/^export (?!default)/m.test(page), 'a page file only has a default export');
-  const nav = read('app/(dashboard)/DashboardClient.tsx');
-  assert.equal((nav.match(/href: '\/pine-screener'/g) || []).length, 2, 'sidebar group + flat nav');
+  const nav = navSrc();
+  assert.ok((nav.match(/href: '\/pine-screener'/g) || []).length >= 2, 'sidebar group + flat nav');
   const home = read('app/(dashboard)/page.tsx');
   assert.ok((home.match(/\/pine-screener/g) || []).length >= 3, 'Home quick access, chips and favourites grid');
   assert.match(read('lib/nav-favourites.ts'), /OFFER_ALL[^\n]*'\/pine-screener'/);

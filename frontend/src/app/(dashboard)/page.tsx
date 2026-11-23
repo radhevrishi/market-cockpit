@@ -88,7 +88,8 @@ import NavLink from '@/components/NavLink';            // zzz1052 — no viewpor
 import LazyPanel, { useNearViewport } from '@/components/LazyPanel';
 import { moveItem, mergeFavOrder, FAV_LONG_PRESS_MS } from '@/lib/home-tools';   // zzz1065 — favourites order
 import { HomeStatusStrip } from './_home/HomeStatusStrip';   // zzz1065 — status strip first
-import { ToolsDrawer } from './_home/ToolsDrawer';           // zzz1065 — searchable All tools drawer
+import { ToolsDrawer } from './_home/ToolsDrawer';
+import { HubTiles } from './_home/HubTiles';   // zzz1294           // zzz1065 — searchable All tools drawer
 import { sessionMemo, peekSessionMemo } from '@/lib/session-memo';
 
 const HOME_TECH_TIERS_KEY = 'home:tech-tiers:v1';
@@ -1965,7 +1966,13 @@ export default function HomeDashboard() {
           {/* zzz1065 — zzz1082: right under In-Play News, before Signals (owner request); the ⭐ heading and the "↕ Arrange" switch live in FavouritesGrid */}
           <div data-home-section="favourites" style={{ marginBottom: 6 }}>
             {/* zzz526 — favourites are data-driven; zzz1065 — reorder only through the separate handle / Arrange mode */}
-            <FavouritesGrid />
+            {/* zzz1294 — favourites are the seven main hubs; every old shortcut is kept under "All shortcuts" */}
+            <div style={{ fontSize: 11, color: 'var(--mc-text-4)', fontWeight: 800, letterSpacing: '0.6px', textTransform: 'uppercase', marginBottom: 6 }}>⭐ Main hubs</div>
+            <HubTiles />
+            <details style={{ marginTop: 8 }}>
+              <summary style={{ cursor: 'pointer', fontSize: 12.5, fontWeight: 800, color: 'var(--mc-text-3)' }}>All shortcuts ({FAVS.length}) — every page, as before</summary>
+              <div style={{ marginTop: 8 }}><FavouritesGrid /></div>
+            </details>
           </div>
           {/* zzz1075 — SIGNALS second on the home page (after In-Play News); same panel, same data. */}
           {/* SIGNALS — high-importance corporate news (PATCH 0865 — institutional font sizing) */}

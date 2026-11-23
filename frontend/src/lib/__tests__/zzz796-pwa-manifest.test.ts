@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { SITE_COOKIE_MAX_AGE_S } from '../site-auth';
+import { navSrc } from './fixtures/nav-src';   // zzz1294
 
 const ROOT = join(__dirname, '..', '..', '..');
 const PUB = join(ROOT, 'public');
@@ -79,7 +80,7 @@ describe('manifest', () => {
   });
 
   test('every shortcut is also in the sidebar, so it matches what the owner stars', () => {
-    const nav = readFileSync(join(APP, '(dashboard)', 'DashboardClient.tsx'), 'utf8');
+    const nav = navSrc();
     for (const s of manifest.shortcuts) {
       const path = s.url.split('?')[0];
       assert.ok(nav.includes(`href: '${path}'`), `${path} in NAV_GROUPS`);
@@ -104,7 +105,7 @@ describe('login cookie survives in the installed app', () => {
   });
 
   test('Sign out clears the cookie (calls the logout route)', () => {
-    const nav = readFileSync(join(APP, '(dashboard)', 'DashboardClient.tsx'), 'utf8');
+    const nav = navSrc();
     assert.match(nav, /fetch\('\/api\/auth\/logout', \{ method: 'POST' \}\)/);
   });
 });

@@ -5,6 +5,8 @@ import NavLink from '@/components/NavLink';   // zzz1052 — prefetch on hover /
 import dynamic from 'next/dynamic';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { getFavourites, toggleFavourite, subscribeFavourites } from '@/lib/nav-favourites';
+import { HUBS, SYSTEM_PAGES } from '@/lib/nav-hubs';
+import HubTabs from '@/components/HubTabs';
 import { useQuery } from '@tanstack/react-query';
 import {
   BarChart3, Newspaper, Calendar, Briefcase, Compass, Bell, Settings, LogOut, ChevronDown, BookMarked, Search,
@@ -45,217 +47,22 @@ interface NavGroup { id: string; label: string; icon: ReactNode; items: NavItem[
 // anything: a starred item still appears in its own group, because a tab
 // quietly vanishing from where you expect it is worse than a long rail.
 
+// zzz1294 — the sidebar IS the seven hubs (lib/nav-hubs.ts) plus a small System group. Every page of the old
+// 12-group rail is in a hub (test zzz1294-nav-hubs); India / USA twins sit side by side, a tab's extra pages under it.
+const HUB_ICON: Record<string, (cls: string) => ReactNode> = {
+  today: (c) => <Compass className={c} />, earnings: (c) => <LineChart className={c} />, book: (c) => <Briefcase className={c} />,
+  discover: (c) => <ScanSearch className={c} />, charts: (c) => <TrendingUp className={c} />, markets: (c) => <Globe className={c} />, tools: (c) => <BookMarked className={c} />,
+};
 const NAV_GROUPS: NavGroup[] = [
-  {
-    id: 'home',
-    label: 'Home',
-    icon: <Star className="w-5 h-5" />,
-    items: [
-      { href: '/',                 label: 'Home Dashboard',     icon: <Star className="w-4 h-4" /> },
-      { href: '/cockpit',          label: 'Action Cockpit',     icon: <Compass className="w-4 h-4" /> },
-    ],
-  },
-  // PATCH 0617 — sidebar reorder per user request:
-  //   1. Earnings tabs right after News & Signals (was 3rd, now 2nd).
-  //   2. News Alerts + Themes moved out of News & Signals to the very end.
-  {
-    id: 'news-signals',
-    label: 'News & Signals',
-    icon: <Newspaper className="w-5 h-5" />,
-    items: [
-      // PATCH 0905 — /company-news route was deleted in an earlier sweep
-      // (frontend/src/app/(dashboard)/company-news/** removed). The nav link
-      // remained, sending users to a 404. Removed per user request.
-      { href: '/news',             label: 'News Feed',          icon: <Newspaper className="w-4 h-4" /> },
-      { href: '/hundred-baggers',  label: 'Future 100-baggers', icon: <Rocket className="w-4 h-4" /> },   // zzz1178
-      { href: '/in-play', label: 'Live In Play', icon: <Newspaper className='w-4 h-4' /> },
-        { href: '/fundamentals', label: 'Fundamentals', icon: <BarChart3 className="w-4 h-4" /> },
-    ],
-  },
-  {
-    id: 'earnings',
-    label: 'Earnings',
-    icon: <LineChart className="w-5 h-5" />,
-    items: [
-      { href: '/earnings-hub',           label: 'Earnings Hub',           icon: <LineChart className="w-4 h-4" /> },
-      { href: '/earnings-opportunities', label: 'Earnings Opportunities', icon: <Star className="w-4 h-4" /> },
-      // US market engine — same grading, fed by SEC EDGAR instead of NSE/Screener.
-      { href: '/us-earnings-opportunities', label: 'US Earnings Opportunities', icon: <Globe className="w-4 h-4" /> },
-      { href: '/us-conviction-beats',       label: 'US Conviction Beats',       icon: <Globe className="w-4 h-4" /> },
-      // zzz713 — the gainers funnel. It sits in Earnings rather than Markets
-      // because in Phase 1 every catalyst it shows IS a filed result; the day
-      // it reads announcements without a filing behind them, it moves.
-      { href: '/ai-gainers',                label: 'AI Daily Gainers',          icon: <Zap className="w-4 h-4" /> },
-      // zzz1166 — the 60-day board of transformational events from the gainers, with themes and a multibagger-chance read.
-      { href: '/transformational-gainers',  label: 'Transformational Gainers',  icon: <Zap className="w-4 h-4" /> },
-      { href: '/inflection-radar',  label: 'Hidden Inflection Radar',  icon: <Zap className="w-4 h-4" /> },   // zzz1235 — abnormal industry signals → Indian suppliers
-      // zzz1208 — one or several companies: FCF checklist, growth vs price, Stage 2 + trend template, links to every other page
-      { href: '/company-lab',               label: 'Company Lab',               icon: <Microscope className="w-4 h-4" /> },
-      // zzz843 — positive guidance raises in the last 7 days, verified and quantified.
-      { href: '/guidance-upgrades',         label: 'Guidance Upgrades',         icon: <LineChart className="w-4 h-4" /> },
-      // zzz846 — companies where management guides unusually high growth (30%+), verified.
-      { href: '/growth-guidance',           label: 'Growth Guidance',           icon: <TrendingUp className="w-4 h-4" /> },
-      // The interpretation layer that sits ON TOP of the graded engine: it
-      // never screens, it only reads what the filings already qualified.
-      { href: '/ai-desk',                   label: 'AI Research Desk',          icon: <Microscope className="w-4 h-4" /> },
-      { href: '/earnings',               label: 'Earnings Scan',          icon: <BarChart3 className="w-4 h-4" /> },
-      { href: '/earnings-analysis',      label: 'Earnings Analysis (AI)', icon: <Microscope className="w-4 h-4" /> },
-      { href: '/earnings-guidance',      label: 'Earnings Guidance',      icon: <LineChart className="w-4 h-4" /> },
-      { href: '/pead-tracker',           label: 'PEAD Drift Tracker',     icon: <TrendingUp className="w-4 h-4" /> },
-      { href: '/calendars',              label: 'Calendar',               icon: <LineChart className="w-4 h-4" /> },
-    ],
-  },
-  {
-    id: 'bottleneck',
-    label: 'Bottleneck Intelligence',
-    icon: <Microscope className="w-5 h-5" />,
-    items: [
-      { href: '/bottleneck-intel',     label: 'Bottleneck Intel',     icon: <Microscope className="w-4 h-4" /> },
-      { href: '/bottleneck-workbench', label: 'Bottleneck Workbench', icon: <Microscope className="w-4 h-4" /> },
-      { href: '/transmission',         label: 'Transmission',         icon: <TrendingUp className="w-4 h-4" /> },
-      { href: '/strategic-visibility', label: 'Strategic Visibility', icon: <Star className="w-4 h-4" /> },
-    ],
-  },
-  {
-    id: 'concall',
-    label: 'Concall Intelligence',
-    icon: <Microscope className="w-5 h-5" />,
-    items: [
-      { href: '/concall-intel',       label: 'Concall Intelligence', icon: <Microscope className="w-4 h-4" /> },
-      // zzz1051 — search across every stored transcript, presentation and results release (India + US)
-      { href: '/search-docs',         label: 'Document search',      icon: <ScanSearch className="w-4 h-4" /> },
-      // zzz721 — the radar is a destination in its own right, not a tab you
-      // have to know is hiding behind Concall Intelligence.
-      { href: '/concall-intel?tab=radar', label: 'Transformation Radar', icon: <Rocket className="w-4 h-4" /> },
-      { href: '/guidance-extractor',  label: 'Guidance Extractor',   icon: <BarChart3 className="w-4 h-4" /> },
-      { href: '/company-intel',  label: 'Company Intelligence', icon: <BookMarked className="w-4 h-4" /> },
-      // zzz883: 'AI Desk' was listed twice — it lives under Earnings as 'AI Research Desk'
-    ],
-  },
-  {
-    id: 'special-events',
-    label: 'Event-Driven',
-    icon: <Compass className="w-5 h-5" />,
-    items: [
-      { href: '/special-situations', label: 'Special Situations', icon: <Compass className="w-4 h-4" /> },
-      // PATCH 0773 — Order Book Intel + Rating Actions nav entries DELETED.
-      // User feedback: empty data, distracting from real workflow.
-      // Pages also removed from the route table.
-      // zzz400 — Book Watch alert feed (holdings/bench radar).
-      { href: '/book-watch', label: 'Book Watch', icon: <Compass className="w-4 h-4" /> },
-      // zzz399 — TheWrap alternate-data trackers (Modules 3/4/5).
-      { href: '/strategic-hires', label: 'Strategic Hires', icon: <Compass className="w-4 h-4" /> },
-      { href: '/marquee-capital', label: 'Marquee Capital', icon: <Compass className="w-4 h-4" /> },
-      { href: '/marketing-auth', label: 'Marketing Auth', icon: <Compass className="w-4 h-4" /> },
-    ],
-  },
-  {
-    id: 'research',
-    label: 'Research',
-    icon: <Star className="w-5 h-5" />,
-    items: [
-      { href: '/multibagger',     label: 'Multibagger',           icon: <Star className="w-4 h-4" /> },
-      // zzz403/zzz404 — scenario simulators + historical returns reference
-      { href: '/smallcap-simulator', label: 'Smallcap Simulator', icon: <LineChart className="w-4 h-4" /> },
-      { href: '/qqq-simulator', label: 'QQQ Simulator', icon: <LineChart className="w-4 h-4" /> },
-      { href: '/historical-returns', label: 'Historical Returns', icon: <BarChart3 className="w-4 h-4" /> },
-      { href: '/buy-strategy', label: 'Buy Strategy', icon: <Rocket className="w-4 h-4" /> },
-      { href: '/capex-tracker', label: 'Capex Tracker', icon: <Factory className="w-4 h-4" /> },
-      { href: '/valuations',      label: 'Valuations',            icon: <Star className="w-4 h-4" /> },
-      { href: '/valuation-calc',  label: 'Valuation Calculators', icon: <Star className="w-4 h-4" /> },
-      { href: '/return-simulator', label: 'Return Simulator', icon: <Star className="w-4 h-4" /> },   // zzz1232
-      { href: '/valuation-bands', label: 'Valuation Bands',        icon: <BarChart3 className="w-4 h-4" /> },
-      { href: '/portfolio-simulator', label: 'Portfolio Simulator', icon: <LineChart className="w-4 h-4" /> },
-      { href: '/winning-playbook', label: 'Winning Playbook', icon: <Star className="w-4 h-4" /> },
-      { href: '/auto-valuation',  label: 'Auto-Valuation',        icon: <Star className="w-4 h-4" /> },
-      { href: '/rerating',       label: 'Re-rating',       icon: <TrendingUp className="w-4 h-4" /> },
-      { href: '/stock-sheet',    label: 'Stock Sheet',     icon: <BookMarked className="w-4 h-4" /> },
-      { href: '/screener',       label: 'Screener',        icon: <Filter className="w-4 h-4" /> },
-      { href: '/stock-screener', label: 'Stock Screener',  icon: <Filter className="w-4 h-4" /> },   // zzz938 — our own screener (USA + India)
-      { href: '/screener-screens', label: 'Screener.in Screens', icon: <Filter className="w-4 h-4" /> },   // zzz1234 — screener.in screens made from our own data
-      { href: '/pine-screener',  label: 'Pine Screener',   icon: <ScanSearch className="w-4 h-4" /> },   // zzz983 — chart patterns across every company
-      { href: '/charts',         label: 'Charts',          icon: <LineChart className="w-4 h-4" /> },   // zzz937 — our own charts with drawings
-      { href: '/charts/grid',    label: 'Multi-chart · Intraday', icon: <LineChart className="w-4 h-4" /> },   // zzz1088 — 1/2/4 charts, 5m/15m/1h + VWAP
-    ],
-  },
-  {
-    id: 'market',
-    label: 'Market Snapshot',
-    icon: <Grid3X3 className="w-5 h-5" />,
-    items: [
-      { href: '/market-leadership', label: 'Market Leadership & Risk', icon: <Shield className="w-4 h-4" /> },   // zzz1290
-      { href: '/market-snapshot', label: 'Market Snapshot', icon: <Grid3X3 className="w-4 h-4" /> },
-      { href: '/heatmap',         label: 'Heatmap',         icon: <Grid3X3 className="w-4 h-4" /> },
-      { href: '/movers',          label: 'Movers',          icon: <TrendingUp className="w-4 h-4" /> },
-      { href: '/rrg',             label: 'RRG',             icon: <RefreshCw className="w-4 h-4" /> },
-      { href: '/breadth',         label: 'Breadth',         icon: <BarChart3 className="w-4 h-4" /> },
-    ],
-  },
-  {
-    id: 'smart-money',
-    label: 'Smart Money & IPOs',
-    icon: <Rocket className="w-5 h-5" />,
-    items: [
-      { href: '/smart-money',     label: 'Smart Money',     icon: <Briefcase className="w-4 h-4" /> },
-      { href: '/fii-dii',         label: 'FII / DII Flows', icon: <BarChart3 className="w-4 h-4" /> },   // zzz1055
-      { href: '/ipos',            label: 'IPOs',            icon: <Rocket className="w-4 h-4" /> },
-    ],
-  },
-  {
-    id: 'mybook',
-    label: 'My Book',
-    icon: <Briefcase className="w-5 h-5" />,
-    items: [
-      { href: '/portfolio',     label: 'Portfolio (India)', icon: <Briefcase className="w-4 h-4" /> },
-      { href: '/portfolio?tab=tradebook', label: 'Tradebook (India)', icon: <Briefcase className="w-4 h-4" /> },   // zzz1237 — upload Zerodha tradebooks
-      // zzz790 — the US book: its own KV document, cash per currency, bench.
-      { href: '/us-portfolio-book', label: 'US Portfolio Book', icon: <Globe className="w-4 h-4" /> },
-      // zzz708 — what CHANGED in the book, as opposed to what it is worth.
-      { href: '/portfolio-catalysts', label: 'Portfolio Catalysts (India)', icon: <Zap className="w-4 h-4" /> },
-      // zzz790 — the same thesis engine over SEC filings (10-Q / 10-K / 8-K).
-      { href: '/us-portfolio-catalysts', label: 'US Portfolio Catalysts', icon: <Globe className="w-4 h-4" /> },
-      // zzz715 — the exit side of the same engine: which theses deteriorated,
-      // and on what evidence. No price reason is allowed on that screen.
-      { href: '/exit-radar', label: 'Exit Radar', icon: <Shield className="w-4 h-4" /> },
-      { href: '/risk',          label: 'Risk Desk',        icon: <Shield className="w-4 h-4" /> },
-      { href: '/position-sizing', label: 'Position Sizing', icon: <BarChart3 className="w-4 h-4" /> },
-      { href: '/thesis',        label: 'Thesis Tracker',   icon: <BookMarked className="w-4 h-4" /> },
-      { href: '/coffee-can',    label: 'Coffee Can',       icon: <Star className="w-4 h-4" /> },
-      { href: '/tax-planner',   label: 'Tax Planner',      icon: <Filter className="w-4 h-4" /> },
-      { href: '/watchlists',    label: 'Watchlist',        icon: <BookMarked className="w-4 h-4" /> },
-      { href: '/price-alerts',  label: 'Price alerts',     icon: <Bell className="w-4 h-4" /> },   // zzz1054
-      { href: '/decisions',     label: 'Decision Logbook', icon: <BookMarked className="w-4 h-4" /> },
-      { href: '/activity-log',  label: 'Activity Log',     icon: <BookMarked className="w-4 h-4" /> },
-      { href: '/orders',     label: 'Signals',          icon: <Shield className="w-4 h-4" /> },
-      { href: '/alerts',     label: 'Alerts',           icon: <Bell className="w-4 h-4" /> },
-    ],
-  },
-  {
-    id: 'system',
-    label: 'System & Tools',
-    icon: <Bell className="w-5 h-5" />,
-    items: [
-      { href: '/playbook',         label: 'Playbook',         icon: <BookMarked className="w-4 h-4" /> },
-      { href: '/investing-os', label: 'Investing OS', icon: <Compass className="w-4 h-4" /> },
-      { href: '/journey', label: 'The Journey', icon: <Rocket className="w-4 h-4" /> }, // PATCH 1082
-      { href: '/monte-carlo', label: 'Monte Carlo', icon: <LineChart className="w-4 h-4" /> },
-      { href: '/market-cycles', label: 'Market Cycles', icon: <RefreshCw className="w-4 h-4" /> }, // PATCH 1089 — handbook
-      { href: '/gautam-baid', label: 'Baid Playbook', icon: <BookMarked className="w-4 h-4" /> },
-      { href: '/earnings-trigger', label: 'Earnings Trigger', icon: <TrendingUp className="w-4 h-4" /> },
-      { href: '/earnings-trigger-masterclass', label: 'ET Masterclass', icon: <BookMarked className="w-4 h-4" /> },
-      { href: '/critical-themes',  label: 'Critical Themes',  icon: <Star className="w-4 h-4" /> },
-      { href: '/themes',           label: 'Themes',           icon: <BarChart3 className="w-4 h-4" /> },
-      { href: '/news-alerts',  label: 'News Alerts',   icon: <Bell className="w-4 h-4" /> },
-      { href: '/status',       label: 'System Status', icon: <Bell className="w-4 h-4" /> },
-      // zzz1050 — AI runs: every model call, its cost against the cap, failures and model mix
-      { href: '/ai-runs',      label: 'AI runs',       icon: <BarChart3 className="w-4 h-4" /> },
-      // PATCH zzz67 — System Health checkup (workers + cron + freshness)
-      { href: '/system-health', label: 'System Health', icon: <Shield className="w-4 h-4" /> },
-      // zzz848 — regression table for the guidance universe (System & Tools only; not linked from Guidance Upgrades)
-      { href: '/guidance-diagnostics', label: 'Guidance diagnostics', icon: <BarChart3 className="w-4 h-4" /> },
-      { href: '/settings',     label: 'Settings',      icon: <Shield className="w-4 h-4" /> },
-    ],
-  },
+  ...HUBS.map((h): NavGroup => ({
+    id: h.id, label: `${h.label}`, icon: HUB_ICON[h.id]?.('w-5 h-5') ?? <Star className="w-5 h-5" />,
+    items: h.tabs.filter((t) => !t.ext).flatMap((t) => [
+      { href: t.href, label: t.us ? `${t.label} (India)` : t.label, icon: HUB_ICON[h.id]?.('w-4 h-4') ?? <Star className="w-4 h-4" /> },
+      ...(t.us ? [{ href: t.us, label: `${t.label} (USA)`, icon: <Globe className="w-4 h-4" /> }] : []),
+      ...(t.more || []).map((m) => ({ href: m.href, label: `· ${m.label}`, icon: <BarChart3 className="w-4 h-4" /> })),
+    ]),
+  })),
+  { id: 'system', label: 'System', icon: <Bell className="w-5 h-5" />, items: SYSTEM_PAGES.map((x) => ({ href: x.href, label: x.label, icon: <Shield className="w-4 h-4" /> })) },
 ];
 
 // Flat NAV preserved for any code that still iterates flatly (e.g. CmdK
@@ -870,6 +677,8 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
         </header>
 
         {/* Page content — add bottom padding on mobile for bottom nav */}
+        {/* zzz1294 — the seven hubs and the current hub's sub-tabs (every page keeps its own address) */}
+        <HubTabs pathname={pathname || '/'} search={searchParams?.toString() || ''} />
         <VaultSyncNotice />
         <main className={`mobile-main-content ${pwa.main}`} style={{ flex: 1, overflowY: 'auto', backgroundColor: 'var(--mc-bg-0)' }}>
           {/* zzz796 — "Install app" help on Settings (kept here so the page itself is untouched). */}

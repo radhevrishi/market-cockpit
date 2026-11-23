@@ -12,6 +12,7 @@ import {
 import { recallAtK, reciprocalRank, precisionAtK, evalQuery, summarise, validLabels, compileLabel } from '../doc-search/eval';
 import { applyScores } from '../doc-search/rerank';
 import { costOf, pricingFor } from '../anthropic-meter';
+import { navSrc } from './fixtures/nav-src';   // zzz1294
 
 const words = (n: number, w = 'alpha') => Array.from({ length: n }, (_, i) => `${w}${i % 7}`).join(' ');
 const sentencesOf = (n: number, tag: string) => Array.from({ length: n }, (_, i) => `The ${tag} business grew in period ${i} and margins held steady.`).join(' ');
@@ -262,6 +263,6 @@ test('wiring: protected route, hourly app job, ingest hook after the store, page
   assert.ok(ingest.indexOf('await ingestDocs(') < ingest.indexOf('indexFromIngest('), 'indexing runs only after the store succeeded');
   const page = readFileSync(join(root, 'app/(dashboard)/search-docs/page.tsx'), 'utf8');
   assert.equal((page.match(/^export (?!default)/gm) || []).length, 0);
-  const nav = readFileSync(join(root, 'app/(dashboard)/DashboardClient.tsx'), 'utf8');
-  assert.match(nav, /href: '\/search-docs',\s+label: 'Document search'/);
+  const nav = navSrc();
+  assert.match(nav, /href: '\/search-docs',\s+label: 'Document [Ss]earch'/);
 });

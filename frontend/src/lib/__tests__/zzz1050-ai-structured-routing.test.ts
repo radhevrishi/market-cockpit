@@ -29,6 +29,7 @@ import { SUMMARY_TOOL } from '../earnings/ai-summary-shared';
 import { RESULTS_TOOL } from '../india-results-pdf';
 import { ANNOUNCEMENT_TOOL } from '../ai-gainers/announcement-reader';
 import type { GuidanceDoc, GuidanceDocIndexRow, GuidanceExtractResult } from '../guidance-docs-types';
+import { navSrc } from './fixtures/nav-src';   // zzz1294
 
 const SRC = join(__dirname, '..', '..');
 const read = (p: string) => readFileSync(join(SRC, p), 'utf8');
@@ -449,7 +450,7 @@ describe('run records', () => {
     const m = MIGRATIONS.find((x) => x.name === 'ai_run');
     assert.ok(m && m.id === 4 && /CREATE TABLE IF NOT EXISTS ai_run/.test(m.sql) && /escalation_reason/.test(m.sql));
     assert.equal(isProtectedApi('/api/v1/ai-runs'), true);
-    const nav = read('app/(dashboard)/DashboardClient.tsx');
+    const nav = navSrc();
     assert.equal((nav.match(/href: '\/ai-runs'/g) || []).length, 2);
     assert.ok(nav.indexOf("href: '/ai-runs'") > nav.indexOf("href: '/status'"));
     const page = read('app/(dashboard)/ai-runs/page.tsx');

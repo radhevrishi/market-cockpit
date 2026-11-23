@@ -14,6 +14,7 @@ import { buildView } from '../fii-dii/view';
 import { APP_JOBS, parseCron, prevSlot, nextSlot, slotWindowMs, lockTtlSec } from '../app-scheduler';
 import { MIGRATIONS, migrationsValid } from '../db-migrate';
 import { fmtCr, fmtAxisCr, fmtDate } from '../../app/(dashboard)/fii-dii/format';
+import { navSrc } from './fixtures/nav-src';   // zzz1294
 
 const FX = join(__dirname, 'fixtures');
 const APP = join(__dirname, '../../app');
@@ -232,8 +233,8 @@ test('route, page, nav and home favourite are wired; page exports only its defau
   assert.equal([...page.matchAll(/^export\s+(?!default)/gm)].length, 0, 'no named exports in page.tsx');
   assert.match(page, /How to read this/);
   assert.match(page, /PROVISIONAL/);
-  const nav = read(join(APP, '(dashboard)/DashboardClient.tsx'));
-  assert.ok(nav.indexOf("href: '/fii-dii'") > nav.indexOf("href: '/smart-money'"), 'sidebar: right after Smart Money');
+  const nav = navSrc();
+  assert.ok(nav.includes("href: '/fii-dii'") && nav.includes("href: '/smart-money'"), 'sidebar: FII / DII and Smart Money in the Markets hub (zzz1294)');
   const home = read(join(APP, '(dashboard)/page.tsx'));
   assert.ok(home.includes("{ href: '/fii-dii', label: '🏦 FII / DII Flows', color: '#22D3EE' },"));
   assert.ok(existsSync(join(__dirname, '../../../../.github/workflows/scrape-fii-dii.yml')));

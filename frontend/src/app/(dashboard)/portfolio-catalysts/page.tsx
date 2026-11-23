@@ -90,7 +90,7 @@ export default function PortfolioCatalystsPage() {
   // objects and the header never adds them into a single "holdings" figure
   // the way this page used to.
   // zzz827: 'cb' = the whole Conviction Beats list under his criteria (held names included).
-  const [source, setSource] = useUrlParam<'all' | 'book' | 'bench' | 'cb'>('src', 'all', ['all', 'book', 'bench', 'cb']);
+  const [source, setSource] = useUrlParam<'all' | 'book' | 'bench' | 'cb' | 'watch'>('src', 'all', ['all', 'book', 'bench', 'cb', 'watch']);
   // zzz811: the bench is the Conviction Beats list under HIS Conviction Beats
   // criteria. Names failing them are off by default and one chip away.
   const [showFailing, setShowFailing] = useState(false);
@@ -105,11 +105,15 @@ export default function PortfolioCatalystsPage() {
   // zzz808: the catalyst board, or "New · last 10 days".
   const [view, setView] = useState<'board' | 'new'>('board');
 
-  const all0 = useMemo(() => Object.values(rows), [rows]);
+  // zzz1293 — watchlist-only names (not held, not on Conviction Beats) are read like every name but appear only in the
+  // Watchlist view, so the book / bench / Conviction Beats counts are unchanged.
+  const allRows = useMemo(() => Object.values(rows), [rows]);
+  const watchRows = useMemo(() => allRows.filter((r) => r.watch), [allRows]);
+  const all0 = useMemo(() => (source === 'watch' ? watchRows : allRows.filter((r) => !r.watchOnly)), [allRows, watchRows, source]);
   // zzz811: bench names failing his Conviction Beats criteria are hidden
   // unless he asks — every count below is over what is in view.
   const failingBench = useMemo(() => all0.filter((r) => r.origin === 'bench' && r.preset?.state === 'fail'), [all0]);
-  const all = useMemo(() => (showFailing ? all0 : all0.filter((r) => !(r.origin === 'bench' && r.preset?.state === 'fail'))), [all0, showFailing]);
+  const all = useMemo(() => (showFailing || source === 'watch' ? all0 : all0.filter((r) => !(r.origin === 'bench' && r.preset?.state === 'fail'))), [all0, showFailing, source]);
   // Names passing his criteria that are on this page (book + bench, before
   // the size filter) — must equal the Conviction Beats page's count.
   // zzz837: one label per number, and a sentence that adds up (lib/thesis/evidence-counts pcCountsReconciled).
@@ -137,6 +141,7 @@ export default function PortfolioCatalystsPage() {
     source === 'all' ? true
       : source === 'book' ? (r.origin === 'book' || r.origin === 'both')
       : source === 'cb' ? cbSet.has(heldKey(r.symbol))
+      : source === 'watch' ? true
       : r.origin === 'bench';
   const inSource = useMemo(() => sized.filter(inView), [sized, source, cbSet]);
   // zzz827: the Conviction Beats view and its name-for-name reconciliation
@@ -400,6 +405,7 @@ export default function PortfolioCatalystsPage() {
           ['book', `\uD83D\uDCD7 My book ${uc.book}`, 'Only what you own. Nothing is filtered out of this list — a holding is watched whatever it grades at.'],
           ['cb', `\uD83C\uDFC6 Conviction Beats ${cbRows.length}`, 'Every name on your India Conviction Beats list that meets your Conviction Beats criteria — the same list as the Conviction Beats tab, name for name. Names you hold are included and tagged "📗 also in My book".'],
           ['bench', `Bench ${pcc ? pcc.byId.bench.n : uc.bench}`, 'India Conviction Beats names you do not hold, selected by your Conviction Beats criteria. You do not own these.'],
+          ['watch', `📋 Watchlist ${watchRows.length}`, 'Every name on your watchlist, analysed like the rest — including names you neither hold nor have on Conviction Beats (those appear only here, so the other counts do not change). Bench names failing your criteria are included here.'],
         ] as Array<[typeof source, string, string]>).map(([k, label, hint]) => {
           const on = source === k;
           return (

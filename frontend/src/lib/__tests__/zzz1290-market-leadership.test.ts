@@ -6,6 +6,7 @@ import { distributionDays, distributionRead, rallyRead, benchRead, breadthOf, pi
 import { dailyBrief } from '../market-leadership/brief';
 import { survivalClass } from '../theme-cycle/classify';
 import { themesForRegion } from '../theme-universe';
+import { navSrc } from './fixtures/nav-src';   // zzz1294
 
 const src = (p: string) => fs.readFileSync(path.join(__dirname, '..', '..', p), 'utf8');
 
@@ -144,7 +145,7 @@ test('zzz1290: brief marks missing data as unknown and never invents a cause', (
 });
 
 test('zzz1290: reachable from the sidebar and the home favourites; page file exports only the page', () => {
-  assert.ok(src('app/(dashboard)/DashboardClient.tsx').includes("href: '/market-leadership'"));
+  assert.ok(navSrc().includes("href: '/market-leadership'"));
   assert.ok(src('app/(dashboard)/page.tsx').includes("href: '/market-leadership'"));
   const page = src('app/(dashboard)/market-leadership/page.tsx');
   assert.ok(!/export (function|const|interface) (?!metadata)/.test(page.replace('export default function Page', '')));

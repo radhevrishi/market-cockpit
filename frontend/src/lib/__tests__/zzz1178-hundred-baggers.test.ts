@@ -6,6 +6,7 @@ import { HB_TOOL, HB_FACTORS, cleanHb } from '../hundred-baggers/core';
 import { hundredBaggerShortlist, industryInflections, toCand, type Cand } from '../screener/ai-candidates';
 import { CHOKE_TOOL, CHOKE_SYSTEM } from '../choke-themes/core';
 import { isStrictSchema, toStrictSchema } from '../ai-schemas';
+import { navSrc } from './fixtures/nav-src';   // zzz1294
 
 const row = (t: string, over: any = {}) => toCand({ t, n: `${t} Inc`, ind: 'Semiconductors', mc: 2000, revQYoY: 40, revAYoY: 30, epsQYoY: 50, opmTTM: 20, roceTTM: 25, de: 0.2, pe: 30, ps: 5, fcfmTTM: 10, perf1Y: 40, perf5Y: 100, bb: 0, fs: 7, ...over })!;
 
@@ -36,7 +37,7 @@ test('themes: industry acceleration data and the "be early, not consensus" rule'
 test('wiring: protected API, nav entry after News Feed, page default export only', () => {
   const src = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8');
   assert.match(src('../site-auth.ts'), /'\/api\/v1\/hundred-baggers'/);
-  assert.match(src('../../app/(dashboard)/DashboardClient.tsx'), /'\/news',[^\n]*\n\s*\{ href: '\/hundred-baggers'/);
+  assert.match(navSrc(), /href: '\/hundred-baggers'/);   // zzz1294: in the Discover hub
   const pg = src('../../app/(dashboard)/hundred-baggers/page.tsx');
   assert.doesNotMatch(pg, /^export (?!default)/m);
 });

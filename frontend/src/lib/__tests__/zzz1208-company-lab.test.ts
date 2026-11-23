@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fcfReport, yearPoints, trendRules, breakout, cagr, type AnnualRow } from '../company-lab/core';
 import { usAnnualRows, inAnnualRows } from '../company-lab/annual';
+import { navSrc } from './fixtures/nav-src';   // zzz1294
 
 const row = (y: number, rev: number, fcf: number | null, o: Partial<AnnualRow> = {}): AnnualRow => ({ end: `${y}-12-31`, label: `FY${y}`, revenue: rev, netIncome: rev * 0.1, eps: rev / 100, cfo: fcf == null ? null : fcf + 10, capex: fcf == null ? null : -10, fcf, debt: 50, shares: 10, sbc: null, ...o });
 test('a compounding cash generator passes; missing figures are unknown, not fails', () => {
@@ -56,7 +57,7 @@ test('trend template and breakout on a steady uptrend', () => {
 
 const read = (p: string) => fs.readFileSync(path.join(__dirname, '..', '..', p), 'utf8');
 test('wired: page, API, nav and home favourite', () => {
-  assert.match(read('app/(dashboard)/DashboardClient.tsx'), /href: '\/company-lab'/);
+  assert.match(navSrc(), /href: '\/company-lab'/);
   assert.match(read('app/(dashboard)/page.tsx'), /href: '\/company-lab', label: '🧪 Company Lab'/);
   assert.match(read('app/api/v1/company-lab/route.ts'), /labCard\(market, t[,)]/);
   assert.doesNotMatch(read('app/(dashboard)/company-lab/page.tsx'), /apikey|financialmodelingprep/i);
