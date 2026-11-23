@@ -46,3 +46,9 @@ test('a red flag caps the overall score at 60', () => {
   assert.ok(clean.score! > 60);
   assert.ok(flagged.score! <= 60, `got ${flagged.score}`);
 });
+
+test('zzz1299: return on new capital is not shown when capital barely grew, and is bounded', () => {
+  // ADROITIND-like: capital +5% → small-base artefact
+  assert.equal(reinvestment([{ label: 'FY23', netIncome: 10, equity: 100, debt: 0 }, { label: 'FY26', netIncome: 24, equity: 105, debt: 0 }]).pct, null);
+  assert.equal(reinvestment([{ label: 'FY23', netIncome: 10, equity: 100, debt: 0 }, { label: 'FY26', netIncome: 40, equity: 120, debt: 0 }]).pct, 100);
+});

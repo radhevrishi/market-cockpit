@@ -18,7 +18,7 @@ const DAY = 86_400_000;
 export interface LabExtras {
   pe: number | null; ps: number | null; evRev: number | null; peg: number | null; pegFrom: string | null;
   roce: number | null; roceFY: number | null; rocePrev: number | null; roe: number | null;
-  ext50: number | null; ext150: number | null; fromHigh: number | null; adr: number | null;
+  ext50: number | null; ext150: number | null; ext200: number | null; fromHigh: number | null; adr: number | null;
   lastResult: string | null; nextResultEst: string | null; daysToNext: number | null; guidanceUp: string | null;
   prom: number | null; promChg: number | null; promFrom: string | null; inst: number | null;
   stageCheck: { effective: number | null; flag: 'broken' | 'lagging' | null; text: string | null };
@@ -66,7 +66,7 @@ export function labExtras(x: {
   return {
     pe, ps: fin(r.ps) && r.ps > 0 ? r1(r.ps) : null, evRev: fin(r.evRev) && r.evRev > 0 ? r1(r.evRev) : null, peg, pegFrom,
     roce: fin(r.roceTTM) ? r.roceTTM : null, roceFY: fin(r.roceFY) ? r.roceFY : null, rocePrev: fin(r.roceP) ? r.roceP : null, roe: fin(r.roeTTM) ? r.roeTTM : fin(r.roeFY) ? r.roeFY : null,
-    ext50: pctOf(px, r.sma50), ext150, fromHigh: px != null && fin(r.hi52) && r.hi52 > 0 ? r1((px / r.hi52 - 1) * 100) : null, adr: fin(r.adrP) ? r1(r.adrP) : null,
+    ext50: pctOf(px, r.sma50), ext150, ext200: pctOf(px, r.sma200), fromHigh: px != null && fin(r.hi52) && r.hi52 > 0 ? r1((px / r.hi52 - 1) * 100) : null, adr: fin(r.adrP) ? r1(r.adrP) : null,
     lastResult: ld, nextResultEst: next, daysToNext: days, guidanceUp: x.guidanceUp,
     prom, promChg, promFrom, inst, stageCheck,
   };

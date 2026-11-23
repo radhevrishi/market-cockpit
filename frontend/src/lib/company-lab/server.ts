@@ -154,7 +154,8 @@ async function record(t: string): Promise<LabCard['record']> {
     // zzz1295 — newest guidance RAISE in the last 120 days (archived guidance events)
     const evs: any[] = Array.isArray(r.events?.data) ? r.events.data : [];
     const up = evs.filter((e) => (/RAIS|UPGRAD/i.test(`${e?.event_type ?? ''} ${e?.headline ?? ''}`) || (Array.isArray(e?.changes) && e.changes.some((c: any) => /up|rais/i.test(String(c?.direction ?? ''))))) && !/LOWER|CUT|DOWNGRAD/i.test(`${e?.event_type ?? ''}`) && Date.now() - Date.parse(String(e?.event_date ?? e?.last_seen ?? '')) < 120 * 86_400_000)
-      .map((e) => String(e?.event_date ?? e?.last_seen ?? '').slice(0, 10)).sort().pop() ?? null;
+      .map((e) => { const t = Date.parse(String(e?.event_date ?? e?.last_seen ?? '')); return Number.isFinite(t) ? new Date(t).toISOString().slice(0, 10) : null; })   // zzz1299 — dates arrive in several shapes ("Fri Aug 14 2026" was shown as "ug 14")
+      .filter((d): d is string => !!d).sort().pop() ?? null;
     return { tier: res?.tier ?? res?.now_tier ?? null, resultDate: res?.filing_date ?? null, guidance: Array.isArray(r.guidance?.data) ? r.guidance.data.length : 0, events: evs.length, summary: Array.isArray(r.summary) ? r.summary.slice(0, 4) : [], guidanceUp: up };
   } catch { return null; }
 }
@@ -190,7 +191,19 @@ async function labCardIn(m: LabMarket, t: string, fresh = false): Promise<LabCar
   const trend = bars ? trendRules(bars) : [];
   const bo = bars ? breakout(bars) : { ok: null, value: 'no prices' };
   const rs = d && ix ? { ...rsCumulative({ t: d.t, c: d.c }, ix), index: idxName } : noRs;
-  const st = typeof row?.twSt === 'number' ? row.twSt : typeof row?.stage === 'number' ? row.stage : null;
+  let st = typeof row?.twSt === 'number' ? row.twSt : typeof row?.stage === 'number' ? row.stage : null;
+  // zzz1299 — a company missing from the screener snapshot (e.g. BSE-only) gets its weekly stage, moving averages and
+  // 52-week high worked out from its own daily prices, so the Stage / Entry columns are not blank
+  let ownRow: any = null;
+  if (!row && d && d.c.length >= 60) {
+    const avg = (n: number) => (d.c.length >= n ? d.c.slice(-n).reduce((a, b) => a + b, 0) / n : null);
+    ownRow = { px: d.c[d.c.length - 1], sma50: avg(50), sma150: avg(150), sma200: avg(200), hi52: Math.max(...d.c.slice(-250)) };
+    try {
+      const { stageFromDaily } = await import('../stage-analysis');
+      const sw = stageFromDaily({ d: d.t, c: d.c, h: (d as any).h, l: (d as any).l, v: (d as any).v }, null, { market: m === 'US' ? 'US' : 'IN' });
+      if (sw?.stage != null) { st = sw.stage; notes.push('stage, moving averages and 52-week high worked out from this company\'s own daily prices (it is not in the screener snapshot); no relative-strength rank'); }
+    } catch { /* stage stays unknown */ }
+  }
   const prices: Array<{ t: string; c: number }> = [];
   if (d) d.c.forEach((c, i) => { if ((d.c.length - 1 - i) % 5 === 0) prices.push({ t: d.t[i], c }); });
   const card: LabCard = {
@@ -211,7 +224,7 @@ async function labCardIn(m: LabMarket, t: string, fresh = false): Promise<LabCar
   const e0 = eps[Math.max(0, eps.length - 4)], e1 = eps[eps.length - 1];
   const yrs = eps.length - 1 - Math.max(0, eps.length - 4);
   const epsCagr3 = e0 && e1 && yrs > 0 && e0.eps! > 0 && e1.eps! > 0 ? Math.round((Math.pow(e1.eps! / e0.eps!, 1 / yrs) - 1) * 1000) / 10 : null;
-  card.extras = labExtras({ row, epsCagr3, lastResult: rec?.resultDate ?? null, guidanceUp: rec?.guidanceUp ?? null, shpQ: ann.shpQ ?? null, stage: st, rsRatio: rs?.ratio ?? null });
+  card.extras = labExtras({ row: row ?? ownRow, epsCagr3, lastResult: rec?.resultDate ?? null, guidanceUp: rec?.guidanceUp ?? null, shpQ: ann.shpQ ?? null, stage: st, rsRatio: rs?.ratio ?? null });
   if (card.extras.stageCheck.text) card.notes = [...(card.notes || []), card.extras.stageCheck.text];
   return card;
 }

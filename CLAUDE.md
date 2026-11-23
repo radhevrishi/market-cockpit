@@ -4429,4 +4429,9 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
 - zzz1298 (23 Nov): Company Lab "Bought growth" (R3) no longer fires when operating margin rose 1 pt or more despite the gross-margin
   dip (mix / scale). Scheduled task "Procurement Bottleneck Engine USA" (Mon 12:41 Berlin, US small / mid caps, Drive state
   procurement_engine_state_us.json) created alongside the India one.
+- zzz1299 (23 Nov): Company Lab owner checks. Any layout can be saved in place: own layouts are overwritten, a ready-made one stores
+  the owner's version in `overrides` (layouts store) with "↺ Reset to original". New Entry column "From 200-day" (`extras.ext200`).
+  A company missing from the screener snapshot (BSE-only, e.g. TANFACIND) gets stage / 50-150-200-day / 52-week high from its own
+  daily prices (`stageFromDaily`, note on the card). Return on new capital: none when capital grew < 10% (small-base artefact,
+  ADROITIND 286%), bounded ±100%. "Guidance raised" dates normalised (was "ug 14" from a Date string). Row reject button says "reject".
 

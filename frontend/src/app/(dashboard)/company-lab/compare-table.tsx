@@ -120,6 +120,7 @@ export const COLS: Col[] = [
   { id: 'incRet', group: 'Capital efficiency', h: 'Return on new capital', tip: 'Extra profit ÷ extra capital (equity + debt) over up to three years — a profit-based stand-in for incremental ROCE. 18%+ = growth that creates value.', cell: (c) => { const d = derivedOf(c).inc; return d.pct == null ? <span style={{ color: R.faint }} title={d.text}>—</span> : <span title={d.text} style={{ color: d.pct >= 18 ? R.green : d.pct < 8 ? R.red : R.text }}>{d.pct}%</span>; }, sort: (c) => derivedOf(c).inc.pct ?? -999 },
   { id: 'roe', group: 'Capital efficiency', h: 'ROE', tip: 'Return on equity', cell: (c) => (X(c)?.roe == null ? '—' : `${X(c)!.roe!.toFixed(0)}%`), sort: (c) => X(c)?.roe ?? -99 },
   { id: 'ext50', group: 'Entry', h: 'From 50-day', tip: 'Price vs its 50-day average. 0–10% above = near support; 25%+ = extended (wait for a base); below = under support.', cell: (c) => { const v = X(c)?.ext50; return v == null ? '—' : <span style={{ fontWeight: 800, color: v > 25 ? R.red : v > 12 ? R.amber : v >= -3 ? R.green : R.amber }}>{v > 0 ? '+' : ''}{v.toFixed(0)}%{v > 25 ? ' ext' : ''}</span>; }, sort: (c) => -Math.abs((X(c)?.ext50 ?? 99) - 5) },
+  { id: 'ext200', group: 'Entry', h: 'From 200-day', tip: 'Price vs its 200-day average — the long-term trend line. Above = long-term uptrend; 40%+ above = stretched; below = under the long-term trend.', cell: (c) => { const v = X(c)?.ext200; return v == null ? '—' : <span style={{ fontWeight: 800, color: v < 0 ? R.red : v > 40 ? R.amber : R.green }}>{v > 0 ? '+' : ''}{v.toFixed(0)}%</span>; }, sort: (c) => X(c)?.ext200 ?? -999 },
   { id: 'fromHigh', group: 'Entry', h: 'From 52-wk high', tip: 'How far under the 52-week high (pivot area)', cell: (c) => { const v = X(c)?.fromHigh; return v == null ? '—' : <span style={{ color: v >= -10 ? R.green : v <= -30 ? R.red : R.text }}>{v.toFixed(0)}%</span>; }, sort: (c) => X(c)?.fromHigh ?? -999 },
   { id: 'nextRes', group: 'Catalysts', h: 'Next result (est.)', tip: 'Estimated as the last result date + about 3 months (companies report quarterly). Within 10 days = a binary event ahead.', cell: (c) => { const x = X(c); if (x?.daysToNext == null) return '—'; const d = x.daysToNext; return <span title={`last result ${x.lastResult} · next around ${x.nextResultEst} (estimate)`} style={{ fontWeight: d <= 10 ? 800 : 400, color: d <= 10 ? R.amber : R.text }}>{d <= 0 ? 'due now' : `~${d} days`}{d <= 10 ? ' ⚠' : ''}</span>; }, sort: (c) => -(X(c)?.daysToNext ?? 999) },
   { id: 'guideUp', group: 'Catalysts', h: 'Guidance raised', tip: 'A guidance raise on file in the last 120 days', cell: (c) => (X(c)?.guidanceUp ? <span style={{ color: R.green, fontWeight: 800 }} title={`raised ${X(c)!.guidanceUp}`}>▲ {X(c)!.guidanceUp!.slice(5)}</span> : <span style={{ color: R.faint }}>—</span>), sort: (c) => (X(c)?.guidanceUp ? 1 : 0) },
@@ -127,7 +128,7 @@ export const COLS: Col[] = [
   { id: 'inst', group: 'Ownership', h: 'FII + DII', tip: 'Foreign + domestic institutional holding, latest quarter (India)', cell: (c) => (X(c)?.inst == null ? '—' : `${X(c)!.inst!.toFixed(1)}%`), sort: (c) => X(c)?.inst ?? -1 },
   { id: 'gap', group: 'Research lead', h: 'FCF/share vs price (3 yr)', tip: 'FCF per share change vs share price change over up to three full years. ◆ = cash up 30%+, price flat (≤ +10%): a research lead, not a buy signal.', cell: (c) => { const g = gapOf(c); if (g.fcfPsG == null) return <span title={g.why} style={{ color: R.faint, fontSize: 12 }}>{g.short}</span>; return g.fcfPsG > 500 ? <span title={`FCF per share ${pct(g.fcfPsG)} from a tiny starting figure — not meaningful`} style={{ color: R.faint, fontSize: 12 }}>low base</span> : <span title={g.from ? `from ${g.from}` : ''} style={{ color: g.flag ? R.cyan : R.text, fontWeight: g.flag ? 800 : 400 }}>{g.flag ? '◆ ' : ''}{pct(g.fcfPsG)} / {pct(g.priceG)}</span>; }, sort: (c) => { const g = gapOf(c); return g.fcfPsG != null && g.priceG != null ? g.fcfPsG - g.priceG : -999; } },
 ];
-const DEFAULT = ['score', 'signals', 'fcfChecks', 'fcfM', 'fcfY', 'r40', 'accel', 'gm', 'om', 'dil', 'cfoPat', 'cfoTrend', 'de', 'squeeze', 'roce', 'incRet', 'peg', 'implied', 'ext50', 'nextRes', 'prom', 'stage', 'rs', 'gap'];
+const DEFAULT = ['score', 'signals', 'fcfChecks', 'fcfM', 'fcfY', 'r40', 'accel', 'gm', 'om', 'dil', 'cfoPat', 'cfoTrend', 'de', 'squeeze', 'roce', 'incRet', 'peg', 'implied', 'ext50', 'ext200', 'nextRes', 'prom', 'stage', 'rs', 'gap'];
 const GROUPS = Array.from(new Set(COLS.map((c) => c.group)));
 
 // zzz1292 — column layouts: ready-made ones + the owner's own, saved by name (synced to his account), last one used reopens
@@ -137,11 +138,11 @@ const PRESETS: Record<string, Layout> = {
   'Overview': { cols: DEFAULT, sort: 'score', desc: true },
   'Cash quality': { cols: ['score', 'fcfChecks', 'fcfM', 'fcfY', 'gap', 'cfoPat', 'de', 'dil', 'squeeze', 'capexOcf', 'runway'], sort: 'fcfChecks', desc: true },
   'Growth': { cols: ['score', 'r40', 'revQ', 'accel', 'revG', 'epsG', 'gm', 'om', 'stage', 'rs'], sort: 'r40', desc: true },
-  'Valuation & entry': { cols: ['score', 'signals', 'pe', 'peg', 'evRev', 'evFcf', 'implied', 'roce', 'roceTrend', 'incRet', 'roe', 'ext50', 'fromHigh', 'nextRes', 'guideUp', 'stage', 'rs'], sort: 'score', desc: true },
-  'Technicals': { cols: ['score', 'stage', 'ext50', 'fromHigh', 'tt', 'rsIdx', 'rs', 'r40', 'accel'], sort: 'rs', desc: true },
+  'Valuation & entry': { cols: ['score', 'signals', 'pe', 'peg', 'evRev', 'evFcf', 'implied', 'roce', 'roceTrend', 'incRet', 'roe', 'ext50', 'ext200', 'fromHigh', 'nextRes', 'guideUp', 'stage', 'rs'], sort: 'score', desc: true },
+  'Technicals': { cols: ['score', 'stage', 'ext50', 'ext200', 'fromHigh', 'tt', 'rsIdx', 'rs', 'r40', 'accel'], sort: 'rs', desc: true },
   'Everything': { cols: COLS.map((c) => c.id), sort: 'score', desc: true },
 };
-interface LayoutStore { active: string; custom: Record<string, Layout>; scoreAdded?: boolean }
+interface LayoutStore { active: string; custom: Record<string, Layout>; scoreAdded?: boolean; /** zzz1299 — the owner's own changes to a ready-made layout */ overrides?: Record<string, Layout> }
 const readLayouts = (): LayoutStore => {
   try {
     const v = JSON.parse(localStorage.getItem(LAYOUTS_KEY) || 'null');
@@ -165,19 +166,26 @@ export function Compare({ cards, marks = {}, onMark }: { cards: LabCard[]; marks
   const [pick, setPick] = useState(false);
   const [naming, setNaming] = useState<string | null>(null);
   const apply = (name: string, st: LayoutStore) => {
-    const l = st.custom[name] ?? PRESETS[name] ?? PRESETS.Overview;
+    const l = st.custom[name] ?? st.overrides?.[name] ?? PRESETS[name] ?? PRESETS.Overview;
     setOn(l.cols.filter((x) => COLS.some((c) => c.id === x))); if (l.sort) setSortId(l.sort); if (l.desc != null) setDesc(l.desc);
   };
   useEffect(() => { const st = readLayouts(); setStore(st); apply(st.active, st); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
   const choose = (name: string) => { const st = { ...store, active: name }; setStore(st); writeLayouts(st); apply(name, st); };
   const isCustom = !!store.custom[store.active];
-  const dirty = (() => { const l = store.custom[store.active] ?? PRESETS[store.active]; return !l || l.cols.join() !== on.join() || (l.sort && l.sort !== sortId) || (l.desc != null && l.desc !== desc); })();
+  const isOverridden = !isCustom && !!store.overrides?.[store.active];
+  const dirty = (() => { const l = store.custom[store.active] ?? store.overrides?.[store.active] ?? PRESETS[store.active]; return !l || l.cols.join() !== on.join() || (l.sort && l.sort !== sortId) || (l.desc != null && l.desc !== desc); })();
   const saveAs = (name: string) => {
     const n = name.trim().slice(0, 40); if (!n || PRESETS[n]) return;
-    const st = { active: n, custom: { ...store.custom, [n]: { cols: on, sort: sortId, desc } } }; setStore(st); writeLayouts(st); setNaming(null);
+    const st = { ...store, active: n, custom: { ...store.custom, [n]: { cols: on, sort: sortId, desc } } }; setStore(st); writeLayouts(st); setNaming(null);
   };
-  const updateCurrent = () => { if (!isCustom) return; const st = { ...store, custom: { ...store.custom, [store.active]: { cols: on, sort: sortId, desc } } }; setStore(st); writeLayouts(st); };
-  const remove = (name: string) => { const c = { ...store.custom }; delete c[name]; const st = { active: store.active === name ? 'Overview' : store.active, custom: c }; setStore(st); writeLayouts(st); if (store.active === name) apply('Overview', st); };
+  // zzz1299 — any layout can be updated in place: own layouts are overwritten, a ready-made one keeps the owner's version (reset brings the original back)
+  const updateCurrent = () => {
+    const l = { cols: on, sort: sortId, desc };
+    const st = isCustom ? { ...store, custom: { ...store.custom, [store.active]: l } } : { ...store, overrides: { ...(store.overrides || {}), [store.active]: l } };
+    setStore(st); writeLayouts(st);
+  };
+  const resetPreset = () => { const o = { ...(store.overrides || {}) }; delete o[store.active]; const st = { ...store, overrides: o }; setStore(st); writeLayouts(st); apply(store.active, st); };
+  const remove = (name: string) => { const c = { ...store.custom }; delete c[name]; const st = { ...store, active: store.active === name ? 'Overview' : store.active, custom: c }; setStore(st); writeLayouts(st); if (store.active === name) apply('Overview', st); };
   const save = (v: string[]) => setOn(v);
   const cols = COLS.filter((c) => on.includes(c.id));
   const ok = cards.filter((c) => c.ok);
@@ -196,7 +204,10 @@ export function Compare({ cards, marks = {}, onMark }: { cards: LabCard[]; marks
             {store.custom[n] ? <button type="button" title="Delete this layout" onClick={() => remove(n)} style={{ border: 'none', background: 'transparent', color: R.faint, cursor: 'pointer', paddingRight: 8 }}>✕</button> : null}
           </span>
         ))}
-        {dirty && isCustom ? <button type="button" onClick={updateCurrent} style={{ fontSize: 12.5, fontWeight: 800, padding: '3px 10px', borderRadius: 8, cursor: 'pointer', border: `1px solid ${R.amber}`, background: tint(R.amber, 10), color: R.amber }}>💾 Update “{store.active}”</button> : null}
+        {dirty
+          ? <button type="button" onClick={updateCurrent} title={isCustom ? 'Save these columns and sort into this layout' : 'Save these columns and sort into this ready-made layout (Reset brings the original back)'} style={{ fontSize: 12.5, fontWeight: 800, padding: '3px 10px', borderRadius: 8, cursor: 'pointer', border: `1px solid ${R.amber}`, background: tint(R.amber, 10), color: R.amber }}>💾 Save changes to “{store.active}”</button>
+          : <span style={{ fontSize: 12, color: R.faint }}>✓ “{store.active}” saved{isOverridden ? ' (your version)' : ''}</span>}
+        {isOverridden ? <button type="button" onClick={resetPreset} title="Bring back the original ready-made columns" style={{ fontSize: 12, padding: '3px 8px', borderRadius: 8, cursor: 'pointer', border: `1px solid ${R.border}`, background: 'transparent', color: R.dim }}>↺ Reset to original</button> : null}
         {naming == null
           ? <button type="button" onClick={() => setNaming('')} style={{ fontSize: 12.5, fontWeight: 800, padding: '3px 10px', borderRadius: 8, cursor: 'pointer', border: `1px solid ${R.green}`, background: 'transparent', color: R.green }}>＋ Save as new layout</button>
           : <span style={{ display: 'inline-flex', gap: 4 }}><input autoFocus value={naming} onChange={(e) => setNaming(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') saveAs(naming); if (e.key === 'Escape') setNaming(null); }} placeholder="Layout name" style={{ fontSize: 12.5, padding: '3px 8px', borderRadius: 6, border: `1px solid ${R.border}`, background: 'transparent', color: R.text, width: 150 }} /><button type="button" onClick={() => saveAs(naming)} style={{ fontSize: 12.5, fontWeight: 800, padding: '3px 10px', borderRadius: 6, cursor: 'pointer', border: `1px solid ${R.green}`, background: tint(R.green, 12), color: R.green }}>Save</button><button type="button" onClick={() => setNaming(null)} style={{ fontSize: 12.5, border: 'none', background: 'transparent', color: R.faint, cursor: 'pointer' }}>Cancel</button></span>}
@@ -241,7 +252,7 @@ export function Compare({ cards, marks = {}, onMark }: { cards: LabCard[]; marks
                     <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center', marginRight: 4 }}>
                       {onMark && (rj.rejected
                         ? <button type="button" title={rj.why === 'red-flag' ? 'Rejected by a red flag — keep it anyway (you have checked the flag away)' : 'Rejected by you — bring it back'} onClick={() => onMark(k, rj.why === 'red-flag' ? 'kept' : null)} style={{ border: `1px solid ${R.border}`, background: 'transparent', color: R.dim, borderRadius: 5, cursor: 'pointer', fontSize: 11, padding: '0 5px' }}>{rj.why === 'red-flag' ? 'keep' : '↺'}</button>
-                        : <button type="button" title={rj.kept ? 'Kept despite a red flag — reject it after all' : 'Reject this company'} onClick={() => onMark(k, 'rejected')} style={{ border: `1px solid ${R.border}`, background: 'transparent', color: R.faint, borderRadius: 5, cursor: 'pointer', fontSize: 11, padding: '0 5px' }}>✕</button>)}
+                        : <button type="button" title={rj.kept ? 'Kept despite a red flag — reject it after all' : 'Reject this company (it stays in the lab; the Exclude-rejected view hides it)'} onClick={() => onMark(k, 'rejected')} style={{ border: `1px solid ${R.border}`, background: 'transparent', color: R.faint, borderRadius: 5, cursor: 'pointer', fontSize: 11, padding: '0 5px' }}>reject</button>)}
                     </span>); })()}
                   <a href={`#lab-${c.market}-${c.ticker}`} title={redOf(c).map((x) => `⚑ ${x.label}: ${x.why}`).join('\n')} style={{ color: redOf(c).length ? R.red : R.text, textDecoration: 'none' }}><b>{redOf(c).length ? '⚑ ' : ''}{c.ticker}</b></a> <span style={{ color: R.faint, fontSize: 12 }}>{c.market === 'US' ? '🇺🇸' : '🇮🇳'} {capText(c)}</span>
                   {c.name && <div style={{ fontSize: 12, color: redOf(c).length ? R.red : R.dim, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.name}</div>}

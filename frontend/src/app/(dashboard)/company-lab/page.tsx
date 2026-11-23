@@ -208,6 +208,7 @@ function ExtrasStrip({ c }: { c: LabCard }) {
         {cp?.series?.length ? item('CFO/PAT trend', `${cp.trend === 'improving' ? '▲' : cp.trend === 'worsening' ? '▼' : '●'} ${cp.series.map((p) => (p.v == null ? '·' : p.v.toFixed(1))).join('→')}`, cp.series.map((p) => `${p.l}: ${p.v ?? 'loss'}`).join(' · '), cp.trend === 'improving' ? R.green : cp.trend === 'worsening' ? R.red : undefined) : null}
       </Fragment>); })()}
       {item('vs 50-day', f(x.ext50, '%', -0), 'over +25% = extended, wait for a base', x.ext50 != null && x.ext50 > 25 ? R.red : undefined)}
+      {item('vs 200-day', f(x.ext200 ?? null, '%', -0), 'below 0 = under the long-term trend', x.ext200 != null && x.ext200 < 0 ? R.red : undefined)}
       {item('vs 52-wk high', f(x.fromHigh, '%'))}
       {item('Next result', x.daysToNext == null ? '—' : x.daysToNext <= 0 ? 'due now (est.)' : `~${x.daysToNext} days (est.)`, x.lastResult ? `last ${x.lastResult}` : '', x.daysToNext != null && x.daysToNext <= 10 ? R.amber : undefined)}
       {x.guidanceUp ? item('Guidance', `raised ${x.guidanceUp}`, '', R.green) : null}

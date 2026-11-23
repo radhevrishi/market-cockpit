@@ -60,7 +60,9 @@ export function reinvestment(rows: Array<{ label: string; netIncome: number | nu
   const cap = (r: typeof L) => (r.equity as number) + (fin(r.debt) ? r.debt : 0);
   const dCap = cap(L) - cap(F), dNi = (L.netIncome as number) - (F.netIncome as number);
   if (!(dCap > 0)) return { pct: null, text: `capital did not grow ${F.label} → ${L.label} (buybacks / losses) — not meaningful` };
-  const pct = Math.round((dNi / dCap) * 100);
+  // zzz1299 — when capital barely grew (< 10% of where it started) the ratio is a small-base artefact (ADROITIND showed 286%)
+  if (cap(F) > 0 && dCap < 0.1 * cap(F)) return { pct: null, text: `capital barely grew ${F.label} → ${L.label} (+${r1(dCap)} on ${r1(cap(F))}) — the ratio would be a small-base artefact` };
+  const pct = Math.max(-100, Math.min(100, Math.round((dNi / dCap) * 100)));
   return { pct, text: `profit ${dNi >= 0 ? '+' : ''}${r1(dNi)} on ${r1(dCap)} of new capital ${F.label} → ${L.label} = ${pct}% (profit-based stand-in for incremental ROCE)` };
 }
 
