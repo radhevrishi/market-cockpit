@@ -6,7 +6,7 @@ import { dailyHistory } from '../theme-cycle/server';
 import { HISTORY_SETS } from '../theme-cycle/universe';
 import { periodReturns, weeklyCloses, marketCycles, themeBoard, type Cycle, type PerfKey, type ThemePerf, type DaySeries } from './perf';
 
-export const PERF_VERSION = 2;
+export const PERF_VERSION = 3;
 type M = 'us' | 'india';
 const INDICES: Record<M, Array<{ s: string; name: string; kind: 'Broad' | 'Size' | 'Sector' | 'Style' }>> = {
   us: [
@@ -37,6 +37,16 @@ export interface PerfPayload {
   cycles: { bench: string; benchName: string; weekly: DaySeries; list: Cycle[]; from: string | null } | null;
   missing: string[];
 }
+// long histories (cycles) change once a day: kept 12 hours in memory so the hourly rebuild does not refetch ~40 full histories
+const longMemo = new Map<string, { at: number; s: DaySeries | null }>();
+async function longHistory(sym: string): Promise<DaySeries | null> {
+  const hit = longMemo.get(sym);
+  if (hit && Date.now() - hit.at < 12 * 3600_000 && hit.s) return hit.s;
+  const s = await dailyHistory(sym, 0);
+  if (longMemo.size > 120) longMemo.clear();
+  longMemo.set(sym, { at: Date.now(), s });
+  return s;
+}
 async function pool<T, R>(xs: T[], k: number, f: (x: T) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(xs.length); let i = 0;
   await Promise.all(Array.from({ length: Math.min(k, xs.length) }, async () => { while (i < xs.length) { const j = i++; out[j] = await f(xs[j]).catch(() => null as any); } }));
@@ -63,10 +73,14 @@ export async function buildPerf(m: M): Promise<PerfPayload> {
   const set = HISTORY_SETS[m];
   const benchSym = m === 'india' ? '^BSESN' : '^GSPC', benchName = m === 'india' ? 'Sensex' : 'S&P 500';
   let cycles: PerfPayload['cycles'] = null;
-  const long = await dailyHistory(benchSym, 0);
+  const long = await longHistory(benchSym);
   if (long?.c?.length) {
     const w = weeklyCloses(long);
-    const sectors = await pool(set.sectors.filter((x) => x.index), 3, async (x) => ({ name: x.name, s: await dailyHistory(x.index!, 0) }));
+    const sectors = await pool(set.sectors.filter((x) => x.index || x.basket), 3, async (x) => ({
+      name: x.name, s: x.index ? await longHistory(x.index) : null,
+      // zzz1291 — India before the NSE sector indices (2010–11): equal-weight basket of that time's large companies (marked *)
+      ...(m === 'india' && x.basket?.length ? { members: await pool(x.basket, 3, (b) => longHistory(b)), until: set.basketUntil } : {}),
+    }));
     const { cycles: list } = marketCycles(w, sectors, m, 0.2);
     cycles = { bench: benchSym, benchName, weekly: { d: w.d, c: w.c.map((v) => Math.round(v * 100) / 100) }, list, from: w.d[0] ?? null };
   } else missing.push(`${benchName} history`);

@@ -90,7 +90,9 @@ export interface Cycle {
   fall: { low: string; lowC: number; depthPct: number; months: number; cause: string | null } | null;   // null = the run is still going
   ledBy: Array<{ name: string; pct: number }>; ledNote: string | null; current: boolean;
 }
-export function marketCycles(w: DaySeries, sectors: Array<{ name: string; s: DaySeries | null }>, m: 'us' | 'india', min = 0.2): { cycles: Cycle[]; points: Swing[] } {
+/** A sector: its index history, or (before `until`) an equal-weight basket of companies that led it then (marked * — chosen with hindsight). */
+export interface CycleSector { name: string; s: DaySeries | null; members?: Array<DaySeries | null>; until?: string }
+export function marketCycles(w: DaySeries, sectors: CycleSector[], m: 'us' | 'india', min = 0.2): { cycles: Cycle[]; points: Swing[] } {
   const pts = turningPoints(w, min);
   const cycles: Cycle[] = [];
   const mo = (a: string, b: string) => Math.max(0, Math.round((Date.parse(b) - Date.parse(a)) / (30.44 * 86_400_000)));
@@ -98,9 +100,15 @@ export function marketCycles(w: DaySeries, sectors: Array<{ name: string; s: Day
   const lead = (a: string, b: string) => {
     const got: Array<{ name: string; pct: number }> = [];
     for (const x of sectors) {
-      if (!x.s?.d.length || x.s.d[0] > a) continue;
-      const p0 = closeAt(x.s, a), p1 = closeAt(x.s, b);
-      if (fin(p0) && fin(p1) && p0 > 0) got.push({ name: x.name, pct: Math.round((p1 / p0 - 1) * 100) });
+      if (x.s?.d.length && x.s.d[0] <= a) {
+        const p0 = closeAt(x.s, a), p1 = closeAt(x.s, b);
+        if (fin(p0) && fin(p1) && p0 > 0) { got.push({ name: x.name, pct: Math.round((p1 / p0 - 1) * 100) }); continue; }
+      }
+      if (x.members?.length && x.until && a < x.until) {
+        const rs: number[] = [];
+        for (const ms of x.members) { if (!ms?.d.length || ms.d[0] > a) continue; const p0 = closeAt(ms, a), p1 = closeAt(ms, b); if (fin(p0) && fin(p1) && p0 > 0) rs.push(p1 / p0 - 1); }
+        if (rs.length >= 2) got.push({ name: `${x.name}*`, pct: Math.round((rs.reduce((q, v) => q + v, 0) / rs.length) * 100) });
+      }
     }
     return got.sort((x, y) => y.pct - x.pct).slice(0, 3);
   };
@@ -121,7 +129,7 @@ export function marketCycles(w: DaySeries, sectors: Array<{ name: string; s: Day
     const ledBy = lead(t.d, pkD);
     cycles.push({
       start: t.d, startC: t.c, peak: pkD, peakC: pkC, gainPct: Math.round((pkC / t.c - 1) * 100), months: mo(t.d, pkD), fall,
-      ledBy, ledNote: ledBy.length ? null : m === 'india' ? 'sector index history starts 2010–11' : 'no sector history this far back', current: !peak,
+      ledBy, ledNote: ledBy.length ? (ledBy.some((l) => l.name.endsWith('*')) ? '* = equal-weight basket of the large companies of that sector then (no index history yet; chosen with hindsight)' : null) : m === 'india' ? 'no sector history this far back' : 'no sector history this far back', current: !peak,
     });
   }
   return { cycles, points: pts };

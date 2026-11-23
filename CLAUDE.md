@@ -4362,3 +4362,10 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   (`memberScore`), cycles (weekly log, 20% turning points, led by sector histories, `FALL_CAUSES`). Best companies shown in radar,
   damage table and the Theme Rotation CyclePanel. Page polls every 10 min without forcing rebuilds.
   Tests zzz823 / zzz827 pin the clock (the PEAD drift reading decays with real time — they failed from ~20 Nov).
+- zzz1291f (23 Nov): regime-change alert (`lib/market-leadership/regime-watch.ts`, jobs `leadership-regime-in` 11:13 / `-us` 21:43 UTC
+  weekdays: rebuilds the payload, compares with `mlr:regime-last:v1:<m>`, notifyOwnerOnce ALERTS; INSUFFICIENT_DATA never alerts;
+  flip-back within 3 days said). Holdings on Market Leadership (`useHeld` in PerfTabs: portfolio in this browser + US book): "Your
+  holdings vs leadership" panel, ● HELD marks on leaders / theme companies / theme rows. Leaders: listed < 180 days left out
+  (`LEADER_MIN_LISTED_DAYS`, `recentLeft`), < 1 year marked `listedMonths`; LR_VERSION 3. US `fcfPsG` now up to 3 fiscal years
+  (`fcfPsY` = years used). India cycles before 2011 led by equal-weight baskets (marked *, hindsight); long histories kept 12 h;
+  PERF_VERSION 3. Company Lab: more debt tags (current-only debt counted).

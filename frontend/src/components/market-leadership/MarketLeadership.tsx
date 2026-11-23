@@ -21,7 +21,7 @@ import { previousStates } from '@/lib/theme-cycle/memory';
 import { useThemeRotationModel } from '@/components/dashboard/theme-rotation/useThemeModel';
 import { card } from '@/components/dashboard/theme-rotation/ui';
 import { T, tint } from '@/components/dashboard/theme-rotation/tokens';
-import { usePerf, PerformanceTab, CyclesTab, BestCompanies } from './PerfTabs';
+import { usePerf, PerformanceTab, CyclesTab, BestCompanies, useHeld, HeldDot } from './PerfTabs';
 import { CyclePanel } from '@/components/dashboard/theme-rotation/CyclePanel';
 
 type Tab = 'overview' | 'leaders' | 'themes' | 'performance' | 'cycles' | 'compare';
@@ -266,6 +266,7 @@ export default function MarketLeadership() {
   // zzz1291 — always live: everything re-reads every 10 minutes while the page is open (the server caches keep it cheap)
   useEffect(() => { const id = setInterval(() => { if (document.visibilityState === 'visible') setPoll((r) => r + 1); }, 10 * 60_000); return () => clearInterval(id); }, []);
   const perf = usePerf(sel, reload + poll);
+  const held = useHeld(sel);
   const perfTheme = useMemo(() => new Map((perf.d?.themes || []).map((t) => [t.id, t])), [perf.d]);
 
   const themeBrief = (s: ThemeSide) => {
@@ -402,6 +403,27 @@ export default function MarketLeadership() {
 
           </>)}
           {tab === 'leaders' && (<>
+          {held.size ? (() => {
+            const byT = new Map(p.leaders.map((l) => [l.t, l]));
+            const emer = new Set(p.emerging.map((e) => e.t));
+            const mine = [...held].map((t) => ({ t, l: byT.get(t), e: emer.has(t), th: (perf.d?.themes || []).filter((x) => x.members.some((mm) => mm.t === t)).map((x) => `${x.emoji} ${x.name}`) })).filter((x) => x.l || x.e || x.th.length);
+            const lead = mine.filter((x) => x.l), bad = lead.filter((x) => x.l!.state === 'BROKEN' || x.l!.state === 'UNDER_PRESSURE');
+            return (<>
+              <H2 n={5} hint="Your holdings in this market (portfolio in this browser + US book) — where each one sits in today's leadership.">Your holdings vs leadership</H2>
+              <div style={{ ...card, padding: '8px 10px' }}>
+                <div style={{ fontSize: 13, marginBottom: 6 }}><b>{held.size}</b> held · <b style={{ color: T.up }}>{lead.length}</b> on the leader list{bad.length ? <> · <b style={{ color: T.down }}>{bad.length} of them under pressure or broken</b></> : null} · <b>{mine.filter((x) => x.e).length}</b> on the emerging list</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 6 }}>
+                  {mine.sort((a, b) => (a.l ? 0 : a.e ? 1 : 2) - (b.l ? 0 : b.e ? 1 : 2)).slice(0, 40).map((x) => (
+                    <div key={x.t} style={{ fontSize: 12.5, borderTop: `1px solid ${T.border}`, padding: '4px 0' }}>
+                      <b>{x.t}</b>{' '}
+                      {x.l ? <span style={{ color: LEADER_TONE[x.l.state], fontWeight: 800 }} title={x.l.why}>leader · {LEADER_LABEL[x.l.state]}</span> : x.e ? <span style={{ color: T.up, fontWeight: 800 }}>emerging leader</span> : <span style={{ color: T.faint }}>not a leader</span>}
+                      {x.th.length ? <span style={{ color: T.dim }}> · {x.th.slice(0, 2).join(', ')}</span> : null}
+                    </div>))}
+                </div>
+                {held.size > mine.length ? <div style={{ fontSize: 11.5, color: T.faint, marginTop: 4 }}>{held.size - mine.length} other holdings are not on the leader / emerging lists and not in a tracked theme.</div> : null}
+              </div>
+            </>);
+          })() : null}
           <H2 n={5} hint={p.leaderRule}>Leader health</H2>
           {p.health ? (
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(250px, 1fr) minmax(0, 2fr)', gap: 10 }} className="mlr-two">
@@ -428,7 +450,7 @@ export default function MarketLeadership() {
                   <thead><tr style={{ color: T.faint, fontSize: 10.5, textAlign: 'right' }}><th style={{ textAlign: 'left', padding: '3px 4px' }}>Leader</th><th style={{ textAlign: 'left' }}>State</th><th title="Price a year ago → 52-week high">Run-up</th><th>Off high</th><th>vs 50-day</th><th>vs 200-day</th><th>RS</th><th title="Last month vs the benchmark, points">vs mkt 1m</th></tr></thead>
                   <tbody>{leadersShown.map((l) => (
                     <tr key={l.t} style={{ borderTop: `1px solid ${T.border}`, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                      <td style={{ textAlign: 'left', padding: '4px', whiteSpace: 'nowrap' }}><Link href={`/charts?ticker=${encodeURIComponent(l.t)}&market=${MK[sel].code}`} style={{ color: T.text, fontWeight: 800, textDecoration: 'none' }}>{l.t}</Link> <span style={{ color: T.dim }}>{l.n}</span>{l.ind ? <div style={{ fontSize: 10.5, color: T.faint }}>{l.ind}</div> : null}</td>
+                      <td style={{ textAlign: 'left', padding: '4px', whiteSpace: 'nowrap' }}><Link href={`/charts?ticker=${encodeURIComponent(l.t)}&market=${MK[sel].code}`} style={{ color: T.text, fontWeight: 800, textDecoration: 'none' }}>{l.t}</Link><HeldDot on={held.has(l.t)} />{l.listedMonths ? <span title="Listed less than a year ago — the run-up starts at the listing price" style={{ fontSize: 10.5, color: T.warn, marginLeft: 4 }}>listed {l.listedMonths}m ago</span> : null} <span style={{ color: T.dim }}>{l.n}</span>{l.ind ? <div style={{ fontSize: 10.5, color: T.faint }}>{l.ind}</div> : null}</td>
                       <td style={{ textAlign: 'left' }} title={l.why}><span style={{ color: LEADER_TONE[l.state], fontWeight: 800 }}>{LEADER_LABEL[l.state]}</span></td>
                       <td>+{l.runUp}%</td><td>{l.dd != null ? `−${l.dd}%` : '—'}</td>
                       <td style={{ color: (l.vs50 ?? 0) >= 0 ? T.up : T.down }}>{fmtP(l.vs50)}</td>

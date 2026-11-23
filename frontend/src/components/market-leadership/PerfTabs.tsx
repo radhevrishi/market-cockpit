@@ -11,6 +11,32 @@ import { card } from '@/components/dashboard/theme-rotation/ui';
 import { T, tint } from '@/components/dashboard/theme-rotation/tokens';
 
 type PP = PerfPayload & { ok: boolean; error?: string; ageMin?: number };
+
+// zzz1291 — the owner's holdings (India / US portfolio in this browser + the US book), to mark held names everywhere
+const heldCache: Partial<Record<Market, Set<string>>> = {};
+const clean = (s: unknown) => String(s || '').toUpperCase().trim().replace(/^(NSE|BSE|NASDAQ|NYSE|AMEX|US|IN):/, '').replace(/\.(NS|BO)$/, '').replace(/-(BE|EQ|SM|ST)$/, '');
+export function useHeld(m: Market): Set<string> {
+  const [held, setHeld] = useState<Set<string>>(heldCache[m] ?? new Set());
+  useEffect(() => {
+    let off = false;
+    const out = new Set<string>();
+    try {
+      const raw = JSON.parse(localStorage.getItem('mc_portfolio_holdings') || '[]');
+      if (Array.isArray(raw)) for (const h of raw) { const mk = h?.market === 'US' ? 'us' : 'india'; if (mk === m && h?.symbol) out.add(clean(h.symbol)); }
+    } catch { /* none */ }
+    heldCache[m] = out; setHeld(new Set(out));
+    if (m === 'us') {
+      fetch('/api/v1/us-book', { cache: 'no-store' }).then((r) => r.json()).then((j: any) => {
+        if (off) return;
+        for (const h of j?.book?.holdings || j?.holdings || []) if (h?.ticker) out.add(clean(h.ticker));
+        heldCache[m] = out; setHeld(new Set(out));
+      }).catch(() => { /* local only */ });
+    }
+    return () => { off = true; };
+  }, [m]);
+  return held;
+}
+export const HeldDot = ({ on }: { on: boolean }) => (on ? <span title="You hold this" style={{ fontSize: 10.5, fontWeight: 900, color: T.accent, border: `1px solid ${tint(T.accent, 45)}`, borderRadius: 4, padding: '0 4px', marginLeft: 4 }}>● HELD</span> : null);
 const cache: Partial<Record<Market, PP>> = {};
 export function usePerf(m: Market, reload: number): { d: PP | null; err: string | null } {
   const [d, setD] = useState<PP | null>(cache[m] ?? null);
@@ -50,6 +76,7 @@ function Spark({ v }: { v: number[] }) {
 
 /** The best companies of one theme, compact — used by the radar and the theme list. */
 export function BestCompanies({ th, m, max = 5 }: { th: ThemePerf | undefined; m: Market; max?: number }) {
+  const held = useHeld(m);
   if (!th) return <div style={{ fontSize: 12.5, color: T.faint }}>Companies loading…</div>;
   if (!th.best.length) return <div style={{ fontSize: 12.5, color: T.faint }}>None of the theme&apos;s {th.n} companies are in the stock-screener data.</div>;
   return (
@@ -57,7 +84,7 @@ export function BestCompanies({ th, m, max = 5 }: { th: ThemePerf | undefined; m
       {th.best.slice(0, max).map((x) => (
         <div key={x.t} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 8, fontSize: 13, alignItems: 'baseline' }}>
           <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            <Link href={chartHref(x.t, m)} style={{ color: T.text, fontWeight: 900, textDecoration: 'none' }}>{x.t}</Link> <span style={{ color: T.dim }}>{x.n}</span> <span style={{ color: T.faint, fontSize: 11.5 }}>{mcText(x.mc, m)}</span>
+            <Link href={chartHref(x.t, m)} style={{ color: T.text, fontWeight: 900, textDecoration: 'none' }}>{x.t}</Link><HeldDot on={held.has(x.t)} /> <span style={{ color: T.dim }}>{x.n}</span> <span style={{ color: T.faint, fontSize: 11.5 }}>{mcText(x.mc, m)}</span>
           </span>
           <span style={{ fontSize: 12, color: T.dim, whiteSpace: 'nowrap' }}>{x.why.slice(0, 3).join(' · ') || '—'} · 3M <b style={{ color: (x.m3 ?? 0) >= 0 ? T.up : T.down }}>{pc(x.m3)}</b></span>
         </div>
@@ -70,6 +97,7 @@ const th = { padding: '6px 8px', fontSize: 12, color: T.faint, textAlign: 'right
 const td = { padding: '6px 8px', textAlign: 'right' as const, fontVariantNumeric: 'tabular-nums' as const, whiteSpace: 'nowrap' as const };
 
 export function PerformanceTab({ m, d, err, other }: { m: Market; d: PP | null; err: string | null; other?: React.ReactNode }) {
+  const held = useHeld(m);
   const [sortK, setSortK] = useState<PerfKey>('m1');
   const [kind, setKind] = useState<'All' | 'Broad' | 'Size' | 'Sector' | 'Style'>('All');
   const [open, setOpen] = useState<string | null>(null);
@@ -111,7 +139,7 @@ export function PerformanceTab({ m, d, err, other }: { m: Market; d: PP | null; 
           <tbody>{themes.map((t) => (
             <React.Fragment key={t.id}>
               <tr onClick={() => setOpen(open === t.id ? null : t.id)} style={{ borderTop: `1px solid ${T.border}`, cursor: 'pointer', background: open === t.id ? tint(T.accent, 6) : undefined }}>
-                <td style={{ ...td, textAlign: 'left' }}><b>{t.emoji} {t.name}</b> <span style={{ color: T.faint, fontSize: 12 }}>{t.group}</span></td>
+                <td style={{ ...td, textAlign: 'left' }}><b>{t.emoji} {t.name}</b> <span style={{ color: T.faint, fontSize: 12 }}>{t.group}</span>{(() => { const k = t.members.filter((x) => held.has(x.t)).length; return k ? <span style={{ fontSize: 11, fontWeight: 900, color: T.accent, marginLeft: 6 }}>● {k} held</span> : null; })()}</td>
                 <td style={td}>{t.found}{t.found < t.n ? <span style={{ color: T.faint }}>/{t.n}</span> : ''}</td>
                 {PERF_KEYS.map((k) => <td key={k} style={{ ...td, background: heat(t.med[k], SCALE[k]), fontWeight: sortK === k ? 900 : 600 }}>{pc(t.med[k])}</td>)}
                 <td style={{ ...td, textAlign: 'left', fontSize: 13 }}>{t.best.slice(0, 3).map((x) => <span key={x.t} style={{ marginRight: 10 }}><b>{x.t}</b> <span style={{ color: T.faint }}>{x.n.slice(0, 18)}</span></span>)}</td>
@@ -127,12 +155,13 @@ export function PerformanceTab({ m, d, err, other }: { m: Market; d: PP | null; 
 }
 
 function Members({ rows, m }: { rows: MemberRow[]; m: Market }) {
+  const held = useHeld(m);
   return (
     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5 }}>
       <thead><tr><th style={{ ...th, textAlign: 'left' }}>Company</th><th style={th}>Size</th><th style={th}>Stage</th><th style={th}>RS</th>{PERF_KEYS.map((k) => <th key={k} style={th}>{PERF_LABEL[k]}</th>)}<th style={th}>Off high</th><th style={th}>Revenue YoY (qtr)</th><th style={th}>Rule of 40</th><th style={{ ...th, textAlign: 'left' }}>Why ranked here</th></tr></thead>
       <tbody>{rows.map((x, i) => (
         <tr key={x.t} style={{ borderTop: `1px solid ${T.border}`, background: i < 3 ? tint(T.up, 5) : undefined }}>
-          <td style={{ ...td, textAlign: 'left' }}><Link href={chartHref(x.t, m)} style={{ color: T.text, fontWeight: 900, textDecoration: 'none' }}>{x.t}</Link> <span style={{ color: T.dim }}>{x.n}</span> <Link href={`/company-lab?add=${m === 'us' ? 'US' : 'IN'}:${encodeURIComponent(x.t)}`} title="Open in Company Lab" style={{ color: T.accent, fontSize: 11.5, textDecoration: 'none' }}>🧪</Link></td>
+          <td style={{ ...td, textAlign: 'left' }}><Link href={chartHref(x.t, m)} style={{ color: T.text, fontWeight: 900, textDecoration: 'none' }}>{x.t}</Link><HeldDot on={held.has(x.t)} /> <span style={{ color: T.dim }}>{x.n}</span> <Link href={`/company-lab?add=${m === 'us' ? 'US' : 'IN'}:${encodeURIComponent(x.t)}`} title="Open in Company Lab" style={{ color: T.accent, fontSize: 11.5, textDecoration: 'none' }}>🧪</Link></td>
           <td style={td}>{mcText(x.mc, m)}</td>
           <td style={{ ...td, color: x.st === 2 ? T.up : x.st === 4 ? T.down : T.dim, fontWeight: 800 }}>{x.st ?? '—'}</td>
           <td style={td}>{x.rs == null ? '—' : Math.round(x.rs)}</td>
@@ -191,12 +220,12 @@ export function CyclesTab({ m, d, err, history }: { m: Market; d: PP | null; err
           <div key={k} style={{ ...card, padding: '10px 12px', borderColor: c.current ? tint(T.accent, 50) : undefined }}>
             <div style={{ fontSize: 12, color: T.faint, fontWeight: 900 }}>{c.start.slice(0, 7)} → {c.current ? 'now' : c.peak.slice(0, 7)}{c.current ? ' · CURRENT' : ''}</div>
             <div style={{ fontSize: 24, fontWeight: 900, color: T.up }}>+{c.gainPct}% <span style={{ fontSize: 13, color: T.dim, fontWeight: 600 }}>in {c.months} months</span></div>
-            <div style={{ fontSize: 13, marginTop: 4 }}><span style={{ color: T.faint }}>Led by: </span>{c.ledBy.length ? c.ledBy.map((l) => <b key={l.name} style={{ marginRight: 8 }}>{l.name} <span style={{ color: T.up }}>+{l.pct}%</span></b>) : <span style={{ color: T.faint }}>{c.ledNote}</span>}</div>
+            <div style={{ fontSize: 13, marginTop: 4 }}><span style={{ color: T.faint }}>Led by: </span>{c.ledBy.length ? c.ledBy.map((l) => <b key={l.name} style={{ marginRight: 8 }}>{l.name} <span style={{ color: T.up }}>+{l.pct}%</span></b>) : <span style={{ color: T.faint }}>{c.ledNote}</span>}{c.ledBy.length && c.ledNote ? <div style={{ fontSize: 11, color: T.faint }}>{c.ledNote}</div> : null}</div>
             {c.fall ? <div style={{ fontSize: 13, marginTop: 4, color: T.down }}><b>{c.fall.depthPct}%</b> over {c.fall.months} months{c.fall.cause ? <span style={{ color: T.dim }}> · {c.fall.cause}</span> : null}</div> : <div style={{ fontSize: 13, marginTop: 4, color: T.accent }}>still running — no 20% fall since the low</div>}
           </div>
         ))}
       </div>
-      <div style={{ fontSize: 12, color: T.faint }}>Turning points need a 20% move the other way to count. "Led by" = the sector indices / funds that rose most over that bull run, from the histories that existed then ({m === 'india' ? 'NSE sector indices start 2010–11' : 'US sector funds start 1998–99'}). Fall causes are short historical context, written by hand.</div>
+      <div style={{ fontSize: 12, color: T.faint }}>Turning points need a 20% move the other way to count. "Led by" = the sector indices / funds that rose most over that bull run, from the histories that existed then ({m === 'india' ? 'NSE sector indices start 2010–11; earlier India runs use equal-weight baskets of the large companies of the time, marked *' : 'US sector funds start 1998–99'}). Fall causes are short historical context, written by hand.</div>
       {history}
     </div>
   );

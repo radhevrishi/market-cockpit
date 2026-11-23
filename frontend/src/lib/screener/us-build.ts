@@ -306,7 +306,7 @@ export function assembleUsRows(universe: NasdaqRow[], ciks: Map<string, number>,
       ...rowPatternFields(tf),   // zzz983 — chart patterns (Pine Screener)
       ...rowScanFields(tf, { px: rq.px, src: rq.src, at: rq.at }),   // zzz993 (MC-01) — scan close (Yahoo bars) vs latest quote (Nasdaq)
       ...rowTvFields(tf, 'US'),   // zzz984 — the owner's TradingView script fields
-      ...(f?.fcfPsG != null ? { fcfPsG: f.fcfPsG } : {}),
+      ...(f?.fcfPsG != null ? { fcfPsG: f.fcfPsG, ...(f.fcfPsY ? { fcfPsY: f.fcfPsY } : {}) } : {}),
       ...(f?.fcfmFY != null ? { fcfmTTM: f.fcfmFY, r40: ruleOf40(f.revQYoY, f.fcfmFY), ...(f.fcfmAt ? { fcfmAt: f.fcfmAt } : {}) } : {}),
       // zzz1045e — the true trailing-12-month FCF margin and its Rule of 40 (new fields; fcfmTTM / r40 above keep their meaning)
       ...(f?.fcfmT != null ? { fcfmT: f.fcfmT, r40T: ruleOf40(f.revQYoY, f.fcfmT), ...(f.fcfmTAt ? { fcfmTAt: f.fcfmTAt } : {}) } : {}),

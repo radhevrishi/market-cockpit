@@ -186,6 +186,8 @@ export interface Leader {
   t: string; n: string; ind: string | null; runUp: number; dd: number | null;
   vs50: number | null; vs200: number | null; sma50Rising: boolean | null; newHigh: boolean; newLow: boolean | null;
   rs: number | null; relM1: number | null; state: LeaderState; why: string;
+  /** zzz1291 — listed less than a year ago: months since listing (its run-up starts at the listing price) */
+  listedMonths?: number;
 }
 /** Price a year ago → 52-week high: the run-up the company made INTO its high. */
 export function runUpOf(r: Row): number | null {
@@ -211,8 +213,14 @@ export function leaderState(r: Row): { state: LeaderState; why: string } {
   if (a50 === false || (dd != null && dd >= 15)) return { state: 'UNDER_PRESSURE', why: a50 === false ? `below its 50-day line${a200 ? ', still above its 200-day' : short}` : `${dd!.toFixed(0)}% off its high${a200 ? ', still above its 200-day line' : short}` };
   return { state: 'HEALTHY', why: `above its 50-day${a200 ? ' and 200-day lines' : ` line${short}`}${dd != null ? `, ${dd.toFixed(0)}% off its high` : ''}` };
 }
-export function pickLeaders(rows: Row[], m: Mkt, rsMap: Map<string, number>, benchM1: number | null): { leaders: Leader[]; universe: number; rule: string } {
-  const pool = rows.filter((r) => liquid(r, m, LEADER_LIQ[m])).map((r) => ({ r, up: runUpOf(r) })).filter((x): x is { r: Row; up: number } => x.up != null && x.up >= 40);
+/** zzz1291 — days since listing (screener `ipoD` = first trading day, days since 1970), null when unknown. */
+export const listedDaysOf = (r: Row, nowMs = Date.now()): number | null => (num(r.ipoD) ? Math.floor(nowMs / 86_400_000) - (r.ipoD as number) : null);
+export const LEADER_MIN_LISTED_DAYS = 180;
+export function pickLeaders(rows: Row[], m: Mkt, rsMap: Map<string, number>, benchM1: number | null, nowMs = Date.now()): { leaders: Leader[]; universe: number; rule: string; recentLeft: number } {
+  // a company listed under ~6 months has no year of trading behind its 'run-up' (often just the listing pop): left out, counted
+  const young = (r: Row) => { const d = listedDaysOf(r, nowMs); return d != null && d < LEADER_MIN_LISTED_DAYS; };
+  const recentLeft = rows.filter((r) => liquid(r, m, LEADER_LIQ[m]) && young(r)).length;
+  const pool = rows.filter((r) => liquid(r, m, LEADER_LIQ[m]) && !young(r)).map((r) => ({ r, up: runUpOf(r) })).filter((x): x is { r: Row; up: number } => x.up != null && x.up >= 40);
   const universe = rows.filter((r) => liquid(r, m, LEADER_LIQ[m])).length;
   const k = Math.max(15, Math.min(40, Math.round(universe * 0.06)));
   pool.sort((a, b) => b.up - a.up);
@@ -226,13 +234,14 @@ export function pickLeaders(rows: Row[], m: Mkt, rsMap: Map<string, number>, ben
       newHigh: num(r.hi52) ? r.px! >= r.hi52 * 0.99 : false, newLow: num(r.lo52) ? r.px! <= r.lo52 * 1.01 : null,
       rs: rsMap.get(r.t.toUpperCase()) ?? null, relM1: num(r.perf1M) && benchM1 != null ? +(r.perf1M - benchM1).toFixed(1) : null,
       ...s,
+      ...(() => { const d = listedDaysOf(r, nowMs); return d != null && d < 365 ? { listedMonths: Math.max(1, Math.round(d / 30.4)) } : {}; })(),
     };
   });
   // zzz1291 — shown healthy first, then recovering, under pressure, broken; inside a state the biggest run-up first
   const ORD: Record<LeaderState, number> = { HEALTHY: 0, RECOVERING: 1, UNDER_PRESSURE: 2, BROKEN: 3 };
   const leaders = leaders0.slice().sort((a, b) => ORD[a.state] - ORD[b.state] || b.runUp - a.runUp);
   const cap = m === 'US' ? '$10B and $100M traded a day' : '₹10,000 Cr and ₹25 Cr traded a day';
-  return { leaders, universe, rule: `Top 6% (${k}) of ${universe} large, liquid companies (market cap ≥ ${cap}) by run-up into their 52-week high (price a year ago → high), run-up ≥ 40%. Chosen by the run-up, so leaders that have since broken stay counted.` };
+  return { leaders, universe, rule: `Top 6% (${k}) of ${universe} large, liquid companies (market cap ≥ ${cap}) by run-up into their 52-week high (price a year ago → high), run-up ≥ 40%. Chosen by the run-up, so leaders that have since broken stay counted. Companies listed under 6 months are left out${recentLeft ? ` (${recentLeft} now)` : ''}; one listed under a year is marked — its run-up starts at the listing price.`, recentLeft };
 }
 export interface LeaderHealth { n: number; healthy: number; pressure: number; broken: number; recovering: number; above50: number; above200: number; newHighs: number; newLows: number | null; rsUp: number; rsDown: number; healthyPct: number | null; deterioratingPct: number | null; concentration: 'broad' | 'narrow' | 'very narrow' | null }
 export function leaderHealth(L: Leader[]): LeaderHealth {

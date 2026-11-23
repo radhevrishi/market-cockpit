@@ -54,8 +54,8 @@ const QTAGS = {
   capex: ['PaymentsToAcquirePropertyPlantAndEquipment', 'PaymentsToAcquireProductiveAssets', 'PaymentsToAcquirePropertyAndEquipment'],
   cash: ['CashAndCashEquivalentsAtCarryingValue', 'CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents', 'Cash'],
   recv: ['AccountsReceivableNetCurrent', 'ReceivablesNetCurrent', 'AccountsAndOtherReceivablesNetCurrent'],
-  debt: ['LongTermDebt', 'DebtLongtermAndShorttermCombinedAmount', 'LongTermDebtAndCapitalLeaseObligations'],
-  debtN: ['LongTermDebtNoncurrent'], debtC: ['LongTermDebtCurrent', 'DebtCurrent'],
+  debt: ['LongTermDebt', 'DebtLongtermAndShorttermCombinedAmount', 'LongTermDebtAndCapitalLeaseObligations', 'LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities', 'ConvertibleNotesPayable', 'SeniorNotes'],
+  debtN: ['LongTermDebtNoncurrent', 'ConvertibleDebtNoncurrent', 'ConvertibleNotesPayableNoncurrent', 'SeniorNotesNoncurrent', 'LongTermLineOfCredit', 'LongTermNotesPayable'], debtC: ['LongTermDebtCurrent', 'DebtCurrent', 'ConvertibleNotesPayableCurrent', 'LineOfCredit', 'ShortTermBorrowings'],
 };
 const FORMS = /^(10-Q|10-K|10-KT|10-QT)(\/A)?$/;
 function facts(f: any, tag: string, unit = 'USD'): SecFact[] {
@@ -95,6 +95,7 @@ export function usQuarterInputs(f: any): QIn {
   const d = instants(f, QTAGS.debt), dn = instants(f, QTAGS.debtN), dc = instants(f, QTAGS.debtC);
   const debt = new Map<string, number>(d);
   for (const [e, v] of dn) if (!debt.has(e)) debt.set(e, v + (dc.get(e) ?? 0));
+  for (const [e, v] of dc) if (!debt.has(e)) debt.set(e, v);
   return { basis: 'quarterly', rev, gp, op: bestQuarters(f, QTAGS.op), cfo: bestQuarters(f, QTAGS.cfo), capex: bestQuarters(f, QTAGS.capex), cash: instants(f, QTAGS.cash), debt, recv: instants(f, QTAGS.recv) };
 }
 

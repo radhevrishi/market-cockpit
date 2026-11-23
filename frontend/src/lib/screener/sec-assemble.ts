@@ -190,6 +190,8 @@ export interface UsFigures {
   fcfmFY?: number | null;
   /** zzz1291 — FCF per share growth, latest fiscal year vs the year before, % (both years positive) */
   fcfPsG?: number | null;
+  /** zzz1291 — how many fiscal years the FCF/share growth spans (3 when the frames hold it) */
+  fcfPsY?: number | null;
   fcfmAt?: string | null;
   /** zzz1045e — TRUE trailing-12-month FCF margin: (Σ last 4 quarters of operating cash flow − Σ the same 4 quarters of capex) ÷ the
    *  same 4 quarters' revenue × 100 (lib/screener/fcf-ttm.ts). Only when the cash-flow quarters end on the latest quarter with
@@ -357,11 +359,17 @@ export function usFigures(fd: FrameData, cik: number, periods: { quarters: strin
     // zzz1044 (F03) — free cash flow needs BOTH lines: a year with no capex filed is unknown (was: capex taken as 0, FCF = all of CFO)
     if (cfo != null && cx != null) out.fcfFY = Math.round(cfo - Math.abs(cx));
     if (cfo != null && cx != null && revA != null && revA > 0) { out.fcfmFY = r1(((cfo - Math.abs(cx)) / revA) * 100); if (e1) out.fcfmAt = e1; }   // zzz984
-    {   // zzz1291 — FCF per share, this year vs last (weighted diluted shares of each year)
-      const cfoP = valueAt(fd, CFO, cik, Aprev), cxP = valueAt(fd, CAPEX, cik, Aprev);
-      if (cfo != null && cx != null && cfoP != null && cxP != null && s1 != null && s0 != null && s1 > 0 && s0 > 0 && s1 / s0 > 0.2 && s1 / s0 < 5) {
-        const p1 = (cfo - Math.abs(cx)) / s1, p0 = (cfoP - Math.abs(cxP)) / s0;
-        if (p1 > 0 && p0 > 0) out.fcfPsG = r1((p1 / p0 - 1) * 100);
+    {   // zzz1291 — FCF per share now vs up to 3 years earlier (the oldest year the frames hold; weighted diluted shares of each year)
+      const ps = (y: string): number | null => {
+        const c = valueAt(fd, CFO, cik, y), x = valueAt(fd, CAPEX, cik, y), sh = valueAt(fd, WSH, cik, y);
+        return c != null && x != null && sh != null && sh > 0 ? (c - Math.abs(x)) / sh : null;
+      };
+      const p1 = ps(A), shA = valueAt(fd, WSH, cik, A);
+      for (const k of [3, 2, 1]) {
+        const y = `CY${Number(A.slice(2)) - k}`, p0 = ps(y), sh0 = valueAt(fd, WSH, cik, y);
+        if (p1 == null || p0 == null || shA == null || sh0 == null || !(shA / sh0 > 0.2 && shA / sh0 < 5)) continue;
+        if (p1 > 0 && p0 > 0) { out.fcfPsG = r1((p1 / p0 - 1) * 100); out.fcfPsY = k; }
+        break;
       }
     }
     const lab = e1 ? quarterLabelForEnd(e1) : null;

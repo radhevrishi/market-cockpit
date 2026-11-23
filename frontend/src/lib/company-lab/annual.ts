@@ -20,7 +20,7 @@ const TAGS: Record<string, string[]> = {
   equity: ['StockholdersEquity', 'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest', 'PartnersCapital', 'MembersEquity', 'PartnersCapitalIncludingPortionAttributableToNoncontrollingInterest'],
   debt: ['LongTermDebt', 'DebtLongtermAndShorttermCombinedAmount', 'LongTermDebtAndCapitalLeaseObligations', 'LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities', 'ConvertibleNotesPayable', 'SeniorNotes'],   // these include the current part
   debtNonCur: ['LongTermDebtNoncurrent', 'ConvertibleDebtNoncurrent', 'ConvertibleNotesPayableNoncurrent', 'SeniorNotesNoncurrent', 'LongTermLineOfCredit', 'LongTermNotesPayable'],
-  debtCur: ['LongTermDebtCurrent', 'DebtCurrent'],
+  debtCur: ['LongTermDebtCurrent', 'DebtCurrent', 'ConvertibleNotesPayableCurrent', 'LineOfCredit', 'ShortTermBorrowings'],
 };
 // zzz1210 — foreign filers (20-F, IFRS: Spotify, ASML …) tag ifrs-full in their own currency
 const IFRS: Record<string, string[]> = {
@@ -119,7 +119,7 @@ export function usAnnualRows(facts: any, n = 10, toUsd = 1): AnnualRow[] {
   const out: AnnualRow[] = kept.slice(-n).map((end) => {
     const c = cfo.get(end), x = cap.get(end);
     const d = debt.get(end), dn = debtN.get(end), dc = debtC.get(end);
-    const totalDebt = fin(d) ? d : fin(dn) ? dn + (fin(dc) ? dc : 0) : null;
+    const totalDebt = fin(d) ? d : fin(dn) ? dn + (fin(dc) ? dc : 0) : fin(dc) ? dc : null;
     return {
       end, label: `FY${end.slice(0, 4)}`,
       revenue: M(rev.get(end)), netIncome: M(ni.get(end)), eps: fin(eps.get(end)) ? Math.round(eps.get(end)! * fx * 100) / 100 : null,

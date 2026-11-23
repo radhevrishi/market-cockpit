@@ -267,7 +267,7 @@ export function assembleInRow(t: string, name: string, latest: BhavDay, bhav: Bh
     ...rowScanFields(tf, { px: close, src: rq.src, at: rq.at ?? latest.date }),   // zzz993 (MC-01) — scan close vs NSE's close
     ...rowTvFields(tf, 'IN'),   // zzz984 — the owner's TradingView script fields
     ...deliveryFields(bhav, t),   // zzz1046a — delivery % from NSE's price files
-    ...(f?.fcfPsG != null ? { fcfPsG: f.fcfPsG } : {}),
+    ...(f?.fcfPsG != null ? { fcfPsG: f.fcfPsG, fcfPsY: 3 } : {}),
     ...(f?.fcfmFY != null ? { fcfmTTM: f.fcfmFY, r40: ruleOf40(f.revQYoY, f.fcfmFY), ...(f.fcfmAt ? { fcfmAt: f.fcfmAt } : {}) } : {}),
     earnD: earnIso ? Math.floor(Date.parse(`${earnIso.slice(0, 10)}T00:00:00Z`) / DAY) : null,
     roeTTM: f?.roeTTM ?? null, roeFY: f?.roeFY ?? null, roceTTM: f?.roceTTM ?? null, roceFY: f?.roceFY ?? null, ...(f?.roceP != null ? { roceP: f.roceP } : {}), nmTTM: f?.nmTTM ?? null, ptmTTM: f?.ptmTTM ?? null,

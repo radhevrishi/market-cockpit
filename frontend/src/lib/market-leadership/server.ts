@@ -8,7 +8,7 @@ import { rsRanks } from '@/lib/screener/rs-rank';
 import { kvGet, kvSet } from '@/lib/kv';
 import { benchRead, breadthOf, emergingNames, leaderHealth, pickLeaders, postureOf, recoveryChecks, regimeOf, type Bars, type BenchRead, type Breadth, type Emerging, type Leader, type LeaderHealth, type Mkt, type PostureRead, type RegimeRead, type Row, type Check } from './core';
 
-export const LR_VERSION = 2;
+export const LR_VERSION = 3;
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36';
 
 export const BENCHES: Record<Mkt, Array<{ symbol: string; name: string; primary?: boolean }>> = {
