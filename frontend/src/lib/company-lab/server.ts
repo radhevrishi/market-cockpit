@@ -51,7 +51,7 @@ async function snapRow(m: LabMarket, t: string): Promise<any | null> {
   }
   return row;
 }
-type Ann = { rows: AnnualRow[]; source: string; sharesNow: number | null; q?: QIn; notes?: string[]; name?: string | null; shpQ?: any };
+type Ann = { rows: AnnualRow[]; source: string; sharesNow: number | null; q?: QIn; notes?: string[]; name?: string | null; shpQ?: any; industry?: string | null; roce?: number | null; lastResult?: string | null };
 async function annual(m: LabMarket, t: string, fresh = false): Promise<Ann> {
   if (m === 'US') {
     const { tickerToCik, companyFacts, sharesOutstandingFromFacts, forgetCompanyFacts } = await import('../us-edgar');
@@ -108,16 +108,17 @@ async function annual(m: LabMarket, t: string, fresh = false): Promise<Ann> {
   if (!raw) return { rows: [], source: 'screener.in page not available', sharesNow: null };
   const sharesNow = raw.price && raw.mcapCr ? raw.mcapCr / raw.price : null;   // crore shares
   let q: QIn | undefined; try { q = inQuarterInputs(raw); } catch { q = undefined; }
-  return { rows: inAnnualRows(raw), source: 'screener.in company page (yearly profit & loss, cash flow, balance sheet)', sharesNow, q, notes: freshNote ? [freshNote] : [], name: raw?.name ?? null, shpQ: raw?.shpQ ?? null };
+  return { rows: inAnnualRows(raw), source: 'screener.in company page (yearly profit & loss, cash flow, balance sheet)', sharesNow, q, notes: freshNote ? [freshNote] : [], name: raw?.name ?? null, shpQ: raw?.shpQ ?? null,
+    industry: raw?.industry ?? raw?.sector ?? null, roce: typeof raw?.roce === 'number' ? raw.roce : null, lastResult: Array.isArray(raw?.ann) && raw.ann[0]?.d ? String(raw.ann[0].d).slice(0, 10) : null };
 }
-interface Daily { t: string[]; c: number[]; h: number[]; l: number[]; v: number[] }
+interface Daily { t: string[]; c: number[]; h: number[]; l: number[]; v: number[]; name?: string | null }
 const isoOf = (x: number) => new Date(x < 1e11 ? x * 1000 : x).toISOString().slice(0, 10);
 async function daily(m: LabMarket, t: string): Promise<Daily | null> {
   const { getDailySeries } = await import('../chart-data');
   const s = await withTimeout(getDailySeries(m, t, '10y'), 25_000, null);
   const bars = (s?.bars || []).filter((b) => [b.c, b.h, b.l].every((x) => Number.isFinite(x) && x > 0));
   if (!bars.length) return null;
-  return { t: bars.map((b) => isoOf(b.t)), c: bars.map((b) => b.c), h: bars.map((b) => b.h), l: bars.map((b) => b.l), v: bars.map((b) => b.v || 0) };
+  return { t: bars.map((b) => isoOf(b.t)), c: bars.map((b) => b.c), h: bars.map((b) => b.h), l: bars.map((b) => b.l), v: bars.map((b) => b.v || 0), name: s?.name ?? null };
 }
 /** The benchmark (S&P 500 / Nifty 50) daily closes, 2 years, kept 1 hour. */
 const benchMemo = new Map<LabMarket, { at: number; d: { t: string[]; c: number[] } | null }>();
@@ -194,20 +195,35 @@ async function labCardIn(m: LabMarket, t: string, fresh = false): Promise<LabCar
   let st = typeof row?.twSt === 'number' ? row.twSt : typeof row?.stage === 'number' ? row.stage : null;
   // zzz1299 — a company missing from the screener snapshot (e.g. BSE-only) gets its weekly stage, moving averages and
   // 52-week high worked out from its own daily prices, so the Stage / Entry columns are not blank
-  let ownRow: any = null;
-  if (!row && d && d.c.length >= 60) {
+  // zzz1300 — figures the snapshot lacks (BSE-only names, new listings, missing averages) are worked out from the company's own
+  // daily prices, field by field; P/E and ROE from the last full year when the snapshot has none
+  let ownRow: any = row ? { ...row } : null;
+  if (d && d.c.length >= 50) {
     const avg = (n: number) => (d.c.length >= n ? d.c.slice(-n).reduce((a, b) => a + b, 0) / n : null);
-    ownRow = { px: d.c[d.c.length - 1], sma50: avg(50), sma150: avg(150), sma200: avg(200), hi52: Math.max(...d.c.slice(-250)) };
-    try {
-      const { stageFromDaily } = await import('../stage-analysis');
-      const sw = stageFromDaily({ d: d.t, c: d.c, h: (d as any).h, l: (d as any).l, v: (d as any).v }, null, { market: m === 'US' ? 'US' : 'IN' });
-      if (sw?.stage != null) { st = sw.stage; notes.push('stage, moving averages and 52-week high worked out from this company\'s own daily prices (it is not in the screener snapshot); no relative-strength rank'); }
-    } catch { /* stage stays unknown */ }
+    const o: any = ownRow ?? {};
+    const filled: string[] = [];
+    const put = (k: string, v: number | null, label: string) => { if (typeof o[k] !== 'number' && v != null && Number.isFinite(v)) { o[k] = v; filled.push(label); } };
+    put('px', d.c[d.c.length - 1], 'price');
+    put('sma50', avg(50), '50-day'); put('sma150', avg(150), '150-day'); put('sma200', avg(200), '200-day');
+    put('hi52', Math.max(...d.c.slice(-250)), '52-week high');
+    const lastY = [...ann.rows].reverse().find((r) => typeof r.netIncome === 'number');
+    if (cap != null && lastY?.netIncome != null && lastY.netIncome > 0) put('pe', cap / lastY.netIncome, `P/E (on ${lastY.label} profit)`);
+    if (lastY?.netIncome != null && typeof (lastY as any).equity === 'number' && (lastY as any).equity > 0) put('roeFY', (lastY.netIncome / (lastY as any).equity) * 100, `ROE (${lastY.label})`);
+    if (typeof o.roceTTM !== 'number' && typeof o.roceFY !== 'number' && typeof ann.roce === 'number') { o.roceFY = ann.roce; filled.push('ROCE (screener.in page)'); }
+    if (st == null && d.c.length >= 200) {
+      try {
+        const { stageFromDaily } = await import('../stage-analysis');
+        const sw = stageFromDaily({ d: d.t, c: d.c, h: d.h, l: d.l, v: d.v }, null, { market: m === 'US' ? 'US' : 'IN' });
+        if (sw?.stage != null) { st = sw.stage; filled.push('weekly stage'); }
+      } catch { /* stage stays unknown */ }
+    }
+    ownRow = o;
+    if (filled.length) notes.push(`${row ? 'not in the screener snapshot for this company' : 'not in the screener snapshot'} — worked out here: ${filled.join(', ')}${row ? '' : '; no relative-strength rank'}`);
   }
   const prices: Array<{ t: string; c: number }> = [];
   if (d) d.c.forEach((c, i) => { if ((d.c.length - 1 - i) % 5 === 0) prices.push({ t: d.t[i], c }); });
   const card: LabCard = {
-    market: m, ticker: t, ok: true, name: row?.n ?? ann.name ?? null, industry: row?.ind ?? row?.sec ?? null, cap, price: typeof row?.px === 'number' ? row.px : d ? d.c[d.c.length - 1] : null,
+    market: m, ticker: t, ok: true, name: row?.n ?? ann.name ?? d?.name ?? null, industry: row?.ind ?? row?.sec ?? ann.industry ?? null, cap, price: typeof row?.px === 'number' ? row.px : d ? d.c[d.c.length - 1] : null,
     currency: cur, unit,
     listedDays: typeof row?.ipoD === 'number' ? Math.floor(Date.now() / 86_400_000) - row.ipoD : null,
     stage: { st, weeks: row?.twWk ?? null, health: row?.twH ?? null, mrs: row?.mrs ?? null, rsR: row?.rsR ?? null, tt: row?.tt ?? null },
@@ -224,7 +240,7 @@ async function labCardIn(m: LabMarket, t: string, fresh = false): Promise<LabCar
   const e0 = eps[Math.max(0, eps.length - 4)], e1 = eps[eps.length - 1];
   const yrs = eps.length - 1 - Math.max(0, eps.length - 4);
   const epsCagr3 = e0 && e1 && yrs > 0 && e0.eps! > 0 && e1.eps! > 0 ? Math.round((Math.pow(e1.eps! / e0.eps!, 1 / yrs) - 1) * 1000) / 10 : null;
-  card.extras = labExtras({ row: row ?? ownRow, epsCagr3, lastResult: rec?.resultDate ?? null, guidanceUp: rec?.guidanceUp ?? null, shpQ: ann.shpQ ?? null, stage: st, rsRatio: rs?.ratio ?? null });
+  card.extras = labExtras({ row: ownRow ?? row, epsCagr3, lastResult: rec?.resultDate ?? ann.lastResult ?? null, guidanceUp: rec?.guidanceUp ?? null, shpQ: ann.shpQ ?? null, stage: st, rsRatio: rs?.ratio ?? null });
   if (card.extras.stageCheck.text) card.notes = [...(card.notes || []), card.extras.stageCheck.text];
   return card;
 }

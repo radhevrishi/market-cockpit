@@ -304,7 +304,7 @@ export function dilution(rows: AnnualRow[]): QuarterReport['dilution'] {
   const perYear = r1((Math.pow(last.v / first.v, 1 / yrs) - 1) * 100);
   const est = rows.some((r) => r.shares == null && r.sharesEst != null);
   // profit ÷ EPS breaks on a bonus issue / split / listing (screener.in does not restate old EPS): a jump of 60%+ is not read as dilution
-  if (est && Math.abs(pct) >= 60) return { pct: null, years: yrs, perYear: null, text: `share count estimate jumped ${pct > 0 ? '+' : ''}${pct}% ${first.l} → ${last.l} — likely a bonus issue, split or listing (profit ÷ EPS), not read as dilution` };
+  if (est && Math.abs(pct) >= 60) return { pct: null, years: yrs, perYear: null, text: `share count estimate ${pct > 0 ? `jumped +${pct}%` : `fell ${Math.abs(pct)}%`} ${first.l} → ${last.l} — likely a bonus issue, split or listing (profit ÷ EPS), not read as dilution` };
   return { pct, years: yrs, perYear, text: `${pct > 0 ? '+' : ''}${pct}% shares ${first.l} → ${last.l} (${perYear > 0 ? '+' : ''}${perYear}% a year)${est ? ' — estimated from profit ÷ EPS' : ''}${pct >= 10 ? ' · diluting' : pct <= -3 ? ' · buying back' : ''}` };
 }
 export function cfoPat(rows: AnnualRow[]): QuarterReport['cfoPat'] {
