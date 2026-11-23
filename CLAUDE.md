@@ -4397,3 +4397,12 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   "All shortcuts". Sidebar favourites migrate once to the hub homes (`mc.navFavourites.hubs.v1`, old list kept in
   `mc.navFavourites.v1.before-hubs`). Wiring tests read `__tests__/fixtures/nav-src.ts` (DashboardClient + nav-hubs + hub links
   written as sidebar entries). A new page must be added to a hub (test zzz1294-nav-hubs checks old pages and favourites).
+- zzz1295 (23 Nov): (a) STAGE LAG at the source (lib/stage-analysis.ts): a confirmed Stage 2 whose weekly close is 8%+ under the
+  30-week line leaves Stage 2 even while the line still rises (3, or 4 when also under the 13-week low and 15%+ under) — NBIS
+  crashed to half its 30-week average and was still "Stage 2". SETUP_VERSION 6 (stored setups re-read). (b) Company Lab extras
+  (`lib/company-lab/extras.ts`, card `extras`): trailing P/E, PEG (TTM EPS growth, else 3-year EPS CAGR; no forward P/E — no
+  estimates kept), EV/sales, ROCE (TTM + last year vs year before), ROE, % from 50-day / 30-week / 52-week high, last result +
+  next result ESTIMATED as +91 days, guidance raised in 120 days (intel_event), India promoter % + 4-quarter change + FII+DII
+  (raw.shpQ; pledge not in data). Stage check: Stage 2 5%+ under the 30-week line this week = broken (score treats as Stage 3,
+  cap 65); Stage 2 with RS vs index < 1 = lagging (counts 60 not 100). Score now Growth 30 · Price 20 · Margin 10 · Safety 20
+  (+ promoter selling) · Capital efficiency 10 · Valuation & entry 10. New columns + layout "Valuation & entry".

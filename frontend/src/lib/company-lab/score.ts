@@ -14,7 +14,9 @@
 // pillar: it does not lift a score much (winners are often cash-hungry) but serious problems pull it down.
 // This is what winners looked like at the end of their run, not a forward test — our data keeps no point-in-time history.
 //
-//   Growth 35 · Price strength 25 · Margin momentum 15 · Safety (cash, debt, squeeze, dilution) 25
+//   Growth 30 · Price strength 20 · Margin momentum 10 · Safety (cash, debt, squeeze, dilution, promoter selling) 20 ·
+//   Capital efficiency (ROCE level and direction, ROE) 10 · Valuation & entry (PEG / P/E, distance from the 50-day line) 10
+//   (zzz1295 — the last two added at the owner's request; India winners had ROCE 15%+ a little more often, 1.13×)
 // Balance rules (one strong pillar cannot hide a broken one):
 //   • growth pillar under 30 → total at most 60     • safety pillar under 30 → total at most 65
 //   • Stage 4 (downtrend) → total at most 55        • fewer than half the inputs known → pulled halfway to 50, said so
@@ -37,8 +39,12 @@ export interface ScoreInput {
   fcfPassed: number; fcfKnown: number; fcfM: number | null; cfoPat: number | null; de: number | null;
   squeeze: 'Low' | 'Watch' | 'High' | 'Unknown' | null; squeezeCombo?: boolean; dilution: number | null;
   stage: number | null; tt: number | null; rs: number | null;
+  /** zzz1295 */
+  rsRatio?: number | null; stageFlag?: 'broken' | 'lagging' | null; promChg?: number | null;
+  roce?: number | null; roceFY?: number | null; rocePrev?: number | null; roe?: number | null;
+  pe?: number | null; peg?: number | null; ext50?: number | null;
 }
-export interface Pillar { id: 'growth' | 'price' | 'margin' | 'safety'; label: string; weight: number; score: number | null; known: number; total: number; why: string[] }
+export interface Pillar { id: 'growth' | 'price' | 'margin' | 'safety' | 'capital' | 'value'; label: string; weight: number; score: number | null; known: number; total: number; why: string[] }
 export interface LabScore { score: number | null; grade: 'A' | 'B' | 'C' | 'D' | '—'; pillars: Pillar[]; caps: string[]; coverage: number; summary: string }
 
 function pillar(id: Pillar['id'], label: string, weight: number, parts: Array<{ v: number | null; w: number; why: string }>): Pillar {
@@ -56,7 +62,7 @@ export function labScore(x: ScoreInput): LabScore {
   const tr = x.accel === 'accelerating' ? 90 : x.accel === 'steady' ? 60 : x.accel === 'uneven' ? 45 : x.accel === 'decelerating' ? 30 : null;
   const r40 = fin(x.r40) ? ramp(x.r40, [[-20, 0], [0, 20], [20, 50], [40, 80], [60, 100]]) : null;
   const revY = revQ == null && fin(x.revY) ? ramp(x.revY, [[-20, 0], [0, 15], [10, 40], [20, 60], [30, 75], [50, 90]]) : null;
-  const growth = pillar('growth', 'Growth', 35, [
+  const growth = pillar('growth', 'Growth', 30, [
     { v: revQ, w: 3, why: `revenue ${fin(x.revQ) ? `${x.revQ > 0 ? '+' : ''}${x.revQ.toFixed(0)}%` : '—'} (quarter)${x.revQLowBase ? ', low base' : ''}` },
     { v: revY, w: 3, why: `revenue ${fin(x.revY) ? `${x.revY > 0 ? '+' : ''}${x.revY.toFixed(0)}%` : '—'} (year)` },
     { v: eps, w: 3, why: x.epsSwing ? `EPS ${x.epsSwing.replace(/-/g, ' ')}` : `EPS ${fin(x.epsG) ? `${x.epsG > 0 ? '+' : ''}${x.epsG.toFixed(0)}%` : '—'} (year)` },
@@ -64,9 +70,11 @@ export function labScore(x: ScoreInput): LabScore {
     { v: r40, w: 2, why: `Rule of 40 ${fin(x.r40) ? x.r40.toFixed(0) : '—'}` },
   ]);
   // PRICE STRENGTH — stage, trend template, RS rating
-  const st = x.stage === 2 ? 100 : x.stage === 1 ? 45 : x.stage === 3 ? 30 : x.stage === 4 ? 0 : null;
-  const price = pillar('price', 'Price strength', 25, [
-    { v: st, w: 4, why: `Stage ${x.stage ?? '—'}` },
+  // zzz1295 — a Stage 2 that has broken under its 30-week line counts as Stage 3; one lagging its index counts 60, not 100
+  const stg = x.stageFlag === 'broken' ? 3 : x.stage;
+  const st = stg === 2 ? (x.stageFlag === 'lagging' ? 60 : 100) : stg === 1 ? 45 : stg === 3 ? 30 : stg === 4 ? 0 : null;
+  const price = pillar('price', 'Price strength', 20, [
+    { v: st, w: 4, why: `Stage ${x.stage ?? '—'}${x.stageFlag === 'broken' ? ' (broken this week)' : x.stageFlag === 'lagging' ? ' (lagging the index)' : ''}` },
     { v: fin(x.tt) ? (x.tt / 6) * 100 : null, w: 3, why: `trend template ${x.tt ?? '—'}/6` },
     { v: fin(x.rs) ? x.rs : null, w: 3, why: `RS ${fin(x.rs) ? Math.round(x.rs) : '—'}` },
   ]);
@@ -74,7 +82,7 @@ export function labScore(x: ScoreInput): LabScore {
   const omLvl = fin(x.om) ? ramp(x.om, [[-10, 0], [0, 25], [10, 55], [20, 80], [30, 95]]) : null;
   const omMove = fin(x.omChg) ? ramp(x.omChg, [[-5, 0], [-1, 35], [1, 60], [3, 85], [6, 100]]) : null;
   const gmMove = fin(x.gmChg) ? ramp(x.gmChg, [[-5, 10], [-1, 40], [1, 60], [4, 90]]) : null;
-  const margin = pillar('margin', 'Margin momentum', 15, [
+  const margin = pillar('margin', 'Margin momentum', 10, [
     { v: omLvl, w: 2, why: `operating margin ${fin(x.om) ? `${x.om.toFixed(0)}%` : '—'}` },
     { v: omMove, w: 3, why: `operating margin move ${fin(x.omChg) ? `${x.omChg > 0 ? '+' : ''}${x.omChg.toFixed(1)} pts` : '—'}` },
     { v: gmMove, w: 1, why: `gross margin move ${fin(x.gmChg) ? `${x.gmChg > 0 ? '+' : ''}${x.gmChg.toFixed(1)} pts` : '—'}` },
@@ -85,14 +93,32 @@ export function labScore(x: ScoreInput): LabScore {
   const de = fin(x.de) ? ramp(x.de, [[0, 90], [0.5, 80], [1, 55], [1.5, 30], [2.5, 5]]) : null;
   const sq = x.squeeze === 'Low' ? 85 : x.squeeze === 'Watch' ? 55 : x.squeeze === 'High' ? (x.squeezeCombo ? 5 : 20) : null;
   const dil = fin(x.dilution) ? ramp(x.dilution, [[-5, 95], [2, 85], [8, 55], [15, 25], [30, 0]]) : null;
-  const safety = pillar('safety', 'Safety', 25, [
+  const prm = fin(x.promChg) ? ramp(x.promChg, [[-6, 5], [-3, 25], [-1, 60], [0, 85], [2, 90]]) : null;
+  const safety = pillar('safety', 'Safety', 20, [
+    { v: prm, w: 2, why: `promoter ${fin(x.promChg) ? `${x.promChg > 0 ? '+' : ''}${x.promChg.toFixed(1)} pts in a year` : '—'}` },
     { v: fcfC, w: 2, why: `FCF checks ${x.fcfPassed}/${x.fcfKnown}` },
     { v: cp, w: 2, why: `CFO/PAT ${fin(x.cfoPat) ? x.cfoPat.toFixed(2) : '—'}` },
     { v: de, w: 2, why: `debt ÷ equity ${fin(x.de) ? x.de.toFixed(2) : '—'}` },
     { v: sq, w: 3, why: `cash squeeze ${x.squeeze ?? '—'}${x.squeezeCombo ? ' ⚡' : ''}` },
     { v: dil, w: 2, why: `dilution ${fin(x.dilution) ? `${x.dilution > 0 ? '+' : ''}${x.dilution.toFixed(0)}%` : '—'}` },
   ]);
-  const pillars = [growth, price, margin, safety];
+  // CAPITAL EFFICIENCY — ROCE level and direction, ROE
+  const roceL = fin(x.roce) ? ramp(x.roce, [[0, 10], [10, 40], [15, 60], [20, 75], [30, 92]]) : null;
+  const roceD = fin(x.roceFY) && fin(x.rocePrev) ? ramp(x.roceFY - x.rocePrev, [[-8, 10], [-3, 35], [0, 60], [3, 80], [8, 95]]) : null;
+  const roeL = fin(x.roe) ? ramp(x.roe, [[0, 10], [10, 45], [15, 65], [25, 90]]) : null;
+  const capital = pillar('capital', 'Capital efficiency', 10, [
+    { v: roceL, w: 3, why: `ROCE ${fin(x.roce) ? `${x.roce.toFixed(0)}%` : '—'}` },
+    { v: roceD, w: 2, why: `ROCE ${fin(x.roceFY) && fin(x.rocePrev) ? `${x.rocePrev.toFixed(0)}% → ${x.roceFY.toFixed(0)}%` : 'trend —'}` },
+    { v: roeL, w: 1, why: `ROE ${fin(x.roe) ? `${x.roe.toFixed(0)}%` : '—'}` },
+  ]);
+  // VALUATION & ENTRY — PEG (else P/E) and how far price is from its 50-day line (extended = worse entry)
+  const val = fin(x.peg) ? ramp(x.peg, [[0.5, 95], [1, 85], [1.5, 70], [2.5, 40], [4, 15]]) : fin(x.pe) ? ramp(x.pe, [[10, 80], [25, 65], [50, 40], [100, 15]]) : null;
+  const ent = fin(x.ext50) ? ramp(x.ext50, [[-15, 35], [-5, 60], [0, 80], [10, 90], [20, 70], [35, 35], [60, 10]]) : null;
+  const value = pillar('value', 'Valuation & entry', 10, [
+    { v: val, w: 3, why: fin(x.peg) ? `PEG ${x.peg.toFixed(2)}` : `P/E ${fin(x.pe) ? x.pe.toFixed(0) : '—'}` },
+    { v: ent, w: 2, why: `${fin(x.ext50) ? `${x.ext50 > 0 ? '+' : ''}${x.ext50.toFixed(0)}%` : '—'} from the 50-day line` },
+  ]);
+  const pillars = [growth, price, margin, safety, capital, value];
   const known = pillars.filter((p) => p.score != null);
   if (!known.length) return { score: null, grade: '—', pillars, caps: [], coverage: 0, summary: 'not enough figures for a score' };
   const tw = known.reduce((a, p) => a + p.weight, 0);
@@ -102,6 +128,7 @@ export function labScore(x: ScoreInput): LabScore {
   if (growth.score != null && growth.score < 30) cap(60, 'growth weak — capped at 60');
   if (safety.score != null && safety.score < 30) cap(65, 'cash / balance sheet weak — capped at 65');
   if (x.stage === 4) cap(55, 'Stage 4 downtrend — capped at 55');
+  if (x.stageFlag === 'broken') cap(65, 'Stage 2 broken this week (under the 30-week line) — capped at 65');
   const inputs = pillars.reduce((a, p) => a + p.total, 0), have = pillars.reduce((a, p) => a + p.known, 0);
   const coverage = Math.round((have / inputs) * 100) / 100;
   if (coverage < 0.5) { s = 50 + (s - 50) * 0.5; caps.push(`only ${have} of ${inputs} inputs known — pulled toward 50`); }

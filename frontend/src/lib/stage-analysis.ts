@@ -130,7 +130,7 @@ export const STAGE_MEANING: Record<Stage, string> = {
 };
 export const STAGE_TOOLTIP = 'Stage Analysis (TheWrap method): our own version. Stages follow Weinstein\'s rules on the 30-week average (its 5-week slope, the 13-week closing range, two weekly closes to confirm a change); the 10-point SATA score follows the published description of Tar_H\'s TheWrap Stage Analysis, with Mansfield RS against the S&P 500 (US) or Nifty 50 (India). Not the original script; readings can differ from TradingView.';
 /** zzz1023 — the method's settings (exported for the banner and the tests). */
-export const STAGE_RULES = { slopeWeeks: 5, flatPct: 1.0, fastPct: 2.0, confirmWeeks: 2, crossWeeks: 10, extendedPct: 20, sataMin: 5, youngWeeks: 13 } as const;
+export const STAGE_RULES = { slopeWeeks: 5, flatPct: 1.0, fastPct: 2.0, confirmWeeks: 2, crossWeeks: 10, extendedPct: 20, sataMin: 5, youngWeeks: 13, deepBreakPct: 8, crashPct: 15 } as const;
 
 const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const r1 = (v: number) => Math.round(v * 10) / 10;
@@ -218,6 +218,12 @@ function changeAsked(cur: Stage | null, prev: Stage | null, young: boolean, x: {
   const breakdown = close < lo13 && close < ma30 && (cur === 1 ? slope === 'falling' : slope !== 'rising');
   if (cur !== 2 && breakout) return 2;
   if (cur !== 4 && breakdown) return 4;
+  // zzz1295 — a crash UNDER a 30-week average that is still rising (the average lags a sharp fall: NBIS −50% under it,
+  // APLAPOLLO −17%) never left Stage 2, because both exits above required the slope to stop rising. Weinstein reads a
+  // stock 8%+ under its 30-week line as topping, and one that has also broken its 13-week low 15%+ under the line as a
+  // Stage 4 decline, whatever the slope. Still two weekly closes to confirm, like every change.
+  if (cur === 2 && close < ma30 * (1 - STAGE_RULES.deepBreakPct / 100)) return close < lo13 && close < ma30 * (1 - STAGE_RULES.crashPct / 100) ? 4 : 3;
+  if (cur === 3 && close < lo13 && close < ma30 * (1 - STAGE_RULES.crashPct / 100)) return 4;
   if (cur === 2) {
     // a fresh breakout that falls back under a flat average has failed: back to the base (or the top) it came from
     if (young && close < ma30 && slope !== 'rising') return prev === 3 ? 3 : 1;

@@ -186,6 +186,30 @@ function takeCapexDebt(y: LabCard['years'], india: boolean): string {
 }
 
 /** zzz1293 — the overall score with its four parts */
+// zzz1295 — valuation · capital efficiency · entry · catalysts · ownership, one line each
+function ExtrasStrip({ c }: { c: LabCard }) {
+  const x = c.extras;
+  if (!x) return null;
+  const f = (v: number | null, suf = '', d = 0) => (v == null ? '—' : `${v > 0 && suf === '%' && d < 0 ? '+' : ''}${v.toFixed(Math.abs(d))}${suf}`);
+  const item = (k: string, v: string, tip?: string, col?: string) => (
+    <span title={tip} style={{ fontSize: 12 }}><span style={{ color: R.faint }}>{k} </span><b style={{ color: col || R.text }}>{v}</b></span>
+  );
+  return (
+    <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', border: `1px solid ${R.border}`, borderRadius: 8, padding: '6px 10px' }}>
+      {item('P/E', f(x.pe), 'trailing — no forward estimates kept')}
+      {item('PEG', x.peg == null ? '—' : x.peg.toFixed(2), x.pegFrom ?? '', x.peg == null ? undefined : x.peg <= 1 ? R.green : x.peg > 2.5 ? R.red : undefined)}
+      {item('ROCE', x.roce == null ? '—' : `${x.roce.toFixed(0)}%${x.roceFY != null && x.rocePrev != null ? ` (${x.rocePrev.toFixed(0)}→${x.roceFY.toFixed(0)})` : ''}`)}
+      {item('ROE', f(x.roe, '%'))}
+      {item('vs 50-day', f(x.ext50, '%', -0), 'over +25% = extended, wait for a base', x.ext50 != null && x.ext50 > 25 ? R.red : undefined)}
+      {item('vs 52-wk high', f(x.fromHigh, '%'))}
+      {item('Next result', x.daysToNext == null ? '—' : x.daysToNext <= 0 ? 'due now (est.)' : `~${x.daysToNext} days (est.)`, x.lastResult ? `last ${x.lastResult}` : '', x.daysToNext != null && x.daysToNext <= 10 ? R.amber : undefined)}
+      {x.guidanceUp ? item('Guidance', `raised ${x.guidanceUp}`, '', R.green) : null}
+      {x.prom != null ? item('Promoter', `${x.prom.toFixed(1)}%${x.promChg != null ? ` (${x.promChg > 0 ? '+' : ''}${x.promChg.toFixed(1)} in a year)` : ''}`, 'pledge not in our data', x.promChg != null && x.promChg <= -1 ? R.red : undefined) : null}
+      {x.stageCheck.text ? item('Stage check', x.stageCheck.flag === 'broken' ? 'broken' : 'lagging', x.stageCheck.text, x.stageCheck.flag === 'broken' ? R.red : R.amber) : null}
+    </div>
+  );
+}
+
 function ScoreStrip({ c }: { c: LabCard }) {
   const s = scoreOf(c);
   return (
@@ -248,6 +272,7 @@ function Card({ c, onRemove }: { c: LabCard; onRemove: () => void }) {
         {c.record && c.record.guidance > 0 && chip(`Guidance on file ${c.record.guidance}`, R.cyan, 'Active company guidance in the guidance universe')}
       </div>
       <ScoreStrip c={c} />
+      <ExtrasStrip c={c} />
       <div style={{ fontSize: 14.5, lineHeight: 1.5 }}>{c.summary}</div>
       {!!c.notes?.length && <div style={{ fontSize: 12.5, color: R.amber, lineHeight: 1.45 }}>{c.notes.map((n) => <div key={n}>ⓘ {n}</div>)}</div>}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 13 }}>

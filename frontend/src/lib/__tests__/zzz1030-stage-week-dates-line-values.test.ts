@@ -92,7 +92,9 @@ for (const tk of ['HAL', 'AVAV']) {
     for (const ch of changes) {
       assert.equal(ch.i, ch.beganI + 1, 'two weekly closes in a row');
       assert.equal(r.weeks[ch.beganI].stage, ch.from, `${tk} ${ch.began}: began week reads the old stage`);
-      assert.equal(r.weeks[ch.beganI].pending, ch.to, `${tk} ${ch.began}: … with the change pending`);
+      // zzz1295 — a run may step on (asked 3 the first week, 4 the next): the began week shows the step it asked for then
+      const pd = r.weeks[ch.beganI].pending;
+      assert.ok(pd === ch.to || (pd === 3 && ch.to === 4) || (pd === 1 && ch.to === 2), `${tk} ${ch.began}: … with the change pending (${pd} → ${ch.to})`);
       assert.equal(r.weeks[ch.i].stage, ch.to);
       assert.equal(r.weeks[ch.i].weeks, 1, 'weeks count from the confirmed week');
       assert.equal(ch.confirmedEnd, weeks[ch.i].last, 'confirmed = the last session of that week, from the bars');

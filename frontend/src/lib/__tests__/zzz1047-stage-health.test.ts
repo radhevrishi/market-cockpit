@@ -53,12 +53,14 @@ test('the engine records the drop from the stage\'s highest weekly close', () =>
     weeks.push({ wk: new Date(t).toISOString().slice(0, 10), o: c, h: c * 1.01, l: c * 0.99, c, v: 1000 });
     t += 7 * 86_400_000;
   }
-  const r = stageAnalysis(weeks.slice(0, 110));
+  const r = stageAnalysis(weeks.slice(0, 107));
   const last = r.last!;
-  // still a confirmed Stage 2 by the stage rules (the 30-week average is still rising) while 30%+ below its high — the lag this fixes
+  // still a confirmed Stage 2 (the 30-week average is still rising) while ~25% below its high — health says weak
   assert.equal(last.stage, 2);
-  assert.ok(last.ddPct != null && last.ddPct < -30, `ddPct ${last.ddPct}`);
+  assert.ok(last.ddPct != null && last.ddPct < -20, `ddPct ${last.ddPct}`);
   assert.equal(stageHealth(last)!.level, 'weak');
+  // zzz1295 — once the fall takes it 8%+ under the 30-week line it leaves Stage 2 (two closes to confirm), then Stage 4
+  assert.notEqual(stageAnalysis(weeks.slice(0, 110)).last!.stage, 2);
   const hiWeek = r.weeks.find((w) => w.ddPct === 0 && w.stage === 2);
   assert.ok(hiWeek, 'a new stage high reads 0');
 });

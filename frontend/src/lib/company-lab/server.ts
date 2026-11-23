@@ -3,6 +3,7 @@
 // SEC company facts (USA yearly figures) / the kept screener.in page (India yearly figures), the daily price series (charts,
 // trend-template rules, breakout) and the company record (graded result, active guidance). Read-only; ≤ 8 companies a call;
 // answers kept 30 minutes per company.
+import { labExtras, type LabExtras } from './extras';
 import { fcfReport, yearPoints, trendRules, breakout, labSummary, rsCumulative, maSeries, stage2Verdict, type AnnualRow, type FcfReport, type LabMarket, type RsCum, type TrendRule, type YearPoint } from './core';
 import { usAnnualRows, inAnnualRows, businessBreak } from './annual';
 import { quarterReport, usQuarterInputs, inQuarterInputs, type QuarterReport, type QIn } from './quarterly';
@@ -17,7 +18,9 @@ export interface LabCard {
   rs: RsCum & { index: string };
   verdict: { all: boolean | null; trendAndRs: boolean | null; text: string };
   movedFrom?: LabMarket;   // asked under the other market, not found there
-  record: { tier: string | null; resultDate: string | null; guidance: number; events: number; summary: string[] } | null;
+  record: { tier: string | null; resultDate: string | null; guidance: number; events: number; summary: string[]; guidanceUp?: string | null } | null;
+  /** zzz1295 — valuation, capital efficiency, entry, catalysts, ownership, stage check (lib/company-lab/extras) */
+  extras?: LabExtras;
   summary: string; sources: string[]; builtAt: string;
   /** zzz1291 — Rule of 40, growth acceleration, margins, cash-squeeze check, dilution, cash conversion, debt ÷ equity */
   quarter?: QuarterReport;
@@ -48,7 +51,7 @@ async function snapRow(m: LabMarket, t: string): Promise<any | null> {
   }
   return row;
 }
-type Ann = { rows: AnnualRow[]; source: string; sharesNow: number | null; q?: QIn; notes?: string[]; name?: string | null };
+type Ann = { rows: AnnualRow[]; source: string; sharesNow: number | null; q?: QIn; notes?: string[]; name?: string | null; shpQ?: any };
 async function annual(m: LabMarket, t: string, fresh = false): Promise<Ann> {
   if (m === 'US') {
     const { tickerToCik, companyFacts, sharesOutstandingFromFacts, forgetCompanyFacts } = await import('../us-edgar');
@@ -105,7 +108,7 @@ async function annual(m: LabMarket, t: string, fresh = false): Promise<Ann> {
   if (!raw) return { rows: [], source: 'screener.in page not available', sharesNow: null };
   const sharesNow = raw.price && raw.mcapCr ? raw.mcapCr / raw.price : null;   // crore shares
   let q: QIn | undefined; try { q = inQuarterInputs(raw); } catch { q = undefined; }
-  return { rows: inAnnualRows(raw), source: 'screener.in company page (yearly profit & loss, cash flow, balance sheet)', sharesNow, q, notes: freshNote ? [freshNote] : [], name: raw?.name ?? null };
+  return { rows: inAnnualRows(raw), source: 'screener.in company page (yearly profit & loss, cash flow, balance sheet)', sharesNow, q, notes: freshNote ? [freshNote] : [], name: raw?.name ?? null, shpQ: raw?.shpQ ?? null };
 }
 interface Daily { t: string[]; c: number[]; h: number[]; l: number[]; v: number[] }
 const isoOf = (x: number) => new Date(x < 1e11 ? x * 1000 : x).toISOString().slice(0, 10);
@@ -148,7 +151,11 @@ async function record(t: string): Promise<LabCard['record']> {
     const r: any = await withTimeout(getCompanyRecord(t), 8_000, null);
     if (!r) return null;
     const res = r.results?.data || null;
-    return { tier: res?.tier ?? res?.now_tier ?? null, resultDate: res?.filing_date ?? null, guidance: Array.isArray(r.guidance?.data) ? r.guidance.data.length : 0, events: Array.isArray(r.events?.data) ? r.events.data.length : 0, summary: Array.isArray(r.summary) ? r.summary.slice(0, 4) : [] };
+    // zzz1295 — newest guidance RAISE in the last 120 days (archived guidance events)
+    const evs: any[] = Array.isArray(r.events?.data) ? r.events.data : [];
+    const up = evs.filter((e) => (/RAIS|UPGRAD/i.test(`${e?.event_type ?? ''} ${e?.headline ?? ''}`) || (Array.isArray(e?.changes) && e.changes.some((c: any) => /up|rais/i.test(String(c?.direction ?? ''))))) && !/LOWER|CUT|DOWNGRAD/i.test(`${e?.event_type ?? ''}`) && Date.now() - Date.parse(String(e?.event_date ?? e?.last_seen ?? '')) < 120 * 86_400_000)
+      .map((e) => String(e?.event_date ?? e?.last_seen ?? '').slice(0, 10)).sort().pop() ?? null;
+    return { tier: res?.tier ?? res?.now_tier ?? null, resultDate: res?.filing_date ?? null, guidance: Array.isArray(r.guidance?.data) ? r.guidance.data.length : 0, events: evs.length, summary: Array.isArray(r.summary) ? r.summary.slice(0, 4) : [], guidanceUp: up };
   } catch { return null; }
 }
 
@@ -199,6 +206,13 @@ async function labCardIn(m: LabMarket, t: string, fresh = false): Promise<LabCar
     quarter: quarterReport(ann.q ?? { basis: 'yearly', rev: [], gp: [], op: [], cfo: [], capex: [], cash: new Map(), debt: new Map(), recv: new Map() }, ann.rows),
     notes,
   };
+  // zzz1295 — EPS growth a year over 3 years (positive start and end only) for the PEG when the TTM figure is missing
+  const eps = ann.rows.filter((x) => typeof x.eps === 'number');
+  const e0 = eps[Math.max(0, eps.length - 4)], e1 = eps[eps.length - 1];
+  const yrs = eps.length - 1 - Math.max(0, eps.length - 4);
+  const epsCagr3 = e0 && e1 && yrs > 0 && e0.eps! > 0 && e1.eps! > 0 ? Math.round((Math.pow(e1.eps! / e0.eps!, 1 / yrs) - 1) * 1000) / 10 : null;
+  card.extras = labExtras({ row, epsCagr3, lastResult: rec?.resultDate ?? null, guidanceUp: rec?.guidanceUp ?? null, shpQ: ann.shpQ ?? null, stage: st, rsRatio: rs?.ratio ?? null });
+  if (card.extras.stageCheck.text) card.notes = [...(card.notes || []), card.extras.stageCheck.text];
   return card;
 }
 
