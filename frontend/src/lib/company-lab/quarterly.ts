@@ -173,6 +173,7 @@ export function quarterReport(q: QIn, rows: AnnualRow[]): QuarterReport {
   if (known.length < 2) accel = { state: 'unknown', text: 'needs two quarters with a year-earlier quarter', last: yoy.slice(-4) };
   else {
     accel = { ...accelOf(known.slice(-4)), last: yoy.slice(-4) };
+    accel.text += baseNote(points);
   }
   // FCF margin: last four quarters, else the latest full year
   let fcfMargin: number | null = null, fcfFrom = 'not known';
@@ -274,6 +275,28 @@ export function fmtIn(v: number): string { const a = Math.abs(v), s = v < 0 ? '�
 export function fmtUs(v: number): string { const a = Math.abs(v), s = v < 0 ? '−' : ''; return a >= 1e9 ? `${s}$${(a / 1e9).toFixed(2)}B` : a >= 1e6 ? `${s}$${(a / 1e6).toFixed(a >= 1e8 ? 0 : 1)}M` : `${s}$${Math.round(a / 1e3)}K`; }
 /** A change of 300%+ (or from almost nothing) is said in money, not as a percentage. */
 function bigMove(pc: number, before: number, now: number, f: (v: number) => string): string { return Math.abs(pc) >= 300 ? `${f(before)} → ${f(now)} in a year` : `${pctTxt(pc)} in a year`; }
+
+/**
+ * zzz1300 — context for the growth trend: a big quarter whose year-earlier quarter itself fell (weak base), and the
+ * last three quarters' revenue side by side (flat / rising / falling), so a "slowing" read can be checked by eye.
+ */
+export function baseNote(points: QPoint[]): string {
+  const parts: string[] = [];
+  const tail = points.slice(-4);
+  for (const p of tail) {
+    const i = points.indexOf(p), prev = i >= 4 ? points[i - 4] : null;
+    if (fin(p.revYoY) && p.revYoY! >= 30 && prev && fin(prev.revYoY) && prev.revYoY! <= -10) {
+      parts.push(`${p.label} ${pctTxt(p.revYoY)} came after ${prev.label} fell ${Math.abs(prev.revYoY!).toFixed(1)}% (weak base)`);
+    }
+  }
+  const r = points.slice(-3).map((p) => p.rev).filter(fin) as number[];
+  if (r.length === 3 && r[0] > 0) {
+    const ch = ((r[2] - r[0]) / r[0]) * 100;
+    const word = Math.abs(ch) < 5 ? 'about flat' : ch > 0 ? `up ${ch.toFixed(0)}%` : `down ${Math.abs(ch).toFixed(0)}%`;
+    parts.push(`revenue last 3 quarters ${r.map((x) => Math.round(x).toLocaleString('en-IN')).join(' → ')} (${word})`);
+  }
+  return parts.length ? ` · ${parts.join(' · ')}` : '';
+}
 
 /**
  * zzz1293 — the growth trend over the last four quarters' year-on-year growth (oldest → newest).

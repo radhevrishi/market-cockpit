@@ -12,3 +12,12 @@ test('zzz1300 — a share-count estimate that falls is worded "fell", never "jum
   assert.match(d.text, /fell 66\.7%/);
   assert.doesNotMatch(d.text, /jumped -/);
 });
+
+import { baseNote } from '../company-lab/quarterly';
+test('zzz1300 — growth trend says when a big quarter sat on a weak base, and shows the last 3 quarters', () => {
+  const rv = [113, 87, 101, 120, 137, 132, 132, 137], y = [0, -17.9, -7.3, 13.2, 21.2, 51.7, 30.7, 14.2];
+  const pts: any[] = rv.map((v, i) => ({ e: '', label: `Q${i}`, rev: v, revYoY: y[i], gm: null, om: null }));
+  const t = baseNote(pts);
+  assert.match(t, /Q5 \+51\.7% came after Q1 fell 17\.9% \(weak base\)/);
+  assert.match(t, /132 → 132 → 137 \(about flat\)/);
+});

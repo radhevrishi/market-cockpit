@@ -4435,3 +4435,12 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   daily prices (`stageFromDaily`, note on the card). Return on new capital: none when capital grew < 10% (small-base artefact,
   ADROITIND 286%), bounded ±100%. "Guidance raised" dates normalised (was "ug 14" from a Date string). Row reject button says "reject".
 
+- zzz1300 (23 Nov): Company Lab blanks — missing snapshot fields are filled from the company's own daily prices field by field (price,
+  50/150/200-day, 52-week high, weekly stage), P/E = market cap ÷ last full-year profit and ROE = profit ÷ equity when the snapshot has
+  none, ROCE from the screener.in page, last result date from the page's results announcements, name from Yahoo and industry from
+  screener.in for names outside the snapshot; card note lists what was worked out. Dilution text says "fell X%" (was "jumped -67%").
+  Growth trend text adds `baseNote` (a 30%+ quarter after a year-earlier fall of 10%+ = weak base; last 3 quarters' revenue side by
+  side). RACLGEAR checked: 21 → 52 → 31 → 14 is right (the 52 sat on a −18% Mar 25 quarter; revenue flat ₹132–137 Cr).
+  Daily Action Cockpit (/cockpit) redesigned: full width (≤ 1800 px), two columns (Act + Watch left; conflicts + FYI right), KPI strip
+  of 8, signals of one kind shown as compact tables (`group`, `name`, `note`, today's move `chg`, `held` dot) with show-all past 10;
+  entries split held vs bench. Signal logic unchanged.

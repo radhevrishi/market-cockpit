@@ -46,6 +46,12 @@ interface Signal {
   title: string;
   detail: string;
   href: string;
+  /** zzz1300 — table fields: company name, one-line note, today's move, held or bench */
+  name?: string;
+  note?: string;
+  chg?: number | null;
+  held?: boolean;
+  group?: string;          // rows with the same group sit in one table
 }
 
 const SEV_META: Record<Sev, { label: string; color: string; blurb: string }> = {
@@ -193,7 +199,8 @@ export default function CockpitPage() {
         priority: (isHeld ? 60 : 40) + (g.composite_score ? g.composite_score / 10 : 0),
         icon: strong ? '🟢' : weak ? '🔴' : '🟡',
         kind: 'REPORTED',
-        ticker: g.ticker || key,
+        ticker: g.ticker || key, name: g.company || undefined, group: 'Just reported (last 7 days)',
+        note: `${g.tier || 'graded'} · ${age === 0 ? 'today' : age + 'd ago'}${bits.length ? ' · ' + bits.join(' · ') : ''}${isHeld ? ' · you hold this' : ''}`,
         title: `${g.company || tk} reported — ${g.tier || 'graded'}${isHeld ? ' · you hold this' : ' · on your bench'}`,
         detail: `${age === 0 ? 'today' : age + 'd ago'} · ${bits.join(' · ') || 'graded'}${g.composite_score ? ` · score ${g.composite_score}` : ''}.`,
         href: `/earnings-opportunities?date=${g.filing_date}`,
@@ -215,7 +222,8 @@ export default function CockpitPage() {
         seenSoon.add(tk);
         sig.push({
           id: `soon-${tk}`, sev: 'watch', priority: 45 - Math.min(days, 14),
-          icon: '📅', kind: 'UPCOMING', ticker: it.symbol || tk,
+          icon: '📅', kind: 'UPCOMING', ticker: it.symbol || tk, name: it.company || undefined, group: 'Reporting in the next 14 days',
+          note: `${days === 0 ? 'today' : 'in ' + days + 'd'} · ${held.has(tk) ? 'you hold this' : 'on your bench'} · ${it.quarter || 'results'} ${d}`,
           title: `${it.company || tk} reports ${days === 0 ? 'today' : 'in ' + days + 'd'}`,
           detail: `${held.has(tk) ? 'You hold this' : 'On your bench'} · ${it.quarter || 'results'} board meeting ${d}. Prep before the print.`,
           href: '/earnings-hub',
@@ -251,7 +259,8 @@ export default function CockpitPage() {
           // Held-in-theme opportunities rank above pure new ones.
           themeAdds.push({
             id: `theme-add-${region}-${th.id}`, sev: 'info', priority: (yoursIn.length ? 30 : 20) + (th.conviction ? th.conviction / 10 : 0),
-            icon: '➕', kind: 'THEME',
+            icon: '➕', kind: 'THEME', group: 'Themes rotating in', name: `${th.emoji || ''} ${th.name}`.trim(),
+            note: `${region === 'india' ? '🇮🇳 India' : '🇺🇸 USA'} · ${th.verdict} · conviction ${th.conviction ?? '—'}/100${yoursIn.length ? ` · you hold ${yoursIn.join(', ')}` : ''}`,
             title: `${th.emoji || ''} ${th.name} rotating in — ${th.verdict}`,
             detail: `${region === 'india' ? '🇮🇳' : '🇺🇸'} conviction ${th.conviction ?? '—'}/100${yoursIn.length ? ` · you hold ${yoursIn.join(', ')}` : ' · new opportunity'}.`,
             href: `/multibagger?tab=theme-rotation&region=${region}`,
@@ -296,7 +305,8 @@ export default function CockpitPage() {
       const tk = norm(b.ticker);
       sig.push({
         id: `new-${tk}`, sev: 'info', priority: 15 + (b.composite_score ? b.composite_score / 12 : 0),
-        icon: '✨', kind: 'NEW IDEA', ticker: b.ticker,
+        icon: '✨', kind: 'NEW IDEA', ticker: b.ticker, name: b.company || undefined, group: 'New on your bench (last 7 days)',
+        note: `${b.tier}${b.composite_score ? ` · score ${b.composite_score}` : ''}${b.sector ? ` · ${b.sector}` : ''} · graded ${age === 0 ? 'today' : age + 'd ago'}`,
         title: `New on your bench: ${b.company || tk} — ${b.tier}`,
         detail: `Graded ${age === 0 ? 'today' : age + 'd ago'}${b.composite_score ? ` · score ${b.composite_score}` : ''}${b.sector ? ` · ${b.sector}` : ''}. Size it or pass.`,
         href: '/watchlists?tab=conviction',
@@ -321,7 +331,8 @@ export default function CockpitPage() {
         if (!isHeld && !isBench) continue;
         sig.push({
           id: `tech-${tk}`, sev: isHeld ? 'watch' : 'watch', priority: isHeld ? 52 : 48,
-          icon: '🎯', kind: 'ENTRY', ticker: tk,
+          icon: '🎯', kind: 'ENTRY', ticker: tk, name: benchByTicker.get(tk)?.company || heldMap.get(tk)?.company || heldMap.get(tk)?.name || undefined,
+          note: String(info.note || '').replace(/ — Qulla entry/i, ''), group: isHeld ? 'Entries on names you hold' : 'Entries on your bench (not held)',
           title: `${benchByTicker.get(tk)?.company || tk} is at a technical entry${isHeld ? ' (you hold this)' : ''}`,
           detail: `${info.market === 'IND' ? '🇮🇳' : '🇺🇸'} ${info.note}. ${isHeld ? 'Add on strength or hold.' : 'On your bench — a clean setup to start a position.'}`,
           href: `/multibagger?tab=technicals-${info.market === 'IND' ? 'ind' : 'usa'}`,
@@ -335,11 +346,19 @@ export default function CockpitPage() {
       if (chg == null || chg > -6) continue;
       sig.push({
         id: `drop-${tk}`, sev: chg <= -9 ? 'act' : 'watch', priority: 55 + Math.min(20, Math.abs(chg)),
-        icon: '📉', kind: 'MOVE', ticker: tk,
+        icon: '📉', kind: 'MOVE', ticker: tk, name: heldMap.get(tk)?.company || heldMap.get(tk)?.name || undefined,
         title: `${tk} is down ${Math.abs(chg).toFixed(1)}% today`,
         detail: `A sharp move on a name you hold. Check the news and your thesis before it becomes an emotional decision.`,
         href: `/news`,
       });
+    }
+
+    for (const s of sig) {
+      if (!s.ticker) continue;
+      const k = norm(s.ticker);
+      const q = quoteMap[k];
+      if (s.chg == null && q?.chg != null) s.chg = q.chg;
+      s.held = held.has(k);
     }
 
     sig.sort((a, b) => {
@@ -422,7 +441,6 @@ export default function CockpitPage() {
     } catch { /* */ }
   }
 
-  const bands: Sev[] = ['act', 'watch', 'info'];
   const grouped = useMemo(() => {
     const m: Record<Sev, Signal[]> = { act: [], watch: [], info: [] };
     for (const s of signals) m[s.sev].push(s);
@@ -430,121 +448,203 @@ export default function CockpitPage() {
   }, [signals]);
 
   const actN = grouped.act.length;
+  const kpi = useMemo(() => {
+    const k = (f: (s: Signal) => boolean) => signals.filter(f).length;
+    return [
+      { n: actN, l: 'need a decision', c: actN > 0 ? C.red : C.muted },
+      { n: k((s) => s.kind === 'MOVE'), l: 'holdings moving hard', c: C.red },
+      { n: k((s) => s.kind === 'REPORTED'), l: 'just reported', c: C.text0 },
+      { n: k((s) => s.kind === 'UPCOMING'), l: 'report in 14 days', c: C.amber },
+      { n: k((s) => s.kind === 'ENTRY' && !!s.held), l: 'entries · held', c: C.green },
+      { n: k((s) => s.kind === 'ENTRY' && !s.held), l: 'entries · bench', c: C.cyan },
+      { n: k((s) => s.kind === 'NEW IDEA'), l: 'new ideas', c: C.saffron },
+      { n: counts.held, l: `holdings · ${counts.bench} on bench`, c: C.text },
+    ];
+  }, [signals, actN, counts]);
+
+  const onDismiss = (id: string) => { try { dismiss('cockpit', id); build(); } catch {} };
 
   if (!mounted) {
     return <div style={{ background: C.bg, minHeight: '100vh' }} />;
   }
 
+  const btn: CSSProperties = { ...MONO, fontSize: 11, fontWeight: 700, padding: '7px 12px', borderRadius: 6, cursor: 'pointer', border: `1px solid ${C.border2}`, background: C.card2, color: C.muted };
+
   return (
-    <div style={{ background: C.bg, color: C.text, minHeight: '100vh', padding: '18px 16px 64px' }}>
-      <div style={{ maxWidth: 940, margin: '0 auto' }}>
+    <div style={{ background: C.bg, color: C.text, minHeight: '100vh', padding: '16px 20px 64px' }}>
+      <div style={{ maxWidth: 1800, margin: '0 auto' }}>
 
         {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
           <div>
             <div style={{ ...MONO, fontSize: 11, letterSpacing: '0.22em', color: C.dim, textTransform: 'uppercase', fontWeight: 600 }}>Daily Action Cockpit</div>
-            <h1 style={{ fontSize: 26, fontWeight: 800, margin: '4px 0 0', color: C.text0, letterSpacing: '-0.01em' }}>
-              What your book needs today
+            <h1 style={{ fontSize: 24, fontWeight: 800, margin: '4px 0 0', color: C.text0, letterSpacing: '-0.01em' }}>
+              {loading ? 'Reading your book…' : actN > 0 ? `${actN} decision${actN > 1 ? 's' : ''} need you today` : 'Nothing urgent today'}
             </h1>
-            <div style={{ fontSize: 13, color: C.muted, marginTop: 6, maxWidth: '62ch' }}>
-              One ranked list, pulled from every signal you already track — earnings, rotation, valuations, and your own theses. {builtAt && <span style={{ ...MONO, color: C.dim }}>· built {builtAt}</span>}
+            <div style={{ fontSize: 13, color: C.muted, marginTop: 4 }}>
+              Decisions first, then what is moving, then fresh ideas. Built from your holdings, bench, theses, results, themes and valuations.
+              {builtAt && <span style={{ ...MONO, color: C.dim }}> · built {builtAt}</span>}
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <button onClick={toggleNotify} title="Fire a browser notification each morning while the app is open"
-              style={{ ...MONO, fontSize: 11, fontWeight: 700, padding: '7px 12px', borderRadius: 6, cursor: 'pointer',
-                border: `1px solid ${notify ? 'color-mix(in srgb, var(--mc-bullish) 45%, transparent)' : C.border2}`,
-                background: notify ? 'color-mix(in srgb, var(--mc-bullish) 12%, transparent)' : C.card2,
-                color: notify ? C.green : C.muted }}>
-              {notify ? '🔔 MORNING BRIEFING ON' : '🔕 MORNING BRIEFING OFF'}
+              style={{ ...btn, border: `1px solid ${notify ? 'color-mix(in srgb, var(--mc-bullish) 45%, transparent)' : C.border2}`,
+                background: notify ? 'color-mix(in srgb, var(--mc-bullish) 12%, transparent)' : C.card2, color: notify ? C.green : C.muted }}>
+              {notify ? '🔔 Morning briefing on' : '🔕 Morning briefing off'}
             </button>
-            <button onClick={() => build()} title="Rebuild the board"
-              style={{ ...MONO, fontSize: 11, fontWeight: 700, padding: '7px 12px', borderRadius: 6, cursor: 'pointer', border: `1px solid ${C.border2}`, background: C.card2, color: C.muted }}>
-              ↻ REFRESH
-            </button>
-            <button onClick={() => { try { clearDismissed('cockpit'); build(); } catch {} }} title="Restore dismissed cards"
-              style={{ ...MONO, fontSize: 11, fontWeight: 700, padding: '7px 12px', borderRadius: 6, cursor: 'pointer', border: `1px solid ${C.border2}`, background: C.card2, color: C.dim }}>
-              ↺ RESET
-            </button>
+            <button onClick={() => build()} title="Rebuild the board" style={btn}>↻ Refresh</button>
+            <button onClick={() => { try { clearDismissed('cockpit'); build(); } catch {} }} title="Bring back cards you dismissed" style={{ ...btn, color: C.dim }}>↺ Show dismissed</button>
           </div>
         </div>
 
-        {/* Briefing strip */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 1, background: C.border, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden', margin: '18px 0 6px' }}>
-          {[
-            { n: actN, l: 'need action', c: actN > 0 ? C.red : C.muted },
-            { n: signals.length, l: 'signals total', c: C.text0 },
-            { n: counts.held, l: 'holdings', c: C.cyan },
-            { n: counts.bench, l: 'on bench', c: C.saffron },
-          ].map((x, i) => (
-            <div key={i} style={{ background: C.card, padding: '13px 15px' }}>
-              <div style={{ ...MONO, fontSize: 26, fontWeight: 800, lineHeight: 1, color: x.c, fontVariantNumeric: 'tabular-nums' }}>{x.n}</div>
-              <div style={{ fontSize: 10.5, color: C.dim, textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 6, fontWeight: 600 }}>{x.l}</div>
+        {/* KPI strip */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 1, background: C.border, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden', margin: '14px 0 16px' }}>
+          {kpi.map((x, i) => (
+            <div key={i} style={{ background: C.card, padding: '11px 14px' }}>
+              <div style={{ ...MONO, fontSize: 24, fontWeight: 800, lineHeight: 1, color: x.n ? x.c : C.dim, fontVariantNumeric: 'tabular-nums' }}>{loading ? '…' : x.n}</div>
+              <div style={{ fontSize: 10.5, color: C.dim, textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 6, fontWeight: 600 }}>{x.l}</div>
             </div>
           ))}
         </div>
 
-        {/* zzz525 — ⚔️ engine conflicts: where your judgment is needed */}
-        <ConflictsPanel />
-
-        {/* Loading */}
         {loading && (
           <div style={{ ...MONO, fontSize: 13, color: C.muted, padding: '40px 0', textAlign: 'center' }}>Assembling signals from your book…</div>
         )}
 
-        {/* Empty */}
         {!loading && signals.length === 0 && (
-          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: '34px 24px', textAlign: 'center', marginTop: 14 }}>
+          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: '34px 24px', textAlign: 'center' }}>
             <div style={{ fontSize: 34 }}>🛩️</div>
             <div style={{ fontSize: 16, fontWeight: 700, color: C.text0, marginTop: 8 }}>Clear skies — nothing needs a decision</div>
-            <div style={{ fontSize: 13, color: C.muted, marginTop: 6, maxWidth: '52ch', margin: '6px auto 0' }}>
-              No breached theses, no fresh prints on your names, no rotation flips against you. Add holdings in <NavLink href="/portfolio" style={{ color: C.accent }}>My Book</NavLink> and theses in <NavLink href="/thesis" style={{ color: C.accent }}>Thesis Tracker</NavLink> to feed the cockpit.
+            <div style={{ fontSize: 13, color: C.muted, maxWidth: '52ch', margin: '6px auto 0' }}>
+              No breached theses, no fresh results on your names, no theme turning against you. Add holdings in <NavLink href="/portfolio" style={{ color: C.accent }}>My Book</NavLink> and theses in <NavLink href="/thesis" style={{ color: C.accent }}>Thesis Tracker</NavLink> to feed the cockpit.
             </div>
           </div>
         )}
 
-        {/* Bands */}
-        {!loading && bands.map(b => grouped[b].length > 0 && (
-          <section key={b} style={{ marginTop: 26 }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10 }}>
-              <span style={{ ...MONO, fontSize: 12, fontWeight: 800, letterSpacing: '0.1em', color: SEV_META[b].color, padding: '2px 8px', borderRadius: 5, background: `color-mix(in srgb, ${SEV_META[b].color} 12%, transparent)`, border: `1px solid color-mix(in srgb, ${SEV_META[b].color} 32%, transparent)` }}>
-                {SEV_META[b].label} · {grouped[b].length}
-              </span>
-              <span style={{ fontSize: 12, color: C.dim }}>{SEV_META[b].blurb}</span>
+        {!loading && signals.length > 0 && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 600px), 1fr))', gap: 18, alignItems: 'start' }}>
+            {/* Left: decisions + what is moving */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
+              <Band sev="act" items={grouped.act} newIds={newIds} onDismiss={onDismiss}
+                empty="Nothing needs a decision today — no thesis breach, no sharp drop, no theme turning against you." />
+              <Band sev="watch" items={grouped.watch} newIds={newIds} onDismiss={onDismiss} />
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {grouped[b].map(s => (
-                <div key={s.id} style={{ display: 'flex', gap: 8, alignItems: 'stretch', background: C.card, border: `1px solid ${newIds.has(s.id) ? `color-mix(in srgb, ${C.accent} 45%, ${C.border})` : C.border}`, borderLeft: `3px solid ${SEV_META[s.sev].color}`, borderRadius: 10 }}>
-                  <NavLink href={s.href} style={{ textDecoration: 'none', flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', padding: '12px 4px 12px 14px' }}>
-                      <div style={{ fontSize: 18, lineHeight: 1.2, marginTop: 1 }}>{s.icon}</div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                          <span style={{ ...MONO, fontSize: 9.5, fontWeight: 700, letterSpacing: '0.06em', color: C.dim, background: C.card2, border: `1px solid ${C.border}`, padding: '1px 6px', borderRadius: 4 }}>{s.kind}</span>
-                          {newIds.has(s.id) && <span style={{ ...MONO, fontSize: 9, fontWeight: 800, letterSpacing: '0.08em', color: C.accent, background: `color-mix(in srgb, ${C.accent} 14%, transparent)`, border: `1px solid color-mix(in srgb, ${C.accent} 40%, transparent)`, padding: '1px 5px', borderRadius: 4 }}>NEW</span>}
-                          {s.ticker && <span style={{ ...MONO, fontSize: 11, fontWeight: 700, color: C.muted }}>{norm(s.ticker)}</span>}
-                          <span style={{ fontSize: 13.5, fontWeight: 700, color: C.text0 }}>{s.title}</span>
-                        </div>
-                        <div style={{ fontSize: 12.5, color: C.muted, marginTop: 3, lineHeight: 1.5 }}>{s.detail}</div>
-                      </div>
-                      <div style={{ ...MONO, fontSize: 15, color: C.dim, alignSelf: 'center' }}>›</div>
-                    </div>
-                  </NavLink>
-                  <button
-                    onClick={() => { try { dismiss('cockpit', s.id); build(); } catch {} }}
-                    title="Dismiss — I've handled this"
-                    style={{ ...MONO, fontSize: 13, color: C.dim, background: 'transparent', border: 'none', borderLeft: `1px solid ${C.border}`, cursor: 'pointer', padding: '0 12px', flexShrink: 0 }}
-                  >✕</button>
-                </div>
-              ))}
+            {/* Right: disagreements + fresh ideas */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
+              <ConflictsPanel />
+              <Band sev="info" items={grouped.info} newIds={newIds} onDismiss={onDismiss} />
             </div>
-          </section>
-        ))}
+          </div>
+        )}
 
-        <div style={{ ...MONO, fontSize: 10.5, color: C.dim, marginTop: 34, borderTop: `1px solid ${C.border}`, paddingTop: 14, lineHeight: 1.7 }}>
-          Sources: your holdings, Conviction bench, thesis triggers, portfolio earnings grades, theme rotation (IN + US), earnings calendar, saved valuations. Nothing is scraped here — the cockpit only routes signals the terminal already produces. Morning briefing fires a browser notification once/day while the app is open.
+        <div style={{ ...MONO, fontSize: 10.5, color: C.dim, marginTop: 28, borderTop: `1px solid ${C.border}`, paddingTop: 12, lineHeight: 1.7 }}>
+          Sources: your holdings, Conviction bench, thesis triggers, portfolio earnings grades, theme rotation (India + USA), earnings calendar, saved valuations. Nothing new is downloaded here — the cockpit only sorts signals the other pages already make. ✕ hides a card until something new appears; ↺ brings hidden cards back.
         </div>
       </div>
+    </div>
+  );
+}
+
+// zzz1300 — one band (Act / Watch / FYI): single signals as cards, signals of one kind as a compact table.
+function Band({ sev, items, newIds, onDismiss, empty }: { sev: Sev; items: Signal[]; newIds: Set<string>; onDismiss: (id: string) => void; empty?: string }) {
+  const meta = SEV_META[sev];
+  if (!items.length && !empty) return null;
+  const order: string[] = [];
+  const groups = new Map<string, Signal[]>();
+  const cards: Signal[] = [];
+  for (const s of items) {
+    if (!s.group) { cards.push(s); continue; }
+    if (!groups.has(s.group)) { groups.set(s.group, []); order.push(s.group); }
+    groups.get(s.group)!.push(s);
+  }
+  // a "table" of one or two rows reads better as cards
+  for (const g of [...order]) { const rows = groups.get(g)!; if (rows.length <= 2) { cards.push(...rows); groups.delete(g); order.splice(order.indexOf(g), 1); } }
+  cards.sort((a, b) => b.priority - a.priority);
+  return (
+    <section style={{ background: C.card, border: `1px solid ${C.border}`, borderTop: `3px solid ${meta.color}`, borderRadius: 10, padding: '12px 14px' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10 }}>
+        <span style={{ ...MONO, fontSize: 12, fontWeight: 800, letterSpacing: '0.1em', color: meta.color }}>{meta.label} · {items.length}</span>
+        <span style={{ fontSize: 12, color: C.dim }}>{meta.blurb}</span>
+      </div>
+      {!items.length && empty && <div style={{ fontSize: 13, color: C.muted, padding: '4px 0 6px' }}>✓ {empty}</div>}
+      {cards.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: order.length ? 14 : 0 }}>
+          {cards.map((s) => <SignalCard key={s.id} s={s} isNew={newIds.has(s.id)} onDismiss={onDismiss} />)}
+        </div>
+      )}
+      {order.map((g) => <GroupTable key={g} title={g} rows={groups.get(g)!} newIds={newIds} onDismiss={onDismiss} />)}
+    </section>
+  );
+}
+
+function ChgCell({ v }: { v?: number | null }) {
+  if (v == null || !Number.isFinite(v)) return <span style={{ ...MONO, color: C.dim }}>—</span>;
+  return <span style={{ ...MONO, fontWeight: 700, color: v > 0 ? C.green : v < 0 ? C.red : C.muted, fontVariantNumeric: 'tabular-nums' }}>{v > 0 ? '+' : ''}{v.toFixed(1)}%</span>;
+}
+
+function SignalCard({ s, isNew, onDismiss }: { s: Signal; isNew: boolean; onDismiss: (id: string) => void }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'stretch', background: C.card2, border: `1px solid ${isNew ? `color-mix(in srgb, ${C.accent} 45%, ${C.border})` : C.border}`, borderLeft: `3px solid ${SEV_META[s.sev].color}`, borderRadius: 8 }}>
+      <NavLink href={s.href} style={{ textDecoration: 'none', flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '9px 6px 9px 12px' }}>
+          <div style={{ fontSize: 17, lineHeight: 1.2 }}>{s.icon}</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
+              <span style={{ ...MONO, fontSize: 9.5, fontWeight: 700, letterSpacing: '0.06em', color: C.dim, border: `1px solid ${C.border}`, padding: '1px 6px', borderRadius: 4 }}>{s.kind}</span>
+              {isNew && <span style={{ ...MONO, fontSize: 9, fontWeight: 800, color: C.accent }}>NEW</span>}
+              {s.ticker && <span style={{ ...MONO, fontSize: 12, fontWeight: 800, color: C.text0 }}>{norm(s.ticker)}</span>}
+              {s.held && <span style={{ fontSize: 10, color: C.green, fontWeight: 700 }}>● held</span>}
+              {s.chg != null && <ChgCell v={s.chg} />}
+            </div>
+            <div style={{ fontSize: 13.5, fontWeight: 700, color: C.text0, marginTop: 3 }}>{s.title}</div>
+            <div style={{ fontSize: 12.5, color: C.muted, marginTop: 2, lineHeight: 1.5 }}>{s.detail}</div>
+          </div>
+          <div style={{ ...MONO, fontSize: 15, color: C.dim, alignSelf: 'center' }}>›</div>
+        </div>
+      </NavLink>
+      <button onClick={() => onDismiss(s.id)} title="Dismiss — I've handled this"
+        style={{ ...MONO, fontSize: 13, color: C.dim, background: 'transparent', border: 'none', borderLeft: `1px solid ${C.border}`, cursor: 'pointer', padding: '0 11px', flexShrink: 0 }}>✕</button>
+    </div>
+  );
+}
+
+function GroupTable({ title, rows, newIds, onDismiss }: { title: string; rows: Signal[]; newIds: Set<string>; onDismiss: (id: string) => void }) {
+  const [all, setAll] = useState(false);
+  const LIMIT = 10;
+  const shown = all ? rows : rows.slice(0, LIMIT);
+  const hasTicker = rows.some((r) => r.ticker);
+  const cols = hasTicker ? '92px minmax(120px, 1.1fr) minmax(140px, 1.6fr) 62px 26px' : 'minmax(140px, 1fr) minmax(160px, 1.8fr) 26px';
+  return (
+    <div style={{ marginTop: 4, marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, margin: '2px 0 6px' }}>
+        <span style={{ fontSize: 12.5, fontWeight: 800, color: C.text0 }}>{rows[0]?.icon} {title}</span>
+        <span style={{ ...MONO, fontSize: 11, color: C.dim }}>{rows.length}</span>
+      </div>
+      <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 10, padding: '6px 10px', background: C.panel, ...MONO, fontSize: 9.5, fontWeight: 700, letterSpacing: '0.06em', color: C.dim, textTransform: 'uppercase' }}>
+          {hasTicker ? <><span>Ticker</span><span>Company</span><span>What</span><span style={{ textAlign: 'right' }}>Today</span><span /></> : <><span>Name</span><span>What</span><span /></>}
+        </div>
+        {shown.map((r, i) => (
+          <div key={r.id} style={{ display: 'grid', gridTemplateColumns: cols, gap: 10, alignItems: 'center', padding: '7px 10px', fontSize: 12.5, background: i % 2 ? C.card : C.card2, borderTop: `1px solid ${C.border}` }}>
+            {hasTicker && (
+              <NavLink href={r.href} style={{ ...MONO, fontWeight: 800, color: C.text0, textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.title}>
+                {r.ticker ? norm(r.ticker) : '—'}{r.held && <span style={{ color: C.green }} title="you hold this"> ●</span>}{newIds.has(r.id) && <span style={{ color: C.accent, fontSize: 9 }}> NEW</span>}
+              </NavLink>
+            )}
+            <NavLink href={r.href} style={{ color: hasTicker ? C.muted : C.text0, fontWeight: hasTicker ? 500 : 700, textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.title}>
+              {r.name || r.title}
+            </NavLink>
+            <span style={{ color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.detail}>{r.note || r.detail}</span>
+            {hasTicker && <span style={{ textAlign: 'right' }}><ChgCell v={r.chg} /></span>}
+            <button onClick={() => onDismiss(r.id)} title="Dismiss" style={{ ...MONO, fontSize: 12, color: C.dim, background: 'transparent', border: 'none', cursor: 'pointer', padding: 0 }}>✕</button>
+          </div>
+        ))}
+      </div>
+      {rows.length > LIMIT && (
+        <button onClick={() => setAll((v) => !v)} style={{ ...MONO, fontSize: 11, color: C.accent, background: 'transparent', border: 'none', cursor: 'pointer', padding: '6px 2px' }}>
+          {all ? '▲ Show fewer' : `▼ Show all ${rows.length}`}
+        </button>
+      )}
     </div>
   );
 }
@@ -572,17 +672,17 @@ function ConflictsPanel() {
   }, []);
   if (rows.length === 0) return null;
   return (
-    <div style={{ background: 'color-mix(in srgb, var(--mc-warn) 5%, var(--mc-bg-1))', border: '1px solid color-mix(in srgb, var(--mc-warn) 30%, transparent)', borderRadius: 10, padding: '11px 14px', margin: '10px 0' }}>
+    <div style={{ background: 'color-mix(in srgb, var(--mc-warn) 5%, var(--mc-bg-1))', border: '1px solid color-mix(in srgb, var(--mc-warn) 30%, transparent)', borderTop: '3px solid var(--mc-warn)', borderRadius: 10, padding: '12px 14px' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
         <span style={{ fontSize: 11.5, fontWeight: 900, letterSpacing: '0.4px', color: 'var(--mc-warn)' }}>⚔️ ENGINE CONFLICTS · {rows.length}</span>
-        <span style={{ fontSize: 9.5, color: 'var(--mc-text-4)' }}>engines disagree on these — your judgment is the tiebreak</span>
+        <span style={{ fontSize: 12, color: 'var(--mc-text-4)' }}>engines disagree on these — your judgment decides</span>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {rows.map((r) => (
-          <div key={r.symbol} style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', fontSize: 11 }}>
+          <div key={r.symbol} style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', fontSize: 12.5 }}>
             <span onClick={() => openPassport(r.symbol)} title="Open Stock Passport" style={{ fontWeight: 900, color: 'var(--mc-text-1)', cursor: 'pointer' }}>{r.symbol}</span>
             <span style={{ fontSize: 8.5, fontWeight: 800, color: 'var(--mc-warn)', border: '1px solid color-mix(in srgb, var(--mc-warn) 40%, transparent)', borderRadius: 3, padding: '0 5px' }}>{r.kind}</span>
-            <span style={{ color: 'var(--mc-text-3)', fontSize: 10.5 }}>{r.conflicts[0]}{r.conflicts.length > 1 ? ` (+${r.conflicts.length - 1} more)` : ''}</span>
+            <span style={{ color: 'var(--mc-text-3)', fontSize: 12 }}>{r.conflicts[0]}{r.conflicts.length > 1 ? ` (+${r.conflicts.length - 1} more)` : ''}</span>
           </div>
         ))}
       </div>
