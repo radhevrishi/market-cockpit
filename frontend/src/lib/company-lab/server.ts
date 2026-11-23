@@ -150,7 +150,8 @@ async function labCardIn(m: LabMarket, t: string, fresh = false): Promise<LabCar
     while (lo <= hi) { const mid = (lo + hi) >> 1; if (d.t[mid] <= end) { k = mid; lo = mid + 1; } else hi = mid - 1; }
     return k >= 0 && Date.parse(end) - Date.parse(d.t[k]) < 20 * 86_400_000 ? d.c[k] : null;
   };
-  const sharesNow = ann.sharesNow ?? (cap != null && typeof row?.px === 'number' && row.px > 0 ? cap / row.px : null);
+  const lastSh = [...ann.rows].reverse().find((r) => typeof r.shares === 'number' && r.shares > 0)?.shares ?? null;
+  const sharesNow = ann.sharesNow ?? (cap != null && typeof row?.px === 'number' && row.px > 0 ? cap / row.px : null) ?? (m === 'US' ? lastSh : null);
   const lastPx = typeof row?.px === 'number' ? row.px : d ? d.c[d.c.length - 1] : null;
   if (cap == null && sharesNow != null && lastPx != null) { cap = Math.round(sharesNow * lastPx); notes.push('market cap worked out as shares outstanding × last price (not in the screener snapshot)'); }
   if (ann.rows.length && !ann.rows.some((r) => r.fcf != null)) notes.push('no free-cash-flow figures in the filings — the FCF charts are empty for this company');

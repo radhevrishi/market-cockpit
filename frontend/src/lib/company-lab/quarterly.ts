@@ -274,8 +274,9 @@ export function deOf(rows: AnnualRow[]): QuarterReport['de'] {
   const L = [...rows].reverse().find((r) => fin(r.equity) || fin(r.debt));
   if (!L || !fin(L.equity)) return { value: null, text: 'equity not reported' };
   if (L.equity! <= 0) return { value: null, text: `negative equity (${L.label})` };
-  const v = fin(L.debt) ? Math.round((L.debt! / L.equity!) * 100) / 100 : 0;
-  return { value: v, text: `${v}× (${L.label}${fin(L.debt) ? '' : ', no debt reported'})` };
+  if (!fin(L.debt)) return { value: null, text: `no debt line found in the ${L.label} filing (debt may be tagged under another name — check the balance sheet)` };
+  const v = Math.round((L.debt! / L.equity!) * 100) / 100;
+  return { value: v, text: `${v}× (${L.label})` };
 }
 
 /**

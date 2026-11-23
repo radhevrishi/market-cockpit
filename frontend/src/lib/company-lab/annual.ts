@@ -18,8 +18,8 @@ const TAGS: Record<string, string[]> = {
   shares: ['WeightedAverageNumberOfDilutedSharesOutstanding', 'WeightedAverageNumberOfSharesOutstandingBasic', 'WeightedAverageNumberOfShareOutstandingBasicAndDiluted',
     'WeightedAverageLimitedPartnershipUnitsOutstandingDiluted', 'WeightedAverageLimitedPartnershipUnitsOutstanding'],
   equity: ['StockholdersEquity', 'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest', 'PartnersCapital', 'MembersEquity', 'PartnersCapitalIncludingPortionAttributableToNoncontrollingInterest'],
-  debt: ['LongTermDebt', 'DebtLongtermAndShorttermCombinedAmount', 'LongTermDebtAndCapitalLeaseObligations'],   // these include the current part
-  debtNonCur: ['LongTermDebtNoncurrent'],
+  debt: ['LongTermDebt', 'DebtLongtermAndShorttermCombinedAmount', 'LongTermDebtAndCapitalLeaseObligations', 'LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities', 'ConvertibleNotesPayable', 'SeniorNotes'],   // these include the current part
+  debtNonCur: ['LongTermDebtNoncurrent', 'ConvertibleDebtNoncurrent', 'ConvertibleNotesPayableNoncurrent', 'SeniorNotesNoncurrent', 'LongTermLineOfCredit', 'LongTermNotesPayable'],
   debtCur: ['LongTermDebtCurrent', 'DebtCurrent'],
 };
 // zzz1210 — foreign filers (20-F, IFRS: Spotify, ASML …) tag ifrs-full in their own currency
@@ -81,7 +81,32 @@ export function usAnnualRows(facts: any, n = 10, toUsd = 1): AnnualRow[] {
   const cfo = factYears(facts, T.cfo, cur, false, tax);
   const cap = factYears(facts, T.capex, cur, false, tax);
   const sbc = factYears(facts, T.sbc, cur, false, tax);
-  const sh = repairShares(factYears(facts, T.shares, 'shares', false, tax));
+  const shW = factYears(facts, T.shares, 'shares', false, tax);
+  // zzz1291 — no weighted count for a year (partnerships tag it only in 10-Qs — Sunoco LP): the units / shares outstanding at the
+  // year end, else the cover-page count filed within four months after it
+  if (tax === 'us-gaap') {
+    const inst = factYears(facts, ['CommonStockSharesOutstanding', 'LimitedPartnersCapitalAccountUnitsOutstanding'], 'shares', true, tax);
+    const cover: any[] = facts?.facts?.dei?.EntityCommonStockSharesOutstanding?.units?.shares || [];
+    for (const e of new Set([...rev.keys(), ...cfo.keys()])) {
+      if (shW.has(e)) continue;
+      // the weighted count of the latest 10-Q of that fiscal year (year to date) comes first — it is the same measure
+      let ytd: number | null = null, ytdEnd = '';
+      for (const tag of T.shares) for (const x of (facts?.facts?.['us-gaap']?.[tag]?.units?.shares || []) as any[]) {
+        if (!fin(x?.val) || typeof x?.end !== 'string' || typeof x?.start !== 'string' || !/^10-Q/.test(String(x.form || ''))) continue;
+        const back = days(x.end, e);
+        if (back < 0 || back > 100 || days(x.start, x.end) < 80) continue;
+        if (x.end > ytdEnd || (x.end === ytdEnd && ytd != null && x.val > ytd)) { ytd = x.val; ytdEnd = x.end; }
+      }
+      const v = ytd ?? inst.get(e) ?? cover.filter((x) => fin(x?.val) && typeof x?.end === 'string' && days(e, x.end) >= 0 && days(e, x.end) <= 125).sort((a, b) => String(a.end).localeCompare(String(b.end)))[0]?.val;
+      if (!(fin(v) && v > 0)) continue;
+      if (ytd == null) {   // an outstanding / cover count can be one unit class only: keep it only near the closest weighted year
+        const near = [...shW.entries()].sort((p1, p2) => Math.abs(days(p1[0], e)) - Math.abs(days(p2[0], e)))[0];
+        if (!near || v < near[1] * 0.65 || v > near[1] * 1.6) continue;
+      }
+      shW.set(e, v);
+    }
+  }
+  const sh = repairShares(shW);
   const eq = factYears(facts, T.equity, cur, true, tax);
   const debt = factYears(facts, T.debt, cur, true, tax);
   const debtC = factYears(facts, T.debtCur, cur, true, tax);
