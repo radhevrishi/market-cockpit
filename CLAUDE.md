@@ -4447,7 +4447,7 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
 - zzz1300d (23 Nov): Cockpit moving-average entries for India + USA (`lib/ma-entries.ts` `maEntry`: above the 200-day and within
   −1.5/+4% of the 21-day EMA, −2/+4% of the 50-day, or a 200-day test −3/+4% while the 50-day is ≥ 97% of the 200-day; stage 4 out;
   the closest line wins) from the slim screener answer (SLIM_CB now adds ema21, hi52), held + bench in both markets (US holdings from
-  /api/v1/us-book + US Conviction Beats); three tables (21-day / 50-day / 200-day); US new bench ideas; India / USA / Both switch
+  /api/v1/us-book + US Conviction Beats); three tables (21-day / 50-day / 200-day; bench names only Stage 2 with RS 70+, held names any stage but 4); US new bench ideas; India / USA / Both switch
   (`mc:cockpit:market:v1`); the Technicals-tab buy zone is only a fallback. Signals: same-day bulk/block round trips (one party buys and
   sells within 20% of the same quantity — Graviton on APLAPOLLO) are not signals (`lib/deal-round-trip.ts`); signal stacks show today's
   move and say "price disagrees" when filings read Bullish on a −5% day (or Bearish on +5%). Price alerts page, bell, dialog and phone

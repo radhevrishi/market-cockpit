@@ -361,6 +361,8 @@ export default function CockpitPage() {
       if (!e) return;
       seenEntry.add(`${market}:${tk}`);
       const isHeld = market === 'US' ? heldUs.has(tk) : held.has(tk) && !heldUs.has(tk);
+      // bench names: only clean Stage 2 leaders (RS 70+), so the list stays short enough to act on
+      if (!isHeld && !(r?.twSt === 2 && (typeof r?.rs !== 'number' || r.rs >= 70))) { seenEntry.delete(`${market}:${tk}`); return; }
       const name = r?.n || (market === 'US' ? usBenchBy.get(tk)?.company : benchByTicker.get(tk)?.company) || undefined;
       const st = typeof r?.twSt === 'number' ? ` · Stage ${r.twSt}` : '';
       const rs = typeof r?.rs === 'number' ? ` · RS ${r.rs}` : '';
