@@ -21,6 +21,11 @@ import { previousStates } from '@/lib/theme-cycle/memory';
 import { useThemeRotationModel } from '@/components/dashboard/theme-rotation/useThemeModel';
 import { card } from '@/components/dashboard/theme-rotation/ui';
 import { T, tint } from '@/components/dashboard/theme-rotation/tokens';
+import { usePerf, PerformanceTab, CyclesTab, BestCompanies } from './PerfTabs';
+import { CyclePanel } from '@/components/dashboard/theme-rotation/CyclePanel';
+
+type Tab = 'overview' | 'leaders' | 'themes' | 'performance' | 'cycles' | 'compare';
+const TABS: Array<[Tab, string]> = [['overview', '🧭 Overview'], ['leaders', '🏆 Leaders'], ['themes', '🔄 Themes & cycle'], ['performance', '📊 Performance'], ['cycles', '📈 Market cycles'], ['compare', '🌐 USA vs India']];
 
 type LR = MarketPayload & { ok: boolean; error?: string; detail?: string; ageMin?: number };
 const MK: Record<Market, { code: 'US' | 'IN'; q: string; flag: string; name: string }> = {
@@ -82,7 +87,7 @@ function useCycleHist() {
   }, []);
   return d;
 }
-interface ThemeSide { views: ThemeView[]; reads: Map<string, CycleRead>; nameOf: (id: string) => string; benchName: string; payloadOk: boolean; loading: boolean; error: string | null; ref: any }
+interface ThemeSide { payload: any; views: ThemeView[]; reads: Map<string, CycleRead>; nameOf: (id: string) => string; benchName: string; payloadOk: boolean; loading: boolean; error: string | null; ref: any }
 function useThemeSide(region: Market): ThemeSide {
   const m = useThemeRotationModel(region, 0);
   const views = m.vm?.themes || [];
@@ -94,7 +99,7 @@ function useThemeSide(region: Market): ThemeSide {
     return out;
   }, [views, m.payload, prev]);
   const nameOf = useMemo(() => { const by = new Map(views.map((v) => [v.row.id, `${v.row.emoji} ${v.row.name}`])); return (id: string) => by.get(id) || id; }, [views]);
-  return { views, reads, nameOf, benchName: m.payload?.benchmark?.name || (region === 'us' ? 'S&P 500' : 'Nifty 50'), payloadOk: !!m.payload, loading: m.board.loading, error: m.board.error ?? null, ref: m.payload?.cycleRef ?? null };
+  return { payload: m.payload, views, reads, nameOf, benchName: m.payload?.benchmark?.name || (region === 'us' ? 'S&P 500' : 'Nifty 50'), payloadOk: !!m.payload, loading: m.board.loading, error: m.board.error ?? null, ref: m.payload?.cycleRef ?? null };
 }
 
 // ── small UI bits ──────────────────────────────────────────────────────────
@@ -247,6 +252,13 @@ export default function MarketLeadership() {
   const p = lr[sel];
   const [showAllLeaders, setShowAllLeaders] = useState(false);
   const [openTheme, setOpenTheme] = useState<string | null>(null);
+  const [tab, setTab] = useState<Tab>('overview');
+  useEffect(() => { try { const t = new URLSearchParams(window.location.search).get('tab'); if (t && TABS.some(([k]) => k === t)) setTab(t as Tab); } catch { /* ignore */ } }, []);
+  const pickTab = (t: Tab) => { setTab(t); try { const u = new URL(window.location.href); u.searchParams.set('tab', t); window.history.replaceState(null, '', u.toString()); } catch { /* ignore */ } };
+  // zzz1291 — always live: everything re-reads every 10 minutes while the page is open (the server caches keep it cheap)
+  useEffect(() => { const id = setInterval(() => { if (document.visibilityState === 'visible') setReload((r) => r + 1); }, 10 * 60_000); return () => clearInterval(id); }, []);
+  const perf = usePerf(sel, reload);
+  const perfTheme = useMemo(() => new Map((perf.d?.themes || []).map((t) => [t.id, t])), [perf.d]);
 
   const themeBrief = (s: ThemeSide) => {
     if (!s.payloadOk) return null;
@@ -278,7 +290,7 @@ export default function MarketLeadership() {
   const eps = hist[sel]?.episodes || [];
 
   return (
-    <div style={{ padding: '14px 18px 40px', maxWidth: 1480, margin: '0 auto', color: T.text }}>
+    <div style={{ padding: '14px 22px 40px', maxWidth: 1880, margin: '0 auto', color: T.text, zoom: 1.12 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
         <div>
           <h1 style={{ fontSize: 24, fontWeight: 900, margin: 0, letterSpacing: 0.2 }}>Market Leadership &amp; Risk</h1>
@@ -290,6 +302,11 @@ export default function MarketLeadership() {
           <Btn onClick={() => setReload((r) => r + 1)}>↻ Refresh</Btn>
         </div>
       </div>
+      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', margin: '12px 0 4px', borderBottom: `1px solid ${T.border}`, position: 'sticky', top: 0, zIndex: 5, background: T.bg, paddingTop: 4 }}>
+        {TABS.map(([k, l]) => <button key={k} type="button" onClick={() => pickTab(k)} style={{ fontSize: 14, fontWeight: 900, padding: '8px 14px', cursor: 'pointer', border: 'none', borderBottom: `3px solid ${tab === k ? T.accent : 'transparent'}`, background: 'transparent', color: tab === k ? T.accent : T.dim }}>{l}</button>)}
+        <span style={{ marginLeft: 'auto', alignSelf: 'center', fontSize: 11.5, color: T.faint }}>{MK[sel].flag} {MK[sel].name} · {p?.ageMin != null ? `data ${p.ageMin} min old` : 'loading'} · re-reads every 10 min</span>
+      </div>
+      {tab === 'overview' && (<>
 
       <H2 n={1} hint="Each market judged on its own data. Click a card for its detail below.">Executive market regime</H2>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(420px, 100%), 1fr))', gap: 10 }}>
@@ -312,12 +329,14 @@ export default function MarketLeadership() {
         ))}
       </div>
 
+      </>)}
       <div style={{ margin: '22px 0 0', padding: '8px 12px', borderRadius: 8, background: tint(T.accent, 8), border: `1px solid ${tint(T.accent, 30)}`, fontSize: 13, fontWeight: 900 }}>
         {MK[sel].flag} {MK[sel].name} in detail <span style={{ fontWeight: 600, color: T.faint, fontSize: 12 }}>— switch with the buttons at the top</span>
       </div>
 
       {!p ? <div style={{ ...card, marginTop: 10, color: T.faint, fontSize: 12.5 }}>{err[sel] || 'Loading…'}</div> : (
         <>
+          {tab === 'overview' && (<>
           <H2 n={3} hint={`${p.bench?.name ?? ''} — completed sessions${p.liveSession ? `; today's session (${p.liveSession}) joins once it closes` : ''}.`}>The market: structure &amp; distribution</H2>
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2.1fr) minmax(260px, 1fr)', gap: 10 }} className="mlr-two">
             <div style={{ ...card, padding: '8px 10px' }}>
@@ -373,6 +392,8 @@ export default function MarketLeadership() {
             </div>
           ) : <div style={{ ...card, color: T.faint, fontSize: 12.5 }}>Screener snapshot not available — breadth unknown.</div>}
 
+          </>)}
+          {tab === 'leaders' && (<>
           <H2 n={5} hint={p.leaderRule}>Leader health</H2>
           {p.health ? (
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(250px, 1fr) minmax(0, 2fr)', gap: 10 }} className="mlr-two">
@@ -399,7 +420,7 @@ export default function MarketLeadership() {
                   <thead><tr style={{ color: T.faint, fontSize: 10.5, textAlign: 'right' }}><th style={{ textAlign: 'left', padding: '3px 4px' }}>Leader</th><th style={{ textAlign: 'left' }}>State</th><th title="Price a year ago → 52-week high">Run-up</th><th>Off high</th><th>vs 50-day</th><th>vs 200-day</th><th>RS</th><th title="Last month vs the benchmark, points">vs mkt 1m</th></tr></thead>
                   <tbody>{leadersShown.map((l) => (
                     <tr key={l.t} style={{ borderTop: `1px solid ${T.border}`, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                      <td style={{ textAlign: 'left', padding: '4px', whiteSpace: 'nowrap' }}><Link href={`/charts?ticker=${encodeURIComponent(l.t)}&market=${MK[sel].code}`} style={{ color: T.text, fontWeight: 800, textDecoration: 'none' }}>{l.t}</Link> <span style={{ color: T.faint }}>{l.n.slice(0, 22)}</span></td>
+                      <td style={{ textAlign: 'left', padding: '4px', whiteSpace: 'nowrap' }}><Link href={`/charts?ticker=${encodeURIComponent(l.t)}&market=${MK[sel].code}`} style={{ color: T.text, fontWeight: 800, textDecoration: 'none' }}>{l.t}</Link> <span style={{ color: T.dim }}>{l.n}</span>{l.ind ? <div style={{ fontSize: 10.5, color: T.faint }}>{l.ind}</div> : null}</td>
                       <td style={{ textAlign: 'left' }} title={l.why}><span style={{ color: LEADER_TONE[l.state], fontWeight: 800 }}>{LEADER_LABEL[l.state]}</span></td>
                       <td>+{l.runUp}%</td><td>{l.dd != null ? `−${l.dd}%` : '—'}</td>
                       <td style={{ color: (l.vs50 ?? 0) >= 0 ? T.up : T.down }}>{fmtP(l.vs50)}</td>
@@ -411,9 +432,12 @@ export default function MarketLeadership() {
               </div>
             </div>
           ) : <div style={{ ...card, color: T.faint, fontSize: 12.5 }}>Leader universe unavailable (no screener snapshot).</div>}
+          </>)}
         </>
       )}
 
+      {tab === 'themes' && (<>
+      {side.payload ? <div style={{ marginTop: 10 }}><CyclePanel region={sel} payload={side.payload} views={side.views} nameOf={side.nameOf} onPick={(id) => setOpenTheme(id)} benchName={side.benchName} /></div> : null}
       <H2 n={6} hint={side.ref ? `${side.benchName}: high ${fmtDay(side.ref.peak)} → low ${fmtDay(side.ref.trough)} → today. Same window for every theme.` : undefined}>Leadership survival map (themes)</H2>
       <SurvivalMap side={side} region={sel} />
 
@@ -446,6 +470,7 @@ export default function MarketLeadership() {
                       <div><b style={{ color: T.down }}>Against / missing</b>{r.againstEvidence.map((e) => <div key={e}>• {e}</div>)}</div>
                       <div><b>Next confirmation</b><div>{r.milestone}</div><b>Invalidation</b><div>{r.invalidation}</div>
                         <Link href={`/multibagger?tab=theme-rotation&region=${sel}`} style={{ color: T.accent, fontSize: 11.5 }}>Full evidence in Theme Rotation →</Link></div>
+                      <div><b>Best companies</b><BestCompanies th={perfTheme.get(t.id)} m={sel} max={5} /></div>
                     </div>
                   </td></tr> : null}
                 </React.Fragment>
@@ -471,6 +496,10 @@ export default function MarketLeadership() {
               <div style={{ color: T.dim }}>What changed: {r.forEvidence.slice(0, 2).join('; ') || '—'}</div>
               <div style={{ color: T.dim }}><span style={{ color: T.down }}>Risk:</span> {r.againstEvidence.slice(0, 2).join('; ') || '—'}</div>
               <div style={{ color: T.dim }}><b>Confirms if:</b> {r.milestone} <b>Invalidated if:</b> {r.invalidation}</div>
+              {r.state !== 'FAILED_TRANSITION' ? <div style={{ marginTop: 5, padding: '6px 8px', borderRadius: 6, background: tint(T.up, 5), border: `1px solid ${tint(T.up, 22)}` }}>
+                <div style={{ fontSize: 11, fontWeight: 900, color: T.faint, marginBottom: 2 }}>BEST COMPANIES IN THIS THEME (Stage 2 · RS · current growth · near the high)</div>
+                <BestCompanies th={perfTheme.get(v.row.id)} m={sel} max={4} />
+              </div> : null}
             </div>
           )) : <div style={{ fontSize: 12, color: T.faint }}>{side.payloadOk ? 'No theme is improving on enough independent measures. Nothing is forced onto the list.' : 'Loading…'}</div>}
         </div>
@@ -507,7 +536,9 @@ export default function MarketLeadership() {
         </div>
       ) : <div style={{ ...card, color: T.faint, fontSize: 12.5 }}>No related pair shows a relative-strength hand-over of 4+ points over 4 weeks.</div>}
 
-      {p ? (
+      </>)}
+      {tab === 'performance' && <PerformanceTab m={sel} d={perf.d} err={perf.err} />}
+      {tab === 'overview' && p ? (
         <>
           <H2 n={10} hint="A reading of market conditions — not an allocation or a cash percentage.">Risk posture &amp; discipline</H2>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(420px, 100%), 1fr))', gap: 10 }}>
@@ -532,6 +563,7 @@ export default function MarketLeadership() {
         </>
       ) : null}
 
+      {tab === 'cycles' && <CyclesTab m={sel} d={perf.d} err={perf.err} history={<>
       <H2 n={11} hint="Past 15%+ falls of the same benchmark, every figure over each fall's own dates. Later returns are shown only for completed falls.">Historical comparison</H2>
       {eps.length ? (
         <div style={{ ...card, padding: '6px 8px', overflowX: 'auto' }}>
@@ -561,6 +593,8 @@ export default function MarketLeadership() {
         </div>
       ) : <div style={{ ...card, color: T.faint, fontSize: 12.5 }}>Building the long history (first build can take a few minutes)…</div>}
 
+      </>} />}
+      {tab === 'compare' && (<>
       <H2 n={12} hint="Only themes with a real counterpart in both markets. US strength does not imply Indian strength.">USA vs India — leadership comparison</H2>
       <div style={{ ...card, padding: '6px 8px', overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
@@ -581,6 +615,7 @@ export default function MarketLeadership() {
         <div style={{ fontSize: 10.5, color: T.faint, padding: 4 }}>Each side is measured against its own market (S&amp;P 500 / Nifty 50). "USA leading" = US theme 5+ points stronger vs its market over 12 weeks than the Indian one vs its market. No financial link between the two is assumed.</div>
       </div>
 
+      </>)}
       <div style={{ fontSize: 11, color: T.faint, marginTop: 18, lineHeight: 1.6 }}>
         <b>Method.</b> Regime: trend (benchmark vs 50 / 200-day lines and their slopes), drawdown from the 52-week high, distribution days, breadth (share of liquid stocks above their 50 / 200-day lines), leader health, volatility and the rally attempt are each shown; the label needs several of them to agree and says which data is missing. Leaders are picked by their run-up into the 52-week high, so leaders that have since broken stay in the count. Breadth and leaders come from the stock screener snapshot (the same data as the Technicals and Stock Screener pages); themes from Theme Rotation; past falls from Theme Cycle. Educational decision support — not investment advice.
       </div>

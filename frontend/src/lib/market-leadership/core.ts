@@ -191,23 +191,32 @@ export interface Leader {
 export function runUpOf(r: Row): number | null {
   if (!num(r.px) || !num(r.hi52) || !num(r.perf1Y) || r.perf1Y <= -100) return null;
   const yearAgo = r.px / (1 + r.perf1Y / 100);
-  return yearAgo > 0 ? (r.hi52 / yearAgo - 1) * 100 : null;
+  if (!(yearAgo > 0)) return null;
+  // zzz1291 — the price a year ago is the start of the 52-week window, so it must sit inside that window's range. A one-year
+  // change that puts it far below the 52-week low (MRNA +1,025% — a stale or split-broken figure) is not used.
+  if (num(r.lo52) && r.lo52 > 0 && (yearAgo < r.lo52 * 0.85 || yearAgo > r.hi52 * 1.15)) return null;
+  if (r.hi52 < r.px * 0.98) return null;   // the high is older than today's price allows: a stale high
+  return (r.hi52 / yearAgo - 1) * 100;
 }
 export function leaderState(r: Row): { state: LeaderState; why: string } {
   const px = r.px!, dd = num(r.hi52) ? (1 - px / r.hi52) * 100 : null;
   const a50 = num(r.sma50) ? px > r.sma50 : null, a200 = num(r.sma200) ? px > r.sma200 : null;
   const rising50 = num(r.sma50) && num(r.sma50P) ? r.sma50 > r.sma50P : null;
   if (a200 === false && a50 === true && rising50 !== false) return { state: 'RECOVERING', why: 'below its 200-day line but back above a 50-day line that is not falling' };
-  if (a200 === false || (dd != null && dd >= 35)) return { state: 'BROKEN', why: a200 === false ? 'below its 200-day line' : `${dd!.toFixed(0)}% below its 52-week high` };
-  if (a50 === false || (dd != null && dd >= 15)) return { state: 'UNDER_PRESSURE', why: a50 === false ? 'below its 50-day line, still above its 200-day' : `${dd!.toFixed(0)}% off its high, above both lines` };
-  return { state: 'HEALTHY', why: `above its 50- and 200-day lines${dd != null ? `, ${dd.toFixed(0)}% off its high` : ''}` };
+  // zzz1291 — "Broken" only below the 200-day line (or, with too little history for one, 35%+ off the high and below the 50-day).
+  // A name 35%+ off its high but still above its 200-day line is under pressure, said with both facts (STLTECH).
+  const short = a200 == null ? ' (fewer than 200 sessions of history — no 200-day line yet)' : '';
+  if (a200 === false) return { state: 'BROKEN', why: `below its 200-day line${dd != null ? `, ${dd.toFixed(0)}% off its high` : ''}` };
+  if (a200 == null && a50 === false && dd != null && dd >= 35) return { state: 'BROKEN', why: `${dd.toFixed(0)}% off its high and below its 50-day line${short}` };
+  if (a50 === false || (dd != null && dd >= 15)) return { state: 'UNDER_PRESSURE', why: a50 === false ? `below its 50-day line${a200 ? ', still above its 200-day' : short}` : `${dd!.toFixed(0)}% off its high${a200 ? ', still above its 200-day line' : short}` };
+  return { state: 'HEALTHY', why: `above its 50-day${a200 ? ' and 200-day lines' : ` line${short}`}${dd != null ? `, ${dd.toFixed(0)}% off its high` : ''}` };
 }
 export function pickLeaders(rows: Row[], m: Mkt, rsMap: Map<string, number>, benchM1: number | null): { leaders: Leader[]; universe: number; rule: string } {
   const pool = rows.filter((r) => liquid(r, m, LEADER_LIQ[m])).map((r) => ({ r, up: runUpOf(r) })).filter((x): x is { r: Row; up: number } => x.up != null && x.up >= 40);
   const universe = rows.filter((r) => liquid(r, m, LEADER_LIQ[m])).length;
   const k = Math.max(15, Math.min(40, Math.round(universe * 0.06)));
   pool.sort((a, b) => b.up - a.up);
-  const leaders = pool.slice(0, k).map(({ r, up }) => {
+  const leaders0 = pool.slice(0, k).map(({ r, up }) => {
     const s = leaderState(r);
     return {
       t: r.t, n: String(r.n || r.t), ind: (r.ind as string) || (r.sec as string) || null, runUp: +up.toFixed(0),
@@ -219,6 +228,9 @@ export function pickLeaders(rows: Row[], m: Mkt, rsMap: Map<string, number>, ben
       ...s,
     };
   });
+  // zzz1291 — shown healthy first, then recovering, under pressure, broken; inside a state the biggest run-up first
+  const ORD: Record<LeaderState, number> = { HEALTHY: 0, RECOVERING: 1, UNDER_PRESSURE: 2, BROKEN: 3 };
+  const leaders = leaders0.slice().sort((a, b) => ORD[a.state] - ORD[b.state] || b.runUp - a.runUp);
   const cap = m === 'US' ? '$10B and $100M traded a day' : '₹10,000 Cr and ₹25 Cr traded a day';
   return { leaders, universe, rule: `Top 6% (${k}) of ${universe} large, liquid companies (market cap ≥ ${cap}) by run-up into their 52-week high (price a year ago → high), run-up ≥ 40%. Chosen by the run-up, so leaders that have since broken stay counted.` };
 }

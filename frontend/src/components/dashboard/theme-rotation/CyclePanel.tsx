@@ -14,6 +14,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import type { Market, Payload } from '@/lib/theme-rotation/types';
 import type { ThemeView } from '@/lib/theme-rotation/view-model';
 import type { EpisodeRow, HistoryLessons, RegimeRead } from '@/lib/theme-cycle/core';
+import { usePerf, BestCompanies } from '@/components/market-leadership/PerfTabs';
 import { classifyCycle, cycleSummary, leadershipTransitions, watchlistOrder, STATE_LABEL, STATE_HELP, WATCH_STATES, type CycleRead, type CycleState } from '@/lib/theme-cycle/classify';
 import { previousStates, saveStates } from '@/lib/theme-cycle/memory';
 import { card } from './ui';
@@ -177,6 +178,9 @@ export function CyclePanel({ region, payload, views, nameOf, onPick, benchName }
   region: Market; payload: Payload; views: ThemeView[]; nameOf: (id: string) => string; onPick: (id: string) => void; benchName: string;
 }) {
   const hist = useCycleHistory(region);
+  // zzz1291 — the companies behind each theme (best first), so a theme name never needs a second search
+  const perf = usePerf(region, 0);
+  const perfTheme = useMemo(() => new Map((perf.d?.themes || []).map((t) => [t.id, t])), [perf.d]);
   const [openId, setOpenId] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
@@ -282,7 +286,7 @@ export function CyclePanel({ region, payload, views, nameOf, onPick, benchName }
                         <React.Fragment key={r.id}>
                           <tr style={{ borderTop: `1px solid ${T.border}`, cursor: 'pointer', background: open ? tint(T.accent, 6) : undefined }} onClick={() => setOpenId(open ? null : r.id)}>
                             <td style={{ padding: '5px 6px', color: T.faint }}>{i + 1}</td>
-                            <td style={{ fontWeight: 800, whiteSpace: 'nowrap' }}>{nameOf(r.id)}</td>
+                            <td style={{ fontWeight: 800 }}><div style={{ whiteSpace: 'nowrap' }}>{nameOf(r.id)}</div>{perfTheme.get(r.id)?.best.length ? <div style={{ fontSize: 11, color: T.dim, fontWeight: 600 }}>{perfTheme.get(r.id)!.best.slice(0, 3).map((x) => x.t).join(' · ')}</div> : null}</td>
                             <td><StateBadge s={r.state} /></td>
                             <td><DimChips r={r} /></td>
                             <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}><span style={{ color: (r.rel4w ?? 0) >= 0 ? T.up : T.down }}>{pts(r.rel4w)}</span> / <span style={{ color: (r.rel12w ?? 0) >= 0 ? T.up : T.down }}>{pts(r.rel12w)}</span></td>
@@ -296,6 +300,7 @@ export function CyclePanel({ region, payload, views, nameOf, onPick, benchName }
                               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 10, fontSize: 12, lineHeight: 1.55 }}>
                                 <div><div style={{ fontWeight: 900, color: T.up }}>Evidence for</div>{r.forEvidence.length ? r.forEvidence.map((e) => <div key={e}>• {e}</div>) : <div style={{ color: T.faint }}>—</div>}</div>
                                 <div><div style={{ fontWeight: 900, color: T.down }}>Evidence against / missing</div>{r.againstEvidence.length ? r.againstEvidence.map((e) => <div key={e}>• {e}</div>) : <div style={{ color: T.faint }}>—</div>}</div>
+                                <div><div style={{ fontWeight: 900 }}>Best companies</div><BestCompanies th={perfTheme.get(r.id)} m={region} max={5} /></div>
                                 <div><div style={{ fontWeight: 900 }}>Invalidation</div><div>{r.invalidation}</div><div style={{ marginTop: 6, color: T.faint }}>{STATE_HELP[r.state]}</div>
                                   <button type="button" onClick={(e) => { e.stopPropagation(); onPick(r.id); }} style={{ marginTop: 6, fontSize: 11.5, fontWeight: 800, padding: '3px 9px', borderRadius: 6, border: `1px solid ${T.border2}`, background: 'transparent', color: T.accent, cursor: 'pointer' }}>Open full evidence ↓</button></div>
                               </div>
