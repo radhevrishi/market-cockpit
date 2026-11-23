@@ -249,6 +249,7 @@ export function BookLoader({ onAdd, onRefresh, busy }: { onAdd: (e: Entry[], rep
   const [sel, setSel] = useState<string[]>([]);
   const [replace, setReplace] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
+  const [more, setMore] = useState(false);
   useEffect(() => {
     try { const v = JSON.parse(localStorage.getItem('mc:company-lab:sources:v1') || '[]'); if (Array.isArray(v)) setSel(v); } catch { /* none */ }
     fetch('/api/v1/us-book', { cache: 'no-store' }).then((r) => r.json()).then((j: any) => setUsBook((j?.book?.holdings || j?.holdings || []).map((h: any) => clean(h?.ticker)).filter(Boolean))).catch(() => { /* local only */ });
@@ -261,12 +262,13 @@ export function BookLoader({ onAdd, onRefresh, busy }: { onAdd: (e: Entry[], rep
     <div style={{ display: 'grid', gap: 8 }}>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
         <span style={{ fontSize: 12.5, fontWeight: 900, color: R.faint }}>LOAD FROM (pick one or more):</span>
-        {sources.map((s) => {
+        {sources.filter((s) => more || !s.id.startsWith('chart-') || sel.includes(s.id)).map((s) => {
           const on = sel.includes(s.id);
           return <button key={s.id} type="button" onClick={() => toggle(s.id)} title={s.note || `${s.entries.length} companies`} disabled={!s.entries.length}
             style={{ fontSize: 13, fontWeight: 800, padding: '5px 11px', borderRadius: 999, cursor: s.entries.length ? 'pointer' : 'not-allowed', border: `1px solid ${on ? R.cyan : R.border}`, background: on ? tint(R.cyan, 14) : 'transparent', color: !s.entries.length ? R.faint : on ? R.cyan : R.dim }}>
             {on ? '☑ ' : '☐ '}{s.label} <span style={{ fontWeight: 600, opacity: 0.8 }}>{s.entries.length}</span></button>;
         })}
+        {sources.some((s) => s.id.startsWith('chart-')) ? <button type="button" onClick={() => setMore((v) => !v)} style={{ fontSize: 12.5, padding: '4px 10px', borderRadius: 999, cursor: 'pointer', border: `1px dashed ${R.border}`, background: 'transparent', color: R.dim }}>{more ? '▴ fewer lists' : `▾ chart lists (${sources.filter((s) => s.id.startsWith('chart-')).length})`}</button> : null}
       </div>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <button type="button" disabled={busy || !picked.length} onClick={go} style={{ fontSize: 13.5, fontWeight: 900, padding: '6px 14px', borderRadius: 8, cursor: busy || !picked.length ? 'not-allowed' : 'pointer', border: `1px solid ${R.green}`, background: tint(R.green, 14), color: R.green }}>▶ Load {picked.length || ''} {picked.length === 1 ? 'company' : 'companies'}</button>

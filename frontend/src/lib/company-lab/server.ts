@@ -222,10 +222,12 @@ export async function labCard(m: LabMarket, tickerIn: string, fresh = false, str
   if (!fresh && hit && Date.now() - hit.at < TTL) return hit.card;
   let card = await labCardIn(m, t, fresh);
   // the other market only for a ticker typed by hand (strict = it came from a list that already says its market)
-  if (!card.ok && t && !strict) {
+  // zzz1292b — a US-tagged entry not found in the USA may be an Indian company filed under the wrong market (portfolio entries ICL, SUMAX…);
+  // an India-tagged one never jumps to a US ticker of the same letters
+  if (!card.ok && t && !(strict && m === 'IN')) {
     const other: LabMarket = m === 'US' ? 'IN' : 'US';
     const alt = await labCardIn(other, t, fresh);
-    if (alt.ok) card = { ...alt, movedFrom: m };
+    if (alt.ok) card = { ...alt, movedFrom: m, notes: [`filed under ${m === 'US' ? 'the USA' : 'India'} in your list, found in ${other === 'US' ? 'the USA' : 'India'}`, ...(alt.notes || [])] };
   }
   if (res.note && card.ok) card = { ...card, notes: [res.note, ...(card.notes || [])] };
   if (!card.ok) card = { ...card, ticker: t0, error: `${t0} not found in the ${m === 'US' ? 'US' : 'India'} data${strict ? '' : ' or the other market'}${res.suggest.length ? ` — did you mean ${res.suggest.join(', ')}?` : ' — check the symbol'}`, suggest: res.suggest };
