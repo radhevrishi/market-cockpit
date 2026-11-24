@@ -144,6 +144,7 @@ function ScanTab({ market }: { market: Mkt }) {
         {g ? <div style={{ fontSize: 13, maxWidth: 560 }}><div style={{ fontSize: 12, color: 'var(--mc-text-3)' }}>Grade A calls in the study ({market === 'US' ? 'USA' : 'India'})</div><HistoryLine h={g} /></div> : null}
         <button onClick={run} disabled={busy} style={{ ...chip(false), marginLeft: 'auto' }}>{busy ? 'Scanning…' : '↻ Scan now'}</button>
       </div>
+      {scan?.regime ? <div style={{ ...card, padding: '10px 14px', borderLeft: `4px solid ${scan.regime.up ? '#10B981' : '#EF4444'}`, fontSize: 14 }}><b>Market today:</b> {scan.regime.label}</div> : null}
       {msg ? <div style={{ fontSize: 13, color: 'var(--mc-text-2)' }}>{msg}</div> : null}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         <button style={chip(grade === 'A')} onClick={() => setGrade('A')}>Grade A only</button>
@@ -184,6 +185,7 @@ function OneTab({ market }: { market: Mkt }) {
       </div>
       {r && !r.ok ? <div style={{ ...card, color: '#EF4444' }}>{r.error || 'Could not read this company.'}</div> : null}
       {r?.ok && !r.ideas?.length ? <div style={card}><div style={{ fontSize: 18, fontWeight: 900 }}>{r.ticker} <span style={{ fontSize: 13, color: 'var(--mc-text-3)', fontWeight: 500 }}>{r.name}</span></div><div style={{ marginTop: 6, fontSize: 15 }}>⛔ <b>No valid setup.</b> {r.noSetup}</div></div> : null}
+      {r?.ok && r.regime ? <div style={{ ...card, padding: '10px 14px', borderLeft: `4px solid ${r.regime.up ? '#10B981' : '#EF4444'}`, fontSize: 14 }}><b>Market today:</b> {r.regime.label}</div> : null}
       {r?.ok && r.ideas?.length && r.chainNote ? <div style={{ fontSize: 12.5, color: '#F59E0B' }}>Live option chain not available ({r.chainNote}) — premiums below are model prices.</div> : null}
       {r?.ok && r.ideas?.length ? r.ideas.map((i: any) => <IdeaCard key={i.setup.id} idea={i} bars={r.bars} />) : null}
     </div>
@@ -300,7 +302,7 @@ function HowTab() {
           <li><b>Puts:</b> uptrend line breakdown · downtrend line rejection · breakdown + retest · inverse cup breakdown + retest.</li>
         </ul></P>
       <P t="2 · Plan the trade">Each structure gives an entry trigger (a trade beyond the bar that tested the line or level), a stop beyond the structure with an ATR buffer, target 1 (measured move or the next level, at least 1.5× the risk) and target 2. Stops tighter than ½ ATR or wider than 3½ ATR are rejected.</P>
-      <P t="3 · Grade it with history">The study followed ~21,700 past setups on 376 liquid companies (Dec 2022 – Nov 2026), using only the bars known each day. The pattern alone was close to a coin toss. What made the difference: a healthy stock (above its 200-day average, stronger than the index over 3 months), a healthy market (index above its 200-day and up over 20 sessions) and a target within 3× the risk. All three = grade A. Puts lost money in every condition tried — they are hedge / watch ideas only.</P>
+      <P t="3 · Grade it with history">The study followed ~21,700 past setups on 376 liquid companies (Dec 2022 – Nov 2026), using only the bars known each day. The pattern alone was close to a coin toss. What made the difference: a healthy stock (above its 200-day average, stronger than the index over 3 months), a healthy market (index above its 200-day and up over 20 sessions) and a target within 3× the risk. All three = grade A — as long as that setup type itself has paid in those conditions (India downtrend-line breaks did not, so they stop at B). Puts lost money in every condition tried — they are hedge / watch ideas only.</P>
       <P t="4 · Choose the option">Expiry: at least 30 days, and at least 1.6× the time similar trades took to reach target 1. Strike: delta about 0.5 (at the money) — in the study the steadiest; a safer (delta ~0.7) and an aggressive (~0.35) choice are shown too. Prices come from the live chain (Yahoo for the USA, NSE for India) when it can be read, else from Black–Scholes on the stock’s own volatility. Each choice shows its value at target 1, target 2 and the stop.</P>
       <P t="5 · Manage it">Move the stop to the entry once the stock is up 1× the risk; take half at target 1; let the rest run to target 2; close after 40 sessions or 7 days before expiry. In the study grade A options averaged about +20% a trade but only about 1 in 4 made money — a few big winners pay for many small losses, so size each trade to lose the premium without harm.</P>
       <P t="6 · Keep score">Every grade A / B idea from the daily scan goes into the live track record and is graded with the same rules, so you can see whether it keeps working after the study.</P>

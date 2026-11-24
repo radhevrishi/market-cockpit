@@ -7,7 +7,7 @@
 import { readFileSync, readdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { study, aggregate, optionReturn, type Trade } from '../src/lib/options-ideas/backtest';
-import { classify, indexCtx, type RawFeatures, type StudyStats, type GroupStats, type Grade } from '../src/lib/options-ideas/model';
+import { classify, finalGrade, indexCtx, type RawFeatures, type StudyStats, type GroupStats, type Grade } from '../src/lib/options-ideas/model';
 import type { PBar } from '../src/lib/chart-patterns';
 import { SETUPS_VERSION } from '../src/lib/options-ideas/setups';
 
@@ -35,7 +35,13 @@ const raw = (t: Trade): RawFeatures => ({
 const ms = (t: number) => (t > 1e11 ? t : t * 1000);
 const testFrom = Date.parse(process.env.OI_TEST_FROM || '2025-07-01');
 const OPT_DELTA = 0.5, OPT_DTE = 30;
-const graded = trades.map((t) => ({ t, g: classify(raw(t)).grade }));
+const pre = trades.map((t) => ({ t, f: raw(t), c0: classify(raw(t)) }));
+const mean0 = (a: number[]) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
+// the setup-type gate table: grade-A conditions before the gate, per market and setup
+const groups0: Record<string, GroupStats> = {};
+{ const m = new Map<string, Trade[]>(); for (const x of pre) if (x.c0.grade === 'A') { const k = `${x.t.market}|${x.t.id}|A0`; if (!m.has(k)) m.set(k, []); m.get(k)!.push(x.t); }
+  for (const [k, v] of m) groups0[k] = { n: v.length, winRate: 0, avgR: 0, trailR: Math.round(mean0(v.map((t) => t.rTrail)) * 100) / 100, medSessions: 0, optAvgRet: null, optWinRate: null, trainR: 0, testR: 0, trainOpt: null, testOpt: null }; }
+const graded = pre.map((x) => ({ t: x.t, g: finalGrade(x.f, x.c0, groups0).grade }));
 const mean = (a: number[]) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
 const r2 = (x: number) => Math.round(x * 100) / 100, r1 = (x: number) => Math.round(x * 10) / 10;
 const stats = (rows: Trade[]): GroupStats => {
@@ -50,11 +56,13 @@ const stats = (rows: Trade[]): GroupStats => {
   };
 };
 const groups: Record<string, GroupStats> = {};
+const groupsA0Stats = (() => { const m = new Map<string, Trade[]>(); for (const x of pre) if (x.c0.grade === 'A') { const k = `${x.t.market}|${x.t.id}|A0`; if (!m.has(k)) m.set(k, []); m.get(k)!.push(x.t); } return m; })();
 const by = (key: (x: { t: Trade; g: Grade }) => string) => { const m = new Map<string, Trade[]>(); for (const x of graded) { const k = key(x); if (!m.has(k)) m.set(k, []); m.get(k)!.push(x.t); } for (const [k, v] of m) if (v.length >= 20) groups[k] = stats(v); };
 by((x) => `${x.t.market}|${x.t.side}|${x.g}`);
 by((x) => `${x.t.market}|${x.t.id}|${x.g}`);
 by((x) => `ALL|${x.t.side}|${x.g}`);
 by((x) => `ALL|${x.t.id}|${x.g}`);
+for (const [k, v] of groupsA0Stats) if (v.length >= 20) groups[k] = stats(v);
 // how winners and losers behaved (grade A calls)
 const A = graded.filter((x) => x.g === 'A').map((x) => x.t);
 const win = A.filter((t) => t.outcome === 'target'), lose = A.filter((t) => t.outcome === 'stop');
@@ -63,7 +71,7 @@ const pct = (a: number, b: number) => (b ? Math.round((a / b) * 100) : 0);
 const all = graded.map((x) => x.t);
 const findings = [
   `All ${all.length.toLocaleString('en-US')} setups together: calls ${aggregate(all.filter((t) => t.side === 'CALL')).avgR} R a trade, puts ${aggregate(all.filter((t) => t.side === 'PUT')).avgR} R — the pattern alone is close to a coin toss.`,
-  `Grade A calls (healthy stock + healthy market + near target): ${A.length.toLocaleString('en-US')} trades, ${groups['ALL|CALL|A']?.trailR ?? 0} R a trade, ${groups['ALL|CALL|A']?.trainR ?? 0} R before ${new Date(testFrom).toISOString().slice(0, 7)} and ${groups['ALL|CALL|A']?.testR ?? 0} R after (hold-out).`,
+  `Grade A calls (healthy stock + healthy market + near target + a setup type that paid): ${A.length.toLocaleString('en-US')} trades, ${groups['ALL|CALL|A']?.trailR ?? 0} R a trade, ${groups['ALL|CALL|A']?.trainR ?? 0} R before ${new Date(testFrom).toISOString().slice(0, 7)} and ${groups['ALL|CALL|A']?.testR ?? 0} R after (hold-out).`,
   `Winners took a median ${med(win.map((t) => t.sessions))} sessions to reach target 1; ${pct(win.filter((t) => t.maeR > -0.5).length, win.length)}% of them never went more than half the risk against the entry.`,
   `Losers: ${pct(lose.filter((t) => t.sessions <= 3).length, lose.length)}% were stopped within 3 sessions; ${pct(lose.filter((t) => t.mfeR >= 1).length, lose.length)}% had first been up 1R or more — so moving the stop to the entry at +1R is in the plan.`,
   `Grade A options (delta ${OPT_DELTA}, ${OPT_DTE}+ days, stop to entry at +1R, aim for target 2): average ${groups['ALL|CALL|A']?.optAvgRet ?? 0}% a trade, but only ${groups['ALL|CALL|A']?.optWinRate ?? 0}% of trades made money — a few big winners pay for many small losses. Size every trade so a full loss of the premium is fine.`,

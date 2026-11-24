@@ -45,7 +45,8 @@ test('zzz1301 — expiries: US Fridays, India last Tuesday; expiry rule ≥ 30 d
   const us = syntheticExpiries('US', now), inn = syntheticExpiries('IN', now);
   assert.ok(us.every((d) => [4, 5].includes(new Date(d + 'T12:00:00Z').getUTCDay())));
   assert.ok(!us.includes('2026-12-25') && us.includes('2026-12-24')); // Christmas Friday → Thursday
-  assert.ok(inn.every((d) => new Date(d + 'T12:00:00Z').getUTCDay() === 2));
+  assert.ok(inn.every((d) => [1, 2].includes(new Date(d + 'T12:00:00Z').getUTCDay())));
+  assert.ok(inn.includes('2027-01-25')); // 26 Jan (Republic Day) → Monday
   assert.equal(inn[0], '2026-12-29'); // 24 Nov is today's (last Tuesday) expiry — excluded
   const p = pickExpiry(us, now, 12, 30)!;
   assert.ok(Math.round((Date.parse(p.expiry) - now.getTime()) / 86400000) >= 29);

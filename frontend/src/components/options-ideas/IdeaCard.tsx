@@ -28,8 +28,13 @@ export function SetupChart({ bars, idea, height = 260 }: { bars: Bar5[]; idea: a
   const s = idea.setup;
   const W = 760, H = height, padR = 70, padT = 10, padB = 18;
   const t0 = ms(view[0][0]), t1 = ms(view[view.length - 1][0]);
-  const levels = [s.stop, s.target1, s.target2, s.trigger];
-  let lo = Math.min(...view.map((b) => b[3]), ...levels), hi = Math.max(...view.map((b) => b[2]), ...levels);
+  // the price range shows the bars, entry, stop and target 1; target 2 only when it is not far beyond (else an arrow marks it)
+  const pLo = Math.min(...view.map((b) => b[3])), pHi = Math.max(...view.map((b) => b[2]));
+  const core = [s.stop, s.target1, s.trigger];
+  let lo = Math.min(pLo, ...core), hi = Math.max(pHi, ...core);
+  const span0 = hi - lo;
+  const t2In = s.target2 >= lo - span0 * 0.25 && s.target2 <= hi + span0 * 0.25;
+  if (t2In) { lo = Math.min(lo, s.target2); hi = Math.max(hi, s.target2); }
   const padP = (hi - lo) * 0.04; lo -= padP; hi += padP;
   const n = view.length, cw = (W - padR) / n;
   const x = (i: number) => i * cw + cw / 2;
@@ -60,7 +65,7 @@ export function SetupChart({ bars, idea, height = 260 }: { bars: Bar5[]; idea: a
         if (X1 <= X0) return null;
         return <line key={k} x1={X0} x2={X1} y1={y(at(X0))} y2={y(at(X1))} stroke={l.kind === 'trend' ? '#A78BFA' : l.kind === 'rim' ? '#F472B6' : '#60A5FA'} strokeWidth={2} />;
       })}
-      {hline(s.target2, C.green, 'T2', '2 4')}
+      {t2In ? hline(s.target2, C.green, 'T2', '2 4') : <text x={W - padR + 4} y={s.target2 > hi ? padT + 10 : H - padB} fontSize={10.5} fill={C.green} fontWeight={700}>{s.target2 > hi ? '↑' : '↓'} T2</text>}
       {hline(s.target1, C.green, 'T1')}
       {hline(s.trigger, '#60A5FA', 'Entry', '4 3')}
       {hline(s.stop, C.red, 'Stop')}

@@ -86,6 +86,18 @@ export function classify(f: RawFeatures): Classified {
     verdict: grade === 'B' ? 'Hedge / watch only — single-stock puts lost money in the study even in this setup' : 'Avoid — puts against a stock or market that is not weak lost money in the study' };
 }
 
+/** Grade A also needs this setup type's own grade-A history (same market) to have paid: ≥ 50 trades and ≥ +0.1 R a trade.
+ *  (study: India downtrend breaks / trend bounces in grade A conditions made ~0 R; US breakout retests +0.41 R) */
+export const SETUP_MIN_R = 0.1, SETUP_MIN_N = 50;
+export function finalGrade(f: RawFeatures, c: Classified, groups: Record<string, GroupStats> = STUDY.groups): Classified {
+  if (c.grade !== 'A') return c;
+  // `A0` = this setup type under the grade-A conditions BEFORE this check (so the table does not feed on itself)
+  const h = groups[`${f.market}|${f.id}|A0`];
+  if (!h || h.n < SETUP_MIN_N || h.trailR >= SETUP_MIN_R) return c;
+  return { ...c, grade: 'B', checks: [...c.checks, { label: `This setup type has paid in these conditions (${f.market === 'US' ? 'USA' : 'India'}: ${h.trailR > 0 ? '+' : ''}${h.trailR} R a trade over ${h.n} past trades)`, ok: false }],
+    verdict: 'Watch — conditions are right, but this setup type has not paid in them before' };
+}
+
 export interface GroupStats { n: number; winRate: number; avgR: number; trailR: number; medSessions: number; optAvgRet: number | null; optWinRate: number | null; trainR: number; testR: number; trainOpt: number | null; testOpt: number | null }
 /** study numbers for the setup's group: same market, side and grade; then the same setup type within that */
 export function historyFor(f: RawFeatures, grade: Grade): { group: GroupStats | null; setup: GroupStats | null; groupKey: string; setupKey: string } {

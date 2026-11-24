@@ -17,6 +17,8 @@
 import { isTradingDay } from '../exchange-calendar';
 
 export type Mkt = 'US' | 'IN';
+/** India national holidays on fixed dates (the collected NSE list may not reach next year yet) */
+const IN_FIXED_HOLIDAYS = ['01-26', '05-01', '08-15', '10-02', '12-25'];
 export interface ChainQuote { strike: number; bid: number | null; ask: number | null; last: number | null; iv: number | null; oi: number | null; volume: number | null }
 export interface Chain { expiries: string[]; byExpiry: Record<string, { calls: ChainQuote[]; puts: ChainQuote[] }>; source: string; asOf: string | null }
 
@@ -87,7 +89,8 @@ export function syntheticExpiries(m: Mkt, now: Date): string[] {
     }
   }
   // an exchange holiday moves the expiry to the trading day before (Christmas Friday → Thursday)
-  const moved = out.map((d) => { let x = d; for (let k = 0; k < 5 && !isTradingDay(m, x); k++) x = iso(addDays(new Date(x + 'T12:00:00Z'), -1)); return x; });
+  const open = (x: string) => isTradingDay(m, x) && !(m === 'IN' && IN_FIXED_HOLIDAYS.includes(x.slice(5)));
+  const moved = out.map((d) => { let x = d; for (let k = 0; k < 5 && !open(x); k++) x = iso(addDays(new Date(x + 'T12:00:00Z'), -1)); return x; });
   return Array.from(new Set(moved)).filter((d) => d > iso(start)).sort().slice(0, m === 'US' ? 16 : 3);
 }
 

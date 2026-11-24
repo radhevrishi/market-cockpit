@@ -12,7 +12,7 @@ import { kvGet, kvSet } from '../kv';
 import { getSnapshot } from '../screener/snapshot-cache';
 import type { PBar } from '../chart-patterns';
 import { findSetups, SETUP_META, SETUPS_VERSION, type Setup, type SetupId } from './setups';
-import { classify, historyFor, indexCtx, rawFromSetup, type Classified, type GroupStats, type Grade } from './model';
+import { classify, finalGrade, historyFor, indexCtx, rawFromSetup, type Classified, type GroupStats, type Grade } from './model';
 import { planOption, type OptionPlan, pickExpiry, syntheticExpiries } from './options';
 import { usChain, inChain, nseLots, chainError } from './chain';
 import { simulate, barMs } from './backtest';
@@ -35,10 +35,18 @@ export interface Idea {
   /** set when this group made money in the study overall but lost money after the hold-out date */
   caution: string | null;
 }
-export interface TickerResult { chainNote?: string | null; ok: boolean; market: Mkt; ticker: string; name: string | null; price: number | null; asOf: string | null; ideas: Idea[]; noSetup: string | null; error?: string; bars?: Array<[number, number, number, number, number]> }
+export interface Regime { bench: string; vs200: number; ret20: number; up: boolean; label: string }
+export function regimeOf(m: Mkt, idx: { vs200: number; ret20: number } | null): Regime | null {
+  if (!idx) return null;
+  const up = idx.vs200 > 0 && idx.ret20 > 0;
+  const bench = m === 'US' ? 'S&P 500 (SPY)' : 'Nifty 50 (NIFTYBEES)';
+  const r1 = (x: number) => Math.round(x * 10) / 10;
+  return { bench, vs200: r1(idx.vs200), ret20: r1(idx.ret20), up, label: up ? `${bench} is ${r1(idx.vs200)}% above its 200-day average and up ${r1(idx.ret20)}% in 20 sessions — calls can reach grade A.` : `${bench} is ${Math.abs(r1(idx.vs200))}% ${idx.vs200 >= 0 ? 'above' : 'below'} its 200-day average and ${idx.ret20 >= 0 ? 'up' : 'down'} ${Math.abs(r1(idx.ret20))}% in 20 sessions — no call reaches grade A until the market is above its 200-day AND rising (calls in this state did not pay in the study).` };
+}
+export interface TickerResult { regime?: Regime | null; chainNote?: string | null; ok: boolean; market: Mkt; ticker: string; name: string | null; price: number | null; asOf: string | null; ideas: Idea[]; noSetup: string | null; error?: string; bars?: Array<[number, number, number, number, number]> }
 
 const toP = (b: { t: number; o: number; h: number; l: number; c: number; v: number }[]): PBar[] => b.filter((q) => q && q.l > 0 && Number.isFinite(q.c)).map((q) => ({ t: q.t, o: q.o, h: q.h, l: q.l, c: q.c, v: q.v || 0 }));
-const fmt = (m: Mkt, x: number) => (m === 'US' ? `$${x.toFixed(2)}` : `₹${x.toFixed(2)}`);
+const fmt = (m: Mkt, x: number) => `${m === 'US' ? '$' : '₹'}${x.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 export function capOf(m: Mkt, mc: number | null | undefined): Idea['cap'] {
   if (mc == null || !(mc > 0)) return null;
   // US $ million, India ₹ crore
@@ -80,11 +88,12 @@ export async function analyseTicker(market: Mkt, tickerIn: string, opts: { chain
   const setups = findSetups(bars);
   if (!setups.length) { out.noSetup = 'No valid setup today: no trendline or level with 3+ touches is being tested or broken right now, and no cup is near its rim. Nothing to trade on this company.'; return out; }
   const idx = indexCtx(await benchBars(market), barMs(last.t));
+  out.regime = regimeOf(market, idx);
   let lot = opts.lotSize ?? null;
   if (market === 'IN' && lot == null) lot = (await nseLots().catch(() => null))?.[ticker] ?? null;
   for (const st of setups) {
     const raw = rawFromSetup(st, market, bars, idx);
-    const cls = classify(raw);
+    const cls = finalGrade(raw, classify(raw));
     const hist = historyFor(raw, cls.grade);
     const expSessions = hist.setup?.medSessions || hist.group?.medSessions || 12;
     let chain = null;
@@ -127,7 +136,7 @@ export async function scanUniverse(m: Mkt): Promise<ScanUniverseItem[]> {
   return rows.filter((r) => r.mc >= 15000).sort((a, b) => b.mc - a.mc).slice(0, 220).map((r) => ({ ticker: String(r.t), name: r.n ?? null, mc: r.mc ?? null }));
 }
 
-export interface ScanSnapshot { market: Mkt; builtAt: string; version: string; scanned: number; failed: number; ideas: Idea[]; counts: { A: number; B: number; C: number }; tookS: number }
+export interface ScanSnapshot { regime?: Regime | null; market: Mkt; builtAt: string; version: string; scanned: number; failed: number; ideas: Idea[]; counts: { A: number; B: number; C: number }; tookS: number }
 async function pooled<T>(items: T[], n: number, fn: (x: T) => Promise<void>, deadline: number) {
   let i = 0;
   await Promise.all(Array.from({ length: n }, async () => { while (i < items.length && Date.now() < deadline) { const x = items[i++]; await fn(x).catch(() => {}); } }));
@@ -152,7 +161,9 @@ export async function runScan(m: Mkt, budgetMs = 14 * 60_000): Promise<ScanSnaps
     const same = r?.ideas.find((x) => x.setup.id === i.setup.id);
     if (same?.option) i.option = same.option;
   }
+  const bb = await benchBars(m);
   const snap: ScanSnapshot = {
+    regime: bb.length ? regimeOf(m, indexCtx(bb, barMs(bb[bb.length - 1].t))) : null,
     market: m, builtAt: new Date().toISOString(), version: SETUPS_VERSION, scanned, failed,
     ideas: ideas.slice(0, 400), counts: { A: ideas.filter((i) => i.grade === 'A').length, B: ideas.filter((i) => i.grade === 'B').length, C: ideas.filter((i) => i.grade === 'C').length },
     tookS: Math.round((Date.now() - t0) / 1000),
