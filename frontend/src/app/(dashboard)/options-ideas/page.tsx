@@ -140,7 +140,7 @@ function ScanTab({ market }: { market: Mkt }) {
     load();
   };
   const scan = j?.scan;
-  const ideas = useMemo(() => (scan?.ideas ?? []).filter((i: any) => (grade === 'A+' ? i.grade === 'A+' : grade === 'A' ? i.grade === 'A+' || i.grade === 'A' : i.grade !== 'C') && (side === 'all' || i.setup.side === side) && (cap === 'all' || i.cap === 'small' || i.cap === 'mid') && !(hideRes && i.option?.results?.beforeExpiry) && (adrF === 'all' || (adrF === 'calm' ? (i.ctx?.adr ?? 0) < 3.5 : (i.ctx?.adr ?? 0) >= 3.5))), [scan, grade, side, cap, hideRes, adrF]);
+  const ideas = useMemo(() => (scan?.ideas ?? []).filter((i: any) => (grade === 'A+' ? i.grade === 'A+' : grade === 'A' ? i.grade === 'A+' || i.grade === 'A' : i.grade !== 'C') && (side === 'all' || i.setup.side === side) && (cap === 'all' || i.cap === 'small' || i.cap === 'mid') && !(hideRes && i.option?.results?.beforeExpiry) && (adrF === 'all' || i.ctx?.adr == null || (adrF === 'calm' ? i.ctx.adr < 3.5 : i.ctx.adr >= 3.5))), [scan, grade, side, cap, hideRes, adrF]);
   const throughRes = (scan?.ideas ?? []).filter((i: any) => i.grade !== 'C' && i.option?.results?.beforeExpiry).length;
   // sector heat: trade-grade ideas per sector (3+ = correlated bets)
   const heat = useMemo(() => { const m = new Map<string, number>(); for (const i of (scan?.ideas ?? [])) if ((i.grade === 'A+' || i.grade === 'A') && i.ctx?.sector) m.set(i.ctx.sector, (m.get(i.ctx.sector) ?? 0) + 1); return [...m.entries()].sort((a, b) => b[1] - a[1]); }, [scan]);
@@ -170,8 +170,18 @@ function ScanTab({ market }: { market: Mkt }) {
       {scan?.chainsAt ? <div style={{ fontSize: 12, color: 'var(--mc-text-3)' }}>Option quotes for A+ / A ideas re-read near the close: {new Date(scan.chainsAt).toLocaleString()}</div> : null}
       <div style={card}>
         {!j ? 'Loading…' : !scan ? <div>No scan stored yet for {market === 'US' ? 'the USA' : 'India'}. The scan runs every weekday after the close ({market === 'US' ? '21:52 UTC' : '11:27 UTC'}); press “Scan now” to run a shorter one.</div>
-          : !ideas.length ? <div><b>No valid setup</b> in the scanned universe for these filters. {grade === 'A' ? 'Grade A needs a healthy stock, sector AND market — when the market index is below its 200-day average or falling, there are usually none. Try “A + B (watch)”.' : ''}</div>
+          : !ideas.length ? <div><b>No idea passes these filters.</b> {(() => {
+              const all = (scan?.ideas ?? []).filter((i: any) => i.grade !== 'C');
+              const byGrade = all.filter((i: any) => (grade === 'A+' ? i.grade === 'A+' : grade === 'A' ? i.grade === 'A+' || i.grade === 'A' : true));
+              const parts: string[] = [`${all.length} ideas in the scan`, `${byGrade.length} with the grade filter`];
+              if (side !== 'all') parts.push(`side ${side}`);
+              if (cap === 'sm') parts.push('small + mid caps only');
+              if (adrF !== 'all') parts.push(adrF === 'calm' ? 'ADR < 3.5%' : 'ADR ≥ 3.5%');
+              if (hideRes) parts.push('results before expiry hidden');
+              return `${parts.join(' · ')}.`;
+            })()} <button onClick={() => { setGrade('AB'); setSide('all'); setCap('all'); setAdrF('all'); setHideRes(false); }} style={{ ...chip(false), marginLeft: 6 }}>Clear filters</button></div>
           : <IdeasTable ideas={ideas} open={open} onOpen={(k) => setOpen(open === k ? null : k)} />}
+        {scan && (scan.ideas ?? []).some((i: any) => i.ctx?.adr == null) ? <div style={{ fontSize: 12, color: '#F59E0B', marginTop: 8 }}>This scan was stored before ADR% was added — press “Scan now” to fill it.</div> : null}
         {scan ? <div style={{ fontSize: 12, color: 'var(--mc-text-3)', marginTop: 8 }}>* model premium (no live chain read for that row). Click a row for the chart, the live option chain and the full plan.</div> : null}
       </div>
     </div>
