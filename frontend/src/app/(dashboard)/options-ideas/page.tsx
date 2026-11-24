@@ -19,10 +19,12 @@ const money = (m: string, x: number | null | undefined) => (x == null || !Number
 const chip = (on: boolean): CSSProperties => ({ padding: '5px 11px', borderRadius: 8, border: `1px solid ${on ? 'var(--mc-cyan, #22D3EE)' : 'var(--mc-border-1)'}`, background: on ? 'rgba(34,211,238,0.12)' : 'transparent', color: on ? 'var(--mc-text-0)' : 'var(--mc-text-2)', fontWeight: 700, fontSize: 13, cursor: 'pointer' });
 const LS_MKT = 'mc:options-ideas:market:v1';
 
-function useStored<T>(key: string, init: T): [T, (v: T) => void] {
+/** a stored choice; `ready` is false until the saved value is read, so nothing loads for the default first (zzz1301l) */
+function useStored<T>(key: string, init: T): [T, (v: T) => void, boolean] {
   const [v, setV] = useState<T>(init);
-  useEffect(() => { try { const r = localStorage.getItem(key); if (r) setV(JSON.parse(r)); } catch { /* */ } }, [key]);
-  return [v, (x: T) => { setV(x); try { localStorage.setItem(key, JSON.stringify(x)); } catch { /* */ } }];
+  const [ready, setReady] = useState(false);
+  useEffect(() => { try { const r = localStorage.getItem(key); if (r) setV(JSON.parse(r)); } catch { /* */ } setReady(true); }, [key]);
+  return [v, (x: T) => { setV(x); try { localStorage.setItem(key, JSON.stringify(x)); } catch { /* */ } }, ready];
 }
 
 function IdeasTable({ ideas, onOpen, open }: { ideas: any[]; onOpen: (k: string) => void; open: string | null }) {
@@ -56,7 +58,7 @@ function IdeasTable({ ideas, onOpen, open }: { ideas: any[]; onOpen: (k: string)
             return [
               <tr key={k} onClick={() => onOpen(k)} style={{ cursor: 'pointer', background: open === k ? 'rgba(34,211,238,0.06)' : undefined }}>
                 <td style={td}><GradeBadge g={i.grade} />{i.caution ? <span title={i.caution} style={{ color: '#F59E0B', marginLeft: 4 }}>⚠</span> : null}</td>
-                <td style={td}><b>{i.ticker}</b><div style={{ fontSize: 11.5, color: 'var(--mc-text-3)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{i.name || ''}</div></td>
+                <td style={td}><b>{i.ticker}</b><div style={{ fontSize: 11.5, color: 'var(--mc-text-3)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{i.name || ''}</div>{i.others?.length ? <div style={{ fontSize: 11, color: 'var(--mc-text-3)' }} title={i.others.join(' · ')}>+{i.others.length} more setup{i.others.length > 1 ? 's' : ''}</div> : null}</td>
                 <td style={td}>{i.cap ?? '—'}</td>
                 <td style={td}><SideBadge side={i.setup.side} /><div style={{ fontSize: 12.5, marginTop: 2 }}>{i.setup.label}</div></td>
                 <td style={td}>{money(i.market, i.setup.trigger)}{i.setup.triggered ? ' ✓' : ''} → <span style={{ color: '#EF4444' }}>{money(i.market, i.setup.stop)}</span></td>
@@ -94,7 +96,7 @@ function IdeaDetail({ idea }: { idea: any }) {
 }
 
 export default function OptionsIdeasPage() {
-  const [market, setMarket] = useStored<Mkt>(LS_MKT, 'US');
+  const [market, setMarket, ready] = useStored<Mkt>(LS_MKT, 'US');
   const [tab, setTab] = useState<Tab>('scan');
   useEffect(() => { try { const t = new URLSearchParams(window.location.search).get('view') as Tab; if (t && TABS.some((x) => x[0] === t)) setTab(t); } catch { /* */ } }, []);
   const go = (t: Tab) => { setTab(t); try { const u = new URL(window.location.href); u.searchParams.set('view', t); window.history.replaceState(null, '', u.toString()); } catch { /* */ } };
@@ -107,14 +109,16 @@ export default function OptionsIdeasPage() {
           {(['US', 'IN'] as Mkt[]).map((m) => <button key={m} onClick={() => setMarket(m)} style={chip(market === m)}>{m === 'US' ? '🇺🇸 USA' : '🇮🇳 India'}</button>)}
         </div>
       </div>
-      <div style={{ margin: '12px 0' }}><MarketPanel market={market} /></div>
+      <div style={{ margin: '12px 0' }}>{ready ? <MarketPanel market={market} /> : null}</div>
       <div style={{ display: 'flex', gap: 6, margin: '12px 0', flexWrap: 'wrap' }}>
         {TABS.map(([k, l]) => <button key={k} onClick={() => go(k)} style={chip(tab === k)}>{l}</button>)}
       </div>
-      {tab === 'scan' && <ScanTab market={market} />}
-      {tab === 'one' && <OneTab market={market} />}
-      {tab === 'lists' && <ListsTab market={market} />}
-      {tab === 'record' && <RecordTab market={market} />}
+      {!ready ? <div style={card}>Loading…</div> : <>
+        {tab === 'scan' && <ScanTab key={market} market={market} />}
+        {tab === 'one' && <OneTab key={market} market={market} />}
+        {tab === 'lists' && <ListsTab key={market} market={market} />}
+        {tab === 'record' && <RecordTab key={market} market={market} />}
+      </>}
       {tab === 'how' && <HowTab />}
       <div style={{ fontSize: 12, color: 'var(--mc-text-3)', marginTop: 16 }}>Decision support only, not advice. Options can lose 100% of the premium. Check the live bid / ask, expiry and lot size in your broker before any trade.</div>
     </div>
@@ -131,7 +135,10 @@ function ScanTab({ market }: { market: Mkt }) {
   const [side, setSide] = useState<'all' | 'CALL' | 'PUT'>('all');
   const [cap, setCap] = useState<'all' | 'sm'>('all');
   const [open, setOpen] = useState<string | null>(null);
-  const load = useCallback(() => { setJ(null); fetch(`/api/v1/options-ideas?market=${market}`).then((r) => r.json()).then(setJ).catch(() => setJ({ ok: false })); }, [market]);
+  const load = useCallback(() => {
+    setJ(null);
+    fetch(`/api/v1/options-ideas?market=${market}`).then((r) => r.json()).then((x) => { if (!x?.scan || x.scan.market === market) setJ(x); else setJ({ ok: false }); }).catch(() => setJ({ ok: false }));
+  }, [market]);
   useEffect(() => { load(); }, [load]);
   const run = async () => {
     setBusy(true); setMsg('Scanning (up to 4 minutes; the full scan runs every evening after the close)…');
@@ -141,6 +148,12 @@ function ScanTab({ market }: { market: Mkt }) {
   };
   const scan = j?.scan;
   const ideas = useMemo(() => (scan?.ideas ?? []).filter((i: any) => (grade === 'A+' ? i.grade === 'A+' : grade === 'A' ? i.grade === 'A+' || i.grade === 'A' : i.grade !== 'C') && (side === 'all' || i.setup.side === side) && (cap === 'all' || i.cap === 'small' || i.cap === 'mid') && !(hideRes && i.option?.results?.beforeExpiry) && (adrF === 'all' || i.ctx?.adr == null || (adrF === 'calm' ? i.ctx.adr < 3.5 : i.ctx.adr >= 3.5))), [scan, grade, side, cap, hideRes, adrF]);
+  // one row per company: the best idea (grade, then quality); the others are noted on that row
+  const ideasOne = useMemo(() => {
+    const by = new Map<string, any[]>();
+    for (const i of ideas) { const k = i.ticker; if (!by.has(k)) by.set(k, []); by.get(k)!.push(i); }
+    return [...by.values()].map((arr) => { const s2 = [...arr].sort((a, b) => (({ 'A+': 0, A: 1, B: 2, C: 3 } as any)[a.grade] - ({ 'A+': 0, A: 1, B: 2, C: 3 } as any)[b.grade]) || b.setup.quality - a.setup.quality); return { ...s2[0], others: s2.slice(1).map((o) => `${o.grade} ${o.setup.label}`) }; });
+  }, [ideas]);
   const throughRes = (scan?.ideas ?? []).filter((i: any) => i.grade !== 'C' && i.option?.results?.beforeExpiry).length;
   // sector heat: trade-grade ideas per sector (3+ = correlated bets)
   const heat = useMemo(() => { const m = new Map<string, number>(); for (const i of (scan?.ideas ?? [])) if ((i.grade === 'A+' || i.grade === 'A') && i.ctx?.sector) m.set(i.ctx.sector, (m.get(i.ctx.sector) ?? 0) + 1); return [...m.entries()].sort((a, b) => b[1] - a[1]); }, [scan]);
@@ -148,7 +161,7 @@ function ScanTab({ market }: { market: Mkt }) {
   return (
     <div style={{ display: 'grid', gap: 12 }}>
       <div style={{ ...card, display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'center' }}>
-        <div><div style={{ fontSize: 12, color: 'var(--mc-text-3)' }}>Last scan</div><b>{scan ? new Date(scan.builtAt).toLocaleString() : j ? 'none yet' : '…'}</b>{scan ? <span style={{ fontSize: 12, color: 'var(--mc-text-3)' }}> · {scan.scanned} companies</span> : null}</div>
+        <div><div style={{ fontSize: 12, color: 'var(--mc-text-3)' }}>Last scan</div><b>{scan ? new Date(scan.builtAt).toLocaleString() : j ? 'none yet' : '…'}</b>{scan ? <span style={{ fontSize: 12, color: 'var(--mc-text-3)' }}> · {scan.scanned} {scan.market === 'US' ? 'US' : 'Indian'} companies</span> : null}</div>
         <div><div style={{ fontSize: 12, color: 'var(--mc-text-3)' }}>Grade A+ / A / B</div><b style={{ color: GRADE_COL['A+'] }}>{scan?.counts?.['A+'] ?? 0}</b> / <b style={{ color: GRADE_COL.A }}>{scan?.counts?.A ?? '—'}</b> / <b style={{ color: GRADE_COL.B }}>{scan?.counts?.B ?? '—'}</b></div>
         {gp ? <div style={{ fontSize: 13, maxWidth: 560 }}><div style={{ fontSize: 12, color: 'var(--mc-text-3)' }}>Grade A+ calls in the study ({market === 'US' ? 'USA' : 'India'})</div><HistoryLine h={gp} /></div> : g ? <div style={{ fontSize: 13, maxWidth: 560 }}><div style={{ fontSize: 12, color: 'var(--mc-text-3)' }}>Grade A calls in the study</div><HistoryLine h={g} /></div> : null}
         <button onClick={run} disabled={busy} style={{ ...chip(false), marginLeft: 'auto' }}>{busy ? 'Scanning…' : '↻ Scan now'}</button>
@@ -170,7 +183,7 @@ function ScanTab({ market }: { market: Mkt }) {
       {scan?.chainsAt ? <div style={{ fontSize: 12, color: 'var(--mc-text-3)' }}>Option quotes for A+ / A ideas re-read near the close: {new Date(scan.chainsAt).toLocaleString()}</div> : null}
       <div style={card}>
         {!j ? 'Loading…' : !scan ? <div>No scan stored yet for {market === 'US' ? 'the USA' : 'India'}. The scan runs every weekday after the close ({market === 'US' ? '21:52 UTC' : '11:27 UTC'}); press “Scan now” to run a shorter one.</div>
-          : !ideas.length ? <div><b>No idea passes these filters.</b> {(() => {
+          : !ideasOne.length ? <div><b>No idea passes these filters.</b> {(() => {
               const all = (scan?.ideas ?? []).filter((i: any) => i.grade !== 'C');
               const byGrade = all.filter((i: any) => (grade === 'A+' ? i.grade === 'A+' : grade === 'A' ? i.grade === 'A+' || i.grade === 'A' : true));
               const parts: string[] = [`${all.length} ideas in the scan`, `${byGrade.length} with the grade filter`];
@@ -183,7 +196,7 @@ function ScanTab({ market }: { market: Mkt }) {
               const top = [...fails.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
               return `${parts.join(' · ')}.${top.length && (grade === 'A' || grade === 'A+') ? ` What keeps ideas below grade A today: ${top.map(([l, n]) => `${l.replace(/ — .*$/, '').replace(/\(.*?\)/g, '').trim()} (fails on ${n} of ${all.length})`).join('; ')}.` : ''}`;
             })()} <button onClick={() => { setGrade('AB'); setSide('all'); setCap('all'); setAdrF('all'); setHideRes(false); }} style={{ ...chip(false), marginLeft: 6 }}>Clear filters</button></div>
-          : <IdeasTable ideas={ideas} open={open} onOpen={(k) => setOpen(open === k ? null : k)} />}
+          : <IdeasTable ideas={ideasOne} open={open} onOpen={(k) => setOpen(open === k ? null : k)} />}
         {scan && (scan.ideas ?? []).some((i: any) => i.ctx?.adr == null) ? <div style={{ fontSize: 12, color: '#F59E0B', marginTop: 8 }}>This scan was stored before ADR% was added — press “Scan now” to fill it.</div> : null}
         {scan ? <div style={{ fontSize: 12, color: 'var(--mc-text-3)', marginTop: 8 }}>* model premium (no live chain read for that row). Click a row for the chart, the live option chain and the full plan.</div> : null}
       </div>
