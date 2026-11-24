@@ -4482,4 +4482,7 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   createAlertApi), sector heat chips, hide-through-results filter. zzz1301g: no-setup companies get `structure` (describeStructure:
   trendlines, 3-touch levels, cup rims, "what would make it a setup" nearest first) + StructureChart. zzz1301h: ADR% (20-session,
   TradingView formula, `ctx.adr`, stop / T1 in days of range, scanner column + filter); panel 1-day change dated by regularMarketTime
-  (`closesWithLive`); strike chosen inside the 0.25–0.8 delta band before liquidity.
+  (`closesWithLive`); strike chosen inside the 0.25–0.8 delta band before liquidity. zzz1301l–n: page waits for the saved market
+  (India had shown the USA scan), one row per company, sector medians from larger companies only (US ≥ $2B, India ≥ ₹10,000 Cr —
+  same universe as the replay); `structureBriefs` + `?structure=1&tickers=` feed a "Chart structure" column on Cheat Entry, which is now
+  a full-width sortable table with 📈 Chart / 🎯 Setups links.

@@ -124,7 +124,7 @@ function planWords(m: Mkt, s: Setup): Idea['plan'] {
   };
 }
 
-export async function analyseTicker(market: Mkt, tickerIn: string, opts: { chain?: boolean; bars?: boolean; mc?: number | null; name?: string | null; lotSize?: number | null } = {}): Promise<TickerResult> {
+export async function analyseTicker(market: Mkt, tickerIn: string, opts: { chain?: boolean; bars?: boolean; structure?: boolean; mc?: number | null; name?: string | null; lotSize?: number | null } = {}): Promise<TickerResult> {
   const ticker = tickerIn.trim().toUpperCase();
   const base: TickerResult = { ok: false, market, ticker, name: opts.name ?? null, price: null, asOf: null, ideas: [], noSetup: null };
   const s = await getDailySeries(market, ticker, '2y').catch(() => null);
@@ -138,7 +138,7 @@ export async function analyseTicker(market: Mkt, tickerIn: string, opts: { chain
   const setups = findSetups(bars);
   if (!setups.length) {
     out.noSetup = 'No good setup today: no trendline or level with 3+ touches is being tested or broken right now with a reward at least 1.5× the risk, and no cup is at its rim. Nothing to trade on this company yet — the levels below show what to wait for.';
-    if (opts.bars) out.structure = describeStructure(bars);
+    if (opts.bars || opts.structure) out.structure = describeStructure(bars);
     return out;
   }
   const idx = indexCtx(await benchBars(market), barMs(last.t));
@@ -308,3 +308,21 @@ export async function gradeLog(budgetMs = 6 * 60_000): Promise<{ graded: number;
 
 export async function readScan(m: Mkt): Promise<ScanSnapshot | null> { return kvGet<ScanSnapshot>(SCAN_KEY(m)).catch(() => null); }
 export { syntheticExpiries };
+
+// ─── zzz1301n — slim per-company structure for other boards (Cheat Entry "Chart structure" column) ────────────────────────
+export interface StructureBrief { ticker: string; market: Mkt; ok: boolean; best: { grade: Grade; label: string; side: 'CALL' | 'PUT' } | null; setups: number; lines: number; levels: number; nearest: string | null; nearestPct: number | null }
+export async function structureBriefs(market: Mkt, tickers: string[]): Promise<StructureBrief[]> {
+  const out: StructureBrief[] = [];
+  await Promise.all(tickers.map(async (t) => {
+    const r = await analyseTicker(market, t, { chain: false, structure: true }).catch(() => null);
+    if (!r?.ok) { out.push({ ticker: t, market, ok: false, best: null, setups: 0, lines: 0, levels: 0, nearest: null, nearestPct: null }); return; }
+    const best = r.ideas[0] ?? null;
+    const w = r.structure?.watch?.[0] ?? null;
+    out.push({
+      ticker: r.ticker, market, ok: true, best: best ? { grade: best.grade, label: best.setup.label, side: best.setup.side } : null, setups: r.ideas.length,
+      lines: best ? best.setup.lines.length : r.structure?.lines.length ?? 0, levels: r.structure?.levels.length ?? 0,
+      nearest: w ? w.what.split('.')[0] : null, nearestPct: w ? w.distPct : null,
+    });
+  }));
+  return out;
+}

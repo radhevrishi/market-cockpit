@@ -265,120 +265,171 @@ export default function CheatEntryPage() {
   const atSupport = useMemo(() => (cands || []).filter((c) => c.atSupportNow).length, [cands]);
 
   const chip = (active: boolean, color: string): React.CSSProperties => ({
-    padding: '3px 10px', borderRadius: 6, fontSize: 10.5, fontWeight: 800, cursor: 'pointer',
+    padding: '5px 12px', borderRadius: 8, fontSize: 12.5, fontWeight: 800, cursor: 'pointer',
     border: `1px solid ${active ? color : C.border}`,
     background: active ? `color-mix(in srgb, ${color} 14%, transparent)` : 'transparent',
     color: active ? color : C.muted,
   });
 
+  // zzz1301n — chart structure per row (trendlines / breakout + retest / cups, graded like Options Ideas), loaded for the rows shown
+  const [briefs, setBriefs] = useState<Map<string, any>>(new Map());
+  const [sortK, setSortK] = useState<'score' | 'risk' | 'd50' | 'd200' | 'struct' | 'today'>('score');
+  const top = useMemo(() => shown.slice(0, 60), [shown]);
+  useEffect(() => {
+    let off = false;
+    const need = top.filter((c) => !briefs.has(`${c.market}:${c.symbol}`));
+    if (!need.length) return;
+    (async () => {
+      const groups: Array<{ m: 'US' | 'IN'; t: string[] }> = [];
+      for (const mk of ['IND', 'USA'] as const) {
+        const ts = need.filter((c) => c.market === mk).map((c) => c.symbol);
+        for (let i = 0; i < ts.length; i += 12) groups.push({ m: mk === 'IND' ? 'IN' : 'US', t: ts.slice(i, i + 12) });
+      }
+      let gi = 0;
+      await Promise.all([0, 1].map(async () => {
+        while (gi < groups.length && !off) {
+          const g = groups[gi++];
+          const j = await fetch(`/api/v1/options-ideas?market=${g.m}&structure=1&tickers=${encodeURIComponent(g.t.join(','))}`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+          if (off || !j?.briefs) continue;
+          setBriefs((prev) => { const m = new Map(prev); for (const b of j.briefs) m.set(`${g.m === 'IN' ? 'IND' : 'USA'}:${b.ticker}`, b); return m; });
+        }
+      }));
+    })();
+    return () => { off = true; };
+  }, [top]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const structRank = (b: any) => (!b ? 9 : b.best ? ({ 'A+': 0, A: 1, B: 2, C: 4 } as any)[b.best.grade] ?? 5 : b.lines + b.levels > 0 ? 6 : 8);
+  const rows = useMemo(() => {
+    const r = [...top];
+    const key = (c: Candidate): number => {
+      const b = briefs.get(`${c.market}:${c.symbol}`);
+      switch (sortK) {
+        case 'risk': return c.riskPct ?? 99;
+        case 'd50': return Math.abs(c.d50 ?? 99);
+        case 'd200': return Math.abs(c.d200 ?? 99);
+        case 'struct': return structRank(b);
+        case 'today': return -(c.dayChg ?? -99);
+        default: return -c.score;
+      }
+    };
+    return r.sort((a, b) => key(a) - key(b));
+  }, [top, sortK, briefs]);
+
+  const th: React.CSSProperties = { padding: '8px 8px', textAlign: 'left', fontSize: 11.5, fontWeight: 800, color: C.muted, whiteSpace: 'nowrap', borderBottom: `1px solid ${C.border}`, position: 'sticky', top: 0, background: C.bg };
+  const td: React.CSSProperties = { padding: '8px 8px', fontSize: 13, borderBottom: `1px solid ${C.border}`, verticalAlign: 'middle', fontVariantNumeric: 'tabular-nums' };
+  const H = ({ k, children, title }: { k?: typeof sortK; children: any; title?: string }) => (
+    <th style={{ ...th, cursor: k ? 'pointer' : 'default', color: k && sortK === k ? C.cyan : C.muted }} title={title} onClick={() => k && setSortK(k)}>{children}{k && sortK === k ? ' ▼' : ''}</th>
+  );
+  const pct = (x: number | null, d = 1) => (x == null ? '—' : `${x >= 0 ? '+' : ''}${x.toFixed(d)}%`);
+  const GCOL: Record<string, string> = { 'A+': '#A855F7', A: 'var(--mc-bullish)', B: 'var(--mc-warn)', C: 'var(--mc-bearish)' };
+
   return (
-    <div style={{ padding: '18px 20px', maxWidth: 1180, margin: '0 auto', fontFamily: MONO }}>
+    <div style={{ padding: '16px 20px', width: '100%', boxSizing: 'border-box' }}>
       {/* ── header ─────────────────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-        <h1 style={{ margin: 0, fontSize: 20, fontWeight: 900, color: C.text }}>🥷 Cheat Entry</h1>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          {atSupport > 0 && (
-            <span style={{ fontSize: 10.5, fontWeight: 800, color: C.green, border: `1px solid color-mix(in srgb, var(--mc-bullish) 40%, transparent)`, background: 'color-mix(in srgb, var(--mc-bullish) 10%, transparent)', borderRadius: 6, padding: '3px 9px' }}>
-              🔥 {atSupport} at support NOW
-            </span>
-          )}
-          <span style={{ fontSize: 9.5, fontWeight: 700, color: quotesState === 'live' ? C.green : quotesState === 'loading' ? C.dim : C.amber }}>
-            {quotesState === 'live' ? `● live · ${liveCount.toLocaleString()} px` : quotesState === 'loading' ? '○ fetching live prices…' : '● quotes cold — synced px'}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <h1 style={{ margin: 0, fontSize: 24, fontWeight: 900, color: C.text }}>🥷 Cheat Entry</h1>
+        <span style={{ fontSize: 13.5, color: C.muted }}>Quality names sitting on a rising 50- or 200-day average — the entry where the stop is closest.</span>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+          {atSupport > 0 && <span style={{ fontSize: 13, fontWeight: 800, color: C.green, border: `1px solid color-mix(in srgb, var(--mc-bullish) 40%, transparent)`, borderRadius: 8, padding: '4px 10px' }}>🔥 {atSupport} at support now</span>}
+          <span style={{ fontSize: 12, fontWeight: 700, color: quotesState === 'live' ? C.green : quotesState === 'loading' ? C.dim : C.amber }}>
+            {quotesState === 'live' ? `● live prices (${liveCount.toLocaleString()})` : quotesState === 'loading' ? '○ fetching live prices…' : '● live prices not reached — using synced prices'}
           </span>
-          <button onClick={() => setRefreshTick((x) => x + 1)} style={{ ...chip(false, C.cyan), background: 'transparent' }}>↻ REFRESH</button>
+          <button onClick={() => setRefreshTick((x) => x + 1)} style={chip(false, C.cyan)}>↻ Refresh</button>
         </div>
       </div>
-      <div style={{ fontSize: 11, color: C.muted, marginTop: 6, lineHeight: 1.6, maxWidth: 900 }}>
-        The whole portal votes on <b style={{ color: C.text2 }}>what</b> to buy — Multibagger rankings, your Technicals universe, the Conviction bench.
-        This board decides <b style={{ color: C.text2 }}>when</b>: every vetted name sitting on a rising 200 / 50-day line, ranked by
-        <b style={{ color: C.text2 }}> setup + quality</b>. The nearer the line underneath, the smaller the stop — that&rsquo;s the cheat.
-        The MAs refresh when you re-sync <Link href="/multibagger?tab=technicals-ind" style={{ color: C.cyan }}>India</Link> / <Link href="/multibagger?tab=technicals-usa" style={{ color: C.cyan }}>USA</Link> Technicals.
-      </div>
       {quotesState === 'failed' && (
-        <div style={{ marginTop: 8, fontSize: 10.5, color: C.amber, border: `1px solid color-mix(in srgb, var(--mc-warn) 35%, transparent)`, background: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', borderRadius: 6, padding: '6px 10px', maxWidth: 900 }}>
-        ⚠ The live quote feed didn&rsquo;t answer in time (cold server cache — common right after a deploy). Distances below use your last Technicals-sync prices. Hit ↻ REFRESH in ~30s; the feed will be warm.
+        <div style={{ marginTop: 8, fontSize: 12.5, color: C.amber, border: `1px solid color-mix(in srgb, var(--mc-warn) 35%, transparent)`, borderRadius: 8, padding: '6px 10px' }}>
+          ⚠ The live quote feed didn&rsquo;t answer in time (common right after a deploy). Distances use your last Technicals-sync prices. Refresh in ~30 s.
         </div>
       )}
 
       {/* ── filters ────────────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 12, alignItems: 'center' }}>
         {(['ALL', 'IND', 'USA'] as const).map((m) => (
-          <button key={m} onClick={() => setMarketF(m)} style={chip(marketF === m, C.accent)}>{m === 'ALL' ? 'ALL MARKETS' : m === 'IND' ? '🇮🇳 INDIA' : '🇺🇸 USA'}</button>
+          <button key={m} onClick={() => setMarketF(m)} style={chip(marketF === m, C.accent)}>{m === 'ALL' ? 'All markets' : m === 'IND' ? '🇮🇳 India' : '🇺🇸 USA'}</button>
         ))}
         <span style={{ width: 10 }} />
-        <button onClick={() => setSetupF('ACTIONABLE')} style={chip(setupF === 'ACTIONABLE', C.green)}>✅ ACTIONABLE</button>
+        <button onClick={() => setSetupF('ACTIONABLE')} style={chip(setupF === 'ACTIONABLE', C.green)}>✅ Actionable</button>
         {(['AT_200', 'AT_50'] as SetupKind[]).map((s) => (
           <button key={s} onClick={() => setSetupF(s)} style={chip(setupF === s, SETUP_META[s].color)}>{SETUP_META[s].label}</button>
         ))}
-        <button onClick={() => setSetupF('ALL')} style={chip(setupF === 'ALL', C.muted)}>ALL</button>
+        <button onClick={() => setSetupF('ALL')} style={chip(setupF === 'ALL', C.muted)}>All</button>
+        <span style={{ marginLeft: 'auto', fontSize: 12, color: C.dim }}>
+          {cands ? `${shown.length} of ${cands.length} ranked` : ''}{skipped > 0 ? ` · ${skipped} quality names without moving-average data (add them to a Technicals list)` : ''}
+        </span>
       </div>
 
       {/* ── body ───────────────────────────────────────────────────────────── */}
       {cands == null ? (
-        <div style={{ marginTop: 24, fontSize: 12, color: C.muted, fontStyle: 'italic' }}>Building the board…</div>
+        <div style={{ marginTop: 24, fontSize: 13, color: C.muted, fontStyle: 'italic' }}>Building the board…</div>
       ) : cands.length === 0 ? (
-        <div style={{ marginTop: 24, fontSize: 12, color: C.muted, lineHeight: 1.7, maxWidth: 760 }}>
+        <div style={{ marginTop: 24, fontSize: 13, color: C.muted, lineHeight: 1.7 }}>
           No rankable names yet. The board needs your <Link href="/multibagger?tab=technicals-ind" style={{ color: C.cyan }}>India</Link> /{' '}
           <Link href="/multibagger?tab=technicals-usa" style={{ color: C.cyan }}>USA Technicals</Link> rows (they carry each name&rsquo;s 50 &amp; 200-day averages)
           plus, optionally, the <Link href="/multibagger" style={{ color: C.cyan }}>Multibagger rankings</Link> and{' '}
-          <Link href="/watchlists?tab=conviction" style={{ color: C.cyan }}>Conviction bench</Link> for the quality votes. Sync those once and this fills itself.
+          <Link href="/watchlists?tab=conviction" style={{ color: C.cyan }}>Conviction bench</Link>.
         </div>
       ) : (
         <>
-          <div style={{ fontSize: 10, color: C.dim, marginTop: 10 }}>
-            {shown.length} of {cands.length} ranked
-            {skipped > 0 && <> · {skipped} quality name{skipped === 1 ? '' : 's'} without MA data (add to a Technicals list to rank)</>}
+          <div style={{ marginTop: 10, overflowX: 'auto', border: `1px solid ${C.border}`, borderRadius: 10, background: C.bg }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'inherit' }}>
+              <thead><tr>
+                <H>#</H><H>Company</H><H k="score" title="Setup (0–60) + quality (0–40)">Score</H><H>Entry type</H>
+                <H k="d50" title="Distance from the 50-day average">vs 50-day</H><H k="d200" title="Distance from the 200-day average">vs 200-day</H>
+                <H k="risk" title="Drop to a stop 2% under the average you are buying against">Stop risk</H><H k="today">Today</H><H>3-month trend</H>
+                <H k="struct" title="Trendlines / breakout + retest / cups on the chart, graded like Options Ideas (A+ best). Sort to put the most interesting charts first.">Chart structure</H>
+                <H>Quality</H><H>Sector</H><H>Open</H>
+              </tr></thead>
+              <tbody>
+                {rows.map((c, i) => {
+                  const meta = SETUP_META[c.setup];
+                  const scoreCol = c.score >= 75 ? C.green : c.score >= 55 ? C.cyan : c.score >= 40 ? C.amber : C.muted;
+                  const b = briefs.get(`${c.market}:${c.symbol}`);
+                  const m = c.market === 'IND' ? 'IN' : 'US';
+                  return (
+                    <tr key={c.symbol + c.market} style={{ background: c.atSupportNow ? 'color-mix(in srgb, var(--mc-bullish) 6%, transparent)' : undefined }}>
+                      <td style={{ ...td, color: C.dim, width: 28 }}>{i + 1}</td>
+                      <td style={{ ...td, minWidth: 200 }}>
+                        <span onClick={() => openPassport(c.symbol)} title="Open Stock Passport" style={{ fontWeight: 900, cursor: 'pointer', color: C.text }}>{c.symbol}</span>
+                        <span style={{ marginLeft: 5, fontSize: 11 }}>{c.market === 'IND' ? '🇮🇳' : '🇺🇸'}</span>
+                        {c.atSupportNow && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 900, color: C.green }}>{c.testingSupport ? '🧪 testing support' : '🔥 at support'}</span>}
+                        <div style={{ fontSize: 11.5, color: C.muted, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.company}</div>
+                      </td>
+                      <td style={{ ...td, fontWeight: 900, fontSize: 15, color: scoreCol }} title={`Setup ${c.setupScore}/60 + Quality ${c.qualityScore}/40`}>{c.score}</td>
+                      <td style={{ ...td, whiteSpace: 'nowrap' }}><span title={meta.blurb} style={{ fontWeight: 800, color: meta.color }}>{meta.label}</span></td>
+                      <td style={{ ...td, color: c.d50 != null && Math.abs(c.d50) <= 3 ? C.green : C.text2 }}>{pct(c.d50)}</td>
+                      <td style={{ ...td, color: c.d200 != null && Math.abs(c.d200) <= 4 ? C.cyan : C.text2 }}>{pct(c.d200)}</td>
+                      <td style={{ ...td, fontWeight: 800, color: c.riskPct == null ? C.muted : c.riskPct <= 4 ? C.green : c.riskPct <= 8 ? C.amber : C.red }} title={c.stopMa ? `Stop 2% under the ${c.stopMa}` : ''}>{c.riskPct != null ? `${c.riskPct.toFixed(1)}%` : '—'}{c.stopMa ? <span style={{ fontSize: 10.5, color: C.dim, fontWeight: 600 }}> under {c.stopMa}</span> : null}</td>
+                      <td style={{ ...td, color: c.dayChg == null ? C.dim : c.dayChg >= 0 ? C.green : C.red }}>{c.dayChg != null ? pct(c.dayChg) : (quotesState === 'live' ? <span title="No live quote — synced price">synced</span> : '—')}</td>
+                      <td style={td}>{sparks.get(c.symbol) ? <Sparkline data={sparks.get(c.symbol)} width={80} height={22} /> : <span style={{ color: C.dim }}>—</span>}</td>
+                      <td style={{ ...td, minWidth: 190 }}>
+                        {!b ? <span style={{ color: C.dim, fontSize: 12 }}>reading chart…</span>
+                          : !b.ok ? <span style={{ color: C.dim, fontSize: 12 }}>no chart data</span>
+                          : b.best ? <span title={`${b.setups} setup(s) found on the chart — open Options Ideas for the full plan`}><b style={{ color: '#fff', background: GCOL[b.best.grade] || '#64748B', borderRadius: 5, padding: '1px 6px', fontSize: 12 }}>{b.best.grade}</b> <span style={{ fontWeight: 700 }}>{b.best.label}</span>{b.setups > 1 ? <span style={{ color: C.dim, fontSize: 11.5 }}> +{b.setups - 1}</span> : null}</span>
+                          : b.lines + b.levels > 0 ? <span style={{ fontSize: 12, color: C.text2 }} title={b.nearest || ''}>{b.lines} line{b.lines === 1 ? '' : 's'} · {b.levels} level{b.levels === 1 ? '' : 's'}{b.nearestPct != null ? <span style={{ color: C.dim }}> · nearest {b.nearestPct > 0 ? '+' : ''}{b.nearestPct}%</span> : null}</span>
+                          : <span style={{ color: C.dim, fontSize: 12 }}>no clean structure</span>}
+                      </td>
+                      <td style={td}>
+                        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                          {c.sources.filter((s) => !s.startsWith('Tech')).map((s, k) => <span key={k} style={{ fontSize: 11, fontWeight: 700, color: C.text2, background: C.bg2, border: `1px solid ${C.border2}`, borderRadius: 5, padding: '1px 6px', whiteSpace: 'nowrap' }}>{s}</span>)}
+                        </div>
+                      </td>
+                      <td style={{ ...td, fontSize: 12, color: C.muted, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.sector || '—'}</td>
+                      <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                        <a href={`/charts?m=${m}&t=${encodeURIComponent(c.symbol)}`} target="_blank" rel="noopener noreferrer" style={{ color: C.cyan, fontWeight: 700, textDecoration: 'none' }} title="Open the chart">📈 Chart</a>
+                        <a href={`/options-ideas?view=one&ticker=${encodeURIComponent(c.symbol)}`} onClick={() => { try { localStorage.setItem('mc:options-ideas:market:v1', JSON.stringify(m)); } catch { /* */ } }} target="_blank" rel="noopener noreferrer" style={{ color: C.cyan, fontWeight: 700, textDecoration: 'none', marginLeft: 10 }} title="Trendlines, setups and the option plan">🎯 Setups</a>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 7, marginTop: 10 }}>
-            {shown.slice(0, 60).map((c, i) => {
-              const meta = SETUP_META[c.setup];
-              const scoreCol = c.score >= 75 ? C.green : c.score >= 55 ? C.cyan : c.score >= 40 ? C.amber : C.muted;
-              return (
-                <div key={c.symbol + c.market} style={{ background: C.bg, border: `1px solid ${c.atSupportNow ? 'color-mix(in srgb, var(--mc-bullish) 45%, transparent)' : C.border}`, borderRadius: 9, padding: '9px 12px' }}>
-                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 10, fontWeight: 900, color: C.dim, width: 22 }}>{i + 1}</span>
-                    <span onClick={() => openPassport(c.symbol)} title="Open Stock Passport" style={{ fontSize: 14, fontWeight: 900, color: C.text, cursor: 'pointer', textDecoration: 'underline', textDecorationColor: C.border, textUnderlineOffset: 2 }}>{c.symbol}</span>
-                    <span style={{ fontSize: 9 }}>{c.market === 'IND' ? '🇮🇳' : '🇺🇸'}</span>
-                    {c.atSupportNow && (
-                      <span style={{ fontSize: 8.5, fontWeight: 900, color: C.green, letterSpacing: '0.4px' }}>
-                        {c.testingSupport ? '🧪 TESTING SUPPORT' : '🔥 AT SUPPORT'}
-                      </span>
-                    )}
-                    <span style={{ fontSize: 10, color: C.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 260 }}>{c.company}</span>
-                    <span style={{ flex: 1 }} />
-                    {sparks.get(c.symbol) && <span title="~3-month price trend" style={{ display: 'inline-flex', alignItems: 'center' }}><Sparkline data={sparks.get(c.symbol)} width={72} height={20} /></span>}
-                    <span title={`Setup ${c.setupScore}/60 + Quality ${c.qualityScore}/40`} style={{ fontSize: 15, fontWeight: 900, color: scoreCol, fontVariantNumeric: 'tabular-nums' }}>{c.score}</span>
-                  </div>
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 6, paddingLeft: 30, fontSize: 9.5 }}>
-                    <span title={meta.blurb} style={{ fontWeight: 800, color: meta.color, border: `1px solid color-mix(in srgb, ${meta.color} 40%, transparent)`, borderRadius: 4, padding: '1px 6px' }}>{meta.label}</span>
-                    {c.d50 != null && <span style={{ color: Math.abs(c.d50) <= 3 ? C.green : C.muted, fontVariantNumeric: 'tabular-nums' }}>50DMA {c.d50 >= 0 ? '+' : ''}{c.d50.toFixed(1)}%</span>}
-                    {c.d200 != null && <span style={{ color: Math.abs(c.d200) <= 4 ? C.cyan : C.muted, fontVariantNumeric: 'tabular-nums' }}>200DMA {c.d200 >= 0 ? '+' : ''}{c.d200.toFixed(1)}%</span>}
-                    {c.riskPct != null && c.stopMa && (
-                      <span title={`Stop 2% under the ${c.stopMa} you are buying against — a cheat entry works because the exit is close`} style={{ fontWeight: 800, color: c.riskPct <= 4 ? C.green : c.riskPct <= 8 ? C.amber : C.red, fontVariantNumeric: 'tabular-nums' }}>
-                        risk {c.riskPct.toFixed(1)}% (stop&lt;{c.stopMa})
-                      </span>
-                    )}
-                    {c.dayChg != null && <span style={{ color: c.dayChg >= 0 ? C.green : C.red, fontVariantNumeric: 'tabular-nums' }}>{c.dayChg >= 0 ? '+' : ''}{c.dayChg.toFixed(1)}% today</span>}
-                    {!c.priceIsLive && quotesState === 'live' && <span title="No live quote for this symbol — using the price from your last Technicals sync" style={{ color: C.dim }}>· synced px</span>}
-                  </div>
-                  <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 5, paddingLeft: 30 }}>
-                    {c.sources.map((s, k) => (
-                      <span key={k} style={{ fontSize: 8.5, fontWeight: 700, color: C.text2, background: C.bg2, border: `1px solid ${C.border2}`, borderRadius: 4, padding: '1px 6px' }}>{s}</span>
-                    ))}
-                    {c.sector && <span style={{ fontSize: 8.5, color: C.dim, border: `1px solid ${C.border}`, borderRadius: 4, padding: '1px 6px' }}>{c.sector}</span>}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          {shown.length > 60 && <div style={{ fontSize: 10, color: C.dim, marginTop: 8 }}>Top 60 shown of {shown.length} — tighten the filters to see the rest.</div>}
-          <div style={{ fontSize: 9.5, color: C.dim, marginTop: 14, lineHeight: 1.6, maxWidth: 880 }}>
-            How to read it: <b style={{ color: C.muted }}>score = setup (0-60) + quality (0-40)</b>. The setup is the NEAREST qualifying pivot
-            (200DMA scores highest, then 50DMA); names &gt;15% above the 50DMA are extended, names graded &lt;45 by the Multibagger
-            engine are excluded outright unless the Conviction bench vouches for a fresh quarter. <b style={{ color: C.muted }}>risk</b> is the drop
-            to a stop placed 2% under the pivot you&rsquo;re buying against — the whole cheat is that this number is small. 🧪 = price is 1-3% under the
-            pivot (support being tested, slightly discounted); 🔥 = sitting within ±1% of it. Nothing here is a recommendation; it&rsquo;s your own
-            research, sorted by where the entry is cheapest.
+          {shown.length > 60 && <div style={{ fontSize: 12, color: C.dim, marginTop: 8 }}>Top 60 shown of {shown.length} — narrow the filters to see the rest.</div>}
+          <div style={{ fontSize: 12, color: C.dim, marginTop: 12, lineHeight: 1.6 }}>
+            <b style={{ color: C.muted }}>Score</b> = setup (0–60) + quality (0–40). The setup is the nearest rising average underneath (200-day scores highest, then 50-day); names more than 15% above the 50-day are extended; names graded below 45 by the Multibagger engine are left out unless the Conviction bench vouches.
+            <b style={{ color: C.muted }}> Stop risk</b> = the drop to a stop 2% under that average — small is the point. 🔥 within ±1% of it; 🧪 1–3% under it.
+            <b style={{ color: C.muted }}> Chart structure</b> = trendlines, 3-touch levels and cups found on the daily chart, graded like Options Ideas — sort by it to open the most interesting charts first. Not a recommendation.
           </div>
         </>
       )}
