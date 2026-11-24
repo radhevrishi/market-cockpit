@@ -351,7 +351,7 @@ export async function spyReturn12m(): Promise<number | null> {
 // for AVGO / IOT / PATH and something else entirely for ZS and DOCU.
 export interface EpsHistoryRow { quarter: string | null; eps_estimate: number | null; eps_actual: number | null; surprise_pct: number | null; }
 let _crumb: { at: number; cookie: string; crumb: string } | null = null;
-async function yahooCrumb(): Promise<{ cookie: string; crumb: string } | null> {
+export async function yahooCrumb(): Promise<{ cookie: string; crumb: string } | null> {
   if (_crumb && Date.now() - _crumb.at < 50 * 60_000) return _crumb;
   try {
     const r1 = await fetch('https://fc.yahoo.com/', { headers: { 'User-Agent': BROWSER_UA }, redirect: 'manual', cache: 'no-store', signal: AbortSignal.timeout(9000) });

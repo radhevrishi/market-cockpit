@@ -85,6 +85,7 @@ export const HUBS: Hub[] = [
       { href: '/charts', label: 'Charts + Watchlist', more: [{ href: '/charts/grid', label: 'Multi-chart · Intraday' }] },
       { href: '/multibagger?tab=technicals-ind', label: 'Technicals', us: '/multibagger?tab=technicals-usa' },
       { href: '/market-snapshot?tab=movers', label: 'Movers' },
+      { href: '/options-ideas', label: 'Options Ideas' },
       { href: '/cheat-entry', label: 'Cheat Entry' },
       { href: '/bounce-desk', label: 'Bounce Desk' },
       { href: '/volume-rules', label: 'Volume Rules' },

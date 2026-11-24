@@ -4115,6 +4115,7 @@ const FAVS: Array<{ href: string; label: string; color: string; ext?: boolean }>
   { href: '/search-docs', label: '🔎 Document Search', color: '#A78BFA' },   // zzz1051
   { href: '/cockpit', label: '🛩️ Action Cockpit', color: '#F59E0B' },
   { href: '/cheat-entry', label: '🥷 Cheat Entry', color: '#10B981' },
+  { href: '/options-ideas', label: '🎯 Options Ideas', color: '#F59E0B' },
   { href: '/bounce-desk', label: '🌊 Bounce Desk', color: '#A78BFA' },
   { href: '/weekly-review', label: '🧘 Weekly Review', color: '#FBBF24' },
   { href: '/watchlists?tab=conviction', label: '🏆 Conviction Beats', color: '#F59E0B' },

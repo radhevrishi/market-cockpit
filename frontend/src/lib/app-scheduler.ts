@@ -562,6 +562,16 @@ export const APP_JOBS: readonly AppJob[] = [
   // NSDL confirmed figure + new fortnight sector report at 15:30 / 17:45 / 04:20 UTC, history backfill in small chunks.
   // Crons = lib/fii-dii/schedule FII_DII_CRONS (a test keeps them equal). By hand: POST /api/v1/fii-dii?run=1 (service key).
   { name: 'fii-dii', crons: ['0,15,30,45 13-14 * * 1-5', '0,15,30 15 * * 1-5', '45 17 * * 1-5', '20 4 * * 1-5', '55 0-11,16-23 * * *', '55 12-15 * * 0,6'], timeoutMs: 4 * MIN, workflow: BRIDGE, does: 'in-process: lib/fii-dii/job fiiDiiJob (NSE fiidiiTradeReact → fii_dii_daily; NSDL daily + fortnight sector reports; NSE participant OI; Nifty closes; hourly :55 backfill slots until history is complete)', run: async (ctx) => (await import('./fii-dii/job')).fiiDiiJob(ctx) },
+  // zzz1301 — Options Ideas: scan the optionable universe after each close (USA: liquid ≥ $2B names; India: NSE F&O stocks),
+  // live chains for the best ideas, then grade the live track record. In-process, no AI.
+  { name: 'options-ideas-us', crons: ['52 21 * * 1-5'], timeoutMs: 25 * MIN, workflow: BRIDGE, does: 'in-process: lib/options-ideas/server runScan(US) + gradeLog (setups, grades, option plans → KV options-ideas:v1:scan:US; track record options-ideas:v1:log)', run: async () => {
+    const m = await import('./options-ideas/server'); const s = await m.runScan('US'); await m.gradeLog();
+    return s.scanned > 0 ? { ok: true, status: 200 } : { ok: false, status: 503, error: 'no company could be read' };
+  } },
+  { name: 'options-ideas-in', crons: ['27 11 * * 1-5'], timeoutMs: 25 * MIN, workflow: BRIDGE, does: 'in-process: lib/options-ideas/server runScan(IN) + gradeLog (NSE F&O stocks)', run: async () => {
+    const m = await import('./options-ideas/server'); const s = await m.runScan('IN'); await m.gradeLog();
+    return s.scanned > 0 ? { ok: true, status: 200 } : { ok: false, status: 503, error: 'no company could be read' };
+  } },
   // zzz1259 — Choke-Point Themes refreshed weekly (owner approved 11 Nov; it had last run 2 Nov because it only ran on a click).
   // Sunday 05:10 UTC; skipped when the last report is under 4 days old; at most 2 attempts a ISO week (a failed run keeps the last good report).
   { name: 'choke-themes-weekly', crons: ['10 5 * * 0', '10 5 * * 1'],   // zzz1262: Monday = the second try when Sunday's run failed (skipped when the report is fresh)
