@@ -55,6 +55,9 @@ export const BUILT_IN_PINE_SCREENS: readonly PineScreen[] = [
   }, "O'Neil's bases within 10% of the buy point (pivot), price above its 200-day average."),
   screen('minervini-vcp', 'Minervini VCP', { stages: ['f', 'b'], bias: 'U', ids: ['vcp'], dist: { on: true, lo: -8, hi: 5 }, filters: TREND_TEMPLATE, cols: ['tt', 'rsR'] },
     'Volatility contraction patterns in stocks that pass all six rules of your Minervini trend-template script.'),
+  // zzz1307 — a ceiling that held two years or more, on weekly bars (daily history is too short for most names)
+  screen('multiyear-breakout', 'Multi-year breakout', { stages: ['f', 'b'], bias: 'U', ids: ['multiyear_breakout'], tfs: ['W', 'D'], dist: { on: true, lo: -10, hi: 8 } },
+    'A high that capped the price for two years or more, with a real base under it: within 10% under it, or broke above it and is no more than 8% past it.'),
   screen('breakouts-today', 'Breakouts (last 5 sessions)', { bias: 'U', stages: ['b'], dist: { on: true, lo: 0, hi: 8 }, returned: false },
     'Bullish patterns whose first close above the pivot came in the last 5 sessions, still no more than 8% above it.'),
   screen('flags-pennants', 'Flags & pennants', { stages: ['f', 'b'], bias: 'U', ids: ['bull_flag', 'bull_pennant', 'high_tight_flag'], dist: { on: true, lo: -10, hi: 5 } },

@@ -65,7 +65,7 @@ const FALL: Leg[] = [[60, 100], [60, 70]];
 // ───────── metadata / contract ─────────
 
 test('zzz981 metadata: 22 ids, every id has meta with matching id, groups and short text', () => {
-  assert.equal(PATTERN_IDS.length, 22);
+  assert.equal(PATTERN_IDS.length, 23);   // zzz1307: + multi-year breakout
   for (const id of PATTERN_IDS) {
     const m = PATTERN_META[id];
     assert.equal(m.id, id);

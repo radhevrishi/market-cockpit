@@ -21,7 +21,7 @@ export const PINE_FAMILIES: ReadonlyArray<{ id: PineFamilyId; label: string; hin
 /** The screens named one by one; the rest go by their id prefix (pf-, ts-, r40-, tw-) or, failing that, their old group. */
 const NAMED: Readonly<Record<string, PineFamilyId>> = {
   'all-bullish': 'discovery', 'all-bearish': 'discovery', 'broad-candidates': 'discovery', 'near-ready': 'discovery', 'oneil-bases': 'discovery',
-  'minervini-vcp': 'discovery', 'flags-pennants': 'discovery', 'triangles-wedges': 'discovery', bottoms: 'discovery', 'bearish-tops': 'discovery',
+  'minervini-vcp': 'discovery', 'multiyear-breakout': 'breakouts', 'flags-pennants': 'discovery', 'triangles-wedges': 'discovery', bottoms: 'discovery', 'bearish-tops': 'discovery',
   'bear-continuation': 'discovery',
   'bases-forming': 'bases', 'weekly-bases': 'bases', 'monthly-bases': 'bases', 'monthly-reversal-bases': 'bases', 'monthly-near-pivot': 'bases',
   'mtf-aligned': 'bases', 'wl-forming-bases': 'bases',

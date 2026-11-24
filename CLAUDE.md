@@ -4537,3 +4537,10 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   `retestOf` and Best Picks SETUP family (grade B VCP counts, 10 pts) take it. Also 24 Nov: US book replaced from IBKR (25 holdings,
   €18.16 cash; old book backed up in the owner's browser `mc:us-book:backup:2026-11-24`); US Portfolio Catalysts statuses wait on
   filing reads for the new names — owner chose NOT to run the paid bulk read; the daily auto-read (book first, $0.30/day) covers them.
+- zzz1307c (24 Nov): MULTI-YEAR BREAKOUT everywhere the main patterns are read. chart-patterns `multiyear_breakout` (all timeframes, base
+  family): ceiling = highest high of the last 5 years set ≥ 2 years ago (not in the last 60 bars), base ≥ 15% deep, close ≥ 85% of the
+  ceiling; a second test ≥ 90% a year+ later adds confidence; pivot = the old high (stageOf: forming under it, breakout ≤ 4 sessions,
+  older = completed). Daily reads need `maxBars: 1300` (default 700 bars < 2 years + base) — Options Ideas findSetups /
+  describeStructure pass it and analyseTicker loads 5-year bars. Options Ideas setup `multiyear_breakout` (CALL, built by vcpSetups,
+  capped at grade B via NO_HISTORY_YET until the replay is re-run), STRUCTURE_PATTERNS, Entry Desk retest view, Best Picks SETUP family,
+  Pine screen `multiyear-breakout` (Breakouts family). Tests zzz1307b-multiyear.

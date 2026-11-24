@@ -23,7 +23,7 @@
 import { autoLines, linePriceAt, type TrendLine } from '../auto-lines';
 import { detectPatterns, type PBar } from '../chart-patterns';
 
-export type SetupId = 'trend_bounce' | 'downtrend_break' | 'breakout_retest' | 'cup_retest' | 'trend_breakdown' | 'downtrend_reject' | 'breakdown_retest' | 'inverse_cup' | 'vcp_breakout';
+export type SetupId = 'trend_bounce' | 'downtrend_break' | 'breakout_retest' | 'cup_retest' | 'trend_breakdown' | 'downtrend_reject' | 'breakdown_retest' | 'inverse_cup' | 'vcp_breakout' | 'multiyear_breakout';
 export type Side = 'CALL' | 'PUT';
 export const SETUP_META: Record<SetupId, { side: Side; label: string; short: string; why: string }> = {
   trend_bounce: { side: 'CALL', label: 'Uptrend support bounce', short: 'TL bounce', why: 'Price came back to a rising trendline that has held three or more times and is turning up off it again.' },
@@ -34,10 +34,11 @@ export const SETUP_META: Record<SetupId, { side: Side; label: string; short: str
   downtrend_reject: { side: 'PUT', label: 'Downtrend line rejection', short: 'TL reject', why: 'Price rallied into a falling trendline that has capped it three or more times and is turning down off it again.' },
   breakdown_retest: { side: 'PUT', label: 'Breakdown + retest', short: 'BD retest', why: 'A support level tested three or more times broke, price bounced back up to it and it is now acting as resistance.' },
   vcp_breakout: { side: 'CALL', label: 'VCP breakout', short: 'VCP', why: 'A volatility contraction base (two to six pullbacks, each smaller than the last, volume drying up) — the entry is the break above its pivot.' },
+  multiyear_breakout: { side: 'CALL', label: 'Multi-year breakout', short: 'MY breakout', why: 'A high that capped the price for two years or more, with a real base under it — the entry is the close above it (or the first pull-back to it).' },
   inverse_cup: { side: 'PUT', label: 'Inverse cup breakdown + retest', short: 'Inv. cup', why: 'A rounded top (inverse cup) broke below its rim; price is back near the rim from below and failing there.' },
 };
 export const SETUP_IDS = Object.keys(SETUP_META) as SetupId[];
-export const SETUPS_VERSION = 'oi-3';   // zzz1307: VCP breakout added
+export const SETUPS_VERSION = 'oi-3';   // zzz1307: VCP + multi-year breakout added
 /** reward : risk to target 1 below this = no trade */
 export const MIN_RR = 1.5;
 
@@ -297,11 +298,11 @@ function cupSetups(x: Ctx, bars: PBar[], inverse: boolean): Setup[] {
 
 /** zzz1307 — VCP breakout via the chart-pattern engine: forming within 3% under the pivot, or broke it ≤ 20 sessions ago and is
  *  holding −2 … +5% of it. Stop under the last contraction low (the last 10 sessions) with an ATR buffer. */
-function vcpSetups(x: Ctx, hits: ReturnType<typeof detectPatterns>): Setup[] {
+function vcpSetups(x: Ctx, hits: ReturnType<typeof detectPatterns>, pid: 'vcp' | 'multiyear_breakout' = 'vcp'): Setup[] {
   const out: Setup[] = [];
   const b = x.b, L = x.L;
   for (const h of hits) {
-    if (h.id !== 'vcp' || h.pivot == null || h.stage === 'failed') continue;
+    if (h.id !== pid || h.pivot == null || h.stage === 'failed') continue;
     const P = h.pivot, dist = (x.c - P) / P;
     const broke = h.stage === 'breakout' && (h.breakAgo ?? 99) <= 20;
     const near = broke && dist >= -0.02 && dist <= 0.05;
@@ -313,10 +314,11 @@ function vcpSetups(x: Ctx, hits: ReturnType<typeof detectPatterns>): Setup[] {
     const t1 = P * (1 + Math.min(depth, 0.25)), t2 = P * (1 + Math.min(2 * depth, 0.5));
     const startI = Math.max(0, L - h.lengthBars);
     const cm = /(\d+) contractions/.exec(String(h.note || '')); const contractions = cm ? Number(cm[1]) : null;
-    const s = finish(x, 'vcp_breakout', {
+    const my = pid === 'multiyear_breakout';
+    const s = finish(x, my ? 'multiyear_breakout' : 'vcp_breakout', {
       keyIndex: L, trigger, stop, t1, t2,
       ev: { depthPct: Math.round(depth * 1000) / 10, lengthBars: h.lengthBars, confidence: Math.round(h.confidence * 100) / 100, stage: h.stage, breakAgo: h.breakAgo ?? -1, ...(contractions != null ? { contractions } : {}) },
-      reasons: [`VCP ${h.lengthBars} sessions long, first pullback ${Math.round(depth * 100)}% deep${contractions != null ? `, ${contractions} contractions` : ''}${h.volumeOk === false ? ' (volume not confirmed)' : ''}`,
+      reasons: [my ? `Multi-year ceiling at ${(Math.round(P * 100) / 100)} — ${h.note || 'held for 2+ years'}` : `VCP ${h.lengthBars} sessions long, first pullback ${Math.round(depth * 100)}% deep${contractions != null ? `, ${contractions} contractions` : ''}${h.volumeOk === false ? ' (volume not confirmed)' : ''}`,
         broke ? `Broke above the pivot ${h.breakAgo} session(s) ago and is holding near it` : `Within ${Math.abs(Math.round(dist * 1000) / 10)}% under the pivot — trade only on the close above it`],
       lines: [{ kind: 'level', from: [b[startI].t, P], to: [b[L].t, P] }],
       base: 46 + h.confidence * 22 + (broke ? 4 : 0) + (h.volumeOk === false ? -6 : 0), spanBars: h.lengthBars,
@@ -342,11 +344,11 @@ export function findSetups(barsIn: PBar[], opts: FindOpts = {}): Setup[] {
     ...retestSetups(x, levels, off),
   ];
   if (opts.cups !== false) {
-    const recent = bars.slice(-500);
+    const recent = bars.slice(-1300);   // zzz1307: 5 years so a multi-year ceiling can be seen (cups / VCP cap their own length)
     out.push(...cupSetups(x, recent, false), ...cupSetups(x, recent, true));
     let hits: ReturnType<typeof detectPatterns> = [];
-    try { hits = detectPatterns(recent, { timeframe: 'D' }); } catch { /* patterns are optional */ }
-    out.push(...vcpSetups(x, hits));
+    try { hits = detectPatterns(recent, { timeframe: 'D', maxBars: 1300 }); } catch { /* patterns are optional */ }
+    out.push(...vcpSetups(x, hits), ...vcpSetups(x, hits, 'multiyear_breakout'));
   }
   // one setup per id (the best), sorted by quality
   const best = new Map<SetupId, Setup>();
@@ -358,7 +360,7 @@ export { last as _last };
 
 // ─── zzz1301g — structure on a chart with no tradable setup ──────────────────────────────────────────────────────────────
 /** zzz1307 — bullish patterns shown in the chart structure (what would make it a setup) */
-export const STRUCTURE_PATTERNS = new Set<string>(['cup', 'cup_handle', 'vcp', 'flat_base', 'ascending_base', 'base_on_base', 'high_tight_flag', 'bull_flag', 'ascending_triangle', 'double_bottom', 'inverse_hs']);
+export const STRUCTURE_PATTERNS = new Set<string>(['cup', 'cup_handle', 'vcp', 'flat_base', 'ascending_base', 'base_on_base', 'high_tight_flag', 'bull_flag', 'ascending_triangle', 'double_bottom', 'inverse_hs', 'multiyear_breakout']);
 export interface WatchLevel { side: Side; price: number; distPct: number; what: string }
 export interface Structure { patterns?: Array<{ id: string; label: string; stage: string; distPct: number }>; lines: SetupLine[]; levels: Array<{ price: number; kind: 'support' | 'resistance'; touches: number }>; watch: WatchLevel[]; notes: string[] }
 /** What the chart shows when no setup qualifies: the trendlines / levels / cups found, and what price would make each a setup. */
@@ -393,14 +395,14 @@ export function describeStructure(barsIn: PBar[]): Structure {
       : { side: 'CALL', price: lv.price, distPct: d, what: `Support at ${fmt(lv.price)} (${lv.touches.length} touches, ${d}%). Holding above keeps calls possible; a close below it turns the chart weak (no calls; puts are watch-only).` });
   }
   try {
-    for (const h of detectPatterns(bars.slice(-500), { timeframe: 'D' })) {
+    for (const h of detectPatterns(bars.slice(-1300), { timeframe: 'D', maxBars: 1300 })) {
       // zzz1307 — VCP and the other main bullish bases next to cups (pivot = the entry line)
       if (!STRUCTURE_PATTERNS.has(h.id) || h.pivot == null || h.stage === 'failed') continue;
       const d = pct(h.pivot);
       const cupLike = h.id === 'cup' || h.id === 'cup_handle';
       out.lines.push({ kind: cupLike ? 'rim' : 'level', from: [bars[Math.max(0, L - h.lengthBars)].t, h.pivot], to: [bars[L].t, h.pivot] });
       const name = h.id === 'cup_handle' ? 'Cup with handle' : h.id === 'cup' ? 'Cup' : h.label;
-      out.patterns!.push({ id: h.id, label: h.id === 'vcp' ? 'VCP' : name, stage: h.stage, distPct: d });
+      out.patterns!.push({ id: h.id, label: h.id === 'vcp' ? 'VCP' : h.id === 'multiyear_breakout' ? 'Multi-year breakout' : name, stage: h.stage, distPct: d });
       out.watch.push({ side: 'CALL', price: h.pivot, distPct: d, what: `${name} (${h.lengthBars} sessions${h.depthPct != null ? `, ${Math.round(h.depthPct)}% deep` : ''}), ${cupLike ? 'rim' : 'pivot'} ${fmt(h.pivot)} (${d > 0 ? '+' : ''}${d}%) — ${h.stage === 'breakout' ? `broke out; a pull-back to the ${cupLike ? 'rim' : 'pivot'} that holds is the entry` : `a close above the ${cupLike ? 'rim' : 'pivot'} is the entry`}.` });
     }
   } catch { /* patterns are optional */ }

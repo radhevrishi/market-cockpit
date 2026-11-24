@@ -106,7 +106,7 @@ export function classify(f: RawFeatures): Classified {
 /** Grade A also needs this setup type's own grade-A history (same market) to have paid: ≥ 50 trades and ≥ +0.1 R a trade.
  *  (study: India downtrend breaks / trend bounces in grade A conditions made ~0 R; US breakout retests +0.41 R) */
 export const SETUP_MIN_R = 0.1, SETUP_MIN_N = 50;
-export const NO_HISTORY_YET = new Set<string>(['vcp_breakout']);
+export const NO_HISTORY_YET = new Set<string>(['vcp_breakout', 'multiyear_breakout']);
 export function finalGrade(f: RawFeatures, c: Classified, groups: Record<string, GroupStats> = STUDY.groups): Classified {
   if (c.grade !== 'A' && c.grade !== 'A+') return c;
   // `A0` = this setup type under the grade-A conditions BEFORE this check (so the table does not feed on itself)

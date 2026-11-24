@@ -19,7 +19,7 @@ const read = (p: string) => readFileSync(join(SRC, p), 'utf8');
 const Q = (o: Partial<PineQuery> = {}): PineQuery => ({ ...DEFAULT_QUERY, ...o, dist: { ...DEFAULT_QUERY.dist, ...(o.dist || {}) } });
 const BUILT = new Set(BUILT_IN_PINE_SCREENS.map((s) => s.id));
 
-const IDS = ['all-bullish', 'all-bearish', 'oneil-bases', 'minervini-vcp', 'breakouts-today', 'flags-pennants', 'triangles-wedges', 'bottoms', 'bearish-tops',
+const IDS = ['all-bullish', 'all-bearish', 'oneil-bases', 'minervini-vcp', 'multiyear-breakout', 'breakouts-today', 'flags-pennants', 'triangles-wedges', 'bottoms', 'bearish-tops',
   'breakdowns', 'bear-continuation', 'broad-candidates', 'near-ready', 'bases-forming', 'weekly-bases', 'monthly-bases', 'monthly-reversal-bases',
   'monthly-near-pivot', 'breakouts-holding', 'breakouts-back-below', 'mtf-aligned', 'wl-forming-bases', 'failed-breakouts', 'pf-bearish-risks',
   'pf-bullish-opps', 'pf-failed-bearish', 'tv-trend-template', 'tv-rule-of-40', 'tv-rsi-cross', 'tv-rsi-50', 'tv-golden-cross', 'tv-death-cross',
@@ -37,7 +37,7 @@ const IDS = ['all-bullish', 'all-bearish', 'oneil-bases', 'minervini-vcp', 'brea
   'mtf-eo-strong', 'acc-mtf-eo'];
 
 test('zzz1045a the 65 built-in screen IDs are unchanged (same IDs, same order, none removed or renamed)', () => {
-  assert.equal(BUILT_IN_PINE_SCREENS.length, 78);   // zzz1047: + 2 Stage 2 health screens   // zzz1046a: + 7 volume & accumulation screens
+  assert.equal(BUILT_IN_PINE_SCREENS.length, 79);   // zzz1307: + multi-year breakout   // zzz1047: + 2 Stage 2 health screens   // zzz1046a: + 7 volume & accumulation screens
   assert.deepEqual(BUILT_IN_PINE_SCREENS.map((s) => s.id), IDS);
 });
 
@@ -46,7 +46,7 @@ test('zzz1045a every built-in screen belongs to exactly one family, as the brief
   const seen = new Map<string, number>();
   for (const g of groups) for (const s of g.screens) seen.set(s.id, (seen.get(s.id) || 0) + 1);
   for (const id of IDS) assert.equal(seen.get(id), 1, `${id} listed once`);
-  assert.equal(groups.reduce((n, g) => n + g.screens.length, 0), 78);
+  assert.equal(groups.reduce((n, g) => n + g.screens.length, 0), 79);
   assert.deepEqual(groups.map((g) => g.id), ['discovery', 'bases', 'breakouts', 'portfolio', 'trend', 'r40', 'setups', 'volume']);
   const fam = (id: string) => pineFamilyOf(BUILT_IN_PINE_SCREENS.find((s) => s.id === id)!);
   const expect: Record<PineFamilyId, string[]> = {

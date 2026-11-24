@@ -229,7 +229,7 @@ export async function runBestPicks(o: RunOpts): Promise<BestPicksOut> {
     let k = 0;
     for (const i of s.ideas || []) {
       // zzz1307 — a VCP breakout counts at grade B too (no replay history yet, so it cannot reach A)
-      const vcp = i.setup?.id === 'vcp_breakout' && i.grade === 'B';
+      const vcp = (i.setup?.id === 'vcp_breakout' || i.setup?.id === 'multiyear_breakout') && i.grade === 'B';
       if (i.setup?.side !== 'CALL' || (i.grade !== 'A+' && i.grade !== 'A' && !vcp)) continue;
       const c = cands.get(`${m}:${bare(i.ticker)}`);
       if (!c) continue;   // a chart setup alone is never a pick

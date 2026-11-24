@@ -315,7 +315,7 @@ test('zzz990 improvements: shape score wording, failed in amber after active, op
   assert.equal(shapeScoreWords(H({ confidence: 0.846 })), 'shape score 85/100');
   // engine order: an active structure ranks before a stronger failed one
   const all = [...PATTERN_IDS];
-  assert.equal(all.length, 22);
+  assert.equal(all.length, 23);   // zzz1307: + multi-year breakout
   // banner: failed lead (only when every hit failed) → amber tone
   const failedOnly = bannerOf([H({ stage: 'failed', likelihood: 'likely', confidence: 0.7 })], '₹');
   assert.equal(failedOnly.tone, 'failed');

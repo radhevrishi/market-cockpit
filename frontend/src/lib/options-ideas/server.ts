@@ -127,7 +127,7 @@ function planWords(m: Mkt, s: Setup): Idea['plan'] {
 export async function analyseTicker(market: Mkt, tickerIn: string, opts: { chain?: boolean; bars?: boolean; structure?: boolean; mc?: number | null; name?: string | null; lotSize?: number | null } = {}): Promise<TickerResult> {
   const ticker = tickerIn.trim().toUpperCase();
   const base: TickerResult = { ok: false, market, ticker, name: opts.name ?? null, price: null, asOf: null, ideas: [], noSetup: null };
-  const s = await getDailySeries(market, ticker, '2y').catch(() => null);
+  const s = await getDailySeries(market, ticker, '5y').catch(() => null);   // zzz1307: 5y for multi-year ceilings
   if (!s?.bars?.length) return { ...base, error: 'No price history found for this ticker.' };
   const bars = toP(s.bars);
   if (bars.length < 260) return { ...base, name: s.name ?? base.name, error: `Only ${bars.length} sessions of history — setups need at least 260.` };
@@ -313,7 +313,7 @@ export { syntheticExpiries };
 /** zzz1304 — a bullish breakout (or cup rim) retest on the chart, for the Entry Desk's "Breakout + retest" view */
 export interface RetestBrief { grade: Grade; label: string; trigger: number; stop: number; target1: number; riskPct: number; triggered: boolean; why: string }
 export function retestOf(ideas: Idea[]): RetestBrief | null {
-  const i = ideas.find((x) => x.setup.id === 'breakout_retest' || x.setup.id === 'cup_retest' || x.setup.id === 'vcp_breakout');
+  const i = ideas.find((x) => x.setup.id === 'breakout_retest' || x.setup.id === 'cup_retest' || x.setup.id === 'vcp_breakout' || x.setup.id === 'multiyear_breakout');
   if (!i) return null;
   return { grade: i.grade, label: i.setup.label, trigger: i.setup.trigger, stop: i.setup.stop, target1: i.setup.target1, riskPct: i.setup.riskPct, triggered: i.setup.triggered, why: i.setup.reasons.join(' · ') };
 }

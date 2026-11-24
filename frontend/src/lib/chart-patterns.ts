@@ -143,7 +143,7 @@
 import { aggregateBars } from './bar-aggregate';
 
 export interface PBar { t: number; o: number; h: number; l: number; c: number; v: number }
-export type PatternId = 'flat_base' | 'u_base' | 'cup' | 'cup_handle' | 'ascending_base' | 'vcp' | 'base_on_base' | 'ipo_base' | 'bull_flag' | 'bull_pennant' | 'ascending_triangle' | 'double_bottom' | 'triple_bottom' | 'falling_wedge' | 'high_tight_flag' | 'inverse_hs' | 'double_top' | 'triple_top' | 'head_shoulders' | 'descending_triangle' | 'bear_flag' | 'rising_wedge';
+export type PatternId = 'flat_base' | 'u_base' | 'cup' | 'cup_handle' | 'ascending_base' | 'vcp' | 'multiyear_breakout' | 'base_on_base' | 'ipo_base' | 'bull_flag' | 'bull_pennant' | 'ascending_triangle' | 'double_bottom' | 'triple_bottom' | 'falling_wedge' | 'high_tight_flag' | 'inverse_hs' | 'double_top' | 'triple_top' | 'head_shoulders' | 'descending_triangle' | 'bear_flag' | 'rising_wedge';
 export type PatternBias = 'bullish' | 'bearish';
 export type PatternFamily = 'base' | 'continuation' | 'reversal';
 export type PatternStage = 'forming' | 'breakout' | 'failed';
@@ -157,6 +157,7 @@ export const PATTERN_META: Record<PatternId, PatternMeta> = {
   cup_handle: M('cup_handle', 'Cup with handle', 'bullish', 'base', 'Cup & U', 'A cup followed by a short, shallow pullback (handle) in its upper half on lighter volume.'),
   ascending_base: M('ascending_base', 'Ascending base', 'bullish', 'base', 'Flat & ascending bases', 'Three pullbacks of 10–20% over 9–16 weeks, each low and high above the last (8–22% pullbacks over 8–19 weeks accepted with a lower score).'),
   vcp: M('vcp', 'VCP (volatility contraction)', 'bullish', 'base', 'VCP', 'Two to six pullbacks, each smaller than the one before, with volume drying up in the last.'),
+  multiyear_breakout: M('multiyear_breakout', 'Multi-year breakout', 'bullish', 'base', 'Multi-year breakout', 'A high that capped the price for two years or more (with a real base under it, 15%+ deep); the entry is the close above it.'),
   base_on_base: M('base_on_base', 'Base on base', 'bullish', 'base', 'IPO & base-on-base', 'A new base forming just above an earlier base whose breakout gained less than 20%.'),
   ipo_base: M('ipo_base', 'IPO base', 'bullish', 'base', 'IPO & base-on-base', 'The first base after listing (within about two years), a correction from the post-listing high.'),
   bull_flag: M('bull_flag', 'Bull flag', 'bullish', 'continuation', 'Flags & pennants', 'A sharp rise (the pole) then 1–4 weeks of tight, parallel drift down or sideways.'),
@@ -303,7 +304,7 @@ export function patternShortFor(id: PatternId, tf: PatternTimeframe | null | und
 }
 
 export const PATTERN_TIMEFRAMES: Record<PatternId, ReadonlyArray<PatternTimeframe>> = {
-  flat_base: DW, u_base: ALL_TF, cup: ALL_TF, cup_handle: DW, ascending_base: DW, vcp: ALL_TF, base_on_base: DW, ipo_base: DW,
+  flat_base: DW, u_base: ALL_TF, cup: ALL_TF, cup_handle: DW, ascending_base: DW, vcp: ALL_TF, multiyear_breakout: ALL_TF, base_on_base: DW, ipo_base: DW,
   bull_flag: D_ONLY, bull_pennant: D_ONLY, ascending_triangle: DW, double_bottom: ALL_TF, triple_bottom: ALL_TF, falling_wedge: DW,
   high_tight_flag: D_ONLY, inverse_hs: ALL_TF, double_top: ALL_TF, triple_top: ALL_TF, head_shoulders: ALL_TF,
   descending_triangle: DW, bear_flag: D_ONLY, rising_wedge: DW,
@@ -869,6 +870,35 @@ function detectVcp(s: S, e: number, recs: number[], zz: Pivot[], out: Map<Patter
       pts: cs.slice(j).flatMap((x) => [[x.hi.i, x.hi.p, 'CH'], [x.lo.i, x.lo.p, 'CL']] as Array<[number, number, PointRole]>),
       ev: evOf({ depth: pc1(firstC.d), trend: pc1(up), vr: volDry }) });
   }
+}
+/**
+ * zzz1307 — MULTI-YEAR BREAKOUT: the highest high of up to five years (leaving out the last ~3 months) was set two years or more
+ * ago, nothing went above it since, and a real base (15%+ deep) sits under it. Pivot = that high; the generic stage reader decides
+ * forming (under it) / breakout (closed above) / failed. Stronger with more years, a deeper base, a second test of the ceiling and
+ * a close within reach of it.
+ */
+function detectMultiYear(s: S, e: number, out: Map<PatternId, Raw>) {
+  const Y2 = B(s, 504), Y5 = B(s, 1260), R3 = B(s, 60);
+  if (e < Y2 + R3) return;
+  const a = Math.max(0, e - Y5), z = e - R3;
+  const ci = s.mxH.idx(a, z);
+  if (ci > e - Y2) return;                       // the ceiling must be two years old or more
+  const ceil = s.h[ci];
+  if (!(ceil > 0)) return;
+  const low = s.mnL.val(ci, z);
+  const depth = 1 - low / ceil;
+  if (depth < 0.15) return;                      // a real base under it, not a sideways drift at the top
+  if (s.c[e] < ceil * 0.85) return;              // still far below the ceiling: not a breakout candidate yet
+  // a second test of the ceiling (a high within 10% of it, a year or more after it was set, before the last 3 months)
+  let retest = 0;
+  for (let i = ci + B(s, 252); i <= z; i++) if (s.h[i] >= ceil * 0.9) { retest = 1; break; }
+  const years = (e - ci) / B(s, 252);
+  const conf = wscore([[2, ramp(years, 2, 4)], [2, ramp(depth, 0.15, 0.35)], [1, retest], [1, ramp(s.c[e] / ceil, 0.88, 0.98)]]);
+  push(out, { id: 'multiyear_breakout', conf, start: ci, end: e, keyFrom: ci + 1, pivot: ceil, depth,
+    detail: `${years.toFixed(1)}-year ceiling, base ${Math.round(depth * 100)}% deep${retest ? ', tested again' : ''}`,
+    lines: [LP('pivot', s, ci, ceil, e, ceil)],
+    pts: [[ci, ceil, 'H1']],
+    ev: evOf({ depth: pc1(depth) }) });
 }
 /** Average ratio between successive contraction depths (smaller = cleaner contraction). */
 function tightRatio(cs: Array<{ d: number }>, j: number): number {
@@ -1735,6 +1765,7 @@ export function analyzePatterns(bars: PBar[], opts?: DetectOptions): PatternAnal
     detectLipBases(s, e, recs, raws);
     detectIpoBase(s, e, raws);
     detectVcp(s, e, recs, zzS, raws);
+    detectMultiYear(s, e, raws);
     detectAscendingBase(s, e, zzM, raws);
     detectHTF(s, e, recs, raws);
     detectFlags(s, e, recs, floors, raws);
