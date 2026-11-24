@@ -38,12 +38,13 @@ function One({ p }: { p: any }) {
         </div>
         <div><div style={lab}>Breadth</div>
           {p.breadth ? <><div style={{ fontSize: 18, fontWeight: 800 }}>{p.breadth.above200}% <span style={{ fontSize: 12, fontWeight: 600 }}>above 200-day</span></div>
-            <div style={{ fontSize: 12 }}>{p.breadth.above50}% above 50-day · {p.breadth.nearHigh}% near 52-week high · {p.breadth.n} stocks</div></> : <div>—</div>}
+            <div style={{ fontSize: 12 }}>{p.breadth.above50}% above 50-day · {p.breadth.nearHigh}% near 52-week high · {p.breadth.n} stocks{p.breadth.asOf ? ` · close of ${p.breadth.asOf}` : ''}</div></> : <div>—</div>}
         </div>
         <div><div style={lab} title="Our own CNN-style gauge (CNN blocks servers): index momentum, breadth, volatility and 20-day return, each ranked 0–100">Fear & Greed (our gauge)</div>
           {p.mood ? <Gauge score={p.mood.score} label={p.mood.label} /> : <div>—</div>}
         </div>
       </div>
+      <div style={{ fontSize: 11.5, color: 'var(--mc-text-3)' }}>Index and {p.vix?.name ?? 'VIX'}: live, re-read every 5 minutes (read {new Date(p.readAt).toLocaleTimeString()}). Breadth: share of all listed stocks (≥ {p.market === 'US' ? '$300M' : '₹500 Cr'}), each counted once — so it can be much weaker than the index, which a few giants carry; it updates after each close.</div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
         {([['Buy calls', p.verdict.calls], ['Buy puts', p.verdict.puts], ['Sell puts (short put)', p.verdict.sellPuts]] as const).map(([k, v]: any) => (
           <div key={k} style={{ border: `1px solid ${ACT_COL[v.act]}`, borderRadius: 10, padding: '6px 9px', fontSize: 12.5, lineHeight: 1.45 }}>

@@ -52,7 +52,9 @@ export interface PanelMarket {
   market: Mkt;
   index: { name: string; last: number; chg1d: number; vs50: number; vs200: number; ret20: number; above200: boolean; rising200: boolean } | null;
   vix: { name: string; last: number; chg1d: number; pct1y: number; avg20: number; band: 'calm' | 'normal' | 'elevated' | 'fear'; fearLine: number } | null;
-  breadth: { n: number; above50: number; above200: number; nearHigh: number } | null;
+  breadth: { n: number; above50: number; above200: number; nearHigh: number; asOf: string | null } | null;
+  /** when the index / VIX were read */
+  readAt: string;
   mood: { score: number; label: string; parts: Array<{ k: string; v: number }> } | null;
   regime: 'up' | 'fear' | 'down' | 'mixed';
   verdict: { calls: { act: 'TAKE' | 'SELECTIVE' | 'AVOID'; why: string }; puts: { act: 'AVOID'; why: string }; sellPuts: { act: 'TAKE' | 'SELECTIVE'; why: string } };
@@ -81,12 +83,17 @@ export function buildPanel(m: Mkt, idx: number[] | null, vix: number[] | null, r
     volP = 100 - pct;
   }
   let breadth: PanelMarket['breadth'] = null, brP = 50;
-  const live = rows.filter((r) => typeof r.px === 'number' && r.px > 0 && typeof r.sma50 === 'number' && typeof r.sma200 === 'number' && (r.mc ?? 0) >= (m === 'US' ? 300 : 500));
+  // only rows priced on the snapshot's latest session (a row without a fresh price can be weeks old)
+  const dates = new Map<string, number>();
+  for (const r of rows) if (r.pxAt) { const d = String(r.pxAt).slice(0, 10); dates.set(d, (dates.get(d) ?? 0) + 1); }
+  const asOf = [...dates.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  const fresh = asOf && (dates.get(asOf) ?? 0) >= rows.length * 0.4 ? rows.filter((r) => String(r.pxAt ?? '').slice(0, 10) === asOf) : rows;
+  const live = fresh.filter((r) => typeof r.px === 'number' && r.px > 0 && typeof r.sma50 === 'number' && typeof r.sma200 === 'number' && (r.mc ?? 0) >= (m === 'US' ? 300 : 500));
   if (live.length >= 50) {
     const above50 = Math.round((live.filter((r) => r.px > r.sma50).length / live.length) * 100);
     const above200 = Math.round((live.filter((r) => r.px > r.sma200).length / live.length) * 100);
     const nearHigh = Math.round((live.filter((r) => typeof r.hi52 === 'number' && r.hi52 > 0 && r.px >= r.hi52 * 0.95).length / live.length) * 100);
-    breadth = { n: live.length, above50, above200, nearHigh };
+    breadth = { n: live.length, above50, above200, nearHigh, asOf };
     brP = above50;
   }
   const parts = [{ k: 'Index momentum', v: momP }, { k: 'Breadth (above 50-day)', v: brP }, { k: 'Volatility (inverted)', v: volP }, { k: '20-day return', v: retP }];
@@ -105,12 +112,12 @@ export function buildPanel(m: Mkt, idx: number[] | null, vix: number[] | null, r
     sellPuts: fear ? { act: 'TAKE', why: `Selling puts on healthy stocks you want to own paid best in fear: +2.2% of the strike a month held to expiry, 67% profitable (premiums are rich). Keep the cash to buy the shares.` }
       : { act: 'SELECTIVE', why: `Selling puts on healthy stocks paid about +0.6–0.9% of the strike a month, ~60% profitable — fine for stocks you want to own; better when fear rises.` },
   };
-  return { market: m, index, vix: vx, breadth, mood, regime, verdict };
+  return { market: m, index, vix: vx, breadth, mood, regime, verdict, readAt: new Date().toISOString() };
 }
 
 let memo: { at: number; v: PanelMarket[] } | null = null;
 export async function marketPanel(): Promise<PanelMarket[]> {
-  if (memo && Date.now() - memo.at < 10 * 60_000) return memo.v;
+  if (memo && Date.now() - memo.at < 5 * 60_000) return memo.v;
   const out: PanelMarket[] = [];
   for (const m of ['US', 'IN'] as Mkt[]) {
     const [idx, vix, snap] = await Promise.all([yahooCloses(PANEL_SYMBOLS[m].index), yahooCloses(PANEL_SYMBOLS[m].vix), getSnapshot(m).catch(() => null)]);
