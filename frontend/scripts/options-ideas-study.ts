@@ -7,6 +7,7 @@
 import { readFileSync, readdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { study, aggregate, optionReturn, type Trade } from '../src/lib/options-ideas/backtest';
+import { extraCtx } from '../src/lib/options-ideas/context';
 import { classify, finalGrade, indexCtx, type RawFeatures, type StudyStats, type GroupStats, type Grade } from '../src/lib/options-ideas/model';
 import type { PBar } from '../src/lib/chart-patterns';
 import { SETUPS_VERSION } from '../src/lib/options-ideas/setups';
@@ -26,20 +27,41 @@ if (tradesDir) {
 
   }
 }
+// zzz1301e — extra context per trade: catalyst / volume / HV percentile from the company's own bars, sector strength from the
+// median 3-month return of companies in the same sector (OI_IND_US / OI_IND_IN = JSON { ticker: { sec } } from the screener).
+const barsBy: Record<string, PBar[]> = {};
+for (const f of readdirSync(barsDir).filter((x) => x.endsWith('.json'))) barsBy[`${f.includes('.IN.') ? 'IN' : 'US'}:${f.split('.')[0]}`] = toBars(JSON.parse(readFileSync(join(barsDir, f), 'utf8')));
+const indMap: Record<string, Record<string, { sec?: string | null }>> = { US: process.env.OI_IND_US ? JSON.parse(readFileSync(process.env.OI_IND_US, 'utf8')) : {}, IN: process.env.OI_IND_IN ? JSON.parse(readFileSync(process.env.OI_IND_IN, 'utf8')) : {} };
+const dk = (t: number) => new Date(t > 1e11 ? t : t * 1000).toISOString().slice(0, 10);
+const r60: Record<string, Map<string, number>> = {};
+for (const k in barsBy) { const b = barsBy[k], m = new Map<string, number>(); for (let i = 60; i < b.length; i++) m.set(dk(b[i].t), (b[i].c / b[i - 60].c - 1) * 100); r60[k] = m; }
+const secMembers: Record<string, string[]> = {};
+for (const k in barsBy) { const [m, t] = k.split(':'); const sec = indMap[m][t]?.sec; if (sec) (secMembers[`${m}|${sec}`] ||= []).push(k); }
+const secMedAt = (m: string, sec: string, day: string) => { const v = (secMembers[`${m}|${sec}`] || []).map((k) => r60[k].get(day)).filter((x): x is number => x != null).sort((a, b) => a - b); return v.length >= 4 ? v[Math.floor(v.length / 2)] : null; };
+const extraOf = (t: Trade, ixRet60: number | null) => {
+  const k = `${t.market}:${t.ticker}`, b = barsBy[k];
+  const si = b ? b.findIndex((q) => q.t === t.signalT) : -1;
+  if (!b || si < 260) return {};
+  const e = extraCtx(b, si);
+  const sec = indMap[t.market][t.ticker]?.sec;
+  const sm = sec ? secMedAt(t.market, sec, dk(t.signalT)) : null;
+  return { gap60: e.gap60, rvol: e.rvol, hvPct: e.hvPct, secStrong: sm != null && ixRet60 != null ? sm > ixRet60 : null };
+};
 const raw = (t: Trade): RawFeatures => ({
   id: t.id, side: t.side, market: t.market,
   ret20: Number(t.features.ret20), ret60: Number(t.features.ret60), vs50: Number(t.features.vs50), vs200: Number(t.features.vs200),
   trend: Number(t.features.trend ?? 0), touches: Number(t.features.touches ?? 0), vr: Number(t.features.vr ?? 1), rr1: t.rr1, riskPct: t.riskPct,
   atrPct: Number(t.features.atrPct ?? 0), triggered: t.triggered, idx: indexCtx(idx[t.market], ms(t.signalT)),
+  ...extraOf(t, indexCtx(idx[t.market], ms(t.signalT))?.ret60 ?? null),
 });
 const ms = (t: number) => (t > 1e11 ? t : t * 1000);
 const testFrom = Date.parse(process.env.OI_TEST_FROM || '2025-07-01');
 const OPT_DELTA = 0.5, OPT_DTE = 30;
-const pre = trades.map((t) => ({ t, f: raw(t), c0: classify(raw(t)) }));
+const pre = trades.map((t) => { const f = raw(t); return { t, f, c0: classify(f) }; });
 const mean0 = (a: number[]) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
 // the setup-type gate table: grade-A conditions before the gate, per market and setup
 const groups0: Record<string, GroupStats> = {};
-{ const m = new Map<string, Trade[]>(); for (const x of pre) if (x.c0.grade === 'A') { const k = `${x.t.market}|${x.t.id}|A0`; if (!m.has(k)) m.set(k, []); m.get(k)!.push(x.t); }
+{ const m = new Map<string, Trade[]>(); for (const x of pre) if ((x.c0.grade === 'A' || x.c0.grade === 'A+')) { const k = `${x.t.market}|${x.t.id}|A0`; if (!m.has(k)) m.set(k, []); m.get(k)!.push(x.t); }
   for (const [k, v] of m) groups0[k] = { n: v.length, winRate: 0, avgR: 0, trailR: Math.round(mean0(v.map((t) => t.rTrail)) * 100) / 100, medSessions: 0, optAvgRet: null, optWinRate: null, trainR: 0, testR: 0, trainOpt: null, testOpt: null }; }
 const graded = pre.map((x) => ({ t: x.t, g: finalGrade(x.f, x.c0, groups0).grade }));
 const mean = (a: number[]) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
@@ -56,7 +78,7 @@ const stats = (rows: Trade[]): GroupStats => {
   };
 };
 const groups: Record<string, GroupStats> = {};
-const groupsA0Stats = (() => { const m = new Map<string, Trade[]>(); for (const x of pre) if (x.c0.grade === 'A') { const k = `${x.t.market}|${x.t.id}|A0`; if (!m.has(k)) m.set(k, []); m.get(k)!.push(x.t); } return m; })();
+const groupsA0Stats = (() => { const m = new Map<string, Trade[]>(); for (const x of pre) if ((x.c0.grade === 'A' || x.c0.grade === 'A+')) { const k = `${x.t.market}|${x.t.id}|A0`; if (!m.has(k)) m.set(k, []); m.get(k)!.push(x.t); } return m; })();
 const by = (key: (x: { t: Trade; g: Grade }) => string) => { const m = new Map<string, Trade[]>(); for (const x of graded) { const k = key(x); if (!m.has(k)) m.set(k, []); m.get(k)!.push(x.t); } for (const [k, v] of m) if (v.length >= 20) groups[k] = stats(v); };
 by((x) => `${x.t.market}|${x.t.side}|${x.g}`);
 by((x) => `${x.t.market}|${x.t.id}|${x.g}`);
@@ -64,17 +86,22 @@ by((x) => `ALL|${x.t.side}|${x.g}`);
 by((x) => `ALL|${x.t.id}|${x.g}`);
 for (const [k, v] of groupsA0Stats) if (v.length >= 20) groups[k] = stats(v);
 // how winners and losers behaved (grade A calls)
-const A = graded.filter((x) => x.g === 'A').map((x) => x.t);
+const A = graded.filter((x) => x.g === 'A' || x.g === 'A+').map((x) => x.t);
 const win = A.filter((t) => t.outcome === 'target'), lose = A.filter((t) => t.outcome === 'stop');
 const med = (a: number[]) => { const s = [...a].sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : 0; };
 const pct = (a: number, b: number) => (b ? Math.round((a / b) * 100) : 0);
 const all = graded.map((x) => x.t);
 const findings = [
   `All ${all.length.toLocaleString('en-US')} setups together: calls ${aggregate(all.filter((t) => t.side === 'CALL')).avgR} R a trade, puts ${aggregate(all.filter((t) => t.side === 'PUT')).avgR} R — the pattern alone is close to a coin toss.`,
-  `Grade A calls (healthy stock + healthy market + near target + a setup type that paid): ${A.length.toLocaleString('en-US')} trades, ${groups['ALL|CALL|A']?.trailR ?? 0} R a trade, ${groups['ALL|CALL|A']?.trainR ?? 0} R before ${new Date(testFrom).toISOString().slice(0, 7)} and ${groups['ALL|CALL|A']?.testR ?? 0} R after (hold-out).`,
+  `Grade A+ calls (all checks + a fresh catalyst): ${groups['ALL|CALL|A+']?.n ?? 0} trades, ${groups['ALL|CALL|A+']?.trailR ?? 0} R a trade (${groups['ALL|CALL|A+']?.trainR ?? 0} before ${new Date(testFrom).toISOString().slice(0, 7)}, ${groups['ALL|CALL|A+']?.testR ?? 0} after); options ${groups['ALL|CALL|A+']?.optAvgRet ?? 0}% a trade, ${groups['ALL|CALL|A+']?.optWinRate ?? 0}% of them profitable.`,
+  `Grade A calls (healthy stock, market and sector + near target, no catalyst): ${groups['ALL|CALL|A']?.n ?? 0} trades, ${groups['ALL|CALL|A']?.trailR ?? 0} R a trade (${groups['ALL|CALL|A']?.trainR ?? 0} before, ${groups['ALL|CALL|A']?.testR ?? 0} after).`,
+  `Tested and NOT adopted (replay 24 Nov 2026): a time stop (exit if not +0.5R in 10 sessions) cut grade A results from +0.29 to +0.20 R; call spreads (sell at target 1) averaged +5–7% a trade vs +22% for the plain call — shown as a cheaper alternative only; puts on SPY / QQQ / IWM / Nifty / Bank Nifty lost money too (−0.35 R a trade over 10 years); a weekly Stage 2 check added nothing.`,
+  `Moving the stop to the entry at +1R: +0.28 R a trade vs +0.22 R holding to the first stop or target — kept.`,
+  `Options bought when the stock's 20-day volatility is in the top 30% of its year returned about a quarter of the others (+6% vs +24–29%) — the page warns when that is the case.`,
+  `Selling a 30-day put (delta ~0.3) instead of buying the call on grade A ideas: +0.6% of the strike a month, profitable 60% of the time — an income alternative for stocks you want to own.`,
   `Winners took a median ${med(win.map((t) => t.sessions))} sessions to reach target 1; ${pct(win.filter((t) => t.maeR > -0.5).length, win.length)}% of them never went more than half the risk against the entry.`,
   `Losers: ${pct(lose.filter((t) => t.sessions <= 3).length, lose.length)}% were stopped within 3 sessions; ${pct(lose.filter((t) => t.mfeR >= 1).length, lose.length)}% had first been up 1R or more — so moving the stop to the entry at +1R is in the plan.`,
-  `Grade A options (delta ${OPT_DELTA}, ${OPT_DTE}+ days, stop to entry at +1R, aim for target 2): average ${groups['ALL|CALL|A']?.optAvgRet ?? 0}% a trade, but only ${groups['ALL|CALL|A']?.optWinRate ?? 0}% of trades made money — a few big winners pay for many small losses. Size every trade so a full loss of the premium is fine.`,
+  `Grade A options (delta ${OPT_DELTA}, ${OPT_DTE}+ days, stop to entry at +1R, aim for target 2): only about ${groups['ALL|CALL|A']?.optWinRate ?? 0}% of trades made money — a few big winners pay for many small losses. Size every trade so a full loss of the premium is fine.`,
   `Puts lost money in every condition tried (including falling markets: sharp bear-market rallies stopped them). They are shown as hedge / watch ideas only.`,
 ];
 const pick = (rows: Trade[], n: number) => rows.slice(0, n).map((t) => ({ market: t.market, ticker: t.ticker, id: t.id, grade: 'A' as Grade, date: new Date(ms(t.signalT)).toISOString().slice(0, 10), r: t.rTrail, outcome: t.outcome, sessions: t.trailSessions, optRet: r1(optionReturn(t, OPT_DELTA, OPT_DTE, 'trail') * 100) }));

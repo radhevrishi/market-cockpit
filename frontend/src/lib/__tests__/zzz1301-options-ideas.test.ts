@@ -73,7 +73,10 @@ test('zzz1301 — option plan: delta near 0.5, a safer and an aggressive choice,
 
 test('zzz1301 — grades follow the study rules (calls: stock + market + near target; puts never A)', () => {
   const f = (o: Partial<RawFeatures>): RawFeatures => ({ id: 'trend_bounce', side: 'CALL', market: 'US', ret20: 3, ret60: 15, vs50: 4, vs200: 12, trend: 1, touches: 3, vr: 1, rr1: 2, riskPct: 4, atrPct: 2, triggered: false, idx: { vs200: 5, ret20: 2, ret60: 6 }, ...o });
-  assert.equal(classify(f({})).grade, 'A');
+  assert.equal(classify(f({})).grade, 'A');                                   // sector unknown, no catalyst
+  assert.equal(classify(f({ secStrong: true, gap60: true })).grade, 'A+');
+  assert.equal(classify(f({ secStrong: true, rvol: 1.5 })).grade, 'A+');
+  assert.equal(classify(f({ secStrong: false, gap60: true })).grade, 'B');     // weak sector: no grade A
   assert.equal(classify(f({ rr1: 4 })).grade, 'B');
   assert.equal(classify(f({ idx: { vs200: -3, ret20: -2, ret60: -5 } })).grade, 'B');
   assert.equal(classify(f({ vs200: -5, ret60: -10, idx: { vs200: -3, ret20: -2, ret60: -5 } })).grade, 'C');
@@ -127,4 +130,31 @@ test('zzz1301 — Nasdaq chain table parsing (US fallback when Yahoo refuses)', 
   assert.deepEqual(c.expiries, ['2026-12-24']);
   assert.equal(c.byExpiry['2026-12-24'].calls[0].oi, 1250);
   assert.equal(c.byExpiry['2026-12-24'].puts[0].bid, null);
+});
+
+test('zzz1301e — context: catalyst gap, volume, HV percentile; sector medians', async () => {
+  const { extraCtx, sectorMedians } = await import('../options-ideas/context');
+  const b = bars.map((q) => ({ ...q }));
+  const L = b.length - 1;
+  b[L - 10] = { ...b[L - 10], o: b[L - 11].c * 1.08, v: 50 * (b[L - 11].v || 1e6) };
+  const e = extraCtx(b);
+  assert.equal(e.gap60, true); assert.equal(e.gapDaysAgo, 10);
+  assert.ok(e.hvPct >= 0 && e.hvPct <= 100 && e.hv20 > 0);
+  const med = sectorMedians([{ sec: 'Tech', perf3M: 1 }, { sec: 'Tech', perf3M: 5 }, { sec: 'Tech', perf3M: 9 }, { sec: 'Tech', perf3M: 3 }, { sec: 'Oil', perf3M: 2 }]);
+  assert.equal(med.get('Tech'), 5); assert.equal(med.has('Oil'), false);
+});
+
+test('zzz1301e — option plan: results gate moves the expiry earlier, spread + sell-put alternatives, expensive-volatility note', () => {
+  const closes = bars.slice(-90).map((b) => b.c);
+  const spot = closes[closes.length - 1];
+  const now = new Date('2026-11-24T12:00:00Z');
+  const base = { market: 'US' as const, call: true, spot, entry: spot, stop: spot * 0.95, target1: spot * 1.1, target2: spot * 1.18, expSessions: 12, closes, now };
+  const o = planOption({ ...base, nextEarnings: '2026-12-23', hvPct: 85 })!;
+  assert.ok(o.expiry === '2026-12-18' && o.results.movedExpiry && !o.results.beforeExpiry);
+  assert.ok(o.dte >= 21);
+  assert.ok(o.notes.some((n) => /expensive/.test(n)));
+  assert.ok(o.spread && o.spread.debit < o.premium && o.spread.sell > o.spread.buy);
+  assert.ok(o.sellPut && o.sellPut.strike < spot && o.sellPut.premium > 0);
+  const o2 = planOption({ ...base, nextEarnings: '2026-12-08' })!;                 // too close: no expiry ≥ 21 days before it
+  assert.ok(o2.results.beforeExpiry && o2.notes.some((n) => /held through results/.test(n)));
 });

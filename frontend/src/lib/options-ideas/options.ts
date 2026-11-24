@@ -116,6 +116,8 @@ export interface PlanInput {
   nextEarnings?: string | null;
   /** strike rule — target |delta| (study: 0.5 was the steadiest) and the minimum days to expiry (study: 30) */
   targetDelta?: number; minDte?: number;
+  /** 20-day HV percentile of the stock (context.ts) */
+  hvPct?: number | null;
 }
 export interface OptionPick {
   strike: number; expiry: string; dte: number; premium: number; premiumSource: 'chain' | 'model'; iv: number; delta: number; moneyness: string;
@@ -128,6 +130,14 @@ export interface OptionPlan extends OptionPick {
   type: 'CALL' | 'PUT'; contractSize: number;
   /** a safer (deeper in the money) and a more aggressive (cheaper, out of the money) choice */
   safer: OptionPick | null; aggressive: OptionPick | null;
+  /** zzz1301e — debit spread: buy this strike, sell the one nearest target 1 (same expiry). Cheaper, capped at target 1. */
+  spread: { buy: number; sell: number; debit: number; maxValue: number; atTarget1: number; atStop: number; retT1Pct: number; retStopPct: number; breakeven: number; maxLossPerContract: number } | null;
+  /** calls only: selling a ~0.3-delta put about 30 days out instead (income while waiting to own the stock) */
+  sellPut: { strike: number; expiry: string; dte: number; premium: number; delta: number; cashNeeded: number; returnIfExpiresPct: number; breakeven: number } | null;
+  /** the stock's 20-day volatility percentile against its own last year (≥ 70 = options are expensive) */
+  hvPct: number | null;
+  /** results: the date if known and whether it falls before the chosen expiry */
+  results: { date: string | null; beforeExpiry: boolean; movedExpiry: boolean } ;
   notes: string[];
 }
 
@@ -151,7 +161,13 @@ export function planOption(p: PlanInput): OptionPlan | null {
   const expiries = p.chain?.expiries?.length ? p.chain.expiries : syntheticExpiries(p.market, p.now);
   const pe = pickExpiry(expiries, p.now, p.expSessions, p.minDte ?? 30);
   if (!pe) return null;
-  const ex = pe.expiry;
+  let ex = pe.expiry, movedExpiry = false;
+  // results gate: if results fall before the chosen expiry, prefer the last listed expiry that ends ≥ 3 days before the
+  // results AND still leaves ≥ 21 days; otherwise keep the expiry and flag it (the option is held through the results)
+  if (p.nextEarnings && p.nextEarnings <= ex) {
+    const before = expiries.filter((e) => daysBetween(p.now, e) >= 21 && Date.parse(e) <= Date.parse(p.nextEarnings!) - 3 * 86_400_000).sort();
+    if (before.length) { ex = before[before.length - 1]; movedExpiry = true; }
+  }
   const dte = daysBetween(p.now, ex), T = dte / 365;
   const calDays = Math.ceil(Math.max(3, Math.min(60, p.expSessions)) * 1.45);
   const tHit = Math.min(T * 0.9, calDays / 365), tStop = Math.min(T * 0.9, (calDays * 0.5) / 365);
@@ -205,13 +221,54 @@ export function planOption(p: PlanInput): OptionPlan | null {
     ? `Listed strikes and expiry are real, but the chain has no live bid / ask right now (outside market hours) — premium is a model price (volatility ${best.iv}%).`
     : `Premium is a model price (volatility ${best.iv}%) — no live option chain was available; check the real bid / ask before trading.`);
   if (!p.chain?.expiries?.length) notes.push(p.market === 'US' ? 'Expiry from the standard Friday / monthly calendar — confirm it is listed.' : 'NSE stock options expire on the last Tuesday of the month (a holiday moves it earlier) — confirm in the broker.');
-  if (p.nextEarnings && p.nextEarnings <= ex) notes.push(`Results expected around ${p.nextEarnings}, before expiry — option prices usually drop after results (priced in above).`);
+  if (p.nextEarnings && p.nextEarnings <= ex) notes.push(`⚠ Results expected ${p.nextEarnings}, before this expiry and no earlier expiry leaves 21 days — the option is held through results (the price can gap past the stop; option prices usually drop after results — priced in above).`);
   notes.push(`Expiry: at least ${pe.need} days, so the move gets about 1.6× the time it usually took (median ~${Math.round(p.expSessions)} sessions to target 1).`);
   const base = strip(best)!;
+  // debit spread: sell the listed strike nearest target 1 (beyond the bought strike)
+  let spread: OptionPlan['spread'] = null;
+  {
+    const iv = best.iv / 100;
+    const beyond = strikes.filter((k) => (call ? k > best.strike : k < best.strike));
+    const sellK = beyond.length ? beyond.reduce((a, k) => (Math.abs(k - p.target1) < Math.abs(a - p.target1) ? k : a), beyond[0]) : null;
+    if (sellK != null) {
+      const qS = chainSide?.find((z) => z.strike === sellK) ?? null;
+      const midS = qS && qS.bid != null && qS.ask != null && qS.bid > 0 && qS.ask > 0 ? (qS.bid + qS.ask) / 2 : null;
+      const sNow = midS ?? bs(p.spot, sellK, T, r, iv, call).price;
+      const debit = best.premium - sNow;
+      if (debit > 0) {
+        const at = (S: number, t: number) => bs(S, best.strike, t, r, iv * crush, call).price - bs(S, sellK, t, r, iv * crush, call).price;
+        const v1 = at(p.target1, Math.max(0, T - tHit)), vS = at(p.stop, Math.max(0, T - tStop));
+        spread = { buy: best.strike, sell: sellK, debit: R2(debit), maxValue: R2(Math.abs(sellK - best.strike)), atTarget1: R2(v1), atStop: R2(vS), retT1Pct: Math.round(((v1 - debit) / debit) * 100), retStopPct: Math.round(((vS - debit) / debit) * 100), breakeven: R2(call ? best.strike + debit : best.strike - debit), maxLossPerContract: R2(debit * contractSize) };
+      }
+    }
+  }
+  // sell a put instead (calls only): ~0.3 delta, the expiry nearest 30 days
+  let sellPut: OptionPlan['sellPut'] = null;
+  if (call) {
+    const exS = [...expiries].filter((e) => daysBetween(p.now, e) >= 14).sort((a, b) => Math.abs(daysBetween(p.now, a) - 30) - Math.abs(daysBetween(p.now, b) - 30))[0];
+    if (exS) {
+      const Ts = daysBetween(p.now, exS) / 365;
+      const putSide = p.chain?.byExpiry?.[exS]?.puts ?? null;
+      const live = !!putSide?.some((q) => (q.bid ?? 0) > 0 && (q.ask ?? 0) > 0);
+      const ks = putSide?.length ? putSide.map((q) => q.strike) : syntheticStrikes(p.market, p.spot);
+      let bestK: number | null = null, bd = 9;
+      for (const K of ks) { if (K >= p.spot) continue; const d = Math.abs(bs(p.spot, K, Ts, r, hv, false).delta); if (Math.abs(d - 0.3) < bd) { bd = Math.abs(d - 0.3); bestK = K; } }
+      if (bestK != null) {
+        const q = live ? putSide!.find((z) => z.strike === bestK) : null;
+        const mid = q && q.bid != null && q.ask != null && q.bid > 0 && q.ask > 0 ? (q.bid + q.ask) / 2 : null;
+        const prem = mid ?? bs(p.spot, bestK, Ts, r, q?.iv && q.iv > 0.03 ? q.iv : hv, false).price;
+        sellPut = { strike: bestK, expiry: exS, dte: Math.round(Ts * 365), premium: R2(prem), delta: R2(bs(p.spot, bestK, Ts, r, hv, false).delta), cashNeeded: R2(bestK * contractSize), returnIfExpiresPct: Math.round((prem / bestK) * 1000) / 10, breakeven: R2(bestK - prem) };
+      }
+    }
+  }
+  if (p.hvPct != null && p.hvPct >= 70) notes.push(`Options are expensive now: the stock's 20-day volatility is in the top ${100 - p.hvPct}% of its year. In the study options bought like this returned about a quarter of the others — use fewer contracts, the spread, or the stock.`);
+  if (movedExpiry) notes.push(`Results expected ${p.nextEarnings}: the expiry was moved earlier to ${ex} so the option is closed before results.`);
   return {
     ...base, type: call ? 'CALL' : 'PUT', contractSize,
     safer: saferC && saferC.strike !== best.strike ? strip(saferC) : null,
     aggressive: aggC && aggC.strike !== best.strike ? strip(aggC) : null,
+    spread, sellPut, hvPct: p.hvPct ?? null,
+    results: { date: p.nextEarnings ?? null, beforeExpiry: !!(p.nextEarnings && p.nextEarnings <= ex), movedExpiry },
     notes,
   };
 }

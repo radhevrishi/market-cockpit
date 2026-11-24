@@ -572,6 +572,12 @@ export const APP_JOBS: readonly AppJob[] = [
     const m = await import('./options-ideas/server'); const s = await m.runScan('IN'); await m.gradeLog();
     return s.scanned > 0 ? { ok: true, status: 200 } : { ok: false, status: 503, error: 'no company could be read' };
   } },
+  // zzz1301e — near the close, re-read the live option chains for the stored A+ / A ideas (real bid / ask, OI, spread).
+  // 09:41 UTC = 15:11 IST (India); 19:41 / 20:41 UTC = ~20 min before the US close in summer / winter time.
+  { name: 'options-ideas-chains', crons: ['41 9 * * 1-5', '41 19,20 * * 1-5'], timeoutMs: 10 * MIN, workflow: BRIDGE, does: 'in-process: lib/options-ideas/server refreshChains (09:41 UTC India, 19:41 / 20:41 UTC USA)', run: async (ctx) => {
+    const m = await import('./options-ideas/server'); const r = await m.refreshChains(ctx.slot.getUTCHours() < 12 ? 'IN' : 'US');
+    return { ok: true, status: 200, error: r.refreshed ? null : 'no stored A+ / A ideas to refresh' };
+  } },
   // zzz1259 — Choke-Point Themes refreshed weekly (owner approved 11 Nov; it had last run 2 Nov because it only ran on a click).
   // Sunday 05:10 UTC; skipped when the last report is under 4 days old; at most 2 attempts a ISO week (a failed run keeps the last good report).
   { name: 'choke-themes-weekly', crons: ['10 5 * * 0', '10 5 * * 1'],   // zzz1262: Monday = the second try when Sunday's run failed (skipped when the report is fresh)

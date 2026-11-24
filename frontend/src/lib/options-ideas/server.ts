@@ -8,7 +8,9 @@
 //   gradeLog()                      follows every logged idea with the same rules as the study (fill within 5 sessions,
 //                                   stop / target 1 / 40-session time limit) and stores the outcome.
 import { getDailySeries } from '../chart-data';
-import { kvGet, kvSet } from '../kv';
+import { kvGet, kvSet, kvMGet } from '../kv';
+import { extraCtx, sectorMedians } from './context';
+import { GRADE_ORDER } from './model';
 import { getSnapshot } from '../screener/snapshot-cache';
 import type { PBar } from '../chart-patterns';
 import { findSetups, SETUP_META, SETUPS_VERSION, type Setup, type SetupId } from './setups';
@@ -34,6 +36,8 @@ export interface Idea {
   mc: number | null; cap: 'small' | 'mid' | 'large' | null;
   /** set when this group made money in the study overall but lost money after the hold-out date */
   caution: string | null;
+  /** zzz1301e — context: catalyst, volatility, sector */
+  ctx: { gapDaysAgo: number | null; rvol: number; hvPct: number; hv20: number; sector: string | null; industry: string | null; sectorRet3m: number | null; indexRet3m: number | null; nextResults: string | null };
 }
 export interface Regime { bench: string; vs200: number; ret20: number; up: boolean; label: string }
 export function regimeOf(m: Mkt, idx: { vs200: number; ret20: number } | null): Regime | null {
@@ -51,6 +55,47 @@ export function capOf(m: Mkt, mc: number | null | undefined): Idea['cap'] {
   if (mc == null || !(mc > 0)) return null;
   // US $ million, India ₹ crore
   return m === 'US' ? (mc < 2000 ? 'small' : mc < 10000 ? 'mid' : 'large') : (mc < 20000 ? 'small' : mc < 75000 ? 'mid' : 'large');
+}
+
+// sector map + medians from the screener snapshot (30 min)
+const secMemo = new Map<Mkt, { at: number; by: Map<string, { sec: string | null; ind: string | null }>; med: Map<string, number> }>();
+export async function sectorInfo(m: Mkt) {
+  const h = secMemo.get(m);
+  if (h && Date.now() - h.at < 30 * 60_000) return h;
+  const snap = await getSnapshot(m).catch(() => null);
+  const rows: any[] = snap?.rows ?? [];
+  const by = new Map<string, { sec: string | null; ind: string | null }>();
+  for (const r of rows) by.set(String(r.t).toUpperCase(), { sec: r.tvSec ?? r.sec ?? null, ind: r.ind ?? null });
+  const med = sectorMedians(rows.map((r) => ({ sec: r.tvSec ?? r.sec ?? null, perf3M: typeof r.perf3M === 'number' ? r.perf3M : null })));
+  const v = { at: Date.now(), by, med };
+  if (rows.length) secMemo.set(m, v);
+  return v;
+}
+// next results dates: USA from Nasdaq's earnings calendar (per day, 12 h), India from the stored board-meeting calendar
+const resMemo = new Map<string, { at: number; rows: string[] }>();
+export async function nextResultsMap(m: Mkt, days = 60): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const dates: string[] = [];
+  for (let i = 0; i <= days; i++) { const d = new Date(Date.now() + i * 86_400_000); if (d.getUTCDay() !== 0 && d.getUTCDay() !== 6) dates.push(d.toISOString().slice(0, 10)); }
+  if (m === 'IN') {
+    const vals = await kvMGet<string[]>(dates.map((d) => `earnings-cal:auto:${d}`)).catch(() => [] as any[]);
+    dates.forEach((d, i) => { for (const t of (vals?.[i] as string[] | null) ?? []) { const k = String(t).toUpperCase(); if (!out.has(k)) out.set(k, d); } });
+    return out;
+  }
+  const { nasdaqEarningsOn } = await import('../us-nasdaq');
+  for (const d of dates) {
+    const k = `US:${d}`, h = resMemo.get(k);
+    let rows = h && Date.now() - h.at < 12 * 3600_000 ? h.rows : null;
+    if (!rows) { rows = (await nasdaqEarningsOn(d).catch(() => [])).map((r: any) => String(r.ticker || r.symbol || '').toUpperCase()).filter(Boolean); resMemo.set(k, { at: Date.now(), rows }); }
+    for (const t of rows) if (!out.has(t)) out.set(t, d);
+  }
+  return out;
+}
+let resMapMemo: Record<string, { at: number; map: Map<string, string> }> = {};
+async function resultsFor(m: Mkt, t: string): Promise<string | null> {
+  const h = resMapMemo[m];
+  if (!h || Date.now() - h.at > 6 * 3600_000) resMapMemo[m] = { at: Date.now(), map: await nextResultsMap(m).catch(() => new Map()) };
+  return resMapMemo[m].map.get(t.toUpperCase()) ?? null;
 }
 
 const benchMemo = new Map<Mkt, { at: number; bars: PBar[] }>();
@@ -89,34 +134,40 @@ export async function analyseTicker(market: Mkt, tickerIn: string, opts: { chain
   if (!setups.length) { out.noSetup = 'No valid setup today: no trendline or level with 3+ touches is being tested or broken right now, and no cup is near its rim. Nothing to trade on this company.'; return out; }
   const idx = indexCtx(await benchBars(market), barMs(last.t));
   out.regime = regimeOf(market, idx);
+  const ex = extraCtx(bars);
+  const si = await sectorInfo(market).catch(() => null);
+  const secRow = si?.by.get(ticker) ?? null;
+  const secMed = secRow?.sec ? si?.med.get(secRow.sec) ?? null : null;
+  const secStrong = secMed != null && idx ? secMed > idx.ret60 : null;
+  const nextRes = await resultsFor(market, ticker).catch(() => null);
   let lot = opts.lotSize ?? null;
   if (market === 'IN' && lot == null) lot = (await nseLots().catch(() => null))?.[ticker] ?? null;
   for (const st of setups) {
-    const raw = rawFromSetup(st, market, bars, idx);
+    const raw = rawFromSetup(st, market, bars, idx, { secStrong, gap60: ex.gap60, rvol: ex.rvol, hvPct: ex.hvPct });
     const cls = finalGrade(raw, classify(raw));
     const hist = historyFor(raw, cls.grade);
     const expSessions = hist.setup?.medSessions || hist.group?.medSessions || 12;
     let chain = null;
     if (opts.chain && cls.grade !== 'C') {
-      const pickFn = (ex: string[]) => { const p = pickExpiry(ex, new Date(), expSessions, STUDY.option.minDte || 30); return p ? [p.expiry] : []; };
+      const pickFn = (exps: string[]) => { const now = Date.now(); return exps.filter((e) => { const d = (Date.parse(e) - now) / 86_400_000; return d >= 14 && d <= 120; }).slice(0, 6); };
       chain = market === 'US' ? await usChain(ticker, pickFn).catch(() => null) : await inChain(ticker).catch(() => null);
     }
     const closes = bars.slice(-90).map((q) => q.c);
     const option = market === 'IN' && lot == null && !chain ? null
-      : planOption({ market, call: st.side === 'CALL', spot: st.triggered ? last.c : st.entry, entry: st.entry, stop: st.stop, target1: st.target1, target2: st.target2, expSessions, closes, now: new Date(), chain, lotSize: lot, targetDelta: STUDY.option.delta || 0.5, minDte: STUDY.option.minDte || 30 });
+      : planOption({ market, call: st.side === 'CALL', spot: st.triggered ? last.c : st.entry, entry: st.entry, stop: st.stop, target1: st.target1, target2: st.target2, expSessions, closes, now: new Date(), chain, lotSize: lot, targetDelta: STUDY.option.delta || 0.5, minDte: STUDY.option.minDte || 30, nextEarnings: nextRes, hvPct: ex.hvPct });
     if (option && !st.triggered) option.notes.push(`Priced as if bought when the stock reaches the trigger (${fmt(market, st.trigger)}); today it is ${fmt(market, last.c)}.`);
     if (option && market === 'IN' && lot == null) option.notes.push('No F&O lot size found — this company may not have stock options on NSE.');
     out.ideas.push({
       market, ticker, name: out.name, price: last.c, asOf, setup: st,
       grade: cls.grade, verdict: cls.verdict, checks: cls.checks, strength: cls.strength, regime: cls.regime,
       history: { group: hist.group, setup: hist.setup }, option, plan: planWords(market, st), mc: opts.mc ?? null, cap: capOf(market, opts.mc ?? null),
-      caution: cls.grade === 'A' && hist.group && hist.group.testR < 0 ? `Caution: ${market === 'US' ? 'USA' : 'India'} grade A calls lost ${hist.group.testR} R a trade after ${STUDY.trainedOn.testFrom} (they made ${hist.group.trainR} R before). Size smaller until the live record turns.` : null,
+      ctx: { gapDaysAgo: ex.gapDaysAgo, rvol: ex.rvol, hvPct: ex.hvPct, hv20: ex.hv20, sector: secRow?.sec ?? null, industry: secRow?.ind ?? null, sectorRet3m: secMed != null ? Math.round(secMed * 10) / 10 : null, indexRet3m: idx ? Math.round(idx.ret60 * 10) / 10 : null, nextResults: nextRes },
+      caution: (cls.grade === 'A' || cls.grade === 'A+') && hist.group && hist.group.testR < 0 ? `Caution: ${market === 'US' ? 'USA' : 'India'} grade A calls lost ${hist.group.testR} R a trade after ${STUDY.trainedOn.testFrom} (they made ${hist.group.trainR} R before). Size smaller until the live record turns.` : null,
     });
   }
   if (market === 'IN' && lot == null) out.noSetup = out.noSetup ?? null;
   if (opts.chain) out.chainNote = chainError.get(`${market === 'US' ? 'us' : 'in'}:${ticker}`) ?? null;
-  const g = { A: 0, B: 1, C: 2 } as const;
-  out.ideas.sort((a, b) => g[a.grade] - g[b.grade] || b.setup.quality - a.setup.quality);
+  out.ideas.sort((a, b) => GRADE_ORDER[a.grade] - GRADE_ORDER[b.grade] || b.setup.quality - a.setup.quality);
   return out;
 }
 
@@ -136,7 +187,7 @@ export async function scanUniverse(m: Mkt): Promise<ScanUniverseItem[]> {
   return rows.filter((r) => r.mc >= 15000).sort((a, b) => b.mc - a.mc).slice(0, 220).map((r) => ({ ticker: String(r.t), name: r.n ?? null, mc: r.mc ?? null }));
 }
 
-export interface ScanSnapshot { regime?: Regime | null; market: Mkt; builtAt: string; version: string; scanned: number; failed: number; ideas: Idea[]; counts: { A: number; B: number; C: number }; tookS: number }
+export interface ScanSnapshot { regime?: Regime | null; market: Mkt; builtAt: string; version: string; scanned: number; failed: number; ideas: Idea[]; counts: { 'A+': number; A: number; B: number; C: number }; tookS: number }
 async function pooled<T>(items: T[], n: number, fn: (x: T) => Promise<void>, deadline: number) {
   let i = 0;
   await Promise.all(Array.from({ length: n }, async () => { while (i < items.length && Date.now() < deadline) { const x = items[i++]; await fn(x).catch(() => {}); } }));
@@ -152,9 +203,8 @@ export async function runScan(m: Mkt, budgetMs = 14 * 60_000): Promise<ScanSnaps
     for (const i of r.ideas) if (i.grade !== 'C') ideas.push(i);
   }, t0 + budgetMs);
   // live chains for the best ideas only (A first), so the plan uses real premiums where it can
-  const g = { A: 0, B: 1, C: 2 } as const;
-  ideas.sort((a, b) => g[a.grade] - g[b.grade] || b.setup.quality - a.setup.quality);
-  const top = ideas.filter((i) => i.grade === 'A').slice(0, 25);
+  ideas.sort((a, b) => GRADE_ORDER[a.grade] - GRADE_ORDER[b.grade] || b.setup.quality - a.setup.quality);
+  const top = ideas.filter((i) => i.grade === 'A' || i.grade === 'A+').slice(0, 25);
   for (const i of top) {
     if (Date.now() > t0 + budgetMs + 3 * 60_000) break;
     const r = await analyseTicker(m, i.ticker, { chain: true, mc: i.mc, name: i.name }).catch(() => null);
@@ -165,12 +215,30 @@ export async function runScan(m: Mkt, budgetMs = 14 * 60_000): Promise<ScanSnaps
   const snap: ScanSnapshot = {
     regime: bb.length ? regimeOf(m, indexCtx(bb, barMs(bb[bb.length - 1].t))) : null,
     market: m, builtAt: new Date().toISOString(), version: SETUPS_VERSION, scanned, failed,
-    ideas: ideas.slice(0, 400), counts: { A: ideas.filter((i) => i.grade === 'A').length, B: ideas.filter((i) => i.grade === 'B').length, C: ideas.filter((i) => i.grade === 'C').length },
+    ideas: ideas.slice(0, 400), counts: { 'A+': ideas.filter((i) => i.grade === 'A+').length, A: ideas.filter((i) => i.grade === 'A').length, B: ideas.filter((i) => i.grade === 'B').length, C: ideas.filter((i) => i.grade === 'C').length },
     tookS: Math.round((Date.now() - t0) / 1000),
   };
   await kvSet(SCAN_KEY(m), snap, 14 * 86400).catch(() => {});
   await logIdeas(snap.ideas.filter((i) => i.grade !== 'C')).catch(() => {});
   return snap;
+}
+
+/** zzz1301e — near the close: read the live option chain again for the stored A+ / A ideas (real bid / ask, OI and spread
+ *  while the market is open), so the plan you act on uses end-of-day quotes, not after-hours ones. */
+export async function refreshChains(m: Mkt, budgetMs = 6 * 60_000): Promise<{ refreshed: number }> {
+  const t0 = Date.now();
+  const snap = await readScan(m);
+  if (!snap) return { refreshed: 0 };
+  let n = 0;
+  for (const i of snap.ideas.filter((x) => x.grade === 'A+' || x.grade === 'A').slice(0, 30)) {
+    if (Date.now() - t0 > budgetMs) break;
+    const r = await analyseTicker(m, i.ticker, { chain: true, mc: i.mc, name: i.name }).catch(() => null);
+    const same = r?.ideas.find((x) => x.setup.id === i.setup.id);
+    if (same?.option) { i.option = same.option; i.price = same.price; n++; }
+  }
+  (snap as any).chainsAt = new Date().toISOString();
+  await kvSet(SCAN_KEY(m), snap, 14 * 86400).catch(() => {});
+  return { refreshed: n };
 }
 
 // ─── live track record ───────────────────────────────────────────────────────────────────────────────────────────────────
@@ -181,6 +249,8 @@ export interface LogEntry {
   status: 'open' | 'nofill' | 'target' | 'stop' | 'timeout'; r: number | null; sessions: number | null; gradedAt: string | null;
   /** result with the plan's management (stop to entry at +1R, target 2); null until that exit is known */
   rTrail?: number | null;
+  /** market state when logged (for slicing the record) */
+  regimeUp?: boolean | null; hvPct?: number | null; catalyst?: boolean | null;
 }
 export async function readLog(): Promise<LogEntry[]> { return ((await kvGet<LogEntry[]>(LOG_KEY).catch(() => null)) ?? []); }
 async function logIdeas(ideas: Idea[]) {
@@ -195,7 +265,8 @@ async function logIdeas(ideas: Idea[]) {
     if (have.has(key)) continue;
     const prev = recent.get(`${i.market}|${i.ticker}|${i.setup.id}`);
     if (prev && (Date.parse(i.asOf) - Date.parse(prev)) / 86_400_000 < 14) continue;
-    log.push({ key, market: i.market, ticker: i.ticker, id: i.setup.id, side: i.setup.side, grade: i.grade, date: i.asOf, trigger: i.setup.trigger, triggered: i.setup.triggered, entry: i.setup.entry, stop: i.setup.stop, target1: i.setup.target1, target2: i.setup.target2, rr1: i.setup.rr1, quality: i.setup.quality, premium: i.option?.premium ?? null, strike: i.option?.strike ?? null, expiry: i.option?.expiry ?? null, status: 'open', r: null, sessions: null, gradedAt: null });
+    log.push({ key, market: i.market, ticker: i.ticker, id: i.setup.id, side: i.setup.side, grade: i.grade, date: i.asOf, trigger: i.setup.trigger, triggered: i.setup.triggered, entry: i.setup.entry, stop: i.setup.stop, target1: i.setup.target1, target2: i.setup.target2, rr1: i.setup.rr1, quality: i.setup.quality, premium: i.option?.premium ?? null, strike: i.option?.strike ?? null, expiry: i.option?.expiry ?? null, status: 'open', r: null, sessions: null, gradedAt: null,
+      regimeUp: i.regime === 'market up', hvPct: i.ctx?.hvPct ?? null, catalyst: i.ctx ? !!(i.ctx.gapDaysAgo != null || i.ctx.rvol >= 1.3) : null });
     have.add(key);
   }
   await kvSet(LOG_KEY, log.slice(-LOG_MAX), 400 * 86400);

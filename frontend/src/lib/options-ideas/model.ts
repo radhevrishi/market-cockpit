@@ -19,8 +19,11 @@ export interface RawFeatures {
   ret20: number; ret60: number; vs50: number; vs200: number;
   trend: number; touches: number; vr: number; rr1: number; riskPct: number; atrPct: number; triggered: boolean;
   idx: IndexCtx | null;
+  /** zzz1301e — sector stronger than the index over 3 months (null = unknown), recent catalyst, option richness */
+  secStrong?: boolean | null; gap60?: boolean; rvol?: number; hvPct?: number;
 }
-export type Grade = 'A' | 'B' | 'C';
+export type Grade = 'A+' | 'A' | 'B' | 'C';
+export const GRADE_ORDER: Record<Grade, number> = { 'A+': 0, A: 1, B: 2, C: 3 };
 export interface Check { label: string; ok: boolean | null }
 export interface Classified { grade: Grade; strength: string; regime: string; checks: Check[]; verdict: string }
 
@@ -42,17 +45,18 @@ export function indexCtx(idx: PBar[], tMs: number): IndexCtx | null {
   const s = stockCtx(idx, k);
   return { vs200: s.vs200, ret20: s.ret20, ret60: s.ret60 };
 }
-export function rawFromSetup(s: Setup, market: 'US' | 'IN', bars: PBar[], idx: IndexCtx | null): RawFeatures {
+export function rawFromSetup(s: Setup, market: 'US' | 'IN', bars: PBar[], idx: IndexCtx | null, extra: { secStrong?: boolean | null; gap60?: boolean; rvol?: number; hvPct?: number } = {}): RawFeatures {
   const sc = stockCtx(bars, bars.length - 1);
   const ev = s.evidence as Record<string, any>;
   return {
     id: s.id, side: s.side, market, ...sc,
     trend: Number(ev.trend ?? 0), touches: Number(ev.touches ?? 0), vr: Number(ev.vr ?? 1), rr1: s.rr1, riskPct: s.riskPct,
-    atrPct: Number(ev.atrPct ?? 0), triggered: s.triggered, idx,
+    atrPct: Number(ev.atrPct ?? 0), triggered: s.triggered, idx, ...extra,
   };
 }
 
-/** A: every check passes · B: the stock or the market check fails, not both · C: neither (or any put) */
+/** A+: every check plus a catalyst · A: stock, market, sector and near target · B: the stock or the market check fails, not
+ *  both · C: neither (or any put) */
 export const MAX_RR_A = 3;
 export function classify(f: RawFeatures): Classified {
   const rs = f.idx ? f.ret60 - f.idx.ret60 : null;
@@ -67,12 +71,15 @@ export function classify(f: RawFeatures): Classified {
       { label: `Stock stronger than the ${bench} over 3 months`, ok: rs == null ? null : rs > 0 },
       { label: `${bench} above its 200-day average and up over 20 sessions`, ok: idxUp },
       { label: `Target within ${MAX_RR_A}× the risk (far targets were hit less often)`, ok: f.rr1 <= MAX_RR_A },
+      { label: `Its sector stronger than the ${bench} over 3 months`, ok: f.secStrong ?? null },
+      { label: 'Recent catalyst: a results-style gap up on 2× volume in the last 60 sessions, or 1.3× normal volume today', ok: f.gap60 != null || f.rvol != null ? !!(f.gap60 || (f.rvol ?? 0) >= 1.3) : null },
     ];
     const stockPass = checks[0].ok && checks[1].ok;
     const mktPass = !!idxUp;
-    const grade: Grade = stockPass && mktPass && checks[3].ok ? 'A' : stockPass || mktPass ? 'B' : 'C';
+    const base = stockPass && mktPass && checks[3].ok && f.secStrong !== false;
+    const grade: Grade = base && checks[5].ok ? 'A+' : base ? 'A' : stockPass || mktPass ? 'B' : 'C';
     return { grade, strength, regime: idxUp ? 'market up' : idxDown ? 'market down' : 'market mixed', checks,
-      verdict: grade === 'A' ? 'Trade — matches the conditions that worked in the study' : grade === 'B' ? 'Watch — one condition that mattered is missing' : 'Avoid — weak stock in a weak market (calls like this lost money)' };
+      verdict: grade === 'A+' ? 'Best trade — every condition plus a fresh catalyst (the strongest group in the study)' : grade === 'A' ? 'Trade — matches the conditions that worked in the study' : grade === 'B' ? 'Watch — a condition that mattered is missing' : 'Avoid — weak stock in a weak market (calls like this lost money)' };
   }
   const weak = f.vs200 < 0 && (rs == null ? false : rs < 0);
   const checks: Check[] = [
@@ -90,7 +97,7 @@ export function classify(f: RawFeatures): Classified {
  *  (study: India downtrend breaks / trend bounces in grade A conditions made ~0 R; US breakout retests +0.41 R) */
 export const SETUP_MIN_R = 0.1, SETUP_MIN_N = 50;
 export function finalGrade(f: RawFeatures, c: Classified, groups: Record<string, GroupStats> = STUDY.groups): Classified {
-  if (c.grade !== 'A') return c;
+  if (c.grade !== 'A' && c.grade !== 'A+') return c;
   // `A0` = this setup type under the grade-A conditions BEFORE this check (so the table does not feed on itself)
   const h = groups[`${f.market}|${f.id}|A0`];
   if (!h || h.n < SETUP_MIN_N || h.trailR >= SETUP_MIN_R) return c;

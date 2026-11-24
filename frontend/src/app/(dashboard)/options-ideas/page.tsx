@@ -28,7 +28,7 @@ function IdeasTable({ ideas, onOpen, open }: { ideas: any[]; onOpen: (k: string)
   const [sort, setSort] = useState<{ k: string; d: number }>({ k: 'grade', d: 1 });
   const val = (i: any, k: string): number | string => {
     switch (k) {
-      case 'grade': return ({ A: 0, B: 1, C: 2 } as any)[i.grade] * 1000 - i.setup.quality;
+      case 'grade': return (({ 'A+': 0, A: 1, B: 2, C: 3 } as any)[i.grade] ?? 4) * 1000 - i.setup.quality;
       case 'ticker': return i.ticker;
       case 'cap': return ({ small: 0, mid: 1, large: 2 } as any)[i.cap ?? 'large'] ?? 3;
       case 'rr': return -i.setup.rr1;
@@ -121,7 +121,8 @@ function ScanTab({ market }: { market: Mkt }) {
   const [j, setJ] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const [grade, setGrade] = useState<'A' | 'AB'>('A');
+  const [grade, setGrade] = useState<'A+' | 'A' | 'AB'>('A');
+  const [hideRes, setHideRes] = useState(true);
   const [side, setSide] = useState<'all' | 'CALL' | 'PUT'>('all');
   const [cap, setCap] = useState<'all' | 'sm'>('all');
   const [open, setOpen] = useState<string | null>(null);
@@ -134,29 +135,36 @@ function ScanTab({ market }: { market: Mkt }) {
     load();
   };
   const scan = j?.scan;
-  const ideas = useMemo(() => (scan?.ideas ?? []).filter((i: any) => (grade === 'A' ? i.grade === 'A' : i.grade !== 'C') && (side === 'all' || i.setup.side === side) && (cap === 'all' || i.cap === 'small' || i.cap === 'mid')), [scan, grade, side, cap]);
-  const g = j?.study?.groups?.[`${market}|CALL|A`];
+  const ideas = useMemo(() => (scan?.ideas ?? []).filter((i: any) => (grade === 'A+' ? i.grade === 'A+' : grade === 'A' ? i.grade === 'A+' || i.grade === 'A' : i.grade !== 'C') && (side === 'all' || i.setup.side === side) && (cap === 'all' || i.cap === 'small' || i.cap === 'mid') && !(hideRes && i.option?.results?.beforeExpiry)), [scan, grade, side, cap, hideRes]);
+  const throughRes = (scan?.ideas ?? []).filter((i: any) => i.grade !== 'C' && i.option?.results?.beforeExpiry).length;
+  // sector heat: trade-grade ideas per sector (3+ = correlated bets)
+  const heat = useMemo(() => { const m = new Map<string, number>(); for (const i of (scan?.ideas ?? [])) if ((i.grade === 'A+' || i.grade === 'A') && i.ctx?.sector) m.set(i.ctx.sector, (m.get(i.ctx.sector) ?? 0) + 1); return [...m.entries()].sort((a, b) => b[1] - a[1]); }, [scan]);
+  const g = j?.study?.groups?.[`${market}|CALL|A`], gp = j?.study?.groups?.[`${market}|CALL|A+`];
   return (
     <div style={{ display: 'grid', gap: 12 }}>
       <div style={{ ...card, display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'center' }}>
         <div><div style={{ fontSize: 12, color: 'var(--mc-text-3)' }}>Last scan</div><b>{scan ? new Date(scan.builtAt).toLocaleString() : j ? 'none yet' : '…'}</b>{scan ? <span style={{ fontSize: 12, color: 'var(--mc-text-3)' }}> · {scan.scanned} companies</span> : null}</div>
-        <div><div style={{ fontSize: 12, color: 'var(--mc-text-3)' }}>Grade A / B</div><b style={{ color: GRADE_COL.A }}>{scan?.counts?.A ?? '—'}</b> / <b style={{ color: GRADE_COL.B }}>{scan?.counts?.B ?? '—'}</b></div>
-        {g ? <div style={{ fontSize: 13, maxWidth: 560 }}><div style={{ fontSize: 12, color: 'var(--mc-text-3)' }}>Grade A calls in the study ({market === 'US' ? 'USA' : 'India'})</div><HistoryLine h={g} /></div> : null}
+        <div><div style={{ fontSize: 12, color: 'var(--mc-text-3)' }}>Grade A+ / A / B</div><b style={{ color: GRADE_COL['A+'] }}>{scan?.counts?.['A+'] ?? 0}</b> / <b style={{ color: GRADE_COL.A }}>{scan?.counts?.A ?? '—'}</b> / <b style={{ color: GRADE_COL.B }}>{scan?.counts?.B ?? '—'}</b></div>
+        {gp ? <div style={{ fontSize: 13, maxWidth: 560 }}><div style={{ fontSize: 12, color: 'var(--mc-text-3)' }}>Grade A+ calls in the study ({market === 'US' ? 'USA' : 'India'})</div><HistoryLine h={gp} /></div> : g ? <div style={{ fontSize: 13, maxWidth: 560 }}><div style={{ fontSize: 12, color: 'var(--mc-text-3)' }}>Grade A calls in the study</div><HistoryLine h={g} /></div> : null}
         <button onClick={run} disabled={busy} style={{ ...chip(false), marginLeft: 'auto' }}>{busy ? 'Scanning…' : '↻ Scan now'}</button>
       </div>
       {scan?.regime ? <div style={{ ...card, padding: '10px 14px', borderLeft: `4px solid ${scan.regime.up ? '#10B981' : '#EF4444'}`, fontSize: 14 }}><b>Market today:</b> {scan.regime.label}</div> : null}
       {msg ? <div style={{ fontSize: 13, color: 'var(--mc-text-2)' }}>{msg}</div> : null}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        <button style={chip(grade === 'A')} onClick={() => setGrade('A')}>Grade A only</button>
+        <button style={chip(grade === 'A+')} onClick={() => setGrade('A+')}>A+ only (best)</button>
+        <button style={chip(grade === 'A')} onClick={() => setGrade('A')}>A+ and A</button>
         <button style={chip(grade === 'AB')} onClick={() => setGrade('AB')}>A + B (watch)</button>
         <span style={{ width: 10 }} />
         {(['all', 'CALL', 'PUT'] as const).map((s) => <button key={s} style={chip(side === s)} onClick={() => setSide(s)}>{s === 'all' ? 'Calls + puts' : s === 'CALL' ? 'Calls' : 'Puts'}</button>)}
         <span style={{ width: 10 }} />
         <button style={chip(cap === 'sm')} onClick={() => setCap(cap === 'sm' ? 'all' : 'sm')}>Small + mid caps only</button>
+        <button style={chip(hideRes)} onClick={() => setHideRes(!hideRes)}>Hide ideas held through results{throughRes ? ` (${throughRes})` : ''}</button>
       </div>
+      {heat.length ? <div style={{ fontSize: 13, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}><span style={{ color: 'var(--mc-text-3)' }}>Trade ideas by sector:</span>{heat.map(([sec, n]) => <span key={sec} title={n >= 3 ? 'Three or more ideas in one sector move together — take one or two, not all' : ''} style={{ padding: '2px 8px', borderRadius: 999, border: `1px solid ${n >= 3 ? '#F59E0B' : 'var(--mc-border-1)'}`, color: n >= 3 ? '#F59E0B' : 'var(--mc-text-2)', fontWeight: 700 }}>{sec} {n}{n >= 3 ? ' ⚠ same bet' : ''}</span>)}</div> : null}
+      {scan?.chainsAt ? <div style={{ fontSize: 12, color: 'var(--mc-text-3)' }}>Option quotes for A+ / A ideas re-read near the close: {new Date(scan.chainsAt).toLocaleString()}</div> : null}
       <div style={card}>
         {!j ? 'Loading…' : !scan ? <div>No scan stored yet for {market === 'US' ? 'the USA' : 'India'}. The scan runs every weekday after the close ({market === 'US' ? '21:52 UTC' : '11:27 UTC'}); press “Scan now” to run a shorter one.</div>
-          : !ideas.length ? <div><b>No valid setup</b> in the scanned universe for these filters. {grade === 'A' ? 'Grade A needs a healthy stock AND a healthy market — when the market index is below its 200-day average or falling, there are usually none. Try “A + B (watch)”.' : ''}</div>
+          : !ideas.length ? <div><b>No valid setup</b> in the scanned universe for these filters. {grade === 'A' ? 'Grade A needs a healthy stock, sector AND market — when the market index is below its 200-day average or falling, there are usually none. Try “A + B (watch)”.' : ''}</div>
           : <IdeasTable ideas={ideas} open={open} onOpen={(k) => setOpen(open === k ? null : k)} />}
         {scan ? <div style={{ fontSize: 12, color: 'var(--mc-text-3)', marginTop: 8 }}>* model premium (no live chain read for that row). Click a row for the chart, the live option chain and the full plan.</div> : null}
       </div>
@@ -243,7 +251,9 @@ function RecordTab({ market }: { market: Mkt }) {
   const log: any[] = (j.log ?? []).filter((e: any) => e.market === market).sort((a: any, b: any) => (a.date < b.date ? 1 : -1));
   const closed = log.filter((e) => ['target', 'stop', 'timeout'].includes(e.status));
   const summ = (rows: any[]) => { const n = rows.length; if (!n) return null; const w = rows.filter((e) => (e.r ?? 0) > 0).length; const avg = rows.reduce((a, e) => a + (e.rTrail ?? e.r ?? 0), 0) / n; return { n, win: Math.round((w / n) * 100), avg: Math.round(avg * 100) / 100 }; };
-  const sA = summ(closed.filter((e) => e.grade === 'A')), sB = summ(closed.filter((e) => e.grade === 'B'));
+  const sAp = summ(closed.filter((e) => e.grade === 'A+')), sA = summ(closed.filter((e) => e.grade === 'A')), sB = summ(closed.filter((e) => e.grade === 'B'));
+  const audit = (() => { const r = closed.filter((e) => e.rTrail != null && e.r != null); if (!r.length) return null; const m = (k: string) => Math.round((r.reduce((a, e: any) => a + e[k], 0) / r.length) * 100) / 100; return { n: r.length, base: m('r'), managed: m('rTrail') }; })();
+  const slice = (f: (e: any) => boolean) => summ(closed.filter(f));
   const grp = (k: string) => st?.groups?.[k];
   return (
     <div style={{ display: 'grid', gap: 12 }}>
@@ -252,8 +262,15 @@ function RecordTab({ market }: { market: Mkt }) {
         <div style={{ fontSize: 13.5 }}>Every grade A / B idea from the daily scan is logged and followed with the study's rules (fill within 5 sessions, stop or target 1, 40-session limit).</div>
         <div style={{ display: 'flex', gap: 24, marginTop: 8, flexWrap: 'wrap', fontSize: 14 }}>
           <div>Logged: <b>{log.length}</b> · open {log.filter((e) => e.status === 'open').length} · not filled {log.filter((e) => e.status === 'nofill').length}</div>
+          <div><GradeBadge g="A+" /> closed {sAp?.n ?? 0}{sAp ? <> · won {sAp.win}% · {sAp.avg > 0 ? '+' : ''}{sAp.avg} R a trade</> : null}</div>
           <div><GradeBadge g="A" /> closed {sA?.n ?? 0}{sA ? <> · won {sA.win}% · {sA.avg > 0 ? '+' : ''}{sA.avg} R a trade</> : null}</div>
           <div><GradeBadge g="B" /> closed {sB?.n ?? 0}{sB ? <> · won {sB.win}% · {sB.avg > 0 ? '+' : ''}{sB.avg} R a trade</> : null}</div>
+        </div>
+        <div style={{ fontSize: 13, marginTop: 6, color: 'var(--mc-text-2)' }}>
+          <b>Stop-to-entry audit:</b> {audit ? <>on {audit.n} closed trades, holding to the first stop / target made {audit.base > 0 ? '+' : ''}{audit.base} R a trade; with the stop moved to the entry at +1R {audit.managed > 0 ? '+' : ''}{audit.managed} R. (Study: +0.22 vs +0.28.)</> : 'needs closed trades.'}
+          {' '}<b>By market state:</b> {(['up', 'not up'] as const).map((k) => { const x = slice((e) => (k === 'up') === !!e.regimeUp); return <span key={k}> market {k}: {x ? `${x.n} trades, ${x.avg > 0 ? '+' : ''}${x.avg} R` : '—'} ·</span>; })}
+          {' '}<b>With catalyst:</b> {(() => { const x = slice((e) => e.catalyst === true), y = slice((e) => e.catalyst === false); return `${x ? `${x.n} trades ${x.avg} R` : '—'} vs without ${y ? `${y.n} trades ${y.avg} R` : '—'}`; })()}
+          {' '}<b>Options expensive (HV ≥ 70th):</b> {(() => { const x = slice((e) => (e.hvPct ?? 0) >= 70); return x ? `${x.n} trades ${x.avg} R` : '—'; })()}
         </div>
         {log.length ? <div style={{ overflowX: 'auto', marginTop: 10, maxHeight: 420, overflowY: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -275,13 +292,13 @@ function RecordTab({ market }: { market: Mkt }) {
         <div style={{ overflowX: 'auto', marginTop: 10 }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr><th style={th}>Group</th><th style={th}>Trades</th><th style={th}>Reached T1</th><th style={th}>R a trade (managed)</th><th style={th}>Before / after hold-out</th><th style={th}>Option avg</th><th style={th}>Options that made money</th><th style={th}>Median sessions</th></tr></thead>
-            <tbody>{(['CALL|A', 'CALL|B', 'CALL|C', 'PUT|B', 'PUT|C']).flatMap((k) => (['US', 'IN'] as Mkt[]).map((m) => [m, k, grp(`${m}|${k}`)] as const)).filter((x) => x[2]).map(([m, k, h]: any) => (
-              <tr key={m + k}><td style={td}>{m === 'US' ? '🇺🇸' : '🇮🇳'} {k.split('|')[0] === 'CALL' ? 'Calls' : 'Puts'} grade <GradeBadge g={k.split('|')[1]} /></td><td style={td}>{h.n}</td><td style={td}>{h.winRate}%</td>
+            <tbody>{(['CALL|A+', 'CALL|A', 'CALL|B', 'CALL|C', 'PUT|B', 'PUT|C']).flatMap((k) => (['US', 'IN'] as Mkt[]).map((m) => [m, k, grp(`${m}|${k}`)] as const)).filter((x) => x[2]).map(([m, k, h]: any) => (
+              <tr key={m + k}><td style={td}>{m === 'US' ? '🇺🇸' : '🇮🇳'} {k.split('|')[0] === 'CALL' ? 'Calls' : 'Puts'} grade <GradeBadge g={k.split('|').slice(1).join('|')} /></td><td style={td}>{h.n}</td><td style={td}>{h.winRate}%</td>
                 <td style={{ ...td, fontWeight: 800, color: h.trailR > 0.1 ? '#10B981' : h.trailR < 0 ? '#EF4444' : '#F59E0B' }}>{h.trailR > 0 ? '+' : ''}{h.trailR}</td>
                 <td style={td}>{h.trainR} / {h.testR}</td><td style={td}>{h.optAvgRet > 0 ? '+' : ''}{h.optAvgRet}%</td><td style={td}>{h.optWinRate}%</td><td style={td}>{h.medSessions}</td></tr>))}</tbody>
           </table>
         </div>
-        <div style={{ fontSize: 13.5, fontWeight: 800, marginTop: 12 }}>Recent grade A examples</div>
+        <div style={{ fontSize: 13.5, fontWeight: 800, marginTop: 12 }}>Recent grade A / A+ examples</div>
         <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead><tr><th style={th}>Date</th><th style={th}>Company</th><th style={th}>Setup</th><th style={th}>Result (managed)</th><th style={th}>Sessions</th><th style={th}>Option</th></tr></thead>
           <tbody>{st.examples.map((e: any, i: number) => <tr key={i}><td style={td}>{e.date}</td><td style={td}>{e.market === 'US' ? '🇺🇸' : '🇮🇳'} <b>{e.ticker}</b></td><td style={td}>{e.id.replace(/_/g, ' ')}</td>
@@ -302,8 +319,10 @@ function HowTab() {
           <li><b>Puts:</b> uptrend line breakdown · downtrend line rejection · breakdown + retest · inverse cup breakdown + retest.</li>
         </ul></P>
       <P t="2 · Plan the trade">Each structure gives an entry trigger (a trade beyond the bar that tested the line or level), a stop beyond the structure with an ATR buffer, target 1 (measured move or the next level, at least 1.5× the risk) and target 2. Stops tighter than ½ ATR or wider than 3½ ATR are rejected.</P>
+      <P t="3b · What the second replay added">Grade A now also needs the stock's <b>sector</b> to be stronger than the index over 3 months (calls in weak sectors lost money after July 2025). <b>A+</b> = grade A plus a fresh catalyst: a results-style gap up on 2× volume in the last 60 sessions, or 1.3× normal volume on the signal day — A+ made +0.62 R a trade (+0.60 before / +0.67 after July 2025), its options +56% on average with about 1 in 3 profitable. Tested and rejected: a time stop, spreads as the default, index puts, a weekly Stage 2 check.</P>
       <P t="3 · Grade it with history">The study followed ~21,700 past setups on 376 liquid companies (Dec 2022 – Nov 2026), using only the bars known each day. The pattern alone was close to a coin toss. What made the difference: a healthy stock (above its 200-day average, stronger than the index over 3 months), a healthy market (index above its 200-day and up over 20 sessions) and a target within 3× the risk. All three = grade A — as long as that setup type itself has paid in those conditions (India downtrend-line breaks did not, so they stop at B). Puts lost money in every condition tried — they are hedge / watch ideas only.</P>
       <P t="4 · Choose the option">Expiry: at least 30 days, and at least 1.6× the time similar trades took to reach target 1. Strike: delta about 0.5 (at the money) — in the study the steadiest; a safer (delta ~0.7) and an aggressive (~0.35) choice are shown too. Prices come from the live chain (Yahoo for the USA, NSE for India) when it can be read, else from Black–Scholes on the stock’s own volatility. Each choice shows its value at target 1, target 2 and the stop.</P>
+      <P t="4b · Risk controls">Results date: when results fall before the chosen expiry, the expiry moves earlier if one still leaves 21 days, otherwise the idea is flagged and hidden by default. Volatility: when the stock's 20-day volatility is in the top 30% of its year the option is marked expensive. Position size: enter your account and risk per trade; it gives contracts / lots and warns when one Indian lot is more than your budget. Sector heat: three or more trade ideas in one sector are flagged as one bet. Option quotes for the A+ / A ideas are read again near the close, when bid / ask are real.</P>
       <P t="5 · Manage it">Move the stop to the entry once the stock is up 1× the risk; take half at target 1; let the rest run to target 2; close after 40 sessions or 7 days before expiry. In the study grade A options averaged about +20% a trade but only about 1 in 4 made money — a few big winners pay for many small losses, so size each trade to lose the premium without harm.</P>
       <P t="6 · Keep score">Every grade A / B idea from the daily scan goes into the live track record and is graded with the same rules, so you can see whether it keeps working after the study.</P>
     </div>

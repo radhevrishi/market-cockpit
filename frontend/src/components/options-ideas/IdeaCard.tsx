@@ -1,6 +1,7 @@
 'use client';
 // Options Ideas — one idea: chart with the structure, the trade plan, the option, and how similar trades did before.
-import type { CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
+import { createAlertApi } from '@/lib/alerts/client';
 
 export type Bar5 = [number, number, number, number, number];
 const C = {
@@ -8,7 +9,7 @@ const C = {
   label: { fontSize: 11.5, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase', color: 'var(--mc-text-3)' } as CSSProperties,
   green: '#10B981', red: '#EF4444', amber: '#F59E0B', cyan: 'var(--mc-cyan, #22D3EE)',
 };
-export const GRADE_COL: Record<string, string> = { A: '#10B981', B: '#F59E0B', C: '#EF4444' };
+export const GRADE_COL: Record<string, string> = { 'A+': '#A855F7', A: '#10B981', B: '#F59E0B', C: '#EF4444' };
 const money = (m: string, x: number | null | undefined) => (x == null || !Number.isFinite(x) ? '—' : `${m === 'US' ? '$' : '₹'}${x >= 1000 ? x.toLocaleString('en-US', { maximumFractionDigits: 0 }) : x.toFixed(2)}`);
 const pct = (x: number | null | undefined, d = 0) => (x == null || !Number.isFinite(x) ? '—' : `${x > 0 ? '+' : ''}${x.toFixed(d)}%`);
 const ms = (t: number) => (t > 1e11 ? t : t * 1000);
@@ -121,6 +122,15 @@ function OptionBox({ o, m }: { o: any; m: string }) {
           </tbody>
         </table>
       </div>
+      {o.spread ? <div style={{ fontSize: 13, marginTop: 8, padding: '6px 8px', border: '1px dashed var(--mc-border-1)', borderRadius: 8 }}>
+        <b>Cheaper: {o.type === 'CALL' ? 'bull call' : 'bear put'} spread</b> — buy {money(m, o.spread.buy)}, sell {money(m, o.spread.sell)} (same expiry). Cost {money(m, o.spread.debit)} ({money(m, o.spread.maxLossPerContract)} a contract, max value {money(m, o.spread.maxValue)}).
+        At T1 <span style={{ color: C.green }}>{pct(o.spread.retT1Pct)}</span> · at stop <span style={{ color: C.red }}>{pct(o.spread.retStopPct)}</span> · breakeven {money(m, o.spread.breakeven)}.
+        <span style={{ color: 'var(--mc-text-3)' }}> In the study the plain option earned more on average (+22% vs +5–7%); the spread risks less money per trade.</span>
+      </div> : null}
+      {o.sellPut ? <div style={{ fontSize: 13, marginTop: 6, padding: '6px 8px', border: '1px dashed var(--mc-border-1)', borderRadius: 8 }}>
+        <b>Income instead: sell a put</b> — {money(m, o.sellPut.strike)} put, {o.sellPut.expiry} ({o.sellPut.dte}d), collect about {money(m, o.sellPut.premium)} ({o.sellPut.returnIfExpiresPct}% of the cash set aside, {money(m, o.sellPut.cashNeeded)} a contract). If the stock ends below {money(m, o.sellPut.strike)} you buy it at an effective {money(m, o.sellPut.breakeven)}.
+        <span style={{ color: 'var(--mc-text-3)' }}> Only for stocks you want to own. Study: +0.6% of the strike a month, profitable 60% of the time.</span>
+      </div> : null}
       <div style={{ fontSize: 12.5, color: 'var(--mc-text-2)', marginTop: 6 }}>
         Max loss per contract: <b>{money(m, o.maxLossPerContract)}</b> ({o.contractSize} {m === 'US' ? 'shares' : 'shares a lot'}) · IV {o.iv}%
         {o.liquidity ? <> · OI {o.liquidity.oi ?? '—'} · spread {o.liquidity.spreadPct ?? '—'}%</> : null}
@@ -142,6 +152,7 @@ export function IdeaCard({ idea, bars }: { idea: any; bars?: Bar5[] | null }) {
         </div>
         <div style={{ marginLeft: 'auto', fontSize: 14, fontWeight: 700, color: GRADE_COL[idea.grade] }}>{idea.verdict}</div>
       </div>
+      {idea.ctx ? <CtxChips idea={idea} /> : null}
       {idea.caution ? <div style={{ marginTop: 8, padding: '6px 10px', borderRadius: 8, border: '1px solid #F59E0B', color: '#F59E0B', fontSize: 13, fontWeight: 600 }}>⚠ {idea.caution}</div> : null}
       {bars?.length ? <div style={{ marginTop: 10 }}><SetupChart bars={bars} idea={idea} /></div> : null}
       <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', marginTop: 12 }}>
@@ -178,6 +189,82 @@ export function IdeaCard({ idea, bars }: { idea: any; bars?: Bar5[] | null }) {
         <div style={C.label}>Option</div>
         <OptionBox o={idea.option} m={m} />
       </div>
+      <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 14 }}>
+        <Sizer idea={idea} />
+        <AlertButtons idea={idea} />
+      </div>
+    </div>
+  );
+}
+
+function Chip({ text, col, title }: { text: string; col: string; title?: string }) {
+  return <span title={title} style={{ fontSize: 12, fontWeight: 700, padding: '2px 8px', borderRadius: 999, border: `1px solid ${col}`, color: col, whiteSpace: 'nowrap' }}>{text}</span>;
+}
+function CtxChips({ idea }: { idea: any }) {
+  const c = idea.ctx, o = idea.option;
+  const chips: any[] = [];
+  if (c.gapDaysAgo != null) chips.push(<Chip key="g" col={C.green} text={`⚡ Gap up ${c.gapDaysAgo}d ago on 2×+ volume`} title="A results-style gap: open ≥ 5% above the previous close on ≥ 2× the 50-day volume" />);
+  if (c.rvol >= 1.3) chips.push(<Chip key="v" col={C.green} text={`Volume ${c.rvol}× normal today`} />);
+  chips.push(<Chip key="h" col={c.hvPct >= 70 ? C.amber : c.hvPct <= 30 ? C.green : 'var(--mc-text-3)'} text={`Volatility ${c.hv20}% · ${c.hvPct}th pct of its year`} title="20-day historical volatility against its own last year. ≥ 70th: options are expensive; ≤ 30th: cheap" />);
+  if (c.sector) chips.push(<Chip key="s" col={c.sectorRet3m != null && c.indexRet3m != null ? (c.sectorRet3m > c.indexRet3m ? C.green : C.red) : 'var(--mc-text-3)'} text={`${c.sector}: ${c.sectorRet3m != null ? `${c.sectorRet3m > 0 ? '+' : ''}${c.sectorRet3m}%` : '—'} 3m vs index ${c.indexRet3m != null ? `${c.indexRet3m > 0 ? '+' : ''}${c.indexRet3m}%` : '—'}`} />);
+  if (c.nextResults) chips.push(<Chip key="r" col={o?.results?.beforeExpiry ? C.red : o?.results?.movedExpiry ? C.amber : 'var(--mc-text-2)'} text={`Results ${c.nextResults}${o?.results?.beforeExpiry ? ' — before expiry ⚠' : o?.results?.movedExpiry ? ' — expiry moved earlier' : ''}`} />);
+  else chips.push(<Chip key="r" col="var(--mc-text-3)" text="Results date not found — check it" />);
+  return <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>{chips}</div>;
+}
+
+const SIZER_KEY = 'mc:options-ideas:sizer:v1';
+function Sizer({ idea }: { idea: any }) {
+  const m = idea.market, o = idea.option;
+  const [cfg, setCfg] = useState<{ acct: number; risk: number }>({ acct: m === 'US' ? 50000 : 2000000, risk: 1 });
+  useEffect(() => { try { const all = JSON.parse(localStorage.getItem(SIZER_KEY) || '{}'); if (all[m]) setCfg(all[m]); } catch { /* */ } }, [m]);
+  const save = (v: { acct: number; risk: number }) => { setCfg(v); try { const all = JSON.parse(localStorage.getItem(SIZER_KEY) || '{}'); all[m] = v; localStorage.setItem(SIZER_KEY, JSON.stringify(all)); } catch { /* */ } };
+  const budget = (cfg.acct * cfg.risk) / 100;
+  const n = (perC: number | null | undefined) => (perC && perC > 0 ? Math.floor(budget / perC) : 0);
+  const streak = Math.round((1 - Math.pow(1 - cfg.risk / 100, 10)) * 1000) / 10;
+  const inp: CSSProperties = { width: 110, padding: '4px 6px', borderRadius: 6, border: '1px solid var(--mc-border-1)', background: 'transparent', color: 'var(--mc-text-0)' };
+  return (
+    <div style={{ border: '1px solid var(--mc-border-1)', borderRadius: 10, padding: 10, fontSize: 13 }}>
+      <div style={C.label}>Position size</div>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 4 }}>
+        <label>Account {m === 'US' ? '$' : '₹'} <input type="number" value={cfg.acct} onChange={(e) => save({ ...cfg, acct: Math.max(0, Number(e.target.value) || 0) })} style={inp} /></label>
+        <label>Risk a trade % <input type="number" step="0.25" value={cfg.risk} onChange={(e) => save({ ...cfg, risk: Math.max(0, Math.min(10, Number(e.target.value) || 0)) })} style={{ ...inp, width: 64 }} /></label>
+      </div>
+      {o ? <div style={{ marginTop: 6, lineHeight: 1.6 }}>
+        Budget <b>{money(m, budget)}</b> (the whole premium can be lost) →
+        {' '}<b>{n(o.maxLossPerContract)}</b> {m === 'US' ? 'contract(s)' : 'lot(s)'} of the suggested option
+        {o.spread ? <> · <b>{n(o.spread.maxLossPerContract)}</b> of the spread</> : null}
+        {m === 'IN' && o.maxLossPerContract > budget ? <div style={{ color: C.red, fontWeight: 700 }}>⚠ One lot ({money(m, o.maxLossPerContract)}) is more than your risk budget — skip it, use the spread{o.spread && o.spread.maxLossPerContract <= budget ? ' (fits)' : ''}, or trade fewer shares of the stock.</div> : null}
+        {m === 'US' && n(o.maxLossPerContract) === 0 ? <div style={{ color: C.red, fontWeight: 700 }}>⚠ One contract is more than your risk budget.</div> : null}
+        <div style={{ color: 'var(--mc-text-3)', fontSize: 12 }}>With 1 in 3–4 trades winning, 8–12 losses in a row are normal. At {cfg.risk}% a trade, 10 straight losses cost about {streak}% of the account.</div>
+      </div> : <div style={{ color: 'var(--mc-text-3)' }}>No option plan to size.</div>}
+    </div>
+  );
+}
+
+function AlertButtons({ idea }: { idea: any }) {
+  const [st, setSt] = useState<string | null>(null);
+  const s = idea.setup, call = s.side === 'CALL', m = idea.market;
+  const make = async () => {
+    setSt('Saving…');
+    const base = { target: { kind: 'ticker' as const, id: `${m}:${idea.ticker}`, label: idea.ticker }, interval: 'D' as const, trigger: 'once' as const, session: 'regular' as const, notify: { app: true as const, toast: true, browser: true, telegram: true, email: false, push: true } };
+    const days = (d: number) => new Date(Date.now() + d * 86_400_000).toISOString();
+    const out: string[] = [];
+    if (!s.triggered) {
+      const r = await createAlertApi({ ...base, name: `${idea.ticker} ${call ? 'call' : 'put'} trigger`, conditions: [{ type: call ? 'price_cross_up' : 'price_cross_down', value: s.trigger }], expiresAt: days(8), message: `Options Ideas: ${idea.ticker} ${s.label} triggered at ${money(m, s.trigger)} — check the plan (stop ${money(m, s.stop)}).` });
+      out.push(r.ok ? 'trigger ✓' : `trigger ✗ ${r.error ?? ''}`);
+    }
+    const r2 = await createAlertApi({ ...base, name: `${idea.ticker} ${call ? 'call' : 'put'} stop`, conditions: [{ type: call ? 'price_cross_down' : 'price_cross_up', value: s.stop }], expiresAt: days(60), message: `Options Ideas: ${idea.ticker} hit the stop ${money(m, s.stop)} — the setup has failed; exit.` });
+    out.push(r2.ok ? 'stop ✓' : `stop ✗ ${r2.error ?? ''}`);
+    const r3 = await createAlertApi({ ...base, name: `${idea.ticker} ${call ? 'call' : 'put'} target 1`, conditions: [{ type: call ? 'price_cross_up' : 'price_cross_down', value: s.target1 }], expiresAt: days(60), message: `Options Ideas: ${idea.ticker} reached target 1 ${money(m, s.target1)} — take half, stop to entry.` });
+    out.push(r3.ok ? 'target ✓' : `target ✗ ${r3.error ?? ''}`);
+    setSt(`Alerts: ${out.join(' · ')}`);
+  };
+  return (
+    <div style={{ border: '1px solid var(--mc-border-1)', borderRadius: 10, padding: 10, fontSize: 13 }}>
+      <div style={C.label}>Alerts</div>
+      <div style={{ marginTop: 4 }}>Get a phone / app alert at the {s.triggered ? '' : 'entry trigger, the '}stop and target 1.</div>
+      <button onClick={make} disabled={st === 'Saving…'} style={{ marginTop: 6, padding: '5px 12px', borderRadius: 8, border: '1px solid var(--mc-cyan, #22D3EE)', background: 'transparent', color: 'var(--mc-text-0)', fontWeight: 700, cursor: 'pointer' }}>🔔 Set alerts</button>
+      {st ? <div style={{ marginTop: 6, fontSize: 12.5 }}>{st}</div> : null}
     </div>
   );
 }
