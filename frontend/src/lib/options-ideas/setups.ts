@@ -360,11 +360,11 @@ export { last as _last };
 /** zzz1307 — bullish patterns shown in the chart structure (what would make it a setup) */
 export const STRUCTURE_PATTERNS = new Set<string>(['cup', 'cup_handle', 'vcp', 'flat_base', 'ascending_base', 'base_on_base', 'high_tight_flag', 'bull_flag', 'ascending_triangle', 'double_bottom', 'inverse_hs']);
 export interface WatchLevel { side: Side; price: number; distPct: number; what: string }
-export interface Structure { lines: SetupLine[]; levels: Array<{ price: number; kind: 'support' | 'resistance'; touches: number }>; watch: WatchLevel[]; notes: string[] }
+export interface Structure { patterns?: Array<{ id: string; label: string; stage: string; distPct: number }>; lines: SetupLine[]; levels: Array<{ price: number; kind: 'support' | 'resistance'; touches: number }>; watch: WatchLevel[]; notes: string[] }
 /** What the chart shows when no setup qualifies: the trendlines / levels / cups found, and what price would make each a setup. */
 export function describeStructure(barsIn: PBar[]): Structure {
   const bars = barsIn.filter((q) => q && q.l > 0 && q.h >= q.l && Number.isFinite(q.c));
-  const out: Structure = { lines: [], levels: [], watch: [], notes: [] };
+  const out: Structure = { patterns: [], lines: [], levels: [], watch: [], notes: [] };
   if (bars.length < 220) { out.notes.push(`Only ${bars.length} sessions of history — structure needs at least 220.`); return out; }
   const x = makeCtx(bars), L = x.L, c = x.c;
   const off = Math.max(0, bars.length - 260);
@@ -400,6 +400,7 @@ export function describeStructure(barsIn: PBar[]): Structure {
       const cupLike = h.id === 'cup' || h.id === 'cup_handle';
       out.lines.push({ kind: cupLike ? 'rim' : 'level', from: [bars[Math.max(0, L - h.lengthBars)].t, h.pivot], to: [bars[L].t, h.pivot] });
       const name = h.id === 'cup_handle' ? 'Cup with handle' : h.id === 'cup' ? 'Cup' : h.label;
+      out.patterns!.push({ id: h.id, label: h.id === 'vcp' ? 'VCP' : name, stage: h.stage, distPct: d });
       out.watch.push({ side: 'CALL', price: h.pivot, distPct: d, what: `${name} (${h.lengthBars} sessions${h.depthPct != null ? `, ${Math.round(h.depthPct)}% deep` : ''}), ${cupLike ? 'rim' : 'pivot'} ${fmt(h.pivot)} (${d > 0 ? '+' : ''}${d}%) — ${h.stage === 'breakout' ? `broke out; a pull-back to the ${cupLike ? 'rim' : 'pivot'} that holds is the entry` : `a close above the ${cupLike ? 'rim' : 'pivot'} is the entry`}.` });
     }
   } catch { /* patterns are optional */ }

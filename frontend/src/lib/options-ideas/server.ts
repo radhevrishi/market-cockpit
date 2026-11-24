@@ -317,7 +317,7 @@ export function retestOf(ideas: Idea[]): RetestBrief | null {
   if (!i) return null;
   return { grade: i.grade, label: i.setup.label, trigger: i.setup.trigger, stop: i.setup.stop, target1: i.setup.target1, riskPct: i.setup.riskPct, triggered: i.setup.triggered, why: i.setup.reasons.join(' · ') };
 }
-export interface StructureBrief { ticker: string; market: Mkt; ok: boolean; best: { grade: Grade; label: string; side: 'CALL' | 'PUT' } | null; setups: number; lines: number; levels: number; nearest: string | null; nearestPct: number | null; retest?: RetestBrief | null }
+export interface StructureBrief { ticker: string; market: Mkt; ok: boolean; best: { grade: Grade; label: string; side: 'CALL' | 'PUT' } | null; setups: number; lines: number; levels: number; nearest: string | null; nearestPct: number | null; retest?: RetestBrief | null; patterns?: string[] }
 export async function structureBriefs(market: Mkt, tickers: string[]): Promise<StructureBrief[]> {
   const out: StructureBrief[] = [];
   await Promise.all(tickers.map(async (t) => {
@@ -330,6 +330,8 @@ export async function structureBriefs(market: Mkt, tickers: string[]): Promise<S
       lines: best ? best.setup.lines.length : r.structure?.lines.length ?? 0, levels: r.structure?.levels.length ?? 0,
       nearest: w ? w.what.split('.')[0] : null, nearestPct: w ? w.distPct : null,
       retest: retestOf(r.ideas),
+      // zzz1307 — chart patterns found (VCP, cup, bases …) with stage and distance to the pivot
+      patterns: (r.structure?.patterns || []).slice(0, 3).map((p) => `${p.label} ${p.stage === 'breakout' ? 'broke out' : 'forming'} (${p.distPct > 0 ? '+' : ''}${p.distPct}% to pivot)`),
     });
   }));
   return out;

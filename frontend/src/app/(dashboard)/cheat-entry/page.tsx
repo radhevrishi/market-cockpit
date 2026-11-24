@@ -657,6 +657,7 @@ export default function CheatEntryPage() {
                           : b.best ? <span title={`${b.setups} setup(s) found on the chart — open Options Ideas for the full plan`}><b style={{ color: '#fff', background: GCOL[b.best.grade] || '#64748B', borderRadius: 5, padding: '1px 6px', fontSize: 12 }}>{b.best.grade}</b> <span style={{ fontWeight: 700 }}>{b.best.label}</span>{b.setups > 1 ? <span style={{ color: C.dim, fontSize: 11.5 }}> +{b.setups - 1}</span> : null}</span>
                           : b.lines + b.levels > 0 ? <span style={{ fontSize: 12, color: C.text2 }} title={b.nearest || ''}>{b.lines} line{b.lines === 1 ? '' : 's'} · {b.levels} level{b.levels === 1 ? '' : 's'}{b.nearestPct != null ? <span style={{ color: C.dim }}> · nearest {b.nearestPct > 0 ? '+' : ''}{b.nearestPct}%</span> : null}</span>
                           : <span style={{ color: C.dim, fontSize: 12 }}>no clean structure</span>}
+                        {b?.ok && b.patterns?.length ? <div style={{ fontSize: 11.5, marginTop: 2, color: C.text2 }} title="Chart patterns read by the same engine as the Charts page (zzz1307)">{b.patterns.map((p: string, i: number) => <span key={i} style={{ marginRight: 6, fontWeight: /^VCP/.test(p) ? 800 : 600, color: /^VCP/.test(p) ? C.green : C.text2 }}>{p}</span>)}</div> : null}
                       </td>
                       <td style={td}>
                         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
