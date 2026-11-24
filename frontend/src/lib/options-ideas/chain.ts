@@ -23,11 +23,54 @@ function yq(o: any): ChainQuote {
   return { strike: num(o?.strike) ?? 0, bid: num(o?.bid), ask: num(o?.ask), last: num(o?.lastPrice), iv: num(o?.impliedVolatility), oi: num(o?.openInterest), volume: num(o?.volume) };
 }
 
-/** Yahoo chain. `pick` chooses which expiries (ISO dates) to load from the listed ones. */
+const MONTHS: Record<string, string> = { January: '01', February: '02', March: '03', April: '04', May: '05', June: '06', July: '07', August: '08', September: '09', October: '10', November: '11', December: '12' };
+/** "December 24, 2026" → "2026-12-24" */
+export function nasdaqDateIso(s: string): string | null {
+  const m = /^([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})$/.exec(String(s || '').trim());
+  return m && MONTHS[m[1]] ? `${m[3]}-${MONTHS[m[1]]}-${m[2].padStart(2, '0')}` : null;
+}
+const nn = (x: any): number | null => { const v = typeof x === 'string' ? Number(x.replace(/,/g, '')) : x; return typeof v === 'number' && Number.isFinite(v) ? v : null; };
+/** Nasdaq option-chain table → Chain (pure; exported for tests). Nasdaq gives bid / ask / last / volume / OI but no IV. */
+export function parseNasdaqChain(j: any): Chain | null {
+  const rows: any[] = j?.data?.table?.rows ?? [];
+  const byExpiry: Chain['byExpiry'] = {};
+  let ex: string | null = null;
+  for (const r of rows) {
+    if (r?.expirygroup) { ex = nasdaqDateIso(r.expirygroup); continue; }
+    const K = nn(r?.strike);
+    if (!ex || K == null) continue;
+    const slot = (byExpiry[ex] ||= { calls: [], puts: [] });
+    slot.calls.push({ strike: K, bid: nn(r.c_Bid), ask: nn(r.c_Ask), last: nn(r.c_Last), iv: null, oi: nn(r.c_Openinterest), volume: nn(r.c_Volume) });
+    slot.puts.push({ strike: K, bid: nn(r.p_Bid), ask: nn(r.p_Ask), last: nn(r.p_Last), iv: null, oi: nn(r.p_Openinterest), volume: nn(r.p_Volume) });
+  }
+  const expiries = Object.keys(byExpiry).sort();
+  return expiries.length ? { expiries, byExpiry, source: 'Nasdaq option chain', asOf: null } : null;
+}
+async function nasdaqChain(ticker: string): Promise<Chain | null> {
+  const from = new Date(), to = new Date(Date.now() + 160 * 86_400_000);
+  const d = (x: Date) => x.toISOString().slice(0, 10);
+  const u = `https://api.nasdaq.com/api/quote/${encodeURIComponent(ticker)}/option-chain?assetclass=stocks&limit=3000&fromdate=${d(from)}&todate=${d(to)}&excode=oprac&callput=callput&money=all&type=all`;
+  const r = await fetch(u, { headers: { 'User-Agent': UA, Accept: 'application/json' }, cache: 'no-store', signal: AbortSignal.timeout(12_000) });
+  if (!r.ok) throw new Error(`Nasdaq HTTP ${r.status}`);
+  return parseNasdaqChain(await r.json());
+}
+
+/** US chain: Yahoo first (has implied volatility), Nasdaq when Yahoo refuses (bid / ask / OI, no IV). */
 export async function usChain(ticker: string, pick: (expiries: string[]) => string[]): Promise<Chain | null> {
   const k = `us:${ticker}`;
   const hit = getMemo<Chain | null>(k, CHAIN_TTL);
   if (hit !== undefined) return hit;
+  const y = await yahooChain(ticker, pick, k);
+  if (y) return y;
+  try {
+    const n = await nasdaqChain(ticker);
+    if (n) { chainError.delete(k); setMemo(k, n); return n; }
+    chainError.set(k, `${chainError.get(k) ?? 'Yahoo failed'}; Nasdaq had no chain`);
+  } catch (e: any) { chainError.set(k, `${chainError.get(k) ?? 'Yahoo failed'}; ${String(e?.message || e).slice(0, 60)}`); }
+  setMemo(k, null);
+  return null;
+}
+async function yahooChain(ticker: string, pick: (expiries: string[]) => string[], k: string): Promise<Chain | null> {
   const c = await yahooCrumb();
   if (!c) { chainError.set(k, 'Yahoo refused the options sign-in (crumb)'); return null; }
   const base = `https://query2.finance.yahoo.com/v7/finance/options/${encodeURIComponent(ticker)}`;
@@ -39,7 +82,7 @@ export async function usChain(ticker: string, pick: (expiries: string[]) => stri
   };
   try {
     const first = await get();
-    if (!first) { if (!chainError.has(k)) chainError.set(k, 'Yahoo returned no option chain'); setMemo(k, null); return null; }
+    if (!first) { if (!chainError.has(k)) chainError.set(k, 'Yahoo returned no option chain'); return null; }
     chainError.delete(k);
     const unix: number[] = (first.expirationDates ?? []).filter((x: any) => typeof x === 'number');
     const expiries = unix.map(isoOfUnix);

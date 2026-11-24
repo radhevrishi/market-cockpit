@@ -116,3 +116,15 @@ test('zzz1301 — chain outside market hours (bid = ask = 0): real strikes / exp
   assert.equal(o.premiumSource, 'model');
   assert.ok(o.notes.some((n) => /no live bid \/ ask/.test(n)));
 });
+
+test('zzz1301 — Nasdaq chain table parsing (US fallback when Yahoo refuses)', async () => {
+  const { parseNasdaqChain, nasdaqDateIso } = await import('../options-ideas/chain');
+  assert.equal(nasdaqDateIso('December 24, 2026'), '2026-12-24');
+  const c = parseNasdaqChain({ data: { table: { rows: [
+    { expirygroup: 'December 24, 2026', strike: null },
+    { expirygroup: '', strike: '29.00', c_Bid: '1.20', c_Ask: '1.35', c_Last: '1.25', c_Volume: '40', c_Openinterest: '1,250', p_Bid: '--', p_Ask: '0.90', p_Last: '--', p_Volume: '--', p_Openinterest: '--' },
+  ] } } })!;
+  assert.deepEqual(c.expiries, ['2026-12-24']);
+  assert.equal(c.byExpiry['2026-12-24'].calls[0].oi, 1250);
+  assert.equal(c.byExpiry['2026-12-24'].puts[0].bid, null);
+});
