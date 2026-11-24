@@ -53,7 +53,7 @@ type StopMa = CheatStopMa;
 interface Candidate {
   symbol: string; market: Market;
   company: string; sector: string;
-  livePrice: number; priceIsLive: boolean; dayChg: number | null;
+  livePrice: number; priceIsLive: boolean; dayChg: number | null; chgSrc: 'live' | 'close' | null;
   d21: number | null; d50: number | null; d200: number | null;
   setup: SetupKind; setupLabel: string; atSupportNow: boolean; testingSupport: boolean;
   stopMa: StopMa | null; riskPct: number | null;
@@ -72,6 +72,14 @@ type Regimes = { IND: RegimeSide | null; USA: RegimeSide | null };
 type Lens = 'best' | 'support' | 'bounce' | 'both' | 'all';
 
 interface LiveQuote { price: number; chg: number | null; company?: string }
+// zzz1303 — the stock-screener snapshot (slim answer): averages, price, today's change, RS, name, industry for names the browser's
+// Technicals lists do not carry and for prices the live feed missed
+interface SnapRow { px: number | null; chg: number | null; ema21: number | null; sma50: number | null; sma200: number | null; rs: number | null; n?: string; ind?: string }
+type Snap = Map<string, SnapRow>;   // key `${market}:${symbol}`
+/** Names a company's ticker table carries after the company name ("Class A Shares Representing …", "Common Stock") */
+const cleanName = (n: string) => n.replace(/\s+(Class [A-Z]\b.*|Common Stock.*|Ordinary Shares.*|American Depositary.*|Shares Representing.*)$/i, '').replace(/,?\s+(Inc|Ltd|Limited|Corp|Corporation|PLC|LLC)\.?$/i, '').trim();
+/** Price with sensible decimals ($2.14 not $2, $1,612 not $1.6k) */
+const fmtPx = (v: number, m: Market) => `${m === 'USA' ? '$' : '₹'}${v >= 1000 ? Math.round(v).toLocaleString('en-US') : v >= 100 ? v.toFixed(1) : v.toFixed(2)}`;
 
 const norm = (s: any) => String(s || '').toUpperCase().replace(/\.(NS|BO|NSE|BSE)$/i, '').trim();
 const num = (v: any): number | null => { const n = typeof v === 'number' ? v : parseFloat(String(v)); return Number.isFinite(n) ? n : null; };
@@ -86,16 +94,16 @@ const SETUP_META: Record<SetupKind, { label: string; color: string; blurb: strin
 
 // ── assemble the board from localStorage engines + an (optionally empty) live
 //    quote map. Pure enough to run twice: instant pass, then the live re-score.
-function assemble(live: Map<string, LiveQuote>, regimes: Regimes = { IND: null, USA: null }): { cands: Candidate[]; skipped: number } {
+function assemble(live: Map<string, LiveQuote>, regimes: Regimes = { IND: null, USA: null }, snap: Snap = new Map()): { cands: Candidate[]; skipped: number } {
   let decay = new Map<string, string>();
   try { for (const [k, v] of getEngineViews()) if (v.decay?.severity) decay.set(norm(k), v.decay.severity); } catch { decay = new Map(); }
   // 1 · fundamentals (Multibagger rankings)
-  const fundo = new Map<string, { score: number | null; grade: string | null; sector?: string }>();
-  for (const key of ['mb_excel_scored_v2', 'mb_usa_scored_v2']) {
+  const fundo = new Map<string, { score: number | null; grade: string | null; sector?: string; market: Market }>();
+  for (const [key, fm] of [['mb_excel_scored_v2', 'IND'], ['mb_usa_scored_v2', 'USA'], ['mb_usa_scored_v1', 'USA']] as [string, Market][]) {
     const rows = readJSON(key);
     if (Array.isArray(rows)) for (const r of rows) {
-      const s = norm(r?.symbol); if (!s || EXCLUDE.has(s)) continue;
-      fundo.set(s, { score: num(r?.score), grade: r?.grade ? String(r.grade) : null, sector: r?.sector || r?.industry });
+      const s = norm(r?.symbol); if (!s || EXCLUDE.has(s) || fundo.has(s)) continue;
+      fundo.set(s, { score: num(r?.score), grade: r?.grade ? String(r.grade) : null, sector: r?.sector || r?.industry, market: fm });
     }
   }
   // 2 · conviction bench
@@ -125,9 +133,21 @@ function assemble(live: Map<string, LiveQuote>, regimes: Regimes = { IND: null, 
   const cands: Candidate[] = [];
   let skipped = 0;
   for (const sym of universe) {
-    const t = tech.get(sym);
+    const t0 = tech.get(sym);
     const f = fundo.get(sym) || null;
     const b = bench.get(sym) || null;
+    const mk: Market = t0?.market ?? f?.market ?? 'IND';
+    const sr = snap.get(`${mk}:${sym}`);
+    // zzz1303 — fill missing averages / price / RS from the screener snapshot, field by field
+    const t: TechRaw | undefined = (t0 || sr) ? {
+      market: mk,
+      price: sr?.px ?? t0?.price ?? null,
+      ema21: t0?.ema21 ?? sr?.ema21 ?? null,
+      sma50: t0?.sma50 ?? sr?.sma50 ?? null,
+      sma200: t0?.sma200 ?? sr?.sma200 ?? null,
+      sector: t0?.sector || sr?.ind, company: t0?.company || sr?.n,
+      rs: t0?.rs ?? sr?.rs ?? null,
+    } : undefined;
     if (!t || t.sma50 == null || t.sma200 == null || t.sma50 <= 0 || t.sma200 <= 0) {
       if (b || (f && (f.score ?? 0) >= 60)) skipped++;
       continue;
@@ -161,11 +181,12 @@ function assemble(live: Map<string, LiveQuote>, regimes: Regimes = { IND: null, 
 
     // zzz1302 — oversold bounce (rules from the old Bounce Desk / Oversold Bounce Playbook). Needs a live day move for the
     // "hard down day" leg; the 21-EMA and 50-day legs work on synced prices too.
-    const dayChg = lq?.chg ?? null;
+    const dayChg = lq?.chg ?? sr?.chg ?? null;
     const why: string[] = [];
     if (dayChg != null && dayChg <= -3) why.push(`down ${Math.abs(dayChg).toFixed(1)}% today`);
     if (d21 != null && d21 <= -3) why.push(`${Math.abs(d21).toFixed(1)}% under the 21-day EMA`);
-    if (d50 != null && d50 <= 1 && d200 != null && d200 >= 0) why.push(d50 < 0 ? `${Math.abs(d50).toFixed(1)}% under the 50-day, above the 200-day` : 'back at the 50-day, above the 200-day');
+    // the 50-day leg needs a real pull-back (under the 21-day EMA), otherwise every 50-day rest would also be "oversold"
+    if (d50 != null && d50 <= 1 && d200 != null && d200 >= 0 && (d21 == null || d21 <= -1)) why.push(d50 < 0 ? `${Math.abs(d50).toFixed(1)}% under the 50-day, above the 200-day` : 'back at the 50-day, above the 200-day');
     let block: string | null = null;
     const rk = regimes[t.market]?.kind;
     if (why.length) {
@@ -180,13 +201,15 @@ function assemble(live: Map<string, LiveQuote>, regimes: Regimes = { IND: null, 
     if (b) bScore += b.tier === 'BLOCKBUSTER' ? 12 : 8;
     if (t.rs != null && t.rs >= 80) bScore += 5;
     if (d200 != null && d200 < 0) bScore -= 15;
+    if (d200 != null && d200 > 60) bScore -= 10;   // very late-stage: a dip after a huge run is often the top, not a bounce
     bScore = Math.max(0, Math.min(100, Math.round(bScore)));
 
     cands.push({
       symbol: sym, market: t.market,
-      company: b?.company || live.get(sym)?.company || t.company || '',
+      company: cleanName(b?.company || live.get(sym)?.company || t.company || ''),
       sector: String(f?.sector || t.sector || b?.sector || ''),
-      livePrice, priceIsLive: !!lq, dayChg: lq?.chg ?? null,
+      livePrice, priceIsLive: !!lq, dayChg,
+      chgSrc: lq?.chg != null ? 'live' : sr?.chg != null ? 'close' : null,
       d21, d50, d200,
       setup, setupLabel: SETUP_META[setup].label, atSupportNow, testingSupport,
       stopMa, riskPct,
@@ -200,6 +223,36 @@ function assemble(live: Map<string, LiveQuote>, regimes: Regimes = { IND: null, 
   }
   cands.sort((a, b) => b.score - a.score || (a.riskPct ?? 99) - (b.riskPct ?? 99));
   return { cands, skipped };
+}
+
+/** zzz1303 — every symbol the board looks at, by market (for the snapshot fetch) */
+function universeByMarket(): Record<Market, string[]> {
+  const out: Record<Market, Set<string>> = { IND: new Set(), USA: new Set() };
+  const add = (m: Market, v: any) => { const s = norm(v); if (s && !EXCLUDE.has(s)) out[m].add(s); };
+  for (const [key, m] of [['mb_tech_rows_ind_v1', 'IND'], ['mb_tech_rows_usa_v1', 'USA'], ['mb_excel_scored_v2', 'IND'], ['mb_usa_scored_v2', 'USA'], ['mb_usa_scored_v1', 'USA']] as [string, Market][]) {
+    const rows = readJSON(key); if (Array.isArray(rows)) for (const r of rows) add(m, r?.symbol || r?.ticker);
+  }
+  try { for (const e of getConvictionList()) add('IND', e?.ticker); } catch { /* */ }
+  return { IND: [...out.IND], USA: [...out.USA] };
+}
+async function fetchSnapshot(): Promise<Snap> {
+  const snap: Snap = new Map();
+  const u = universeByMarket();
+  const jobs: Array<{ m: Market; t: string[] }> = [];
+  for (const m of ['IND', 'USA'] as Market[]) for (let i = 0; i < u[m].length; i += 400) jobs.push({ m, t: u[m].slice(i, i + 400) });
+  await Promise.all(jobs.map(async ({ m, t }) => {
+    try {
+      const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), 25000);
+      const r = await fetch(`/api/v1/stock-screener?market=${m === 'IND' ? 'IN' : 'US'}&tickers=${encodeURIComponent(t.join(','))}`, { signal: ctl.signal });
+      clearTimeout(to);
+      const j = r.ok ? await r.json() : null;
+      for (const x of (Array.isArray(j?.rows) ? j.rows : [])) {
+        const sym = norm(x?.t); if (!sym) continue;
+        snap.set(`${m}:${sym}`, { px: num(x.px ?? x.scanPx), chg: num(x.chg), ema21: num(x.ema21), sma50: num(x.sma50), sma200: num(x.sma200), rs: num(x.rs), n: x.n, ind: x.ind || x.sec });
+      }
+    } catch { /* snapshot is a fill-in */ }
+  }));
+  return snap;
 }
 
 // Live quotes with a realistic budget: the full-universe build is ~25s on a
@@ -298,6 +351,7 @@ export default function CheatEntryPage() {
       } catch { return { IND: null, USA: null }; }
     })();
     const liveP = fetchLiveQuotes();
+    const snapP = fetchSnapshot();
     // instant pass — synced prices, board up immediately
     const base = assemble(new Map());
     if (!aliveRef.current || run !== runRef.current) return;
@@ -305,14 +359,16 @@ export default function CheatEntryPage() {
     const reg = await regP;
     if (!aliveRef.current || run !== runRef.current) return;
     setRegimes(reg);
-    const reg1 = assemble(new Map(), reg);
-    setCands(reg1.cands);
+    const snap = await snapP;
+    if (!aliveRef.current || run !== runRef.current) return;
+    const reg1 = assemble(new Map(), reg, snap);
+    setCands(reg1.cands); setSkipped(reg1.skipped);
     // live pass — re-score once quotes land
     setQuotesState('loading');
     const live = await liveP;
     if (!aliveRef.current || run !== runRef.current) return; // a newer REFRESH superseded us
     if (live.size > 0) {
-      const fresh = assemble(live, reg);
+      const fresh = assemble(live, reg, snap);
       setCands(fresh.cands); setSkipped(fresh.skipped);
       setLiveCount(live.size); setQuotesState('live');
       // zzz524 — log today's top setups for the scoreboard (both desks' signal names kept)
@@ -480,7 +536,7 @@ export default function CheatEntryPage() {
         <span style={{ marginLeft: 'auto', fontSize: 12.5, color: C.dim }}>
           {cands ? `${shown.length} names · ${LENS_META[lens].label.replace(/^\S+\s/, '')}` : ''}
           {blocked > 0 ? ` · ${blocked} oversold names refused (bear regime, decay or stop too far)` : ''}
-          {skipped > 0 ? ` · ${skipped} quality names without moving-average data (add them to a Technicals list)` : ''}
+          {skipped > 0 ? ` · ${skipped} quality names without moving-average data (not in the screener snapshot either)` : ''}
         </span>
       </div>
 
@@ -538,17 +594,17 @@ export default function CheatEntryPage() {
                       <td style={{ ...td, fontWeight: 900, fontSize: 15.5, color: scoreCol }} title={`Setup ${c.setupScore}/60 + Quality ${c.qualityScore}/40${c.bounce ? ` + ${isSupport(c) ? 8 : 3} oversold` : ''}`}>{shownScore}</td>
                       <td style={{ ...td, whiteSpace: 'nowrap' }}><span title={meta.blurb} style={{ fontWeight: 800, color: meta.color }}>{meta.label}</span></td>
                       <td style={{ ...td, minWidth: 150 }}>
-                        {c.bounce ? <span title={c.bounceWhy.join(' · ')}><b style={{ color: '#A78BFA', fontSize: 14 }}>🌊 {c.bounceScore}</b><div style={{ fontSize: 11.5, color: C.muted, maxWidth: 220 }}>{c.bounceWhy[0]}{c.bounceWhy.length > 1 ? ` +${c.bounceWhy.length - 1}` : ''}</div></span>
+                        {c.bounce ? <span title={c.bounceWhy.join(' · ')}><b style={{ color: '#A78BFA', fontSize: 14 }}>🌊 {c.bounceScore}</b><div style={{ fontSize: 11.5, color: C.muted, maxWidth: 240, lineHeight: 1.35 }}>{c.bounceWhy.join(' · ')}</div></span>
                           : c.bounceBlock ? <span title={c.bounceBlock} style={{ fontSize: 12, color: C.red }}>🛑 refused<div style={{ fontSize: 11, color: C.dim, maxWidth: 220 }}>{c.bounceBlock.split(' — ')[0]}</div></span>
                           : <span style={{ color: C.dim }}>—</span>}
                       </td>
                       <td style={{ ...td, color: c.d50 != null && Math.abs(c.d50) <= 3 ? C.green : C.text2 }}>{pct(c.d50)}</td>
                       <td style={{ ...td, color: c.d200 != null && Math.abs(c.d200) <= 4 ? C.cyan : C.text2 }}>{pct(c.d200)}</td>
                       <td style={{ ...td, fontWeight: 800, color: c.riskPct == null ? C.muted : c.riskPct <= 4 ? C.green : c.riskPct <= 8 ? C.amber : C.red }} title={c.stopMa ? `Stop 2% under the ${c.stopMa}` : ''}>{c.riskPct != null ? `${c.riskPct.toFixed(1)}%` : '—'}{c.stopMa ? <span style={{ fontSize: 10.5, color: C.dim, fontWeight: 600 }}> under {c.stopMa}</span> : null}</td>
-                      <td style={{ ...td, whiteSpace: 'nowrap' }} title={sz ? `≈ ${fmtMoney(sz.value * (rk === 'CORRECTION' ? 0.5 : 1), c.market)} · stop ${fmtMoney(sz.stopPrice, c.market)}${rk === 'CORRECTION' ? ' · halved: CORRECTION regime' : ''}` : ''}>
-                        {szPct != null ? <><b>{szPct.toFixed(1)}%</b>{rk === 'CORRECTION' ? <span style={{ fontSize: 10.5, color: C.amber }}> ½</span> : null}<div style={{ fontSize: 11, color: C.dim }}>stop {fmtMoney(sz!.stopPrice, c.market)}</div></> : '—'}
+                      <td style={{ ...td, whiteSpace: 'nowrap' }} title={sz ? `≈ ${fmtMoney(sz.value * (rk === 'CORRECTION' ? 0.5 : 1), c.market)} · stop ${fmtPx(sz.stopPrice, c.market)}${rk === 'CORRECTION' ? ' · halved: CORRECTION regime' : ''}` : ''}>
+                        {szPct != null ? <><b>{szPct.toFixed(1)}%</b>{sz!.pctOfPortfolio >= 14.99 ? <span style={{ fontSize: 10, color: C.dim }} title="Capped at the 15% single-position limit — the stop is tight enough that the risk rule would allow more"> max</span> : null}{rk === 'CORRECTION' ? <span style={{ fontSize: 10.5, color: C.amber }} title="Halved: CORRECTION regime"> ½</span> : null}<div style={{ fontSize: 11, color: C.dim }}>stop {fmtPx(sz!.stopPrice, c.market)}</div></> : '—'}
                       </td>
-                      <td style={{ ...td, color: c.dayChg == null ? C.dim : c.dayChg >= 0 ? C.green : C.red }}>{c.dayChg != null ? pct(c.dayChg) : (quotesState === 'live' ? <span title="No live quote — synced price">synced</span> : '—')}</td>
+                      <td style={{ ...td, color: c.dayChg == null ? C.dim : c.dayChg >= 0 ? C.green : C.red }} title={c.chgSrc === 'close' ? 'Last session (screener snapshot) — no live quote for this name' : c.chgSrc === 'live' ? 'Live quote' : 'No price change available'}>{c.dayChg != null ? <>{pct(c.dayChg)}{c.chgSrc === 'close' ? <span style={{ fontSize: 10, color: C.dim }}> close</span> : null}</> : '—'}</td>
                       <td style={td}>{sparks.get(c.symbol) ? <Sparkline data={sparks.get(c.symbol)} width={80} height={22} /> : <span style={{ color: C.dim }}>—</span>}</td>
                       <td style={{ ...td, minWidth: 190 }}>
                         {!b ? <span style={{ color: C.dim, fontSize: 12 }}>reading chart…</span>

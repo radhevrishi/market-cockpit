@@ -4492,3 +4492,9 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   Views (?lens=): best (support OR bounce, default) / both / support / bounce / all; market + view kept in `mc:entry-desk:v1`.
   Regime strip per market (/api/market/regime) with the rule; Size column = suggestSize at the row's stop, halved in CORRECTION.
   /bounce-desk redirects to /cheat-entry?lens=bounce; nav tab "Entry Desk" (+ Oversold bounces); both signal names still logged.
+- zzz1303 (24 Nov): Entry Desk fills from the stock-screener snapshot (slim `?tickers=`, now also `chg`): names with no Technicals row
+  get their 50/200-day, 21-day EMA, price, RS, name and industry from it (was "655 without moving-average data"); a row with no live
+  quote shows the last session's change marked "close" (was "synced" with no move, so the down-today bounce leg never fired).
+  Bounce: the 50-day leg needs the price under the 21-day EMA (else every 50-day rest was also "oversold" → inflated ⭐ both);
+  names > 60% above the 200-day −10 bounce points. Stop prices with decimals (`fmtPx`), all bounce reasons shown, "max" on a size
+  capped at 15%, company names cleaned of share-class text.
