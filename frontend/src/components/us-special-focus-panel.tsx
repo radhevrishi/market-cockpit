@@ -13,7 +13,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { rankOf, compareSpecialFocus, specialFocusLabels, persistenceWords, catalystThesisLine, type PersistentCatalyst } from '@/lib/catalyst/persistence';
-import { specialFocusQueue, nearMissList, focusButtonWords, splitOffLists } from '@/lib/catalyst/cross-view';
+import { specialFocusQueue, nearMissList, focusButtonWords, splitOffLists, splitByView } from '@/lib/catalyst/cross-view';
 import { type FocusRow } from '@/components/special-focus-panel';
 import { usDetect } from '@/lib/us-thesis/persist-us';
 import { catalystIsolated } from '@/lib/us-thesis/sanitize';
@@ -110,7 +110,9 @@ export function UsSpecialFocusPanel({ rows, lookup, ready, thesisLabel, onJump, 
   const nearInfo = useMemo(() => nearMissList<FocusRow>(live, onLists), [live, onLists]);
   const near = nearInfo.near;
   const priorable = near.filter((x) => Object.keys(x.row.ledger?.periods || {}).length <= 1).map((x) => x.pc.ticker);
-  const shown = onLists.filter((e) => !e.dismissed);
+  const viewSet = useMemo(() => (lookup && lookup.length > rows.length ? new Set(rows.map((r) => String(r.symbol).toUpperCase())) : null), [rows, lookup]);
+  // zzz1306: only the companies in the page's current view.
+  const { here: shown, elsewhere } = useMemo(() => splitByView(onLists.filter((e) => !e.dismissed), viewSet), [onLists, viewSet]);
   const visible = showAll ? shown : shown.slice(0, 8);
   const btn = (id: string, u: string | null, label: string, state: string, color: string) => (
     <button key={label} onClick={() => act(id, u === state ? null : state)} style={{ fontSize: 12, fontWeight: 800, padding: '2px 9px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${u === state ? color : C.border}`, background: 'transparent', color }}>{u === state ? `✓ ${label}` : label}</button>
@@ -119,7 +121,7 @@ export function UsSpecialFocusPanel({ rows, lookup, ready, thesisLabel, onJump, 
   return (
     <div id="us-special-focus" data-testid="us-special-focus" style={{ border: `1px solid ${C.amber}`, borderRadius: 8, padding: '10px 12px', background: C.bg, scrollMarginTop: 70 }}>
       <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap', marginBottom: 6 }}>
-        <span style={{ fontSize: 15, fontWeight: 900, color: C.amber }}>🔥 US Special Focus — {shown.length} persistent catalyst{shown.length === 1 ? '' : 's'}</span>
+        <span style={{ fontSize: 15, fontWeight: 900, color: C.amber }}>🔥 US Special Focus — {shown.length} persistent catalyst{shown.length === 1 ? '' : 's'}{elsewhere.length ? ` in this view · ${elsewhere.length} more in other views` : ''}</span>
         <span style={{ fontSize: 12.5, color: C.faint }}>
           A business mechanism (capacity ramp, backlog, customer ramp) with filed SEC evidence and runway for several periods. Research allocation only — not a buy list, no price used. Output growth alone never qualifies; a target is a milestone, not evidence.
         </span>

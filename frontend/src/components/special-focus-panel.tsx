@@ -10,7 +10,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { detectPersistentCatalysts, rankOf, compareSpecialFocus, specialFocusLabels, persistenceWords, catalystThesisLine, type PersistentCatalyst } from '@/lib/catalyst/persistence';
-import { specialFocusQueue, nearMissList, focusButtonWords, splitDroppedOut, splitOffLists, focusRowIndex, focusSourceLabel } from '@/lib/catalyst/cross-view';
+import { specialFocusQueue, nearMissList, focusButtonWords, splitDroppedOut, splitOffLists, splitByView, focusRowIndex, focusSourceLabel } from '@/lib/catalyst/cross-view';
 
 const C = {
   bg: 'var(--mc-bg-1)', bg2: 'var(--mc-bg-2, var(--mc-bg-1))', border: 'var(--mc-bg-4)', text: 'var(--tc-text, #F1F5F9)',
@@ -140,14 +140,17 @@ export function SpecialFocusPanel({ rows, lookup, ready, thesisLabel, onJump, on
   const priorable = near.filter((x) => (x.row.market || 'IN') !== 'US' && Object.keys(x.row.ledger?.periods || {}).length <= 1).map((x) => x.pc.ticker);
   // zzz802: the list is what MEETS the gate; a decayed record the owner did not
   // choose to keep goes to its own "dropped out" section, with the reason.
-  const { inFocus: shown, droppedOut } = splitDroppedOut(onLists);
+  const { inFocus: shown0, droppedOut } = splitDroppedOut(onLists);
+  // zzz1306: only the companies in the page's current view.
+  const viewSet = useMemo(() => (lookup && lookup.length > rows.length ? new Set(rows.map((r) => String(r.symbol).toUpperCase())) : null), [rows, lookup]);
+  const { here: shown, elsewhere } = useMemo(() => splitByView(shown0, viewSet), [shown0, viewSet]);
   const [showDropped, setShowDropped] = useState(false);
   const visible = showAll ? shown : shown.slice(0, 8);
 
   return (
     <div id="special-focus" style={{ border: `1px solid ${C.amber}`, borderRadius: 8, padding: '10px 12px', background: C.bg, scrollMarginTop: 70 }}>
       <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap', marginBottom: 6 }}>
-        <span style={{ fontSize: 15, fontWeight: 900, color: C.amber }}>🔥 Special Focus — {shown.length} persistent catalyst{shown.length === 1 ? '' : 's'}{visible.length < shown.length ? ` · showing top ${visible.length}` : ''}</span>
+        <span style={{ fontSize: 15, fontWeight: 900, color: C.amber }}>🔥 Special Focus — {shown.length} persistent catalyst{shown.length === 1 ? '' : 's'}{elsewhere.length ? ` in this view · ${elsewhere.length} more in other views` : ''}{visible.length < shown.length ? ` · showing top ${visible.length}` : ''}</span>
         <span style={{ fontSize: 12.5, color: C.faint }}>
           Where to spend extra research time: a business mechanism (capacity ramp, order book, customer ramp) with filed evidence and runway for several periods.
           Research allocation only — not a buy list, no price used. Output growth alone never qualifies; a target is a milestone, not evidence.

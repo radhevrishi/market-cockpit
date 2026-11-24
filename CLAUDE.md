@@ -4521,3 +4521,10 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   family (TALBROAUTO, TINNARUBR were double-counting their result); guidance line shows the actual figures from intel_event.changes;
   a vague ("other") raise scores 8 and a < 5% raise 10; vetoes RS < 40 and no-stage 5%+ under the 50-day (OMPOWER RS 12); stops
   under 1.5% get a warning. First test email delivered 24 Nov by e-mail; Telegram returned 401 (bot token stale — owner action).
+- zzz1306 (24 Nov): (a) Portfolio Catalysts India + USA: Special Focus followed no view — stored records of every company showed in
+  All / My book / Bench / Conviction Beats alike (owner: "whatever filter, same data"). `splitByView` (lib/catalyst/cross-view): the panel
+  shows only the view's companies and says "N more in other views". The card list, status buckets and research priority already followed
+  the view. (b) Company Lab "Price and FCF per share — every company": filter chips (`lib/company-lab/fcf-filter.ts`): FCF/share grew
+  faster than price, cash up price flat, FCF positive now, FCF/share up every year, FCF yield ≥ 5%; span 1 / 3 / 5 years; sort by the
+  FCF-vs-price gap; per chart "Since FYxx: FCF/share +x% · price +y% · gap". "FCF above price" = growth comparison (FCF per share is
+  always below the price — it would need a yield over 100%). Choices in localStorage `mc:company-lab:fcf-filter:v1`.

@@ -1,4 +1,5 @@
 'use client';
+import { fcfVsPrice, passesFcfFilters, FCF_FILTERS, type FcfFilterKey } from '@/lib/company-lab/fcf-filter';
 // ═══════════════════════════════════════════════════════════════════════════
 // COMPANY LAB (zzz1208). Add one company or several (India or USA) and see, side by side:
 //   • the FCF quality checklist (growth, margin, yield, cash vs profit, capex, debt, operating leverage, steadiness, share pay)
@@ -447,10 +448,29 @@ function Card({ c, onRemove, rejected, onMark }: { c: LabCard; onRemove: () => v
 }
 
 // Multiple_FCF: each company's price and FCF per share, one panel each, on one screen; log scale optional.
+// zzz1306: filters (FCF/share grew faster than price, cash up price flat, FCF positive, rising every year,
+// FCF yield ≥ 5%) over a chosen span, sorted by the FCF-vs-price gap. Choices kept in this browser.
+const FCF_FILTER_KEY = 'mc:company-lab:fcf-filter:v1';
 function MultiFcf({ cards }: { cards: LabCard[] }) {
   const [log, setLog] = useState(false);
+  const [on, setOn] = useState<Set<FcfFilterKey>>(new Set());
+  const [span, setSpan] = useState(3);
+  const [sortGap, setSortGap] = useState(true);
+  useEffect(() => {
+    try { const v = JSON.parse(localStorage.getItem(FCF_FILTER_KEY) || 'null'); if (v) { setOn(new Set((v.on || []).filter((k: string) => FCF_FILTERS.some((f) => f.key === k)))); if ([1, 3, 5].includes(v.span)) setSpan(v.span); if (typeof v.sort === 'boolean') setSortGap(v.sort); } } catch { /* fresh */ }
+  }, []);
+  const save = (o: Set<FcfFilterKey>, sp: number, so: boolean) => { try { localStorage.setItem(FCF_FILTER_KEY, JSON.stringify({ on: [...o], span: sp, sort: so })); } catch { /* not kept */ } };
+  const toggle = (k: FcfFilterKey) => { const n = new Set(on); n.has(k) ? n.delete(k) : n.add(k); setOn(n); save(n, span, sortGap); };
   const ok = cards.filter((c) => c.ok && c.prices.length > 1);
+  const rows = useMemo(() => {
+    const r = ok.map((c) => ({ c, v: fcfVsPrice(c.years as any, c.price ?? null, span) }));
+    const kept = r.filter((x) => passesFcfFilters(x.v, on));
+    if (sortGap) kept.sort((a, b) => (b.v.gap ?? -1e9) - (a.v.gap ?? -1e9));
+    return { all: r.length, kept };
+  }, [ok, on, span, sortGap]);
   if (ok.length < 2) return null;
+  const chip = (act: boolean): Record<string, string | number> => ({ fontSize: 12.5, fontWeight: 800, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${act ? '#16A34A' : R.border}`, background: act ? 'rgba(22,163,74,0.12)' : 'transparent', color: act ? '#16A34A' : R.dim });
+  const sg = (x: number | null) => (x == null ? '—' : `${x > 0 ? '+' : ''}${x}%`);
   return (
     <div style={{ border: `1px solid ${R.border}`, borderRadius: 10, padding: 10, background: R.bg }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -459,16 +479,33 @@ function MultiFcf({ cards }: { cards: LabCard[] }) {
           <input type="checkbox" checked={log} onChange={(e) => setLog(e.target.checked)} /> Log scale for price
         </label>
       </div>
+      <div data-testid="fcf-filters" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', margin: '6px 0 8px' }}>
+        <span style={{ fontSize: 12.5, fontWeight: 800, color: R.faint }}>SHOW ONLY:</span>
+        {FCF_FILTERS.map((f) => <button key={f.key} title={f.help} onClick={() => toggle(f.key)} style={chip(on.has(f.key))}>{on.has(f.key) ? '✓ ' : ''}{f.label}</button>)}
+        <span style={{ fontSize: 12.5, fontWeight: 800, color: R.faint, marginLeft: 8 }}>OVER:</span>
+        {[1, 3, 5].map((n) => <button key={n} onClick={() => { setSpan(n); save(on, n, sortGap); }} style={chip(span === n)}>{n} yr{n > 1 ? 's' : ''}</button>)}
+        <button onClick={() => { setSortGap(!sortGap); save(on, span, !sortGap); }} style={chip(sortGap)} title="Largest gap between FCF/share growth and price growth first">Sort: FCF ahead of price</button>
+        {on.size > 0 && <button onClick={() => { setOn(new Set()); save(new Set(), span, sortGap); }} style={chip(false)}>Clear</button>}
+        <span style={{ fontSize: 12.5, color: R.dim }}>{rows.kept.length} of {rows.all} companies</span>
+      </div>
+      {rows.kept.length === 0 && <div style={{ fontSize: 13, color: R.dim, padding: 8 }}>No company meets all the chosen filters over {span} year{span > 1 ? 's' : ''}. Remove a filter or change the span.</div>}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(330px, 1fr))', gap: 12 }}>
-        {ok.map((c) => (
+        {rows.kept.map(({ c, v }) => (
           !c.years.some((y) => y.fcfPs != null) ? <div key={`${c.market}:${c.ticker}`} style={{ border: `1px dashed ${R.border}`, borderRadius: 8, padding: 14, fontSize: 13, color: R.faint }}><b style={{ color: R.text }}>{c.ticker}</b>{c.name ? ` · ${c.name}` : ''}<br />No free-cash-flow per share figures in the filings — nothing to plot.</div> :
-          <LabChart key={`${c.market}:${c.ticker}`} title={`${c.ticker}${c.name ? ` · ${c.name}` : ''}`} h={190} logL={log} series={[
-            { name: `Price (${c.currency})`, color: PRICE_C, axis: 'L', pts: pricePts(c) },
-            { name: 'FCF per share', color: '#16A34A', axis: 'R', dots: true, width: 2.4, pts: yearPts(c, (y) => y.fcfPs) },
-          ]} />
+          <div key={`${c.market}:${c.ticker}`}>
+            <LabChart title={`${c.ticker}${c.name ? ` · ${c.name}` : ''}`} h={190} logL={log} series={[
+              { name: `Price (${c.currency})`, color: PRICE_C, axis: 'L', pts: pricePts(c) },
+              { name: 'FCF per share', color: '#16A34A', axis: 'R', dots: true, width: 2.4, pts: yearPts(c, (y) => y.fcfPs) },
+            ]} />
+            <div style={{ fontSize: 12.5, color: R.dim, marginTop: 2 }} title={v.why || undefined}>
+              {v.from ? <>Since {v.from}: FCF/share <b style={{ color: (v.fcfG ?? 0) >= 0 ? '#16A34A' : '#DC2626' }}>{sg(v.fcfG)}</b> · price <b style={{ color: R.text }}>{sg(v.priceG)}</b>{v.gap != null && <> · gap <b style={{ color: v.gap > 0 ? '#16A34A' : '#DC2626' }}>{v.gap > 0 ? '+' : ''}{v.gap} pts</b></>}</> : null}
+              {v.yieldNow != null && <> · FCF yield {v.yieldNow}%</>}
+              {v.why && <span style={{ color: R.faint }}> · {v.why}</span>}
+            </div>
+          </div>
         ))}
       </div>
-      <div style={{ fontSize: 12.5, color: R.faint, marginTop: 6 }}>A rising FCF/share line with a flat share price is a research lead — not an automatic undervaluation signal. The market may be anticipating weaker future economics.</div>
+      <div style={{ fontSize: 12.5, color: R.faint, marginTop: 6 }}>&quot;Grew faster than price&quot; compares growth over the same years (FCF per share itself is always far below the share price — it would take a yield over 100%). A rising FCF/share line with a flat share price is a research lead — not an automatic undervaluation signal. The market may be anticipating weaker future economics.</div>
     </div>
   );
 }

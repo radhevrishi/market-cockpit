@@ -141,7 +141,8 @@ describe('zzz802 · Special Focus — in the list means it meets the gate', () =
   });
   test('the panel renders the split: header count from the in-focus list, a separate dropped-out section', () => {
     const p = src('components/special-focus-panel.tsx');
-    assert.match(p, /const \{ inFocus: shown, droppedOut \} = splitDroppedOut\(onLists\)/ /* zzz823 */);
+    assert.match(p, /const \{ inFocus: shown0, droppedOut \} = splitDroppedOut\(onLists\)/ /* zzz823; zzz1306 view split after it */);
+    assert.match(p, /const \{ here: shown, elsewhere \} = useMemo\(\(\) => splitByView\(shown0, viewSet\)/);
     assert.match(p, /data-testid="sf-dropped"/);
     assert.match(p, /dropped out of Special Focus \(reason shown\)/);
   });

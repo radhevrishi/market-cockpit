@@ -121,6 +121,15 @@ export function splitOffLists<E extends { row: unknown | null; dismissed: boolea
   return { onLists: entries.filter((e) => !offListReason(e)), offLists: entries.filter((e) => offListReason(e) && !e.dismissed) };
 }
 
+/** zzz1306: Special Focus follows the page's view (All / My book / Bench / Conviction
+ *  Beats). Stored records of companies outside the view were shown in every view, so the
+ *  panel looked the same whatever was picked. `inView` = the view's own symbols; null = All. */
+export function splitByView<E extends { pc?: any; row?: any }>(entries: E[], inView: Set<string> | null): { here: E[]; elsewhere: E[] } {
+  if (!inView) return { here: entries, elsewhere: [] };
+  const sym = (e: E) => String(e.row?.symbol || e.pc?.ticker || '').toUpperCase();
+  return { here: entries.filter((e) => inView.has(sym(e))), elsewhere: entries.filter((e) => !inView.has(sym(e))) };
+}
+
 export function splitDroppedOut<E extends { dismissed: boolean; decayed: boolean; st: { user: { state: string } | null } | null }>(entries: E[]): { inFocus: E[]; droppedOut: E[] } {
   const kept = (e: E) => e.st?.user?.state === 'confirmed' || e.st?.user?.state === 'watch';
   const live = entries.filter((e) => !e.dismissed);
