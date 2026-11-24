@@ -1,5 +1,5 @@
 'use client';
-import { fcfVsPrice, passesFcfFilters, FCF_FILTERS, type FcfFilterKey } from '@/lib/company-lab/fcf-filter';
+import { fcfVsPrice, passesFcfFilters, toggleFcfFilter, FCF_FILTERS, type FcfFilterKey } from '@/lib/company-lab/fcf-filter';
 // ═══════════════════════════════════════════════════════════════════════════
 // COMPANY LAB (zzz1208). Add one company or several (India or USA) and see, side by side:
 //   • the FCF quality checklist (growth, margin, yield, cash vs profit, capex, debt, operating leverage, steadiness, share pay)
@@ -460,12 +460,13 @@ function MultiFcf({ cards }: { cards: LabCard[] }) {
     try { const v = JSON.parse(localStorage.getItem(FCF_FILTER_KEY) || 'null'); if (v) { setOn(new Set((v.on || []).filter((k: string) => FCF_FILTERS.some((f) => f.key === k)))); if ([1, 3, 5].includes(v.span)) setSpan(v.span); if (typeof v.sort === 'boolean') setSortGap(v.sort); } } catch { /* fresh */ }
   }, []);
   const save = (o: Set<FcfFilterKey>, sp: number, so: boolean) => { try { localStorage.setItem(FCF_FILTER_KEY, JSON.stringify({ on: [...o], span: sp, sort: so })); } catch { /* not kept */ } };
-  const toggle = (k: FcfFilterKey) => { const n = new Set(on); n.has(k) ? n.delete(k) : n.add(k); setOn(n); save(n, span, sortGap); };
+  const toggle = (k: FcfFilterKey) => { const n = toggleFcfFilter(on, k); setOn(n); save(n, span, sortGap); };
   const ok = cards.filter((c) => c.ok && c.prices.length > 1);
   const rows = useMemo(() => {
     const r = ok.map((c) => ({ c, v: fcfVsPrice(c.years as any, c.price ?? null, span) }));
     const kept = r.filter((x) => passesFcfFilters(x.v, on));
-    if (sortGap) kept.sort((a, b) => (Number(a.v.lowBase) - Number(b.v.lowBase)) || ((b.v.gap ?? -1e9) - (a.v.gap ?? -1e9)));
+    const dir = on.has('slower') ? -1 : 1;
+    if (sortGap) kept.sort((a, b) => (Number(a.v.lowBase) - Number(b.v.lowBase)) || dir * ((b.v.gap ?? -dir * 1e9) - (a.v.gap ?? -dir * 1e9)));
     return { all: r.length, kept };
   }, [ok, on, span, sortGap]);
   if (ok.length < 2) return null;
@@ -484,7 +485,7 @@ function MultiFcf({ cards }: { cards: LabCard[] }) {
         {FCF_FILTERS.map((f) => <button key={f.key} title={f.help} onClick={() => toggle(f.key)} style={chip(on.has(f.key))}>{on.has(f.key) ? '✓ ' : ''}{f.label}</button>)}
         <span style={{ fontSize: 12.5, fontWeight: 800, color: R.faint, marginLeft: 8 }}>OVER:</span>
         {[1, 3, 5].map((n) => <button key={n} onClick={() => { setSpan(n); save(on, n, sortGap); }} style={chip(span === n)}>{n} yr{n > 1 ? 's' : ''}</button>)}
-        <button onClick={() => { setSortGap(!sortGap); save(on, span, !sortGap); }} style={chip(sortGap)} title="Largest gap between FCF/share growth and price growth first">Sort: FCF ahead of price</button>
+        <button onClick={() => { setSortGap(!sortGap); save(on, span, !sortGap); }} style={chip(sortGap)} title="Cash furthest ahead of price first (with ▼ Price ahead of cash on: price furthest ahead first)">Sort: {on.has('slower') ? 'price furthest ahead' : 'cash furthest ahead'}</button>
         {on.size > 0 && <button onClick={() => { setOn(new Set()); save(new Set(), span, sortGap); }} style={chip(false)}>Clear</button>}
         <span style={{ fontSize: 12.5, color: R.dim }}>{rows.kept.length} of {rows.all} companies</span>
       </div>
@@ -498,7 +499,7 @@ function MultiFcf({ cards }: { cards: LabCard[] }) {
               { name: 'FCF per share', color: '#16A34A', axis: 'R', dots: true, width: 2.4, pts: yearPts(c, (y) => y.fcfPs) },
             ]} />
             <div style={{ fontSize: 12.5, color: R.dim, marginTop: 2 }} title={v.why || undefined}>
-              {v.from ? <>Since {v.from}: FCF/share <b style={{ color: (v.fcfG ?? 0) >= 0 ? '#16A34A' : '#DC2626' }}>{sg(v.fcfG)}</b> · price <b style={{ color: R.text }}>{sg(v.priceG)}</b>{v.gap != null && <> · gap <b style={{ color: v.gap > 0 ? '#16A34A' : '#DC2626' }}>{v.gap > 0 ? '+' : ''}{v.gap} pts</b></>}</> : null}
+              {v.from ? <>Since {v.from}: FCF/share <b style={{ color: (v.fcfG ?? 0) >= 0 ? '#16A34A' : '#DC2626' }}>{sg(v.fcfG)}</b> · price <b style={{ color: R.text }}>{sg(v.priceG)}</b>{v.gap != null && <> · <b style={{ color: v.gap > 0 ? '#16A34A' : '#DC2626' }}>{v.gap > 0 ? `cash ahead by ${v.gap} pts` : `price ahead by ${-v.gap} pts`}</b></>}</> : null}
               {v.yieldNow != null && <> · FCF yield {v.yieldNow}%</>}
               {v.lowBase && <span style={{ color: '#D97706', fontWeight: 800 }} title="FCF per share was under 1% of the share price in the start year, so the growth % is from a tiny base. Ranked after the others."> · low base</span>}
               {v.why && <span style={{ color: R.faint }}> · {v.why}</span>}

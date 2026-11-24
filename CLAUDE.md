@@ -4525,6 +4525,6 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   All / My book / Bench / Conviction Beats alike (owner: "whatever filter, same data"). `splitByView` (lib/catalyst/cross-view): the panel
   shows only the view's companies and says "N more in other views". The card list, status buckets and research priority already followed
   the view. (b) Company Lab "Price and FCF per share — every company": filter chips (`lib/company-lab/fcf-filter.ts`): FCF/share grew
-  faster than price, cash up price flat, FCF positive now, FCF/share up every year, FCF yield ≥ 5%; span 1 / 3 / 5 years; sort by the
+  faster than price ("▲ Cash ahead of price") and its opposite ("▼ Price ahead of cash", zzz1306c — the two exclude each other), cash up price flat, FCF positive now, FCF/share up every year, FCF yield ≥ 5%; span 1 / 3 / 5 years; sort by the
   FCF-vs-price gap; per chart "Since FYxx: FCF/share +x% · price +y% · gap". "FCF above price" = growth comparison (FCF per share is
   always below the price — it would need a yield over 100%). Choices in localStorage `mc:company-lab:fcf-filter:v1`.

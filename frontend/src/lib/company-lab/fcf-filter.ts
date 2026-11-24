@@ -47,10 +47,11 @@ export function fcfVsPrice(years: FcfYear[], priceNow: number | null, span: numb
   return { ...base, fcfG, priceG, gap: r1(fcfG - priceG), faster: fcfG > priceG, lowBase };
 }
 
-export type FcfFilterKey = 'faster' | 'flat' | 'positive' | 'rising' | 'yield5';
+export type FcfFilterKey = 'faster' | 'slower' | 'flat' | 'positive' | 'rising' | 'yield5';
 export interface FcfFilterDef { key: FcfFilterKey; label: string; help: string }
 export const FCF_FILTERS: FcfFilterDef[] = [
-  { key: 'faster', label: 'FCF/share grew faster than price', help: 'Free cash flow per share rose more than the share price over the chosen years — the FCF line ends above the price line.' },
+  { key: 'faster', label: '▲ Cash ahead of price', help: 'Free cash flow per share grew MORE than the share price over the chosen years — the cash line ends above the price line. The business earned more cash than the price has caught up with.' },
+  { key: 'slower', label: '▼ Price ahead of cash', help: 'The share price grew MORE than free cash flow per share over the chosen years (or FCF per share fell). The price has run ahead of the cash the business makes.' },
   { key: 'flat', label: 'Cash up, price flat', help: 'Free cash flow per share up 30% or more while the price moved less than +10% over the chosen years.' },
   { key: 'positive', label: 'FCF positive now', help: 'The latest full year has positive free cash flow per share.' },
   { key: 'rising', label: 'FCF/share up every year', help: 'Free cash flow per share went up in each year of the chosen span.' },
@@ -60,10 +61,21 @@ export const FCF_FILTERS: FcfFilterDef[] = [
 export function passesFcfFilters(v: FcfVsPrice, on: Set<FcfFilterKey>): boolean {
   for (const k of on) {
     if (k === 'faster' && !v.faster) return false;
+    if (k === 'slower' && !(v.gap != null && v.gap <= 0)) return false;
     if (k === 'flat' && !(v.fcfG != null && v.priceG != null && v.fcfG >= 30 && v.priceG < 10)) return false;
     if (k === 'positive' && !v.positive) return false;
     if (k === 'rising' && !v.rising) return false;
     if (k === 'yield5' && !(v.yieldNow != null && v.yieldNow >= 5)) return false;
   }
   return true;
+}
+
+/** The two directions exclude each other: turning one on turns the other off. */
+export function toggleFcfFilter(on: Set<FcfFilterKey>, k: FcfFilterKey): Set<FcfFilterKey> {
+  const n = new Set(on);
+  if (n.has(k)) { n.delete(k); return n; }
+  n.add(k);
+  if (k === 'faster') n.delete('slower');
+  if (k === 'slower') n.delete('faster');
+  return n;
 }

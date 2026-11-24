@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fcfVsPrice, passesFcfFilters } from '../company-lab/fcf-filter';
+import { fcfVsPrice, passesFcfFilters, toggleFcfFilter } from '../company-lab/fcf-filter';
 import { splitByView } from '../catalyst/cross-view';
 
 const yrs = (fcf: number[], px: number[]) => fcf.map((f, i) => ({ label: `FY${20 + i}`, fcfPs: f, priceAtEnd: px[i], fcfYield: null }));
@@ -29,4 +29,13 @@ test('Special Focus follows the page view (US Portfolio Catalysts showed the sam
   assert.equal(splitByView(e, null).here.length, 2);
   const s = splitByView(e, new Set(['POWL']));
   assert.deepEqual(s.here.map((x) => x.pc.ticker), ['POWL']); assert.equal(s.elsewhere.length, 1);
+});
+
+test('price ahead of cash is the opposite filter; the two exclude each other', () => {
+  const ran = fcfVsPrice(yrs([1, 1.1], [50, 100]), 100, 1);
+  assert.ok(passesFcfFilters(ran, new Set(['slower'] as any)) && !passesFcfFilters(ran, new Set(['faster'] as any)));
+  const cash = fcfVsPrice(yrs([1, 3], [50, 55]), 55, 1);
+  assert.ok(!passesFcfFilters(cash, new Set(['slower'] as any)));
+  const s1 = toggleFcfFilter(new Set(['faster', 'yield5'] as any), 'slower');
+  assert.deepEqual([...s1].sort(), ['slower', 'yield5']);
 });
