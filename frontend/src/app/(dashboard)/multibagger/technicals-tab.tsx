@@ -9,6 +9,7 @@ import { getDecision } from '@/lib/decisions';
 import { armBookFlag } from '@/lib/book-flags-client';
 import { extensionCheck } from '@/lib/tech-extension';
 import { getTradingviewSyncStatus, TV_MANIFEST_URL, tvFileUrl } from '@/lib/screener-data-loader';
+import { mergeServerPull, mergeUpload, tagRows } from './tech-merge';
 import { CHECKLIST } from '@/lib/multibagger-india-scoring';
 import { F, MUTED } from './constants';
 import { STAGE_META, classifyStage } from './helpers';
@@ -347,18 +348,9 @@ export function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
       try { otherExistingSources = JSON.parse(localStorage.getItem(otherSourcesKey) || '[]'); } catch {}
 
       // Merge function: append (default) or replace, dedupe by symbol
-      const mergeBucket = (existing: any[], newOnes: any[]) => {
-        const base = techAppendMode ? [...existing] : [];
-        const seen = new Set(base.map((r: any) => r.symbol));
-        let added = 0, dup = 0;
-        for (const r of newOnes) {
-          if (seen.has(r.symbol)) { dup++; continue; }
-          seen.add(r.symbol);
-          base.push(r);
-          added++;
-        }
-        return { rows: base, added, dup };
-      };
+      // zzz1308 — newer rows win (the old merge kept the first row ever seen for a symbol)
+      const upAt = new Date().toISOString();
+      const mergeBucket = (existing: any[], newOnes: any[]) => mergeUpload(existing, tagRows(newOnes, 'upload', upAt), techAppendMode);
 
       // zzz159 — Dedup source chips by name so re-uploading the same file replaces the chip.
       const dedupSources = (existing: TechSource[], incoming: TechSource[]) => {
@@ -511,15 +503,12 @@ export function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
       try { otherExistingRows = JSON.parse(localStorage.getItem(otherRowsKey) || '[]'); } catch {}
       try { otherExistingSources = JSON.parse(localStorage.getItem(otherSourcesKey) || '[]'); } catch {}
 
+      // zzz1308 — a server pull REPLACES earlier server rows (old merge kept the first row ever seen, so
+      // prices / moving averages froze); only own uploads the server does not list are kept.
+      const svAt = String(manifest.lastSync || new Date().toISOString());
       const mergeBucket = (existing: any[], newOnes: any[]) => {
-        const base = techAppendMode ? [...existing] : [];
-        const seen = new Set(base.map((r: any) => r.symbol));
-        let added = 0, dup = 0;
-        for (const r of newOnes) {
-          if (seen.has(r.symbol)) { dup++; continue; }
-          seen.add(r.symbol); base.push(r); added++;
-        }
-        return { rows: base, added, dup };
+        const m = mergeServerPull(existing, tagRows(newOnes, 'server', svAt));
+        return { rows: m.rows, added: m.added, dup: m.updated, dropped: m.dropped };
       };
 
       const currentBucket = MK === 'usa' ? usaNewRows : indNewRows;
@@ -564,7 +553,8 @@ export function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
       const parts: string[] = [`✓ ${files.length} file${files.length>1?'s':''} from server (synced ${lastSync})`];
       parts.push(`→ ${meLabel} ${currentMerge.added} new`);
       if (otherAdded > 0) parts.push(`→ ${otherLabel} ${otherAdded} new`);
-      if (currentMerge.dup > 0) parts.push(`${currentMerge.dup} dedup`);
+      if (currentMerge.dup > 0) parts.push(`${currentMerge.dup} refreshed`);
+      if ((currentMerge as any).dropped > 0) parts.push(`${(currentMerge as any).dropped} old rows dropped`);
       parts.push(`· total ${currentMerge.rows.length} on this tab`);
       setTechUploadMsg(parts.join(' '));
       bumpData();
@@ -603,8 +593,10 @@ export function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
         try { lastPulled = localStorage.getItem('mb_tech_last_pulled_sync_v1'); } catch {}
         const localEmpty = techLocalRows.length === 0;
         const isNewer = !lastPulled || new Date(serverSync).getTime() > new Date(lastPulled).getTime();
-        // Auto-pull when: server has fresher data OR current tab is empty
-        if (isNewer || localEmpty) {
+        // zzz1308 — rows kept by the old merge (no source mark) were frozen at their first pull: pull again once
+        const frozen = techLocalRows.some((r: any) => !r?._src);
+        // Auto-pull when: server has fresher data OR current tab is empty OR rows are from the old merge
+        if (isNewer || localEmpty || frozen) {
           handlePullFromServer();
         }
       } catch { /* silent */ }

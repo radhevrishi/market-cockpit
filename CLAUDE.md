@@ -4544,3 +4544,10 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   describeStructure pass it and analyseTicker loads 5-year bars. Options Ideas setup `multiyear_breakout` (CALL, built by vcpSetups,
   capped at grade B via NO_HISTORY_YET until the replay is re-run), STRUCTURE_PATTERNS, Entry Desk retest view, Best Picks SETUP family,
   Pine screen `multiyear-breakout` (Breakouts family). Tests zzz1307b-multiyear.
+- zzz1308 (24 Nov): Technicals rows in the browser were FROZEN: the Technicals tab's merge ("append", on by default) kept the first row
+  ever pulled for a symbol and skipped every newer one, so price / EMAs / RSI / perf stayed at the first pull (FSLY $26.34 vs $15.61 live,
+  Stage 4; 458 of 584 US and 169 of 241 India rows > 5% off). Server files (/api/v1/tv-data) were fine. Now `multibagger/tech-merge.ts`:
+  a server pull REPLACES earlier server rows (rows tagged `_src` / `_at`; rows the server no longer lists and untagged old rows are
+  dropped; own uploads kept unless a newer row has the symbol); uploads: newer wins. `multibagger/tech-refresh.ts` (started in
+  DashboardClient) refreshes both markets' rows on every page (4 s after load, then every 20 min) when the server build is newer or rows
+  are untagged — Entry Desk, Cockpit, Theme Rotation, alerts, engines read the same keys. Tests zzz1308-tech-merge.
