@@ -144,6 +144,8 @@ export function scoreCandidate(c: Candidate, today: string): Scored {
     if (t.stage != null && t.stage !== 2) vetoes.push(`weekly Stage ${t.stage}, not Stage 2`);
     if (t.stage === 2 && t.health === 0) vetoes.push('Stage 2 is weakening (topping risk)');
     if (t.px != null && t.sma200 != null && t.px < t.sma200) vetoes.push('below its 200-day line');
+    if (t.rs != null && t.rs < 40) vetoes.push(`weak relative strength (RS ${Math.round(t.rs)})`);
+    if (t.stage == null && t.px != null && t.sma50 != null && t.px < t.sma50 * 0.95) vetoes.push('no weekly stage and 5%+ under the 50-day');
     if (t.traded != null && t.traded < MIN_TRADED[c.market]) vetoes.push(`thin trading (${c.market === 'IN' ? `₹${fmt1(t.traded)} Cr` : `$${fmt1(t.traded)}M`} a day)`);
   }
   if (c.guidanceCut) vetoes.push(`guidance cut on ${c.guidanceCut}`);

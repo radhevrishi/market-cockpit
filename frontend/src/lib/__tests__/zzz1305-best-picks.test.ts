@@ -110,3 +110,10 @@ test('route and page: no named exports from the page, the scheduler runs the job
   const sched = readFileSync(join(__dirname, '../app-scheduler.ts'), 'utf8');
   assert.match(sched, /name: 'best-picks', crons: \['40 13 \* \* 1-5'\]/);
 });
+
+test('weak relative strength or no stage far under the 50-day is vetoed (OMPOWER case)', () => {
+  const weak = scoreCandidate(cand({ evidence: [ev('EARNINGS', 25), ev('EVENT', 20)], tech: tech({ rs: 12 }) }), TODAY);
+  assert.ok(weak.vetoes.some((v) => /relative strength/.test(v)));
+  const noStage = scoreCandidate(cand({ evidence: [ev('EARNINGS', 25), ev('EVENT', 20)], tech: tech({ stage: null as any, px: 90, sma50: 100 }) }), TODAY);
+  assert.ok(noStage.vetoes.some((v) => /no weekly stage/.test(v)));
+});

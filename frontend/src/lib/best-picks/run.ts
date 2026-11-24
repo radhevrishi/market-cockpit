@@ -57,6 +57,15 @@ function guidanceLine(raw: unknown): string | null {
   return `${metric}${c.period ? ' ' + c.period : ''} ${b ? `${b} → ` : ''}${a}${pct}`;
 }
 
+/** a raise of under 5% (or under 1 point) is a small step, not a re-rating. */
+function smallRaise(raw: unknown): boolean {
+  const c: any = (Array.isArray(raw) ? raw : []).find((x: any) => x && x.after);
+  if (!c) return false;
+  if (typeof c.pct === 'number' && isFinite(c.pct)) return Math.abs(c.pct) < 5;
+  if (typeof c.pp === 'number' && isFinite(c.pp)) return Math.abs(c.pp) < 1;
+  return false;
+}
+
 function regimeOf(raw: any): RegimeKind { const k = String(raw?.kind || '').toUpperCase(); return (['BULL', 'RECOVERY', 'PULLBACK', 'CORRECTION', 'BEAR'] as string[]).includes(k) ? k as RegimeKind : 'UNKNOWN'; }
 
 export async function runBestPicks(o: RunOpts): Promise<BestPicksOut> {
@@ -163,7 +172,8 @@ export async function runBestPicks(o: RunOpts): Promise<BestPicksOut> {
       if (!c) continue;
       if (r.event_type === 'GUIDANCE_DOWNGRADE') { if (!c.guidanceCut || (d && d > c.guidanceCut)) c.guidanceCut = d; continue; }
       const verified = String(r.verification || '').toUpperCase() === 'VERIFIED';
-      add(c, { family: 'GUIDANCE', tool: 'Guidance Upgrades', points: verified ? 20 : 12, line: `${verified ? 'verified ' : ''}guidance raise — ${guidanceLine(r.changes) || String(r.headline || '').slice(0, 120)}`, date: d, id: `gu:${r.id}`, url: r.source_url || null });
+      const gl = guidanceLine(r.changes); const vague = !gl || /^other\b|^guidance\b/i.test(gl);
+      add(c, { family: 'GUIDANCE', tool: 'Guidance Upgrades', points: vague ? 8 : smallRaise(r.changes) ? 10 : verified ? 20 : 12, line: vague ? `guidance raised (measure not clear — check the filing)` : `${verified ? 'verified ' : ''}guidance raise — ${gl}`, date: d, id: `gu:${r.id}`, url: r.source_url || null });
     }
     // a raise newer than the cut wins
     for (const c of cands.values()) if (c.guidanceCut && c.evidence.some((e) => e.family === 'GUIDANCE' && e.date && e.date > c.guidanceCut!)) c.guidanceCut = null;
