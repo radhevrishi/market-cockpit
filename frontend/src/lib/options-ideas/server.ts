@@ -68,7 +68,10 @@ export async function sectorInfo(m: Mkt) {
   const rows: any[] = snap?.rows ?? [];
   const by = new Map<string, { sec: string | null; ind: string | null }>();
   for (const r of rows) by.set(String(r.t).toUpperCase(), { sec: r.tvSec ?? r.sec ?? null, ind: r.ind ?? null });
-  const med = sectorMedians(rows.map((r) => ({ sec: r.tvSec ?? r.sec ?? null, perf3M: typeof r.perf3M === 'number' ? r.perf3M : null })));
+  // the same universe the replay used: liquid, larger companies (US ≥ $2B, India ≥ ₹10,000 Cr) — small caps would pull every
+  // sector below the index in a narrow, large-cap rally
+  const minMc = m === 'US' ? 2000 : 10000;
+  const med = sectorMedians(rows.filter((r) => (r.mc ?? 0) >= minMc).map((r) => ({ sec: r.tvSec ?? r.sec ?? null, perf3M: typeof r.perf3M === 'number' ? r.perf3M : null })));
   const v = { at: Date.now(), by, med };
   if (rows.length) secMemo.set(m, v);
   return v;
