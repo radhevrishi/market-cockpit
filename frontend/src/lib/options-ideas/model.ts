@@ -1,7 +1,7 @@
 // Options Ideas — grading a setup with what the historical study learned (pure).
 //
-// Study (scripts/options-ideas-study.ts): 376 liquid companies (160 US, 216 NSE F&O), Dec 2022 – Nov 2026, every setup found on
-// the bars known that day and followed forward: ~21,700 trades. What separated winners from losers:
+// Study (scripts/options-ideas-study.ts): 376 liquid companies (160 US, 216 NSE F&O), Dec 2017 – Nov 2026, every setup found on
+// the bars known that day and followed forward: ~44,400 trades. What separated winners from losers:
 //   • CALLS worked when the STOCK was healthy (above its 200-day average and stronger than the index over 3 months) AND the
 //     MARKET was healthy (index above its 200-day and up over the last 20 sessions). Those trades were positive both before and
 //     after July 2025 (the hold-out period). Calls in weak stocks or a falling market were not.
@@ -21,7 +21,13 @@ export interface RawFeatures {
   idx: IndexCtx | null;
   /** zzz1301e — sector stronger than the index over 3 months (null = unknown), recent catalyst, option richness */
   secStrong?: boolean | null; gap60?: boolean; rvol?: number; hvPct?: number;
+  /** zzz1301f — the market's fear gauge that day: VIX (USA) / India VIX */
+  vix?: number | null;
 }
+/** zzz1301f — "fear is high": VIX ≥ 25 (USA) / India VIX ≥ 20. 10-year replay (2018–2026): calls taken in fear made +0.49 R a
+ *  trade (+0.57 R even with the market below its 200-day; positive in 8 of 9 years), puts in fear lost −0.55 R (US VIX ≥ 30). */
+export const FEAR_VIX: Record<'US' | 'IN', number> = { US: 25, IN: 20 };
+export const fearHigh = (m: 'US' | 'IN', vix: number | null | undefined) => vix != null && vix >= FEAR_VIX[m];
 export type Grade = 'A+' | 'A' | 'B' | 'C';
 export const GRADE_ORDER: Record<Grade, number> = { 'A+': 0, A: 1, B: 2, C: 3 };
 export interface Check { label: string; ok: boolean | null }
@@ -45,7 +51,7 @@ export function indexCtx(idx: PBar[], tMs: number): IndexCtx | null {
   const s = stockCtx(idx, k);
   return { vs200: s.vs200, ret20: s.ret20, ret60: s.ret60 };
 }
-export function rawFromSetup(s: Setup, market: 'US' | 'IN', bars: PBar[], idx: IndexCtx | null, extra: { secStrong?: boolean | null; gap60?: boolean; rvol?: number; hvPct?: number } = {}): RawFeatures {
+export function rawFromSetup(s: Setup, market: 'US' | 'IN', bars: PBar[], idx: IndexCtx | null, extra: { secStrong?: boolean | null; gap60?: boolean; rvol?: number; hvPct?: number; vix?: number | null } = {}): RawFeatures {
   const sc = stockCtx(bars, bars.length - 1);
   const ev = s.evidence as Record<string, any>;
   return {
@@ -74,12 +80,16 @@ export function classify(f: RawFeatures): Classified {
       { label: `Its sector stronger than the ${bench} over 3 months`, ok: f.secStrong ?? null },
       { label: 'Recent catalyst: a results-style gap up on 2× volume in the last 60 sessions, or 1.3× normal volume today', ok: f.gap60 != null || f.rvol != null ? !!(f.gap60 || (f.rvol ?? 0) >= 1.3) : null },
     ];
+    const fear = fearHigh(f.market, f.vix);
+    if (f.vix != null) checks.push({ label: `Fear is high (${f.market === 'US' ? 'VIX' : 'India VIX'} ${f.vix.toFixed(1)} ≥ ${FEAR_VIX[f.market]}) — calls bought in fear paid well over 10 years`, ok: fear ? true : null });
     const stockPass = checks[0].ok && checks[1].ok;
     const mktPass = !!idxUp;
     const base = stockPass && mktPass && checks[3].ok && f.secStrong !== false;
-    const grade: Grade = base && checks[5].ok ? 'A+' : base ? 'A' : stockPass || mktPass ? 'B' : 'C';
+    // fear path: in high fear the market / stock checks matter less — calls with a near target are grade A (A+ with a catalyst)
+    const fearA = fear && checks[3].ok;
+    const grade: Grade = (base || fearA) && checks[5].ok ? 'A+' : base || fearA ? 'A' : stockPass || mktPass ? 'B' : 'C';
     return { grade, strength, regime: idxUp ? 'market up' : idxDown ? 'market down' : 'market mixed', checks,
-      verdict: grade === 'A+' ? 'Best trade — every condition plus a fresh catalyst (the strongest group in the study)' : grade === 'A' ? 'Trade — matches the conditions that worked in the study' : grade === 'B' ? 'Watch — a condition that mattered is missing' : 'Avoid — weak stock in a weak market (calls like this lost money)' };
+      verdict: fearA && !base && (grade === 'A' || grade === 'A+') ? 'Trade — fear bounce: calls taken when fear was this high paid +0.49 R a trade over 10 years' : grade === 'A+' ? 'Best trade — every condition plus a fresh catalyst (the strongest group in the study)' : grade === 'A' ? 'Trade — matches the conditions that worked in the study' : grade === 'B' ? 'Watch — a condition that mattered is missing' : 'Avoid — weak stock in a weak market (calls like this lost money)' };
   }
   const weak = f.vs200 < 0 && (rs == null ? false : rs < 0);
   const checks: Check[] = [

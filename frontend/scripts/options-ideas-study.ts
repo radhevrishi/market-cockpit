@@ -47,12 +47,15 @@ const extraOf = (t: Trade, ixRet60: number | null) => {
   const sm = sec ? secMedAt(t.market, sec, dk(t.signalT)) : null;
   return { gap60: e.gap60, rvol: e.rvol, hvPct: e.hvPct, secStrong: sm != null && ixRet60 != null ? sm > ixRet60 : null };
 };
+const vixMap: Record<string, Record<string, number>> = { US: process.env.OI_VIX_US ? JSON.parse(readFileSync(process.env.OI_VIX_US, 'utf8')) : {}, IN: process.env.OI_VIX_IN ? JSON.parse(readFileSync(process.env.OI_VIX_IN, 'utf8')) : {} };
+const vixAt = (m: string, t: number) => { for (let k = 0; k < 6; k++) { const v = vixMap[m][dk(ms(t) - k * 86_400_000)]; if (v != null) return v; } return null; };
 const raw = (t: Trade): RawFeatures => ({
   id: t.id, side: t.side, market: t.market,
   ret20: Number(t.features.ret20), ret60: Number(t.features.ret60), vs50: Number(t.features.vs50), vs200: Number(t.features.vs200),
   trend: Number(t.features.trend ?? 0), touches: Number(t.features.touches ?? 0), vr: Number(t.features.vr ?? 1), rr1: t.rr1, riskPct: t.riskPct,
   atrPct: Number(t.features.atrPct ?? 0), triggered: t.triggered, idx: indexCtx(idx[t.market], ms(t.signalT)),
   ...extraOf(t, indexCtx(idx[t.market], ms(t.signalT))?.ret60 ?? null),
+  vix: vixAt(t.market, t.signalT),
 });
 const ms = (t: number) => (t > 1e11 ? t : t * 1000);
 const testFrom = Date.parse(process.env.OI_TEST_FROM || '2025-07-01');
@@ -95,6 +98,7 @@ const findings = [
   `All ${all.length.toLocaleString('en-US')} setups together: calls ${aggregate(all.filter((t) => t.side === 'CALL')).avgR} R a trade, puts ${aggregate(all.filter((t) => t.side === 'PUT')).avgR} R — the pattern alone is close to a coin toss.`,
   `Grade A+ calls (all checks + a fresh catalyst): ${groups['ALL|CALL|A+']?.n ?? 0} trades, ${groups['ALL|CALL|A+']?.trailR ?? 0} R a trade (${groups['ALL|CALL|A+']?.trainR ?? 0} before ${new Date(testFrom).toISOString().slice(0, 7)}, ${groups['ALL|CALL|A+']?.testR ?? 0} after); options ${groups['ALL|CALL|A+']?.optAvgRet ?? 0}% a trade, ${groups['ALL|CALL|A+']?.optWinRate ?? 0}% of them profitable.`,
   `Grade A calls (healthy stock, market and sector + near target, no catalyst): ${groups['ALL|CALL|A']?.n ?? 0} trades, ${groups['ALL|CALL|A']?.trailR ?? 0} R a trade (${groups['ALL|CALL|A']?.trainR ?? 0} before, ${groups['ALL|CALL|A']?.testR ?? 0} after).`,
+  `10-year replay (2018–2026, incl. the 2020 crash and the 2022 bear market): calls bought when fear was high (VIX ≥ 25 / India VIX ≥ 20) made +0.49 R a trade — positive in 8 of 9 years, +0.57 R even with the market below its 200-day. Puts did WORST then (−0.55 R at VIX ≥ 30) and lost in 2022 too: a falling market is not a put signal — sharp rallies stop puts out. So high fear makes calls grade A.`,
   `Tested and NOT adopted (replay 24 Nov 2026): a time stop (exit if not +0.5R in 10 sessions) cut grade A results from +0.29 to +0.20 R; call spreads (sell at target 1) averaged +5–7% a trade vs +22% for the plain call — shown as a cheaper alternative only; puts on SPY / QQQ / IWM / Nifty / Bank Nifty lost money too (−0.35 R a trade over 10 years); a weekly Stage 2 check added nothing.`,
   `Moving the stop to the entry at +1R: +0.28 R a trade vs +0.22 R holding to the first stop or target — kept.`,
   `Options bought when the stock's 20-day volatility is in the top 30% of its year returned about a quarter of the others (+6% vs +24–29%) — the page warns when that is the case.`,

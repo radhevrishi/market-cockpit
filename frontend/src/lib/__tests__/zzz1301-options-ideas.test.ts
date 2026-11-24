@@ -158,3 +158,38 @@ test('zzz1301e — option plan: results gate moves the expiry earlier, spread + 
   const o2 = planOption({ ...base, nextEarnings: '2026-12-08' })!;                 // too close: no expiry ≥ 21 days before it
   assert.ok(o2.results.beforeExpiry && o2.notes.some((n) => /held through results/.test(n)));
 });
+
+test('zzz1301f — fear path: VIX ≥ 25 (USA) / India VIX ≥ 20 makes a near-target call grade A even in a falling market', () => {
+  const f = (o: Partial<RawFeatures>): RawFeatures => ({ id: 'trend_bounce', side: 'CALL', market: 'US', ret20: -8, ret60: -15, vs50: -6, vs200: -4, trend: -1, touches: 3, vr: 1, rr1: 2, riskPct: 5, atrPct: 3, triggered: false, idx: { vs200: -3, ret20: -6, ret60: -9 }, ...o });
+  assert.equal(classify(f({ vix: 18 })).grade, 'C');
+  assert.equal(classify(f({ vix: 31 })).grade, 'A');
+  assert.equal(classify(f({ vix: 31, gap60: true })).grade, 'A+');
+  assert.equal(classify(f({ vix: 31, rr1: 4 })).grade, 'C');                        // far target: no
+  assert.equal(classify(f({ market: 'IN', vix: 21 })).grade, 'A');
+  assert.notEqual(classify(f({ id: 'trend_breakdown', side: 'PUT', vix: 35 })).grade, 'A'); // puts never A
+});
+
+test('zzz1301f — market panel: bands, mood, verdicts', async () => {
+  const { buildPanel } = await import('../options-ideas/market-panel');
+  const idx = Array.from({ length: 500 }, (_, i) => 100 * Math.pow(1.0005, i) * (i > 470 ? 1 + (i - 470) * 0.002 : 1));
+  const fallIdx = [...idx.slice(0, 470), ...Array.from({ length: 30 }, (_, i) => 140 - i * 1.5)];
+  const vixCalm = Array.from({ length: 300 }, () => 14), vixFear = [...Array.from({ length: 290 }, () => 16), ...Array.from({ length: 10 }, (_, i) => 22 + i)];
+  const rows = Array.from({ length: 80 }, (_, i) => ({ px: 10, sma50: i < 60 ? 9 : 11, sma200: i < 40 ? 9 : 11, hi52: 10.2, mc: 5000 }));
+  const up = buildPanel('US', idx, vixCalm, rows);
+  assert.equal(up.vix?.band, 'calm'); assert.equal(up.regime, 'up'); assert.equal(up.verdict.calls.act, 'TAKE'); assert.equal(up.verdict.puts.act, 'AVOID');
+  assert.equal(up.breadth?.above50, 75); assert.equal(up.breadth?.above200, 50);
+  const fear = buildPanel('US', fallIdx, vixFear, rows);
+  assert.equal(fear.vix?.band, 'fear'); assert.equal(fear.regime, 'fear'); assert.equal(fear.verdict.calls.act, 'TAKE'); assert.equal(fear.verdict.sellPuts.act, 'TAKE');
+  assert.ok(fear.mood && fear.mood.score < up.mood!.score);
+  const down = buildPanel('US', fallIdx, vixCalm, rows);
+  assert.equal(down.verdict.calls.act, 'SELECTIVE');
+});
+
+test('zzz1301g — no setup: the chart structure and what to wait for', async () => {
+  const { describeStructure } = await import('../options-ideas/setups');
+  const s = describeStructure(bars);
+  assert.ok(s.lines.length + s.levels.length > 0);
+  assert.ok(s.watch.length > 0 && s.watch.every((w) => typeof w.what === 'string' && w.what.length > 20));
+  for (let i = 1; i < s.watch.length; i++) assert.ok(Math.abs(s.watch[i].distPct) >= Math.abs(s.watch[i - 1].distPct));
+  assert.ok(describeStructure(bars.slice(0, 100)).notes.length === 1);
+});

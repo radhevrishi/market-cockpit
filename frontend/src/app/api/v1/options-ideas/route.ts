@@ -3,11 +3,13 @@
 //   GET ?market=US|IN&tickers=A,B,…   up to 10 companies (the page's "My lists" scan), no live chains
 //   GET ?market=US|IN                 the last scheduled scan (KV)
 //   GET ?log=1                        the live track record
+//   GET ?panel=1                      market panel: index trend, VIX / India VIX, breadth, fear & greed, what to do
 //   POST ?market=US|IN&run=1          run the scan now (owner / service key)
 //   POST ?grade=1                     grade the live track record now (owner / service key)
 import { NextRequest, NextResponse } from 'next/server';
 import { analyseTicker, readScan, readLog, runScan, gradeLog, type Mkt } from '@/lib/options-ideas/server';
 import { STUDY } from '@/lib/options-ideas/model-coeffs';
+import { marketPanel } from '@/lib/options-ideas/market-panel';
 import { siteAuthOk } from '@/lib/site-auth-request';
 
 export const dynamic = 'force-dynamic';
@@ -18,6 +20,7 @@ const clean = (t: string) => t.trim().toUpperCase().replace(/^(NSE|BSE|NASDAQ|NY
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
   const market: Mkt = sp.get('market') === 'IN' ? 'IN' : 'US';
+  if (sp.get('panel') === '1') return NextResponse.json({ ok: true, panel: await marketPanel() }, { headers: { 'Cache-Control': 'private, max-age=120' } });
   if (sp.get('log') === '1') return NextResponse.json({ ok: true, log: await readLog(), study: STUDY }, { headers: { 'Cache-Control': 'no-store' } });
   const one = sp.get('ticker');
   if (one) {

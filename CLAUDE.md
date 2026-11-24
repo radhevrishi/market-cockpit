@@ -4467,3 +4467,17 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   (USA +0.44, India −0.08 after → `caution` on India A); grade A options +20% avg but only ~22% of trades profitable. Route
   `/api/v1/options-ideas` (GET ticker / tickers≤10 / scan / log=1; POST run=1, grade=1 owner-only). Jobs options-ideas-us
   (21:52 UTC) / options-ideas-in (11:27 UTC) weekdays; KV options-ideas:v1:scan:<m>, track record options-ideas:v1:log.
+- zzz1301e/f (24 Nov): Options Ideas second + third replay. `lib/options-ideas/context.ts` (catalyst = results-style gap up on 2×
+  volume in 60 sessions or 1.3× volume today; HV percentile; sector medians). Grades now A+ / A / B / C (`GRADE_ORDER`): A also needs
+  the sector not weaker than the index; A+ = A + catalyst; FEAR path (`fearHigh`: VIX ≥ 25 / India VIX ≥ 20) makes a near-target
+  call A — 10-year replay (2017-12 → 2026-11, 44,398 trades; bars 10y, `resAll` = res + res10) showed calls in fear +0.49 R
+  (8 of 9 years), bought puts worst then (−0.55 R) and negative in 2022 too, index puts negative over 10 years, selling a 0.3-delta
+  put +2.2% of the strike a month in fear (67% win). Rejected: time stop (+0.29 → +0.20 R), spreads as default, weekly Stage 2.
+  Study run: OI_IND_US/IN (ticker→{sec}) and OI_VIX_US/IN (date→close) env files. options.ts: results gate moves the expiry
+  earlier (≥ 21 days left) else flags it, `spread`, `sellPut`, `hvPct`, `results`. server: `sectorInfo`, `nextResultsMap` (Nasdaq
+  calendar / KV earnings-cal:auto), `refreshChains` (job options-ideas-chains 09:41 + 19:41/20:41 UTC), log carries regime /
+  catalyst / HV for track-record slices. `market-panel.ts` (+ `?panel=1`): S&P 500 / Nifty trend, VIX / India VIX bands, breadth
+  from the screener snapshot, our own fear & greed (CNN refuses servers, HTTP 418), calls / buy puts / sell puts verdicts.
+  Card: position sizer (`mc:options-ideas:sizer:v1`, India lot > budget warning), one-click alerts (trigger / stop / T1 via
+  createAlertApi), sector heat chips, hide-through-results filter. zzz1301g: no-setup companies get `structure` (describeStructure:
+  trendlines, 3-touch levels, cup rims, "what would make it a setup" nearest first) + StructureChart.

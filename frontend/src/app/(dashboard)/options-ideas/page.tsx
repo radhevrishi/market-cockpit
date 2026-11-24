@@ -1,10 +1,11 @@
 'use client';
 // 🎯 Options Ideas (zzz1301) — calls and puts from price structure only (trendlines, breakout + retest, cups), graded with a
-// historical study of ~21,700 past setups (lib/options-ideas). Tabs: Scanner · Analyse a company · My lists · Track record ·
+// historical study of ~44,400 past setups (2017–2026) (lib/options-ideas). Tabs: Scanner · Analyse a company · My lists · Track record ·
 // How it works. Nothing here is a buy or sell order.
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
-import { IdeaCard, GradeBadge, SideBadge, HistoryLine, GRADE_COL, type Bar5 } from '@/components/options-ideas/IdeaCard';
+import { IdeaCard, GradeBadge, SideBadge, HistoryLine, GRADE_COL, StructureChart, type Bar5 } from '@/components/options-ideas/IdeaCard';
 import { getPortfolioMap } from '@/lib/portfolio-overlay';
+import { MarketPanel } from '@/components/options-ideas/MarketPanel';
 import { getConvictionTickers } from '@/lib/conviction-beats';
 import { getUsConvictionList } from '@/lib/conviction-beats-us';
 
@@ -104,6 +105,7 @@ export default function OptionsIdeasPage() {
           {(['US', 'IN'] as Mkt[]).map((m) => <button key={m} onClick={() => setMarket(m)} style={chip(market === m)}>{m === 'US' ? '🇺🇸 USA' : '🇮🇳 India'}</button>)}
         </div>
       </div>
+      <div style={{ margin: '12px 0' }}><MarketPanel market={market} /></div>
       <div style={{ display: 'flex', gap: 6, margin: '12px 0', flexWrap: 'wrap' }}>
         {TABS.map(([k, l]) => <button key={k} onClick={() => go(k)} style={chip(tab === k)}>{l}</button>)}
       </div>
@@ -192,7 +194,17 @@ function OneTab({ market }: { market: Mkt }) {
         <span style={{ fontSize: 12.5, color: 'var(--mc-text-3)' }}>Reads 2 years of daily bars, finds every structure, grades it and reads the live option chain.</span>
       </div>
       {r && !r.ok ? <div style={{ ...card, color: '#EF4444' }}>{r.error || 'Could not read this company.'}</div> : null}
-      {r?.ok && !r.ideas?.length ? <div style={card}><div style={{ fontSize: 18, fontWeight: 900 }}>{r.ticker} <span style={{ fontSize: 13, color: 'var(--mc-text-3)', fontWeight: 500 }}>{r.name}</span></div><div style={{ marginTop: 6, fontSize: 15 }}>⛔ <b>No valid setup.</b> {r.noSetup}</div></div> : null}
+      {r?.ok && !r.ideas?.length ? <div style={{ ...card, borderLeft: '4px solid #64748B' }}>
+        <div style={{ fontSize: 18, fontWeight: 900 }}>{r.ticker} <span style={{ fontSize: 13, color: 'var(--mc-text-3)', fontWeight: 500 }}>{r.name}</span> <span style={{ fontSize: 13, color: 'var(--mc-text-2)', fontWeight: 600 }}>· {r.price != null ? (market === 'US' ? '$' : '₹') + r.price.toLocaleString('en-US', { maximumFractionDigits: 2 }) : ''} · {r.asOf}</span></div>
+        <div style={{ marginTop: 6, fontSize: 15 }}>⛔ <b>No good setup right now.</b> {r.noSetup}</div>
+        {r.bars?.length ? <div style={{ marginTop: 10 }}><StructureChart bars={r.bars} structure={r.structure} /></div> : null}
+        <div style={{ fontSize: 12, color: 'var(--mc-text-3)', marginTop: 4 }}>Purple = trendlines (3+ touches) · pink = cup rim · dashed blue S = support level, dashed amber R = resistance level (3+ touches).</div>
+        {r.structure?.watch?.length ? <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 800 }}>What would make it a setup (nearest first)</div>
+          <ul style={{ margin: '4px 0 0 18px', padding: 0, fontSize: 13.5, lineHeight: 1.6 }}>{r.structure.watch.map((w: any, i: number) => <li key={i}>{w.what}</li>)}</ul>
+        </div> : null}
+        {r.structure?.notes?.length ? <ul style={{ margin: '6px 0 0 18px', padding: 0, fontSize: 12.5, color: 'var(--mc-text-3)' }}>{r.structure.notes.map((n: string, i: number) => <li key={i}>{n}</li>)}</ul> : null}
+      </div> : null}
       {r?.ok && r.regime ? <div style={{ ...card, padding: '10px 14px', borderLeft: `4px solid ${r.regime.up ? '#10B981' : '#EF4444'}`, fontSize: 14 }}><b>Market today:</b> {r.regime.label}</div> : null}
       {r?.ok && r.ideas?.length && r.chainNote ? <div style={{ fontSize: 12.5, color: '#F59E0B' }}>Live option chain not available ({r.chainNote}) — premiums below are model prices.</div> : null}
       {r?.ok && r.ideas?.length ? r.ideas.map((i: any) => <IdeaCard key={i.setup.id} idea={i} bars={r.bars} />) : null}
@@ -319,8 +331,8 @@ function HowTab() {
           <li><b>Puts:</b> uptrend line breakdown · downtrend line rejection · breakdown + retest · inverse cup breakdown + retest.</li>
         </ul></P>
       <P t="2 · Plan the trade">Each structure gives an entry trigger (a trade beyond the bar that tested the line or level), a stop beyond the structure with an ATR buffer, target 1 (measured move or the next level, at least 1.5× the risk) and target 2. Stops tighter than ½ ATR or wider than 3½ ATR are rejected.</P>
-      <P t="3b · What the second replay added">Grade A now also needs the stock's <b>sector</b> to be stronger than the index over 3 months (calls in weak sectors lost money after July 2025). <b>A+</b> = grade A plus a fresh catalyst: a results-style gap up on 2× volume in the last 60 sessions, or 1.3× normal volume on the signal day — A+ made +0.62 R a trade (+0.60 before / +0.67 after July 2025), its options +56% on average with about 1 in 3 profitable. Tested and rejected: a time stop, spreads as the default, index puts, a weekly Stage 2 check.</P>
-      <P t="3 · Grade it with history">The study followed ~21,700 past setups on 376 liquid companies (Dec 2022 – Nov 2026), using only the bars known each day. The pattern alone was close to a coin toss. What made the difference: a healthy stock (above its 200-day average, stronger than the index over 3 months), a healthy market (index above its 200-day and up over 20 sessions) and a target within 3× the risk. All three = grade A — as long as that setup type itself has paid in those conditions (India downtrend-line breaks did not, so they stop at B). Puts lost money in every condition tried — they are hedge / watch ideas only.</P>
+      <P t="3b · What the later replays added">Grade A also needs the stock's <b>sector</b> to be stronger than the index over 3 months (calls in weak sectors lost money after July 2025). <b>A+</b> = grade A plus a fresh catalyst (a results-style gap up on 2× volume in the last 60 sessions, or 1.3× normal volume on the signal day): over 10 years +0.31 R a trade, +0.48 R after July 2025. <b>Fear</b>: when VIX ≥ 25 (India VIX ≥ 20) calls made +0.49 R a trade over 10 years — positive in 8 of 9 years, even with the market below its 200-day — so high fear makes a call grade A. Puts did worst exactly then. Tested and rejected: a time stop, spreads as the default, index puts, a weekly Stage 2 check.</P>
+      <P t="3 · Grade it with history">The study followed ~44,400 past setups on 376 liquid companies (Dec 2017 – Nov 2026, including the 2020 crash and the 2022 bear market), using only the bars known each day. The pattern alone was close to a coin toss. What made the difference: a healthy stock (above its 200-day average, stronger than the index over 3 months), a healthy market (index above its 200-day and up over 20 sessions) and a target within 3× the risk. All three = grade A — as long as that setup type itself has paid in those conditions (India downtrend-line breaks did not, so they stop at B). Puts lost money in every condition tried — they are hedge / watch ideas only.</P>
       <P t="4 · Choose the option">Expiry: at least 30 days, and at least 1.6× the time similar trades took to reach target 1. Strike: delta about 0.5 (at the money) — in the study the steadiest; a safer (delta ~0.7) and an aggressive (~0.35) choice are shown too. Prices come from the live chain (Yahoo for the USA, NSE for India) when it can be read, else from Black–Scholes on the stock’s own volatility. Each choice shows its value at target 1, target 2 and the stop.</P>
       <P t="4b · Risk controls">Results date: when results fall before the chosen expiry, the expiry moves earlier if one still leaves 21 days, otherwise the idea is flagged and hidden by default. Volatility: when the stock's 20-day volatility is in the top 30% of its year the option is marked expensive. Position size: enter your account and risk per trade; it gives contracts / lots and warns when one Indian lot is more than your budget. Sector heat: three or more trade ideas in one sector are flagged as one bet. Option quotes for the A+ / A ideas are read again near the close, when bid / ask are real.</P>
       <P t="5 · Manage it">Move the stop to the entry once the stock is up 1× the risk; take half at target 1; let the rest run to target 2; close after 40 sessions or 7 days before expiry. In the study grade A options averaged about +20% a trade but only about 1 in 4 made money — a few big winners pay for many small losses, so size each trade to lose the premium without harm.</P>

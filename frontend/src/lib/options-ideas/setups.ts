@@ -319,3 +319,51 @@ export function findSetups(barsIn: PBar[], opts: FindOpts = {}): Setup[] {
 }
 
 export { last as _last };
+
+// ─── zzz1301g — structure on a chart with no tradable setup ──────────────────────────────────────────────────────────────
+export interface WatchLevel { side: Side; price: number; distPct: number; what: string }
+export interface Structure { lines: SetupLine[]; levels: Array<{ price: number; kind: 'support' | 'resistance'; touches: number }>; watch: WatchLevel[]; notes: string[] }
+/** What the chart shows when no setup qualifies: the trendlines / levels / cups found, and what price would make each a setup. */
+export function describeStructure(barsIn: PBar[]): Structure {
+  const bars = barsIn.filter((q) => q && q.l > 0 && q.h >= q.l && Number.isFinite(q.c));
+  const out: Structure = { lines: [], levels: [], watch: [], notes: [] };
+  if (bars.length < 220) { out.notes.push(`Only ${bars.length} sessions of history — structure needs at least 220.`); return out; }
+  const x = makeCtx(bars), L = x.L, c = x.c;
+  const off = Math.max(0, bars.length - 260);
+  const lr = autoLines(bars.slice(off), { tf: 'D', maxLines: 8, maxLevelsPerSide: 4 });
+  const pct = (p: number) => Math.round(((p - c) / c) * 1000) / 10;
+  const fmt = (p: number) => (Math.round(p * 100) / 100).toString();
+  for (const ln of lr.trend) {
+    if (ln.touches.length < 3) continue;
+    const g = (i: number) => linePriceAt(ln, i - off);
+    const now = g(L);
+    out.lines.push({ kind: 'trend', from: [bars[ln.firstTouch + off].t, g(ln.firstTouch + off)], to: [bars[L].t, now] });
+    const d = pct(now), atrs = Math.abs(now - c) / x.atr;
+    const name = `${ln.dir === 'rising' ? 'Rising' : 'Falling'} ${ln.kind} line (${ln.touches.length} touches) at ${fmt(now)}, ${d > 0 ? '+' : ''}${d}% from the price`;
+    if (ln.state === 'intact') {
+      if (ln.kind === 'support' && ln.dir === 'rising') out.watch.push({ side: 'CALL', price: now, distPct: d, what: `${name}. Call setup if the stock pulls back to it and closes back up${atrs > 1.5 ? ` (now ${atrs.toFixed(1)} ATR away — too far)` : ''}; a close below it ends the uptrend (no calls then).` });
+      else if (ln.kind === 'resistance' && ln.dir === 'falling') out.watch.push({ side: 'CALL', price: now, distPct: d, what: `${name}. Call setup on a close above it (downtrend broken)${atrs > 1.5 ? ` — ${atrs.toFixed(1)} ATR away` : ''}.` });
+      else out.watch.push({ side: ln.kind === 'support' ? 'CALL' : 'PUT', price: now, distPct: d, what: `${name}. ${ln.kind === 'support' ? 'Falling support: no call setup type uses it' : 'Rising resistance (a channel top): no setup type uses it'}.` });
+    } else out.notes.push(`${name} — already broken ${ln.breakIndex != null ? `${L - (ln.breakIndex + off)} sessions ago` : ''}; too long ago to trade the break, watch for a retest.`);
+  }
+  for (const lv of lr.levels) {
+    if (lv.touches.length < 3) continue;
+    out.levels.push({ price: lv.price, kind: lv.kind, touches: lv.touches.length });
+    const d = pct(lv.price);
+    out.watch.push(lv.price > c
+      ? { side: 'CALL', price: lv.price, distPct: d, what: `Resistance at ${fmt(lv.price)} (${lv.touches.length} touches, ${d > 0 ? '+' : ''}${d}%). A close above it, then a pull-back that holds, is the breakout + retest call.` }
+      : { side: 'CALL', price: lv.price, distPct: d, what: `Support at ${fmt(lv.price)} (${lv.touches.length} touches, ${d}%). Holding above keeps calls possible; a close below it turns the chart weak (no calls; puts are watch-only).` });
+  }
+  try {
+    for (const h of detectPatterns(bars.slice(-500), { timeframe: 'D' })) {
+      if ((h.id !== 'cup' && h.id !== 'cup_handle') || h.pivot == null || h.stage === 'failed') continue;
+      const d = pct(h.pivot);
+      out.lines.push({ kind: 'rim', from: [bars[Math.max(0, L - h.lengthBars)].t, h.pivot], to: [bars[L].t, h.pivot] });
+      out.watch.push({ side: 'CALL', price: h.pivot, distPct: d, what: `${h.id === 'cup_handle' ? 'Cup with handle' : 'Cup'} (${h.lengthBars} sessions${h.depthPct != null ? `, ${Math.round(h.depthPct)}% deep` : ''}), rim ${fmt(h.pivot)} (${d > 0 ? '+' : ''}${d}%) — ${h.stage === 'breakout' ? 'broke out; a pull-back to the rim that holds is the entry' : 'a break above the rim is the entry'}.` });
+    }
+  } catch { /* patterns are optional */ }
+  out.watch.sort((a, b) => Math.abs(a.distPct) - Math.abs(b.distPct));
+  out.watch = out.watch.slice(0, 8);
+  if (!out.lines.length && !out.levels.length) out.notes.push('No trendline or level with 3+ touches in the last year, and no cup — the chart has no clean structure to trade against.');
+  return out;
+}

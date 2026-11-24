@@ -268,3 +268,39 @@ function AlertButtons({ idea }: { idea: any }) {
     </div>
   );
 }
+
+/** zzz1301g — chart of a company with no setup: candles, its trendlines / cup rims, and 3-touch levels */
+export function StructureChart({ bars, structure, height = 280 }: { bars: Bar5[]; structure: any; height?: number }) {
+  const view = bars.slice(-180);
+  if (view.length < 20) return null;
+  const W = 760, H = height, padR = 70, padT = 10, padB = 18;
+  const t0 = ms(view[0][0]), t1 = ms(view[view.length - 1][0]);
+  const pLo = Math.min(...view.map((b) => b[3])), pHi = Math.max(...view.map((b) => b[2]));
+  const span = pHi - pLo;
+  const levels = (structure?.levels ?? []).filter((l: any) => l.price >= pLo - span * 0.3 && l.price <= pHi + span * 0.3);
+  let lo = Math.min(pLo, ...levels.map((l: any) => l.price)), hi = Math.max(pHi, ...levels.map((l: any) => l.price));
+  const padP = (hi - lo) * 0.04; lo -= padP; hi += padP;
+  const n = view.length, cw = (W - padR) / n;
+  const x = (i: number) => i * cw + cw / 2;
+  const xt = (t: number) => ((ms(t) - t0) / Math.max(1, t1 - t0)) * (x(n - 1) - x(0)) + x(0);
+  const y = (p: number) => padT + (1 - (p - lo) / (hi - lo)) * (H - padT - padB);
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', display: 'block', borderRadius: 8 }}>
+      {view.map((b, i) => { const up = b[4] >= b[1], col = up ? C.green : C.red; return <g key={i}>
+        <line x1={x(i)} x2={x(i)} y1={y(b[2])} y2={y(b[3])} stroke={col} strokeWidth={1} />
+        <rect x={x(i) - cw * 0.32} width={cw * 0.64} y={y(Math.max(b[1], b[4]))} height={Math.max(1, Math.abs(y(b[1]) - y(b[4])))} fill={col} />
+      </g>; })}
+      {levels.map((l: any, k: number) => <g key={'l' + k}>
+        <line x1={0} x2={W - padR} y1={y(l.price)} y2={y(l.price)} stroke={l.kind === 'support' ? '#60A5FA' : '#F59E0B'} strokeWidth={1.2} strokeDasharray="5 4" />
+        <text x={W - padR + 4} y={y(l.price) + 4} fontSize={10.5} fontWeight={700} fill={l.kind === 'support' ? '#60A5FA' : '#F59E0B'}>{l.kind === 'support' ? 'S' : 'R'} {l.price >= 1000 ? Math.round(l.price) : l.price.toFixed(1)}</text>
+      </g>)}
+      {(structure?.lines ?? []).map((l: any, k: number) => {
+        const [ta, pa] = l.from, [tb, pb] = l.to; const xa = xt(ta), xb = xt(tb);
+        const at = (xx: number) => pa + ((pb - pa) * (xx - xa)) / ((xb - xa) || 1);
+        const X0 = Math.max(0, Math.min(xa, xb)), X1 = Math.min(W - padR, Math.max(xa, xb));
+        if (X1 <= X0) return null;
+        return <line key={k} x1={X0} x2={X1} y1={y(at(X0))} y2={y(at(X1))} stroke={l.kind === 'rim' ? '#F472B6' : '#A78BFA'} strokeWidth={2} />;
+      })}
+    </svg>
+  );
+}

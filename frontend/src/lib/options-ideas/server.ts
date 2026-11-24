@@ -13,7 +13,8 @@ import { extraCtx, sectorMedians } from './context';
 import { GRADE_ORDER } from './model';
 import { getSnapshot } from '../screener/snapshot-cache';
 import type { PBar } from '../chart-patterns';
-import { findSetups, SETUP_META, SETUPS_VERSION, type Setup, type SetupId } from './setups';
+import { findSetups, describeStructure, type Structure, SETUP_META, SETUPS_VERSION, type Setup, type SetupId } from './setups';
+import { fearHigh, FEAR_VIX } from './model';
 import { classify, finalGrade, historyFor, indexCtx, rawFromSetup, type Classified, type GroupStats, type Grade } from './model';
 import { planOption, type OptionPlan, pickExpiry, syntheticExpiries } from './options';
 import { usChain, inChain, nseLots, chainError } from './chain';
@@ -40,14 +41,15 @@ export interface Idea {
   ctx: { gapDaysAgo: number | null; rvol: number; hvPct: number; hv20: number; sector: string | null; industry: string | null; sectorRet3m: number | null; indexRet3m: number | null; nextResults: string | null };
 }
 export interface Regime { bench: string; vs200: number; ret20: number; up: boolean; label: string }
-export function regimeOf(m: Mkt, idx: { vs200: number; ret20: number } | null): Regime | null {
+export function regimeOf(m: Mkt, idx: { vs200: number; ret20: number } | null, vix: number | null = null): Regime | null {
   if (!idx) return null;
-  const up = idx.vs200 > 0 && idx.ret20 > 0;
+  const fear = fearHigh(m, vix);
+  const up = (idx.vs200 > 0 && idx.ret20 > 0) || fear;
   const bench = m === 'US' ? 'S&P 500 (SPY)' : 'Nifty 50 (NIFTYBEES)';
   const r1 = (x: number) => Math.round(x * 10) / 10;
-  return { bench, vs200: r1(idx.vs200), ret20: r1(idx.ret20), up, label: up ? `${bench} is ${r1(idx.vs200)}% above its 200-day average and up ${r1(idx.ret20)}% in 20 sessions — calls can reach grade A.` : `${bench} is ${Math.abs(r1(idx.vs200))}% ${idx.vs200 >= 0 ? 'above' : 'below'} its 200-day average and ${idx.ret20 >= 0 ? 'up' : 'down'} ${Math.abs(r1(idx.ret20))}% in 20 sessions — no call reaches grade A until the market is above its 200-day AND rising (calls in this state did not pay in the study).` };
+  return { bench, vs200: r1(idx.vs200), ret20: r1(idx.ret20), up, label: fear ? `Fear is high: ${m === 'US' ? 'VIX' : 'India VIX'} ${vix!.toFixed(1)} (fear line ${FEAR_VIX[m]}). Over 10 years calls bought in fear made +0.49× the risk a trade — calls can reach grade A now, even with ${bench} ${idx.vs200 >= 0 ? 'above' : 'below'} its 200-day. Buying puts now was the worst trade.` : up ? `${bench} is ${r1(idx.vs200)}% above its 200-day average and up ${r1(idx.ret20)}% in 20 sessions — calls can reach grade A.` : `${bench} is ${Math.abs(r1(idx.vs200))}% ${idx.vs200 >= 0 ? 'above' : 'below'} its 200-day average and ${idx.ret20 >= 0 ? 'up' : 'down'} ${Math.abs(r1(idx.ret20))}% in 20 sessions — no call reaches grade A until the market is above its 200-day AND rising, or fear gets high (${m === 'US' ? 'VIX' : 'India VIX'} ≥ ${FEAR_VIX[m]}${vix != null ? `, now ${vix.toFixed(1)}` : ''}). Buying puts here did not pay either — over 10 years falling markets bounced hard.` };
 }
-export interface TickerResult { regime?: Regime | null; chainNote?: string | null; ok: boolean; market: Mkt; ticker: string; name: string | null; price: number | null; asOf: string | null; ideas: Idea[]; noSetup: string | null; error?: string; bars?: Array<[number, number, number, number, number]> }
+export interface TickerResult { structure?: Structure | null; regime?: Regime | null; chainNote?: string | null; ok: boolean; market: Mkt; ticker: string; name: string | null; price: number | null; asOf: string | null; ideas: Idea[]; noSetup: string | null; error?: string; bars?: Array<[number, number, number, number, number]> }
 
 const toP = (b: { t: number; o: number; h: number; l: number; c: number; v: number }[]): PBar[] => b.filter((q) => q && q.l > 0 && Number.isFinite(q.c)).map((q) => ({ t: q.t, o: q.o, h: q.h, l: q.l, c: q.c, v: q.v || 0 }));
 const fmt = (m: Mkt, x: number) => `${m === 'US' ? '$' : '₹'}${x.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -131,19 +133,24 @@ export async function analyseTicker(market: Mkt, tickerIn: string, opts: { chain
   const out: TickerResult = { ...base, ok: true, name: s.name ?? base.name, price: last.c, asOf };
   if (opts.bars) out.bars = bars.slice(-260).map((q) => [q.t, q.o, q.h, q.l, q.c]);
   const setups = findSetups(bars);
-  if (!setups.length) { out.noSetup = 'No valid setup today: no trendline or level with 3+ touches is being tested or broken right now, and no cup is near its rim. Nothing to trade on this company.'; return out; }
+  if (!setups.length) {
+    out.noSetup = 'No good setup today: no trendline or level with 3+ touches is being tested or broken right now with a reward at least 1.5× the risk, and no cup is at its rim. Nothing to trade on this company yet — the levels below show what to wait for.';
+    if (opts.bars) out.structure = describeStructure(bars);
+    return out;
+  }
   const idx = indexCtx(await benchBars(market), barMs(last.t));
-  out.regime = regimeOf(market, idx);
   const ex = extraCtx(bars);
   const si = await sectorInfo(market).catch(() => null);
   const secRow = si?.by.get(ticker) ?? null;
   const secMed = secRow?.sec ? si?.med.get(secRow.sec) ?? null : null;
   const secStrong = secMed != null && idx ? secMed > idx.ret60 : null;
   const nextRes = await resultsFor(market, ticker).catch(() => null);
+  const vixNow = await (async () => { try { const { marketPanel } = await import('./market-panel'); return (await marketPanel()).find((p) => p.market === market)?.vix?.last ?? null; } catch { return null; } })();
+  out.regime = regimeOf(market, idx, vixNow);
   let lot = opts.lotSize ?? null;
   if (market === 'IN' && lot == null) lot = (await nseLots().catch(() => null))?.[ticker] ?? null;
   for (const st of setups) {
-    const raw = rawFromSetup(st, market, bars, idx, { secStrong, gap60: ex.gap60, rvol: ex.rvol, hvPct: ex.hvPct });
+    const raw = rawFromSetup(st, market, bars, idx, { secStrong, gap60: ex.gap60, rvol: ex.rvol, hvPct: ex.hvPct, vix: vixNow });
     const cls = finalGrade(raw, classify(raw));
     const hist = historyFor(raw, cls.grade);
     const expSessions = hist.setup?.medSessions || hist.group?.medSessions || 12;
@@ -213,7 +220,7 @@ export async function runScan(m: Mkt, budgetMs = 14 * 60_000): Promise<ScanSnaps
   }
   const bb = await benchBars(m);
   const snap: ScanSnapshot = {
-    regime: bb.length ? regimeOf(m, indexCtx(bb, barMs(bb[bb.length - 1].t))) : null,
+    regime: bb.length ? regimeOf(m, indexCtx(bb, barMs(bb[bb.length - 1].t)), await (async () => { try { const { marketPanel } = await import('./market-panel'); return (await marketPanel()).find((p) => p.market === m)?.vix?.last ?? null; } catch { return null; } })()) : null,
     market: m, builtAt: new Date().toISOString(), version: SETUPS_VERSION, scanned, failed,
     ideas: ideas.slice(0, 400), counts: { 'A+': ideas.filter((i) => i.grade === 'A+').length, A: ideas.filter((i) => i.grade === 'A').length, B: ideas.filter((i) => i.grade === 'B').length, C: ideas.filter((i) => i.grade === 'C').length },
     tookS: Math.round((Date.now() - t0) / 1000),
