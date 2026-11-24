@@ -52,7 +52,7 @@ export interface PanelMarket {
   market: Mkt;
   index: { name: string; last: number; chg1d: number; vs50: number; vs200: number; ret20: number; above200: boolean; rising200: boolean } | null;
   vix: { name: string; last: number; chg1d: number; pct1y: number; avg20: number; band: 'calm' | 'normal' | 'elevated' | 'fear'; fearLine: number } | null;
-  breadth: { n: number; above50: number; above200: number; nearHigh: number; asOf: string | null } | null;
+  breadth: { n: number; above50: number; above200: number; nearHigh: number; asOf: string | null; large: { n: number; above50: number; above200: number } | null } | null;
   /** when the index / VIX were read */
   readAt: string;
   mood: { score: number; label: string; parts: Array<{ k: string; v: number }> } | null;
@@ -93,7 +93,9 @@ export function buildPanel(m: Mkt, idx: number[] | null, vix: number[] | null, r
     const above50 = Math.round((live.filter((r) => r.px > r.sma50).length / live.length) * 100);
     const above200 = Math.round((live.filter((r) => r.px > r.sma200).length / live.length) * 100);
     const nearHigh = Math.round((live.filter((r) => typeof r.hi52 === 'number' && r.hi52 > 0 && r.px >= r.hi52 * 0.95).length / live.length) * 100);
-    breadth = { n: live.length, above50, above200, nearHigh, asOf };
+    const big = live.filter((r) => (r.mc ?? 0) >= (m === 'US' ? 10000 : 20000));
+    const large = big.length >= 30 ? { n: big.length, above50: Math.round((big.filter((r) => r.px > r.sma50).length / big.length) * 100), above200: Math.round((big.filter((r) => r.px > r.sma200).length / big.length) * 100) } : null;
+    breadth = { n: live.length, above50, above200, nearHigh, asOf, large };
     brP = above50;
   }
   const parts = [{ k: 'Index momentum', v: momP }, { k: 'Breadth (above 50-day)', v: brP }, { k: 'Volatility (inverted)', v: volP }, { k: '20-day return', v: retP }];

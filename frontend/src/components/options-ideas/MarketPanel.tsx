@@ -38,7 +38,7 @@ function One({ p }: { p: any }) {
         </div>
         <div><div style={lab}>Breadth</div>
           {p.breadth ? <><div style={{ fontSize: 18, fontWeight: 800 }}>{p.breadth.above200}% <span style={{ fontSize: 12, fontWeight: 600 }}>above 200-day</span></div>
-            <div style={{ fontSize: 12 }}>{p.breadth.above50}% above 50-day · {p.breadth.nearHigh}% near 52-week high · {p.breadth.n} stocks{p.breadth.asOf ? ` · close of ${p.breadth.asOf}` : ''}</div></> : <div>—</div>}
+            <div style={{ fontSize: 12 }}>{p.breadth.above50}% above 50-day · {p.breadth.nearHigh}% near 52-week high · {p.breadth.n} stocks{p.breadth.asOf ? ` · close of ${p.breadth.asOf}` : ''}</div>{p.breadth.large ? <div style={{ fontSize: 12 }}>Large caps ({p.market === 'US' ? '≥ $10B' : '≥ ₹20,000 Cr'}): <b>{p.breadth.large.above200}%</b> above 200-day · <b>{p.breadth.large.above50}%</b> above 50-day{p.breadth.large.above50 - p.breadth.above50 >= 15 ? ' — a narrow rally led by large caps' : ''}</div> : null}</> : <div>—</div>}
         </div>
         <div><div style={lab} title="Our own CNN-style gauge (CNN blocks servers): index momentum, breadth, volatility and 20-day return, each ranked 0–100">Fear & Greed (our gauge)</div>
           {p.mood ? <Gauge score={p.mood.score} label={p.mood.label} /> : <div>—</div>}

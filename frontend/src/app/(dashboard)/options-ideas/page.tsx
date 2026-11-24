@@ -178,7 +178,10 @@ function ScanTab({ market }: { market: Mkt }) {
               if (cap === 'sm') parts.push('small + mid caps only');
               if (adrF !== 'all') parts.push(adrF === 'calm' ? 'ADR < 3.5%' : 'ADR ≥ 3.5%');
               if (hideRes) parts.push('results before expiry hidden');
-              return `${parts.join(' · ')}.`;
+              const fails = new Map<string, number>();
+              for (const i of all) for (const c of i.checks ?? []) if (c.ok === false) fails.set(c.label, (fails.get(c.label) ?? 0) + 1);
+              const top = [...fails.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
+              return `${parts.join(' · ')}.${top.length && (grade === 'A' || grade === 'A+') ? ` What keeps ideas below grade A today: ${top.map(([l, n]) => `${l.replace(/ — .*$/, '').replace(/\(.*?\)/g, '').trim()} (fails on ${n} of ${all.length})`).join('; ')}.` : ''}`;
             })()} <button onClick={() => { setGrade('AB'); setSide('all'); setCap('all'); setAdrF('all'); setHideRes(false); }} style={{ ...chip(false), marginLeft: 6 }}>Clear filters</button></div>
           : <IdeasTable ideas={ideas} open={open} onOpen={(k) => setOpen(open === k ? null : k)} />}
         {scan && (scan.ideas ?? []).some((i: any) => i.ctx?.adr == null) ? <div style={{ fontSize: 12, color: '#F59E0B', marginTop: 8 }}>This scan was stored before ADR% was added — press “Scan now” to fill it.</div> : null}
