@@ -4528,3 +4528,12 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   faster than price ("▲ Cash ahead of price") and its opposite ("▼ Price ahead of cash", zzz1306c — the two exclude each other), cash up price flat, FCF positive now, FCF/share up every year, FCF yield ≥ 5%; span 1 / 3 / 5 years; sort by the
   FCF-vs-price gap; per chart "Since FYxx: FCF/share +x% · price +y% · gap". "FCF above price" = growth comparison (FCF per share is
   always below the price — it would need a yield over 100%). Choices in localStorage `mc:company-lab:fcf-filter:v1`.
+- zzz1307 (24 Nov): VCP everywhere trendlines / cups are read. Options Ideas setup `vcp_breakout` (CALL; lib/options-ideas/setups.ts
+  `vcpSetups` from chart-patterns' VCP: forming ≤ 3% under the pivot, or broke it ≤ 20 sessions ago and holding −2 … +5%; stop under the
+  last 10 sessions' low − ½ ATR; SETUPS_VERSION oi-3). No replay history yet → `NO_HISTORY_YET` in model.ts caps it at grade B until
+  scripts/options-ideas-study.ts is re-run. Chart structure (`describeStructure`, Entry Desk "Chart structure" column) now lists VCP and
+  the main bullish bases (`STRUCTURE_PATTERNS`: cup, cup with handle, VCP, flat / ascending base, base on base, high tight flag, bull
+  flag, ascending triangle, double bottom, inverse H&S) with their pivot as the entry line. Entry Desk breakout + retest view, server
+  `retestOf` and Best Picks SETUP family (grade B VCP counts, 10 pts) take it. Also 24 Nov: US book replaced from IBKR (25 holdings,
+  €18.16 cash; old book backed up in the owner's browser `mc:us-book:backup:2026-11-24`); US Portfolio Catalysts statuses wait on
+  filing reads for the new names — owner chose NOT to run the paid bulk read; the daily auto-read (book first, $0.30/day) covers them.

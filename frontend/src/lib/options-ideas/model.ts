@@ -106,10 +106,14 @@ export function classify(f: RawFeatures): Classified {
 /** Grade A also needs this setup type's own grade-A history (same market) to have paid: ≥ 50 trades and ≥ +0.1 R a trade.
  *  (study: India downtrend breaks / trend bounces in grade A conditions made ~0 R; US breakout retests +0.41 R) */
 export const SETUP_MIN_R = 0.1, SETUP_MIN_N = 50;
+export const NO_HISTORY_YET = new Set<string>(['vcp_breakout']);
 export function finalGrade(f: RawFeatures, c: Classified, groups: Record<string, GroupStats> = STUDY.groups): Classified {
   if (c.grade !== 'A' && c.grade !== 'A+') return c;
   // `A0` = this setup type under the grade-A conditions BEFORE this check (so the table does not feed on itself)
   const h = groups[`${f.market}|${f.id}|A0`];
+  // zzz1307 — a setup type added after the replay (VCP) has no history yet: at most B until the study is re-run
+  if (!h && NO_HISTORY_YET.has(f.id)) return { ...c, grade: 'B', checks: [...c.checks, { label: 'This setup type has no replay history yet (added after the last study)', ok: false }],
+    verdict: 'Watch — new setup type, not yet tested in the replay' };
   if (!h || h.n < SETUP_MIN_N || h.trailR >= SETUP_MIN_R) return c;
   return { ...c, grade: 'B', checks: [...c.checks, { label: `This setup type has paid in these conditions (${f.market === 'US' ? 'USA' : 'India'}: ${h.trailR > 0 ? '+' : ''}${h.trailR} R a trade over ${h.n} past trades)`, ok: false }],
     verdict: 'Watch — conditions are right, but this setup type has not paid in them before' };

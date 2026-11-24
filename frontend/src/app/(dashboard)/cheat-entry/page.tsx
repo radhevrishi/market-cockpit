@@ -297,7 +297,7 @@ const PREFS_KEY = 'mc:entry-desk:v1';
 const isSupport = (c: Candidate) => c.setup === 'AT_200' || c.setup === 'AT_50';
 const inLens = (c: Candidate, l: Lens, rt: Retest | null) =>
   l === 'all' ? true : l === 'support' ? isSupport(c) : l === 'bounce' ? c.bounce : l === 'both' ? isSupport(c) && c.bounce : l === 'retest' ? !!rt : isSupport(c) || c.bounce || !!rt;
-const retestFromIdea = (i: any): Retest | null => (i && (i.setup?.id === 'breakout_retest' || i.setup?.id === 'cup_retest'))
+const retestFromIdea = (i: any): Retest | null => (i && (i.setup?.id === 'breakout_retest' || i.setup?.id === 'cup_retest' || i.setup?.id === 'vcp_breakout'))
   ? { grade: String(i.grade), label: String(i.setup.label), trigger: Number(i.setup.trigger), stop: Number(i.setup.stop), target1: Number(i.setup.target1), riskPct: Number(i.setup.riskPct), triggered: !!i.setup.triggered, why: (i.setup.reasons || []).join(' · ') }
   : null;
 /** The stored Options Ideas scans (both markets) → breakout retests by `${market}:${ticker}` */

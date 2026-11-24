@@ -228,10 +228,12 @@ export async function runBestPicks(o: RunOpts): Promise<BestPicksOut> {
     if (!s) throw new Error('no stored scan');
     let k = 0;
     for (const i of s.ideas || []) {
-      if (i.setup?.side !== 'CALL' || (i.grade !== 'A+' && i.grade !== 'A')) continue;
+      // zzz1307 — a VCP breakout counts at grade B too (no replay history yet, so it cannot reach A)
+      const vcp = i.setup?.id === 'vcp_breakout' && i.grade === 'B';
+      if (i.setup?.side !== 'CALL' || (i.grade !== 'A+' && i.grade !== 'A' && !vcp)) continue;
       const c = cands.get(`${m}:${bare(i.ticker)}`);
       if (!c) continue;   // a chart setup alone is never a pick
-      add(c, { family: 'SETUP', tool: 'Options Ideas', points: i.grade === 'A+' ? 15 : 10, line: `${i.setup.label} (grade ${i.grade}${i.setup.triggered ? ', triggered' : ''})`, date: day(i.asOf) || day(s.builtAt), id: `oi:${m}:${bare(i.ticker)}:${i.setup.id}`, triggered: !!i.setup.triggered, plan: { trigger: i.setup.trigger, stop: i.setup.stop, target1: i.setup.target1 ?? null, riskPct: i.setup.riskPct } });
+      add(c, { family: 'SETUP', tool: 'Options Ideas', points: i.grade === 'A+' ? 15 : 10, line: `${i.setup.label} (grade ${i.grade}${vcp ? ', new setup type' : ''}${i.setup.triggered ? ', triggered' : ''})`, date: day(i.asOf) || day(s.builtAt), id: `oi:${m}:${bare(i.ticker)}:${i.setup.id}`, triggered: !!i.setup.triggered, plan: { trigger: i.setup.trigger, stop: i.setup.stop, target1: i.setup.target1 ?? null, riskPct: i.setup.riskPct } });
       k++;
     }
     return { v: true, asOf: s.builtAt, count: k, staleAfterH: 96 };

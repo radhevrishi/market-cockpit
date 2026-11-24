@@ -313,7 +313,7 @@ export { syntheticExpiries };
 /** zzz1304 — a bullish breakout (or cup rim) retest on the chart, for the Entry Desk's "Breakout + retest" view */
 export interface RetestBrief { grade: Grade; label: string; trigger: number; stop: number; target1: number; riskPct: number; triggered: boolean; why: string }
 export function retestOf(ideas: Idea[]): RetestBrief | null {
-  const i = ideas.find((x) => x.setup.id === 'breakout_retest' || x.setup.id === 'cup_retest');
+  const i = ideas.find((x) => x.setup.id === 'breakout_retest' || x.setup.id === 'cup_retest' || x.setup.id === 'vcp_breakout');
   if (!i) return null;
   return { grade: i.grade, label: i.setup.label, trigger: i.setup.trigger, stop: i.setup.stop, target1: i.setup.target1, riskPct: i.setup.riskPct, triggered: i.setup.triggered, why: i.setup.reasons.join(' · ') };
 }
