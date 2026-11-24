@@ -171,6 +171,7 @@ function assemble(live: Map<string, LiveQuote>, regimes: Regimes = { IND: null, 
     if (why.length) {
       if (rk === 'BEAR') block = 'market regime is BEAR — oversold readings tend to keep falling, bounce lane closed';
       else if (decay.get(sym) === 'high') block = 'Conviction decay is high — falling knife, not a dip';
+      else if (riskPct != null && riskPct > 12) block = `stop too far (${riskPct.toFixed(0)}% to the ${stopMa ?? 'average'}) — wait for it to reach the 50-day`;
     }
     let bScore = 40;
     const depth = Math.min(d21 ?? Infinity, d50 ?? Infinity);
@@ -478,7 +479,7 @@ export default function CheatEntryPage() {
         ))}
         <span style={{ marginLeft: 'auto', fontSize: 12.5, color: C.dim }}>
           {cands ? `${shown.length} names · ${LENS_META[lens].label.replace(/^\S+\s/, '')}` : ''}
-          {blocked > 0 ? ` · ${blocked} oversold names refused (bear regime or decay)` : ''}
+          {blocked > 0 ? ` · ${blocked} oversold names refused (bear regime, decay or stop too far)` : ''}
           {skipped > 0 ? ` · ${skipped} quality names without moving-average data (add them to a Technicals list)` : ''}
         </span>
       </div>
@@ -576,7 +577,7 @@ export default function CheatEntryPage() {
           {shown.length > 80 && <div style={{ fontSize: 12, color: C.dim, marginTop: 8 }}>Top 80 shown of {shown.length} — pick a narrower view or market to see the rest.</div>}
           <div style={{ fontSize: 12.5, color: C.dim, marginTop: 12, lineHeight: 1.65 }}>
             <b style={{ color: C.muted }}>Score</b> = setup (0–60) + quality (0–40), +8 when the name is also oversold on support (+3 oversold elsewhere). The setup is the nearest rising average underneath (200-day scores highest, then 50-day); names more than 15% above the 50-day are extended; names graded below 45 by the Multibagger engine are left out unless the Conviction bench vouches.
-            <b style={{ color: C.muted }}> Bounce</b> = oversold (down 3%+ today, 3%+ under the 21-day EMA, or back into the 50-day band) while still above the 200-day. Refused in a BEAR regime and when Conviction decay is high — oversold is not a bottom.
+            <b style={{ color: C.muted }}> Bounce</b> = oversold (down 3%+ today, 3%+ under the 21-day EMA, or back into the 50-day band) while still above the 200-day. Refused in a BEAR regime, when Conviction decay is high, or when the stop is more than 12% away — oversold is not a bottom.
             <b style={{ color: C.muted }}> Stop risk</b> = drop to a stop 2% under that average; <b style={{ color: C.muted }}>Size</b> risks your set % of the book at that stop, halved in a CORRECTION.
             <b style={{ color: C.muted }}> Chart structure</b> = trendlines, 3-touch levels and cups on the daily chart, graded like Options Ideas. Not a recommendation.
           </div>
