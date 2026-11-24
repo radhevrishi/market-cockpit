@@ -81,7 +81,7 @@ export function regimeRule(k: RegimeKind): { maxTop: number; supportOnly: boolea
     case 'BULL': return { maxTop: MAX_TOP, supportOnly: false, size: 'normal size', word: 'aggressive — dips are buyable' };
     case 'RECOVERY': return { maxTop: MAX_TOP, supportOnly: false, size: 'normal size', word: 'post-sell-off window — best time for new longs' };
     case 'PULLBACK': return { maxTop: 4, supportOnly: true, size: 'half size', word: 'careful — support entries only' };
-    case 'CORRECTION': return { maxTop: 4, supportOnly: true, size: 'half size', word: 'defensive — half size, support / retest entries only' };
+    case 'CORRECTION': return { maxTop: 4, supportOnly: true, size: 'half size', word: 'defensive — support / retest entries only' };
     case 'BEAR': return { maxTop: 0, supportOnly: true, size: 'no new longs', word: 'defensive — no new long picks, watch only' };
     default: return { maxTop: 4, supportOnly: true, size: 'half size', word: 'regime unknown — treated as CORRECTION' };
   }
@@ -166,6 +166,10 @@ export function scoreCandidate(c: Candidate, today: string): Scored {
   else if (t && t.px != null && t.sma50 != null && t.sma200 != null) {
     const cs = cheatSetup(t.px, t.sma50, t.sma200);
     if (cs && cs.stopMa && cs.riskPct != null) entry = { kind: cs.setup === 'EXTENDED' ? 'extended above the 50-day — wait' : cs.setup === 'DRIFT' ? 'between averages' : cs.setup === 'AT_200' ? '200-day retest' : '50-day pullback', stop: t.px * (1 - cs.riskPct / 100), riskPct: cs.riskPct, trigger: null };
+  }
+  if (entry?.riskPct != null && entry.riskPct < 1.5 && !vetoes.length) {
+    const w = `stop only ${fmt1(entry.riskPct)}% away — normal daily moves can hit it; use a closing-price stop`;
+    warnings.push(w); breakdown.push(`! ${w}`);
   }
   return { market: c.market, ticker: c.ticker, company: c.company, held: c.held, score, families: fams, familyCount, evidence: counted, quality, vetoes, warnings, excluded, entry, rewarded, resultsOn: c.resultsOn, tech: t, breakdown };
 }

@@ -44,6 +44,19 @@ async function source<T>(sources: SourceStatus[], id: string, label: string, ms:
   }
 }
 
+/** "revenue FY27 ₹1,200–1,300 → ₹1,400–1,500 Cr (+15%)" from an intel_event changes list. */
+function guidanceLine(raw: unknown): string | null {
+  const list = Array.isArray(raw) ? raw : [];
+  const c: any = list.find((x: any) => x && x.after && (x.after.low != null || x.after.high != null));
+  if (!c) return null;
+  const rng = (v: any) => { if (!v) return null; const f = (n: any) => (n == null ? null : Number(n).toLocaleString('en-IN', { maximumFractionDigits: 1 })); const lo = f(v.low), hi = f(v.high); const body = lo && hi && lo !== hi ? `${lo}–${hi}` : (lo || hi); if (!body) return null; const u = String(v.unit || '').toLowerCase(); return u === '%' || u === 'pct' || u === 'percent' ? `${body}%` : `${v.currency === 'USD' ? '$' : v.currency === 'INR' ? '₹' : ''}${body}${u && u !== 'absolute' ? ' ' + v.unit : ''}`; };
+  const a = rng(c.after); if (!a) return null;
+  const b = rng(c.before);
+  const pct = typeof c.pct === 'number' && isFinite(c.pct) ? ` (${c.pct > 0 ? '+' : ''}${Math.round(c.pct)}%)` : typeof c.pp === 'number' && isFinite(c.pp) ? ` (${c.pp > 0 ? '+' : ''}${c.pp.toFixed(1)} pts)` : '';
+  const metric = String(c.metric || 'guidance').replace(/_/g, ' ').toLowerCase();
+  return `${metric}${c.period ? ' ' + c.period : ''} ${b ? `${b} → ` : ''}${a}${pct}`;
+}
+
 function regimeOf(raw: any): RegimeKind { const k = String(raw?.kind || '').toUpperCase(); return (['BULL', 'RECOVERY', 'PULLBACK', 'CORRECTION', 'BEAR'] as string[]).includes(k) ? k as RegimeKind : 'UNKNOWN'; }
 
 export async function runBestPicks(o: RunOpts): Promise<BestPicksOut> {
@@ -138,7 +151,7 @@ export async function runBestPicks(o: RunOpts): Promise<BestPicksOut> {
     const { ensureSchema } = await import('@/lib/db-migrate');
     if (!getPool() || !(await ensureSchema())) throw new Error('database not available');
     const q = await getPool()!.query(
-      `SELECT id, market, ticker, company, event_type, event_date, status, verification, headline, source_url, last_seen FROM intel_event
+      `SELECT id, market, ticker, company, event_type, event_date, status, verification, headline, changes, source_url, last_seen FROM intel_event
         WHERE ticker IS NOT NULL AND event_type IN ('GUIDANCE_FORMAL_UPGRADE','GUIDANCE_DOWNGRADE') AND status = 'CARD'
           AND COALESCE(event_date, last_seen::date) >= (current_date - 45) ORDER BY event_date DESC NULLS LAST LIMIT 1500`);
     let newest: string | null = null;
@@ -150,7 +163,7 @@ export async function runBestPicks(o: RunOpts): Promise<BestPicksOut> {
       if (!c) continue;
       if (r.event_type === 'GUIDANCE_DOWNGRADE') { if (!c.guidanceCut || (d && d > c.guidanceCut)) c.guidanceCut = d; continue; }
       const verified = String(r.verification || '').toUpperCase() === 'VERIFIED';
-      add(c, { family: 'GUIDANCE', tool: 'Guidance Upgrades', points: verified ? 20 : 12, line: `${verified ? 'verified ' : ''}guidance raise — ${String(r.headline || '').slice(0, 120)}`, date: d, id: `gu:${r.id}`, url: r.source_url || null });
+      add(c, { family: 'GUIDANCE', tool: 'Guidance Upgrades', points: verified ? 20 : 12, line: `${verified ? 'verified ' : ''}guidance raise — ${guidanceLine(r.changes) || String(r.headline || '').slice(0, 120)}`, date: d, id: `gu:${r.id}`, url: r.source_url || null });
     }
     // a raise newer than the cut wins
     for (const c of cands.values()) if (c.guidanceCut && c.evidence.some((e) => e.family === 'GUIDANCE' && e.date && e.date > c.guidanceCut!)) c.guidanceCut = null;
@@ -162,16 +175,19 @@ export async function runBestPicks(o: RunOpts): Promise<BestPicksOut> {
     const { loadReviewed } = await import('@/lib/transformational/reviewed');
     const { loadVerifies } = await import('@/lib/transformational/verify-server');
     const { applyVerify } = await import('@/lib/transformational/verify');
-    const { buildBoard, chanceOf, bestHeadline } = await import('@/lib/transformational/core');
+    const { buildBoard, chanceOf, bestHeadline, RESULTS_RELEASE_RE } = await import('@/lib/transformational/core');
     const raw = await loadReviewed(52);
     const vs = await loadVerifies(raw.filter((x) => x.needsCheck).map((x) => x.id));
     const board = buildBoard(raw.map((x) => applyVerify(x, vs.get(x.id))), today, 45);
     let k = 0;
     for (const x of board.items) {
       if (x.kind === 'RESULTS' || x.kind === 'GUIDANCE') continue;   // counted by the earnings / guidance families
+      const hl = bestHeadline(x);
+      // a results release or a bare "Announcement under Regulation 30" is not a separate business event
+      if (RESULTS_RELEASE_RE.test(hl) || /\b(?:consolidated|standalone) (?:revenue|results)\b/i.test(hl) || /^\s*announcement under reg/i.test(hl)) continue;
       const ch = chanceOf(x);
       if (ch.label !== 'HIGH' && ch.label !== 'MEDIUM') continue;
-      add(cand(x.market as Mkt, x.ticker, x.company), { family: 'EVENT', tool: 'Transformational Gainers', points: ch.label === 'HIGH' ? 20 : 12, line: `${bestHeadline(x).slice(0, 130)} (multibagger chance ${ch.label.toLowerCase()})`, date: x.eventDate || x.sessionDate, id: `tg:${x.id}`, url: x.sourceUrl });
+      add(cand(x.market as Mkt, x.ticker, x.company), { family: 'EVENT', tool: 'Transformational Gainers', points: ch.label === 'HIGH' ? 20 : 12, line: `${hl.slice(0, 130)} (multibagger chance ${ch.label.toLowerCase()})`, date: x.eventDate || x.sessionDate, id: `tg:${x.id}`, url: x.sourceUrl });
       k++;
     }
     return { v: true, asOf: board.to, count: k };
