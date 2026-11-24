@@ -585,6 +585,9 @@ export const APP_JOBS: readonly AppJob[] = [
   // zzz914 — owner briefs moved in from Claude scheduled tasks (they needed the owner's Mac awake; the book is on the server now).
   // Morning conviction brief: 04:29 UTC Mon–Fri (≈06:30 Berlin). Thesis watch: 02:15 UTC Mon–Fri (≈07:45 IST). The route sends
   // once per day; a run that composed but could not deliver (no channel set up) reports ok=false so the heartbeat shows it.
+  // zzz1305 — the Daily Best Picks email: every Tier-1 source + confirmation, confluence-ranked, once a weekday at 13:40 UTC (14:40 Berlin):
+  // India has closed and been processed, US results are out, 50 min before the US open. No AI. Not retried (send-once key guards a re-send).
+  { name: 'best-picks', crons: ['40 13 * * 1-5'], timeoutMs: 4 * MIN, workflow: 'owner-briefs.yml', does: 'POST /api/v1/cron/best-picks (stored data only, no AI)', run: async (ctx) => (await import('./owner-briefs/job')).ownerBriefJob(ctx, '/api/v1/cron/best-picks', false) },
   { name: 'conviction-catalyst-brief', crons: ['29 4 * * 1-5'], timeoutMs: 4 * MIN, workflow: 'owner-briefs.yml', does: 'POST /api/v1/cron/conviction-catalyst-brief (rules + stored research; AI only for new names, ≤ $0.05 a run)', run: async (ctx) => (await import('./owner-briefs/job')).ownerBriefJob(ctx, '/api/v1/cron/conviction-catalyst-brief', false) },
   // zzz1051 — document search: index new company documents (Postgres full text) and add meaning vectors within SEARCH_EMBED_DAILY_USD
   // (default $0.10 a UTC day). In-process; paid calls are never retried by the scheduler.

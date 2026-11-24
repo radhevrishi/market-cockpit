@@ -4503,3 +4503,17 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   carries `retest` (`retestOf` in options-ideas/server). A fresh chart read wins over the scan. In that view the chart is read for every
   ranked name in the market (≤ 300, 3 at a time). Retest rows show trigger / stop / T1 under the entry type, +5 on the score, and count
   in "Best entries".
+- zzz1305 (24 Nov): DAILY BEST PICKS email (owner plan approved "do": one email, large caps out, holdings in an add-on list).
+  `lib/best-picks/score.ts` (pure confluence): families EARNINGS (server benches bench:server:v1 / bench:us:server:v1, BB 25 / STRONG 18,
+  ≤ 45 d) · GUIDANCE (intel_event GUIDANCE_FORMAL_UPGRADE status CARD, verified 20 / 12; DOWNGRADE = veto) · EVENT (Transformational
+  Gainers board, chance HIGH 20 / MEDIUM 12, RESULTS/GUIDANCE kinds skipped) · RADAR (transformation-screener CONFIRMED 20 / WATCH 10) ·
+  SETUP (Options Ideas A+ 15 / A 10 call setups, or the price on a rising 50 / 200-day via cheatSetup 10). Quality +5 RS ≥ 70, +5 R40 ≥ 40
+  or ROCE ≥ 20. Same-filing result + guidance = 1.5 families; top needs ≥ 2 families incl. a catalyst; ≥ 3 → ×1.15. Vetoes: not Stage 2,
+  Stage 2 weakening, below 200-day, traded < ₹3 Cr / $3M, rewarded (lib/rewarded), guidance cut. Left out: > ₹30,000 Cr / $10B, logbook
+  REJECTED with nothing newer. Regime (/api/market/regime + market-panel): BULL/RECOVERY 7, PULLBACK/CORRECTION/UNKNOWN 4 + support /
+  retest entries only, BEAR 0. Repeat rule (best-picks:v1:sent): back on top only with a new evidence id, score +10, a newly triggered
+  setup, or 14 days later; else "still valid". `render.ts` (white page, text + Telegram copy, quiet-day subject, partial-data banner,
+  system-health table), `run.ts` (each source timed, failed source named; regime AND screener both failed → no picks), route
+  `/api/v1/cron/best-picks` (?dry=1, ?force=1, ?last=1; service key or owner login), page `/best-picks` (Today hub: last email, full
+  scoring, preview + test send), job `best-picks` 40 13 * * 1-5. No AI. Overlapping emails (daily-summary, eo-blockbuster ×2, movers /
+  watchlist alerts) stay until the owner confirms retiring them after ~2 weeks.

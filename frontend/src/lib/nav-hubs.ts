@@ -31,6 +31,7 @@ export const HUBS: Hub[] = [
     id: 'today', label: 'Today', icon: '🛩️', home: '/cockpit', blurb: 'What needs doing now: actions, alerts, the weekly review.',
     tabs: [
       { href: '/cockpit', label: 'Action Cockpit' },
+      { href: '/best-picks', label: 'Best Picks' },
       { href: '/', label: 'Home Dashboard' },
       { href: '/orders', label: 'Signals', more: [{ href: '/signals', label: 'Signals board' }] },
       { href: '/alerts-center', label: 'Alerts' },
