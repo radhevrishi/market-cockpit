@@ -14,7 +14,7 @@ import type { PBar } from '../chart-patterns';
 import { findSetups, SETUP_META, SETUPS_VERSION, type Setup, type SetupId } from './setups';
 import { classify, historyFor, indexCtx, rawFromSetup, type Classified, type GroupStats, type Grade } from './model';
 import { planOption, type OptionPlan, pickExpiry, syntheticExpiries } from './options';
-import { usChain, inChain, nseLots } from './chain';
+import { usChain, inChain, nseLots, chainError } from './chain';
 import { simulate, barMs } from './backtest';
 import { STUDY } from './model-coeffs';
 
@@ -35,7 +35,7 @@ export interface Idea {
   /** set when this group made money in the study overall but lost money after the hold-out date */
   caution: string | null;
 }
-export interface TickerResult { ok: boolean; market: Mkt; ticker: string; name: string | null; price: number | null; asOf: string | null; ideas: Idea[]; noSetup: string | null; error?: string; bars?: Array<[number, number, number, number, number]> }
+export interface TickerResult { chainNote?: string | null; ok: boolean; market: Mkt; ticker: string; name: string | null; price: number | null; asOf: string | null; ideas: Idea[]; noSetup: string | null; error?: string; bars?: Array<[number, number, number, number, number]> }
 
 const toP = (b: { t: number; o: number; h: number; l: number; c: number; v: number }[]): PBar[] => b.filter((q) => q && q.l > 0 && Number.isFinite(q.c)).map((q) => ({ t: q.t, o: q.o, h: q.h, l: q.l, c: q.c, v: q.v || 0 }));
 const fmt = (m: Mkt, x: number) => (m === 'US' ? `$${x.toFixed(2)}` : `₹${x.toFixed(2)}`);
@@ -105,6 +105,7 @@ export async function analyseTicker(market: Mkt, tickerIn: string, opts: { chain
     });
   }
   if (market === 'IN' && lot == null) out.noSetup = out.noSetup ?? null;
+  if (opts.chain) out.chainNote = chainError.get(`${market === 'US' ? 'us' : 'in'}:${ticker}`) ?? null;
   const g = { A: 0, B: 1, C: 2 } as const;
   out.ideas.sort((a, b) => g[a.grade] - g[b.grade] || b.setup.quality - a.setup.quality);
   return out;

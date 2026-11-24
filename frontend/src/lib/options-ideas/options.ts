@@ -152,8 +152,11 @@ export function planOption(p: PlanInput): OptionPlan | null {
   const dte = daysBetween(p.now, ex), T = dte / 365;
   const calDays = Math.ceil(Math.max(3, Math.min(60, p.expSessions)) * 1.45);
   const tHit = Math.min(T * 0.9, calDays / 365), tStop = Math.min(T * 0.9, (calDays * 0.5) / 365);
-  const chainSide = p.chain?.byExpiry?.[ex] ? (call ? p.chain.byExpiry[ex].calls : p.chain.byExpiry[ex].puts) : null;
-  const strikes = chainSide?.length ? chainSide.map((q) => q.strike) : syntheticStrikes(p.market, p.spot);
+  const chainSide0 = p.chain?.byExpiry?.[ex] ? (call ? p.chain.byExpiry[ex].calls : p.chain.byExpiry[ex].puts) : null;
+  const strikes = chainSide0?.length ? chainSide0.map((q) => q.strike) : syntheticStrikes(p.market, p.spot);
+  // outside market hours Yahoo sends bid = ask = 0, OI 0 and a placeholder IV: then the chain gives the real strikes and expiry only
+  const quotesLive = !!chainSide0?.some((q) => (q.bid ?? 0) > 0 && (q.ask ?? 0) > 0);
+  const chainSide = quotesLive ? chainSide0 : null;
   const crush = p.nextEarnings && p.nextEarnings <= ex ? 0.85 : 1;
   const priced: Array<OptionPick & { absDelta: number; liquid: boolean }> = [];
   for (const K of strikes) {
@@ -183,7 +186,9 @@ export function planOption(p: PlanInput): OptionPlan | null {
       absDelta: Math.abs(now.delta), liquid,
     });
   }
-  const pool = priced.filter((x) => x.liquid);
+  const liquidPool = priced.filter((x) => x.liquid);
+  const thin = !liquidPool.length && priced.length > 0;
+  const pool = thin ? priced : liquidPool;
   if (!pool.length) return null;
   const near = (d: number) => [...pool].sort((a, b) => Math.abs(a.absDelta - d) - Math.abs(b.absDelta - d))[0] ?? null;
   const td = p.targetDelta ?? 0.5;
@@ -192,7 +197,10 @@ export function planOption(p: PlanInput): OptionPlan | null {
   const strip = (x: (typeof pool)[number] | null): OptionPick | null => { if (!x) return null; const { absDelta: _a, liquid: _l, ...o } = x; return o; };
   const saferC = near(0.7), aggC = near(0.35);
   const notes: string[] = [];
-  if (best.premiumSource === 'model') notes.push(`Premium is a model price (volatility ${best.iv}%) — no live option chain was available; check the real bid / ask before trading.`);
+  if (thin) notes.push('Thin options: no strike near the money has open interest ≥ ' + (p.market === 'US' ? 100 : 50) + ' or volume ≥ 20 with a spread ≤ 15% — fills may be poor; consider trading the stock instead.');
+  if (best.premiumSource === 'model') notes.push(chainSide0?.length && !quotesLive
+    ? `Listed strikes and expiry are real, but the chain has no live bid / ask right now (outside market hours) — premium is a model price (volatility ${best.iv}%).`
+    : `Premium is a model price (volatility ${best.iv}%) — no live option chain was available; check the real bid / ask before trading.`);
   if (!p.chain?.expiries?.length) notes.push(p.market === 'US' ? 'Expiry from the standard Friday / monthly calendar — confirm it is listed.' : 'NSE stock options expire on the last Tuesday of the month (a holiday moves it earlier) — confirm in the broker.');
   if (p.nextEarnings && p.nextEarnings <= ex) notes.push(`Results expected around ${p.nextEarnings}, before expiry — option prices usually drop after results (priced in above).`);
   notes.push(`Expiry: at least ${pe.need} days, so the move gets about 1.6× the time it usually took (median ~${Math.round(p.expSessions)} sessions to target 1).`);

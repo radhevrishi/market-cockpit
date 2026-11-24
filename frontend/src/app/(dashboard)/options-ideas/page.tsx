@@ -184,6 +184,7 @@ function OneTab({ market }: { market: Mkt }) {
       </div>
       {r && !r.ok ? <div style={{ ...card, color: '#EF4444' }}>{r.error || 'Could not read this company.'}</div> : null}
       {r?.ok && !r.ideas?.length ? <div style={card}><div style={{ fontSize: 18, fontWeight: 900 }}>{r.ticker} <span style={{ fontSize: 13, color: 'var(--mc-text-3)', fontWeight: 500 }}>{r.name}</span></div><div style={{ marginTop: 6, fontSize: 15 }}>⛔ <b>No valid setup.</b> {r.noSetup}</div></div> : null}
+      {r?.ok && r.ideas?.length && r.chainNote ? <div style={{ fontSize: 12.5, color: '#F59E0B' }}>Live option chain not available ({r.chainNote}) — premiums below are model prices.</div> : null}
       {r?.ok && r.ideas?.length ? r.ideas.map((i: any) => <IdeaCard key={i.setup.id} idea={i} bars={r.bars} />) : null}
     </div>
   );

@@ -10,6 +10,8 @@ import { nseApiFetch } from '../nse';
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 const memo = new Map<string, { at: number; v: any }>();
+/** why the last chain read failed (shown on the page so a model price is explained) */
+export const chainError = new Map<string, string>();
 const CHAIN_TTL = 15 * 60_000;
 function getMemo<T>(k: string, ttl: number): T | undefined { const h = memo.get(k); return h && Date.now() - h.at < ttl ? (h.v as T) : undefined; }
 function setMemo(k: string, v: any) { memo.set(k, { at: Date.now(), v }); if (memo.size > 400) { const first = memo.keys().next().value; if (first) memo.delete(first); } }
@@ -27,17 +29,18 @@ export async function usChain(ticker: string, pick: (expiries: string[]) => stri
   const hit = getMemo<Chain | null>(k, CHAIN_TTL);
   if (hit !== undefined) return hit;
   const c = await yahooCrumb();
-  if (!c) return null;
+  if (!c) { chainError.set(k, 'Yahoo refused the options sign-in (crumb)'); return null; }
   const base = `https://query2.finance.yahoo.com/v7/finance/options/${encodeURIComponent(ticker)}`;
   const get = async (date?: number) => {
     const u = `${base}?crumb=${encodeURIComponent(c.crumb)}${date ? `&date=${date}` : ''}`;
     const r = await fetch(u, { headers: { 'User-Agent': UA, Cookie: c.cookie }, cache: 'no-store', signal: AbortSignal.timeout(9000) });
-    if (!r.ok) return null;
+    if (!r.ok) { chainError.set(k, `Yahoo options HTTP ${r.status}`); return null; }
     return (await r.json())?.optionChain?.result?.[0] ?? null;
   };
   try {
     const first = await get();
-    if (!first) { setMemo(k, null); return null; }
+    if (!first) { if (!chainError.has(k)) chainError.set(k, 'Yahoo returned no option chain'); setMemo(k, null); return null; }
+    chainError.delete(k);
     const unix: number[] = (first.expirationDates ?? []).filter((x: any) => typeof x === 'number');
     const expiries = unix.map(isoOfUnix);
     const want = new Set(pick(expiries));
@@ -52,7 +55,7 @@ export async function usChain(ticker: string, pick: (expiries: string[]) => stri
     const chain: Chain = { expiries, byExpiry, source: 'Yahoo options', asOf: new Date().toISOString() };
     setMemo(k, chain);
     return chain;
-  } catch { return null; }
+  } catch (e: any) { chainError.set(k, `Yahoo options: ${String(e?.message || e).slice(0, 80)}`); return null; }
 }
 
 const MON: Record<string, string> = { JAN: '01', FEB: '02', MAR: '03', APR: '04', MAY: '05', JUN: '06', JUL: '07', AUG: '08', SEP: '09', OCT: '10', NOV: '11', DEC: '12' };
@@ -91,6 +94,7 @@ export async function inChain(symbol: string): Promise<Chain | null> {
   if (hit !== undefined) return hit;
   let chain: Chain | null = null;
   try { chain = parseNseChain(await nseApiFetch(`/api/option-chain-equities?symbol=${encodeURIComponent(symbol)}`, CHAIN_TTL)); } catch { chain = null; }
+  if (chain) chainError.delete(k); else chainError.set(k, 'NSE option chain could not be read from the server');
   setMemo(k, chain);
   return chain;
 }

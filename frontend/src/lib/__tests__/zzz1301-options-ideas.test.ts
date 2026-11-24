@@ -103,3 +103,15 @@ test('zzz1301 — study numbers present; grade A calls positive before and after
   assert.ok(STUDY.groups['ALL|PUT|C'].trailR < 0);
   assert.ok(HUBS.some((h) => h.tabs.some((t) => t.href === '/options-ideas')));
 });
+
+test('zzz1301 — chain outside market hours (bid = ask = 0): real strikes / expiry, model price, said so', () => {
+  const closes = Array.from({ length: 90 }, (_, i) => 30 + Math.sin(i / 5));
+  const ex = '2026-12-31';
+  const q = (k: number) => ({ strike: k, bid: 0, ask: 0, last: 0.2, iv: 0.2500075, oi: 0, volume: 1 });
+  const chain = { expiries: ['2026-11-27', ex], byExpiry: { [ex]: { calls: [27, 28, 29, 30, 31, 32, 33].map(q), puts: [] } }, source: 'test', asOf: null };
+  const o = planOption({ market: 'US', call: true, spot: 30, entry: 30, stop: 28.5, target1: 33, target2: 35, expSessions: 12, closes, now: new Date('2026-11-24T12:00:00Z'), chain })!;
+  assert.equal(o.expiry, ex);
+  assert.ok([27, 28, 29, 30, 31, 32, 33].includes(o.strike));
+  assert.equal(o.premiumSource, 'model');
+  assert.ok(o.notes.some((n) => /no live bid \/ ask/.test(n)));
+});
