@@ -4517,3 +4517,7 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   `/api/v1/cron/best-picks` (?dry=1, ?force=1, ?last=1; service key or owner login), page `/best-picks` (Today hub: last email, full
   scoring, preview + test send), job `best-picks` 40 13 * * 1-5. No AI. Overlapping emails (daily-summary, eo-blockbuster ×2, movers /
   watchlist alerts) stay until the owner confirms retiring them after ~2 weeks.
+  zzz1305b/c (live dry run): results releases / "consolidated revenue" / bare Reg-30 notices on the TG board are not a separate EVENT
+  family (TALBROAUTO, TINNARUBR were double-counting their result); guidance line shows the actual figures from intel_event.changes;
+  a vague ("other") raise scores 8 and a < 5% raise 10; vetoes RS < 40 and no-stage 5%+ under the 50-day (OMPOWER RS 12); stops
+  under 1.5% get a warning. First test email delivered 24 Nov by e-mail; Telegram returned 401 (bot token stale — owner action).
