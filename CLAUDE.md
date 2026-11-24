@@ -4498,3 +4498,8 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   Bounce: the 50-day leg needs the price under the 21-day EMA (else every 50-day rest was also "oversold" → inflated ⭐ both);
   names > 60% above the 200-day −10 bounce points. Stop prices with decimals (`fmtPx`), all bounce reasons shown, "max" on a size
   capped at 15%, company names cleaned of share-class text.
+- zzz1304 (24 Nov): Entry Desk "📐 Breakout + retest" view (?lens=retest, nav "more" link): a breakout_retest / cup_retest setup
+  (Options Ideas rules) from the stored daily scan (`/api/v1/options-ideas?market=`) or the row's chart read — StructureBrief now
+  carries `retest` (`retestOf` in options-ideas/server). A fresh chart read wins over the scan. In that view the chart is read for every
+  ranked name in the market (≤ 300, 3 at a time). Retest rows show trigger / stop / T1 under the entry type, +5 on the score, and count
+  in "Best entries".

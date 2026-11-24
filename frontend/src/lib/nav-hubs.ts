@@ -86,7 +86,7 @@ export const HUBS: Hub[] = [
       { href: '/multibagger?tab=technicals-ind', label: 'Technicals', us: '/multibagger?tab=technicals-usa' },
       { href: '/market-snapshot?tab=movers', label: 'Movers' },
       { href: '/options-ideas', label: 'Options Ideas' },
-      { href: '/cheat-entry', label: 'Entry Desk', more: [{ href: '/cheat-entry?lens=bounce', label: 'Oversold bounces' }] },
+      { href: '/cheat-entry', label: 'Entry Desk', more: [{ href: '/cheat-entry?lens=bounce', label: 'Oversold bounces' }, { href: '/cheat-entry?lens=retest', label: 'Breakout + retest' }] },
       { href: '/volume-rules', label: 'Volume Rules' },
     ],
   },

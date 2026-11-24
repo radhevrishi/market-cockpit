@@ -310,7 +310,14 @@ export async function readScan(m: Mkt): Promise<ScanSnapshot | null> { return kv
 export { syntheticExpiries };
 
 // ─── zzz1301n — slim per-company structure for other boards (Cheat Entry "Chart structure" column) ────────────────────────
-export interface StructureBrief { ticker: string; market: Mkt; ok: boolean; best: { grade: Grade; label: string; side: 'CALL' | 'PUT' } | null; setups: number; lines: number; levels: number; nearest: string | null; nearestPct: number | null }
+/** zzz1304 — a bullish breakout (or cup rim) retest on the chart, for the Entry Desk's "Breakout + retest" view */
+export interface RetestBrief { grade: Grade; label: string; trigger: number; stop: number; target1: number; riskPct: number; triggered: boolean; why: string }
+export function retestOf(ideas: Idea[]): RetestBrief | null {
+  const i = ideas.find((x) => x.setup.id === 'breakout_retest' || x.setup.id === 'cup_retest');
+  if (!i) return null;
+  return { grade: i.grade, label: i.setup.label, trigger: i.setup.trigger, stop: i.setup.stop, target1: i.setup.target1, riskPct: i.setup.riskPct, triggered: i.setup.triggered, why: i.setup.reasons.join(' · ') };
+}
+export interface StructureBrief { ticker: string; market: Mkt; ok: boolean; best: { grade: Grade; label: string; side: 'CALL' | 'PUT' } | null; setups: number; lines: number; levels: number; nearest: string | null; nearestPct: number | null; retest?: RetestBrief | null }
 export async function structureBriefs(market: Mkt, tickers: string[]): Promise<StructureBrief[]> {
   const out: StructureBrief[] = [];
   await Promise.all(tickers.map(async (t) => {
@@ -322,6 +329,7 @@ export async function structureBriefs(market: Mkt, tickers: string[]): Promise<S
       ticker: r.ticker, market, ok: true, best: best ? { grade: best.grade, label: best.setup.label, side: best.setup.side } : null, setups: r.ideas.length,
       lines: best ? best.setup.lines.length : r.structure?.lines.length ?? 0, levels: r.structure?.levels.length ?? 0,
       nearest: w ? w.what.split('.')[0] : null, nearestPct: w ? w.distPct : null,
+      retest: retestOf(r.ideas),
     });
   }));
   return out;

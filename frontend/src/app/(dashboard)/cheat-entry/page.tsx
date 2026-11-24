@@ -69,7 +69,9 @@ interface Candidate {
 type RegimeKind = 'BULL' | 'PULLBACK' | 'CORRECTION' | 'BEAR' | 'RECOVERY' | 'UNKNOWN';
 interface RegimeSide { kind: RegimeKind; note?: string; drawdownPct?: number }
 type Regimes = { IND: RegimeSide | null; USA: RegimeSide | null };
-type Lens = 'best' | 'support' | 'bounce' | 'both' | 'all';
+type Lens = 'best' | 'support' | 'bounce' | 'both' | 'retest' | 'all';
+/** zzz1304 — a breakout (or cup rim) retest found on the chart: from the stored Options Ideas scan or the row's chart read */
+interface Retest { grade: string; label: string; trigger: number; stop: number; target1: number; riskPct: number; triggered: boolean; why: string }
 
 interface LiveQuote { price: number; chg: number | null; company?: string }
 // zzz1303 — the stock-screener snapshot (slim answer): averages, price, today's change, RS, name, industry for names the browser's
@@ -283,17 +285,37 @@ async function fetchLiveQuotes(): Promise<Map<string, LiveQuote>> {
 }
 
 const LENS_META: Record<Lens, { label: string; color: string; hint: string }> = {
-  best:    { label: '✅ Best entries', color: 'var(--mc-bullish)', hint: 'On a rising 50- or 200-day average, or an oversold dip in a trusted name' },
+  best:    { label: '✅ Best entries', color: 'var(--mc-bullish)', hint: 'On a rising 50- or 200-day average, an oversold dip, or a breakout retest in a trusted name' },
   both:    { label: '⭐ Both signals', color: '#A855F7', hint: 'On support AND oversold — the strongest dip-buy read' },
   support: { label: '🎯 On support', color: 'var(--mc-cyan)', hint: 'Resting on a rising 50- or 200-day average (the old Cheat Entry board)' },
   bounce:  { label: '🌊 Oversold bounce', color: '#A78BFA', hint: 'Hard down day, under the 21-day EMA, or into the 50-day band — above the 200-day (the old Bounce Desk)' },
+  retest:  { label: '📐 Breakout + retest', color: '#F59E0B', hint: 'Broke a resistance tested 3+ times (or a cup rim), came back to it and is holding above — the second-chance entry' },
   all:     { label: 'All', color: 'var(--mc-text-3)', hint: 'Every ranked name, extended and drifting included' },
 };
-const LENSES: Lens[] = ['best', 'both', 'support', 'bounce', 'all'];
+const LENSES: Lens[] = ['best', 'both', 'support', 'bounce', 'retest', 'all'];
 const PREFS_KEY = 'mc:entry-desk:v1';
 const isSupport = (c: Candidate) => c.setup === 'AT_200' || c.setup === 'AT_50';
-const inLens = (c: Candidate, l: Lens) =>
-  l === 'all' ? true : l === 'support' ? isSupport(c) : l === 'bounce' ? c.bounce : l === 'both' ? isSupport(c) && c.bounce : isSupport(c) || c.bounce;
+const inLens = (c: Candidate, l: Lens, rt: Retest | null) =>
+  l === 'all' ? true : l === 'support' ? isSupport(c) : l === 'bounce' ? c.bounce : l === 'both' ? isSupport(c) && c.bounce : l === 'retest' ? !!rt : isSupport(c) || c.bounce || !!rt;
+const retestFromIdea = (i: any): Retest | null => (i && (i.setup?.id === 'breakout_retest' || i.setup?.id === 'cup_retest'))
+  ? { grade: String(i.grade), label: String(i.setup.label), trigger: Number(i.setup.trigger), stop: Number(i.setup.stop), target1: Number(i.setup.target1), riskPct: Number(i.setup.riskPct), triggered: !!i.setup.triggered, why: (i.setup.reasons || []).join(' · ') }
+  : null;
+/** The stored Options Ideas scans (both markets) → breakout retests by `${market}:${ticker}` */
+async function fetchScanRetests(): Promise<Map<string, Retest>> {
+  const out = new Map<string, Retest>();
+  await Promise.all((['US', 'IN'] as const).map(async (m) => {
+    try {
+      const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), 20000);
+      const r = await fetch(`/api/v1/options-ideas?market=${m}`, { signal: ctl.signal }); clearTimeout(to);
+      const j = r.ok ? await r.json() : null;
+      for (const i of (Array.isArray(j?.scan?.ideas) ? j.scan.ideas : [])) {
+        const rt = retestFromIdea(i); const k = `${m === 'IN' ? 'IND' : 'USA'}:${norm(i.ticker)}`;
+        if (rt && !out.has(k)) out.set(k, rt);
+      }
+    } catch { /* the chart read per row still finds them */ }
+  }));
+  return out;
+}
 const REGIME_COL: Record<string, string> = { BULL: 'var(--mc-bullish)', RECOVERY: 'var(--mc-cyan)', PULLBACK: 'var(--mc-warn)', CORRECTION: 'var(--mc-warn)', BEAR: 'var(--mc-bearish)' };
 const REGIME_RULE: Record<string, string> = {
   BULL: 'dips are buyable — full size',
@@ -314,6 +336,7 @@ export default function CheatEntryPage() {
   const [refreshTick, setRefreshTick] = useState(0);
   const [sparks, setSparks] = useState<Map<string, number[]>>(new Map()); // zzz536 — inline price context
   const [ready, setReady] = useState(false);
+  const [scanRetests, setScanRetests] = useState<Map<string, Retest>>(new Map());
 
   // zzz1302 — lens from the address (?lens=bounce — the old /bounce-desk forwards here), market + lens remembered
   useEffect(() => {
@@ -352,6 +375,7 @@ export default function CheatEntryPage() {
     })();
     const liveP = fetchLiveQuotes();
     const snapP = fetchSnapshot();
+    fetchScanRetests().then((m) => { if (aliveRef.current && run === runRef.current) setScanRetests(m); });
     // instant pass — synced prices, board up immediately
     const base = assemble(new Map());
     if (!aliveRef.current || run !== runRef.current) return;
@@ -404,13 +428,20 @@ export default function CheatEntryPage() {
 
   useEffect(() => { aliveRef.current = true; build(); return () => { aliveRef.current = false; }; }, [build, refreshTick]);
 
+  const [briefs, setBriefs] = useState<Map<string, any>>(new Map());
+  // a row's chart read (fresh) wins over the stored scan; a read that found no retest clears the scan's older one
+  const retestOf = useCallback((c: Candidate): Retest | null => {
+    const k = `${c.market}:${c.symbol}`; const b = briefs.get(k);
+    if (b && b.ok && 'retest' in b) return b.retest ?? null;
+    return scanRetests.get(k) ?? null;
+  }, [briefs, scanRetests]);
   const inMarket = useMemo(() => (cands || []).filter((c) => marketF === 'ALL' || c.market === marketF), [cands, marketF]);
   const counts = useMemo(() => {
     const o = {} as Record<Lens, number>;
-    for (const l of LENSES) o[l] = inMarket.filter((c) => inLens(c, l)).length;
+    for (const l of LENSES) o[l] = inMarket.filter((c) => inLens(c, l, retestOf(c))).length;
     return o;
-  }, [inMarket]);
-  const shown = useMemo(() => inMarket.filter((c) => inLens(c, lens)), [inMarket, lens]);
+  }, [inMarket, retestOf]);
+  const shown = useMemo(() => inMarket.filter((c) => inLens(c, lens, retestOf(c))), [inMarket, lens, retestOf]);
   const blocked = useMemo(() => inMarket.filter((c) => c.bounceBlock).length, [inMarket]);
   const atSupport = useMemo(() => inMarket.filter((c) => c.atSupportNow).length, [inMarket]);
 
@@ -422,16 +453,19 @@ export default function CheatEntryPage() {
   });
 
   // zzz1301n — chart structure per row (trendlines / breakout + retest / cups, graded like Options Ideas), loaded for the rows shown
-  const [briefs, setBriefs] = useState<Map<string, any>>(new Map());
   const [sortK, setSortK] = useState<'score' | 'risk' | 'd50' | 'd200' | 'struct' | 'today' | 'bounce'>('score');
-  useEffect(() => { setSortK(lens === 'bounce' ? 'bounce' : 'score'); }, [lens]);
+  useEffect(() => { setSortK(lens === 'bounce' ? 'bounce' : lens === 'retest' ? 'struct' : 'score'); }, [lens]);
   const top = useMemo(() => {
-    const deskScore = (c: Candidate) => (lens === 'bounce' ? c.bounceScore : c.score + (c.bounce && isSupport(c) ? 8 : c.bounce ? 3 : 0));
+    const deskScore = (c: Candidate) => (lens === 'bounce' ? c.bounceScore : c.score + (c.bounce && isSupport(c) ? 8 : c.bounce ? 3 : 0) + (retestOf(c) ? 5 : 0));
     return [...shown].sort((a, b) => deskScore(b) - deskScore(a)).slice(0, 80);
-  }, [shown, lens]);
+  }, [shown, lens, retestOf]);
+  // which rows to read the chart for: the rows shown, and in the Breakout + retest view every ranked name in the market (≤ 300,
+  // best scores first) — a retest can sit on any name, not only those already on support
+  const readList = useMemo(() => (lens === 'retest' ? [...inMarket].sort((a, b) => b.score - a.score).slice(0, 300) : top), [lens, inMarket, top]);
+  const [reading, setReading] = useState(0);
   useEffect(() => {
     let off = false;
-    const need = top.filter((c) => !briefs.has(`${c.market}:${c.symbol}`));
+    const need = readList.filter((c) => !briefs.has(`${c.market}:${c.symbol}`));
     if (!need.length) return;
     (async () => {
       const groups: Array<{ m: 'US' | 'IN'; t: string[] }> = [];
@@ -440,35 +474,39 @@ export default function CheatEntryPage() {
         for (let i = 0; i < ts.length; i += 12) groups.push({ m: mk === 'IND' ? 'IN' : 'US', t: ts.slice(i, i + 12) });
       }
       let gi = 0;
-      await Promise.all([0, 1].map(async () => {
+      setReading(need.length);
+      await Promise.all([0, 1, 2].map(async () => {
         while (gi < groups.length && !off) {
           const g = groups[gi++];
           const j = await fetch(`/api/v1/options-ideas?market=${g.m}&structure=1&tickers=${encodeURIComponent(g.t.join(','))}`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
           if (off || !j?.briefs) continue;
           setBriefs((prev) => { const m = new Map(prev); for (const b of j.briefs) m.set(`${g.m === 'IN' ? 'IND' : 'USA'}:${b.ticker}`, b); return m; });
+          setReading((n) => Math.max(0, n - g.t.length));
         }
       }));
+      if (!off) setReading(0);
     })();
     return () => { off = true; };
-  }, [top]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [readList]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const structRank = (b: any) => (!b ? 9 : b.best ? ({ 'A+': 0, A: 1, B: 2, C: 4 } as any)[b.best.grade] ?? 5 : b.lines + b.levels > 0 ? 6 : 8);
   const rows = useMemo(() => {
     const r = [...top];
     const key = (c: Candidate): number => {
       const b = briefs.get(`${c.market}:${c.symbol}`);
+      const rt = retestOf(c);
       switch (sortK) {
         case 'risk': return c.riskPct ?? 99;
         case 'd50': return Math.abs(c.d50 ?? 99);
         case 'd200': return Math.abs(c.d200 ?? 99);
-        case 'struct': return structRank(b);
+        case 'struct': return rt ? structRank({ best: { grade: rt.grade } }) - 0.5 : structRank(b);
         case 'today': return c.dayChg ?? 99;
         case 'bounce': return -(c.bounce ? c.bounceScore : c.bounceScore - 200);
-        default: return -(c.score + (c.bounce && isSupport(c) ? 8 : c.bounce ? 3 : 0));
+        default: return -(c.score + (c.bounce && isSupport(c) ? 8 : c.bounce ? 3 : 0) + (rt ? 5 : 0));
       }
     };
     return r.sort((a, b) => key(a) - key(b));
-  }, [top, sortK, briefs]);
+  }, [top, sortK, briefs, retestOf]);
 
   const th: React.CSSProperties = { padding: '9px 8px', textAlign: 'left', fontSize: 12, fontWeight: 800, color: C.muted, whiteSpace: 'nowrap', borderBottom: `1px solid ${C.border}`, position: 'sticky', top: 0, background: C.bg, zIndex: 1 };
   const td: React.CSSProperties = { padding: '8px 8px', fontSize: 13.5, borderBottom: `1px solid ${C.border}`, verticalAlign: 'middle', fontVariantNumeric: 'tabular-nums' };
@@ -535,6 +573,7 @@ export default function CheatEntryPage() {
         ))}
         <span style={{ marginLeft: 'auto', fontSize: 12.5, color: C.dim }}>
           {cands ? `${shown.length} names · ${LENS_META[lens].label.replace(/^\S+\s/, '')}` : ''}
+          {lens === 'retest' && reading > 0 ? ` · reading ${reading} more charts…` : ''}
           {blocked > 0 ? ` · ${blocked} oversold names refused (bear regime, decay or stop too far)` : ''}
           {skipped > 0 ? ` · ${skipped} quality names without moving-average data (not in the screener snapshot either)` : ''}
         </span>
@@ -553,7 +592,8 @@ export default function CheatEntryPage() {
       ) : rows.length === 0 ? (
         <div style={{ marginTop: 20, fontSize: 13.5, color: C.muted, border: `1px dashed ${C.border2}`, borderRadius: 10, padding: 16 }}>
           Nothing in &ldquo;{LENS_META[lens].label}&rdquo; right now{marketF !== 'ALL' ? ` for ${marketF === 'IND' ? 'India' : 'USA'}` : ''}.
-          {lens === 'bounce' || lens === 'both' ? ' No trusted name is oversold above its 200-day today — that is normal in a rising market.' : ''}{' '}
+          {lens === 'bounce' || lens === 'both' ? ' No trusted name is oversold above its 200-day today — that is normal in a rising market.' : ''}
+          {lens === 'retest' ? (reading > 0 ? ` Still reading ${reading} charts — retests appear as they are found.` : ' None of your ranked names is retesting a breakout right now.') : ''}{' '}
           <button onClick={() => setLens('all')} style={chip(false, C.cyan)}>Show all ranked names</button>
         </div>
       ) : (
@@ -573,7 +613,7 @@ export default function CheatEntryPage() {
               <tbody>
                 {rows.map((c, i) => {
                   const meta = SETUP_META[c.setup];
-                  const shownScore = c.score + (c.bounce && isSupport(c) ? 8 : c.bounce ? 3 : 0);
+                  const shownScore = c.score + (c.bounce && isSupport(c) ? 8 : c.bounce ? 3 : 0) + (retestOf(c) ? 5 : 0);
                   const scoreCol = shownScore >= 75 ? C.green : shownScore >= 55 ? C.cyan : shownScore >= 40 ? C.amber : C.muted;
                   const b = briefs.get(`${c.market}:${c.symbol}`);
                   const m = c.market === 'IND' ? 'IN' : 'US';
@@ -581,6 +621,7 @@ export default function CheatEntryPage() {
                   const sz = suggestSize({ price: c.livePrice, stopPct: c.riskPct ?? 8 });
                   const szPct = sz ? sz.pctOfPortfolio * (rk === 'CORRECTION' ? 0.5 : 1) : null;
                   const both = c.bounce && isSupport(c);
+                  const rt = retestOf(c);
                   return (
                     <tr key={c.symbol + c.market} style={{ background: both ? 'color-mix(in srgb, #A855F7 7%, transparent)' : c.atSupportNow ? 'color-mix(in srgb, var(--mc-bullish) 6%, transparent)' : undefined }}>
                       <td style={{ ...td, color: C.dim, width: 28 }}>{i + 1}</td>
@@ -591,8 +632,12 @@ export default function CheatEntryPage() {
                         {!both && c.atSupportNow && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 900, color: C.green }}>{c.testingSupport ? '🧪 testing support' : '🔥 at support'}</span>}
                         <div style={{ fontSize: 12, color: C.muted, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.company}</div>
                       </td>
-                      <td style={{ ...td, fontWeight: 900, fontSize: 15.5, color: scoreCol }} title={`Setup ${c.setupScore}/60 + Quality ${c.qualityScore}/40${c.bounce ? ` + ${isSupport(c) ? 8 : 3} oversold` : ''}`}>{shownScore}</td>
-                      <td style={{ ...td, whiteSpace: 'nowrap' }}><span title={meta.blurb} style={{ fontWeight: 800, color: meta.color }}>{meta.label}</span></td>
+                      <td style={{ ...td, fontWeight: 900, fontSize: 15.5, color: scoreCol }} title={`Setup ${c.setupScore}/60 + Quality ${c.qualityScore}/40${c.bounce ? ` + ${isSupport(c) ? 8 : 3} oversold` : ''}${rt ? ' + 5 breakout retest' : ''}`}>{shownScore}</td>
+                      <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                        <span title={meta.blurb} style={{ fontWeight: 800, color: meta.color }}>{meta.label}</span>
+                        {rt && <div title={`${rt.label}: ${rt.why}`} style={{ marginTop: 3, fontSize: 12, fontWeight: 800, color: '#F59E0B' }}>📐 {rt.label} <b style={{ color: '#fff', background: GCOL[rt.grade] || '#64748B', borderRadius: 4, padding: '0 5px', fontSize: 11 }}>{rt.grade}</b>
+                          <div style={{ fontSize: 11, fontWeight: 600, color: C.muted }}>{rt.triggered ? 'holding above' : 'buy above'} {fmtPx(rt.trigger, c.market)} · stop {fmtPx(rt.stop, c.market)} ({rt.riskPct.toFixed(1)}%) · T1 {fmtPx(rt.target1, c.market)}</div></div>}
+                      </td>
                       <td style={{ ...td, minWidth: 150 }}>
                         {c.bounce ? <span title={c.bounceWhy.join(' · ')}><b style={{ color: '#A78BFA', fontSize: 14 }}>🌊 {c.bounceScore}</b><div style={{ fontSize: 11.5, color: C.muted, maxWidth: 240, lineHeight: 1.35 }}>{c.bounceWhy.join(' · ')}</div></span>
                           : c.bounceBlock ? <span title={c.bounceBlock} style={{ fontSize: 12, color: C.red }}>🛑 refused<div style={{ fontSize: 11, color: C.dim, maxWidth: 220 }}>{c.bounceBlock.split(' — ')[0]}</div></span>
@@ -634,6 +679,7 @@ export default function CheatEntryPage() {
           <div style={{ fontSize: 12.5, color: C.dim, marginTop: 12, lineHeight: 1.65 }}>
             <b style={{ color: C.muted }}>Score</b> = setup (0–60) + quality (0–40), +8 when the name is also oversold on support (+3 oversold elsewhere). The setup is the nearest rising average underneath (200-day scores highest, then 50-day); names more than 15% above the 50-day are extended; names graded below 45 by the Multibagger engine are left out unless the Conviction bench vouches.
             <b style={{ color: C.muted }}> Bounce</b> = oversold (down 3%+ today, 3%+ under the 21-day EMA, or back into the 50-day band) while still above the 200-day. Refused in a BEAR regime, when Conviction decay is high, or when the stop is more than 12% away — oversold is not a bottom.
+            <b style={{ color: C.muted }}> 📐 Breakout + retest</b> = a resistance tested 3+ times (or a cup rim) broke 4–40 sessions ago, price came back to it and holds above; its own trigger / stop / first target are shown under the entry type (+5 on the score). From the daily Options Ideas scan plus a chart read of each row.
             <b style={{ color: C.muted }}> Stop risk</b> = drop to a stop 2% under that average; <b style={{ color: C.muted }}>Size</b> risks your set % of the book at that stop, halved in a CORRECTION.
             <b style={{ color: C.muted }}> Chart structure</b> = trendlines, 3-touch levels and cups on the daily chart, graded like Options Ideas. Not a recommendation.
           </div>
