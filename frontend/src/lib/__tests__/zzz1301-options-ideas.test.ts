@@ -193,3 +193,18 @@ test('zzz1301g — no setup: the chart structure and what to wait for', async ()
   for (let i = 1; i < s.watch.length; i++) assert.ok(Math.abs(s.watch[i].distPct) >= Math.abs(s.watch[i - 1].distPct));
   assert.ok(describeStructure(bars.slice(0, 100)).notes.length === 1);
 });
+
+test('zzz1301h — ADR% (TradingView formula) and the 1-day change dated by the live quote', async () => {
+  const { extraCtx, adrBand } = await import('../options-ideas/context');
+  const flat = Array.from({ length: 300 }, (_, i) => ({ t: i, o: 100, h: 103, l: 100, c: 101, v: 1 }));
+  assert.equal(extraCtx(flat).adr, 3);
+  assert.equal(adrBand(1.5), 'calm'); assert.equal(adrBand(6), 'wild');
+  const { closesWithLive } = await import('../options-ideas/market-panel');
+  const d = (s: string) => Date.parse(s + 'T14:00:00Z') / 1000;
+  // Fri close 6910, Mon live 7237, Monday bar already present with a stale close → prev must be Friday's
+  const r = closesWithLive([d('2026-11-19'), d('2026-11-20'), d('2026-11-23')], [7176, 6910, 7100], 7237, d('2026-11-23') + 3600);
+  assert.deepEqual(r.c, [7176, 6910, 7237]); assert.equal(r.prev, 6910);
+  // Monday bar missing (null) → still Friday's close as prev, live appended
+  const r2 = closesWithLive([d('2026-11-20'), d('2026-11-23')], [6910, null], 7237, d('2026-11-23') + 3600);
+  assert.deepEqual(r2.c, [6910, 7237]); assert.equal(r2.prev, 6910);
+});

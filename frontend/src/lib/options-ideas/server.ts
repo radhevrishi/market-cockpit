@@ -38,7 +38,7 @@ export interface Idea {
   /** set when this group made money in the study overall but lost money after the hold-out date */
   caution: string | null;
   /** zzz1301e — context: catalyst, volatility, sector */
-  ctx: { gapDaysAgo: number | null; rvol: number; hvPct: number; hv20: number; sector: string | null; industry: string | null; sectorRet3m: number | null; indexRet3m: number | null; nextResults: string | null };
+  ctx: { gapDaysAgo: number | null; rvol: number; hvPct: number; hv20: number; adr: number; stopInAdr: number | null; t1InAdr: number | null; sector: string | null; industry: string | null; sectorRet3m: number | null; indexRet3m: number | null; nextResults: string | null };
 }
 export interface Regime { bench: string; vs200: number; ret20: number; up: boolean; label: string }
 export function regimeOf(m: Mkt, idx: { vs200: number; ret20: number } | null, vix: number | null = null): Regime | null {
@@ -168,7 +168,7 @@ export async function analyseTicker(market: Mkt, tickerIn: string, opts: { chain
       market, ticker, name: out.name, price: last.c, asOf, setup: st,
       grade: cls.grade, verdict: cls.verdict, checks: cls.checks, strength: cls.strength, regime: cls.regime,
       history: { group: hist.group, setup: hist.setup }, option, plan: planWords(market, st), mc: opts.mc ?? null, cap: capOf(market, opts.mc ?? null),
-      ctx: { gapDaysAgo: ex.gapDaysAgo, rvol: ex.rvol, hvPct: ex.hvPct, hv20: ex.hv20, sector: secRow?.sec ?? null, industry: secRow?.ind ?? null, sectorRet3m: secMed != null ? Math.round(secMed * 10) / 10 : null, indexRet3m: idx ? Math.round(idx.ret60 * 10) / 10 : null, nextResults: nextRes },
+      ctx: { gapDaysAgo: ex.gapDaysAgo, rvol: ex.rvol, hvPct: ex.hvPct, hv20: ex.hv20, adr: ex.adr, stopInAdr: ex.adr > 0 ? Math.round((st.riskPct / ex.adr) * 10) / 10 : null, t1InAdr: ex.adr > 0 ? Math.round((Math.abs(st.target1 / st.entry - 1) * 100 / ex.adr) * 10) / 10 : null, sector: secRow?.sec ?? null, industry: secRow?.ind ?? null, sectorRet3m: secMed != null ? Math.round(secMed * 10) / 10 : null, indexRet3m: idx ? Math.round(idx.ret60 * 10) / 10 : null, nextResults: nextRes },
       caution: (cls.grade === 'A' || cls.grade === 'A+') && hist.group && hist.group.testR < 0 ? `Caution: ${market === 'US' ? 'USA' : 'India'} grade A calls lost ${hist.group.testR} R a trade after ${STUDY.trainedOn.testFrom} (they made ${hist.group.trainR} R before). Size smaller until the live record turns.` : null,
     });
   }

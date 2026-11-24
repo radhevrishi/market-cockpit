@@ -37,6 +37,7 @@ function IdeasTable({ ideas, onOpen, open }: { ideas: any[]; onOpen: (k: string)
       case 'hist': return -(i.history.setup?.trailR ?? i.history.group?.trailR ?? -9);
       case 'opt': return -(i.option?.atTarget1?.retPct ?? -999);
       case 'q': return -i.setup.quality;
+      case 'adr': return -(i.ctx?.adr ?? 0);
       default: return 0;
     }
   };
@@ -47,7 +48,7 @@ function IdeasTable({ ideas, onOpen, open }: { ideas: any[]; onOpen: (k: string)
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead><tr>
           <H k="grade">Grade</H><H k="ticker">Company</H><H k="cap">Size</H><th style={th}>Setup</th><th style={th}>Entry → stop</th><th style={th}>Targets</th>
-          <H k="rr">R:R</H><H k="risk">Risk</H><H k="opt">Option (suggested)</H><H k="hist">Trades like this before</H><H k="q">Quality</H>
+          <H k="rr">R:R</H><H k="risk">Risk</H><H k="adr">ADR%</H><H k="opt">Option (suggested)</H><H k="hist">Trades like this before</H><H k="q">Quality</H>
         </tr></thead>
         <tbody>
           {rows.map((i) => {
@@ -62,11 +63,12 @@ function IdeasTable({ ideas, onOpen, open }: { ideas: any[]; onOpen: (k: string)
                 <td style={td}><span style={{ color: '#10B981' }}>{money(i.market, i.setup.target1)}</span> / {money(i.market, i.setup.target2)}</td>
                 <td style={td}>{i.setup.rr1}</td>
                 <td style={td}>{i.setup.riskPct}%</td>
+                <td style={{ ...td, color: (i.ctx?.adr ?? 0) >= 5.5 ? '#EF4444' : (i.ctx?.adr ?? 0) >= 3.5 ? '#F59E0B' : (i.ctx?.adr ?? 0) < 2 ? '#10B981' : undefined }} title="Average daily range, 20 sessions (TradingView formula). ≥ 5.5% = wild mover, < 2% = calm">{i.ctx?.adr != null ? i.ctx.adr.toFixed(1) : '—'}</td>
                 <td style={td}>{i.option ? <>{money(i.market, i.option.strike)} {i.option.expiry?.slice(5)} · {money(i.market, i.option.premium)}{i.option.premiumSource === 'chain' ? '' : '*'}<div style={{ fontSize: 11.5, color: '#10B981' }}>at T1 {i.option.atTarget1.retPct > 0 ? '+' : ''}{i.option.atTarget1.retPct}%</div></> : '—'}</td>
                 <td style={td}><HistoryLine h={i.history.setup ?? i.history.group} compact /></td>
                 <td style={td}>{i.setup.quality}</td>
               </tr>,
-              open === k ? <tr key={k + ':d'}><td colSpan={11} style={{ padding: 10 }}><IdeaDetail idea={i} /></td></tr> : null,
+              open === k ? <tr key={k + ':d'}><td colSpan={12} style={{ padding: 10 }}><IdeaDetail idea={i} /></td></tr> : null,
             ];
           })}
         </tbody>
@@ -125,6 +127,7 @@ function ScanTab({ market }: { market: Mkt }) {
   const [msg, setMsg] = useState<string | null>(null);
   const [grade, setGrade] = useState<'A+' | 'A' | 'AB'>('A');
   const [hideRes, setHideRes] = useState(true);
+  const [adrF, setAdrF] = useState<'all' | 'calm' | 'wild'>('all');
   const [side, setSide] = useState<'all' | 'CALL' | 'PUT'>('all');
   const [cap, setCap] = useState<'all' | 'sm'>('all');
   const [open, setOpen] = useState<string | null>(null);
@@ -137,7 +140,7 @@ function ScanTab({ market }: { market: Mkt }) {
     load();
   };
   const scan = j?.scan;
-  const ideas = useMemo(() => (scan?.ideas ?? []).filter((i: any) => (grade === 'A+' ? i.grade === 'A+' : grade === 'A' ? i.grade === 'A+' || i.grade === 'A' : i.grade !== 'C') && (side === 'all' || i.setup.side === side) && (cap === 'all' || i.cap === 'small' || i.cap === 'mid') && !(hideRes && i.option?.results?.beforeExpiry)), [scan, grade, side, cap, hideRes]);
+  const ideas = useMemo(() => (scan?.ideas ?? []).filter((i: any) => (grade === 'A+' ? i.grade === 'A+' : grade === 'A' ? i.grade === 'A+' || i.grade === 'A' : i.grade !== 'C') && (side === 'all' || i.setup.side === side) && (cap === 'all' || i.cap === 'small' || i.cap === 'mid') && !(hideRes && i.option?.results?.beforeExpiry) && (adrF === 'all' || (adrF === 'calm' ? (i.ctx?.adr ?? 0) < 3.5 : (i.ctx?.adr ?? 0) >= 3.5))), [scan, grade, side, cap, hideRes, adrF]);
   const throughRes = (scan?.ideas ?? []).filter((i: any) => i.grade !== 'C' && i.option?.results?.beforeExpiry).length;
   // sector heat: trade-grade ideas per sector (3+ = correlated bets)
   const heat = useMemo(() => { const m = new Map<string, number>(); for (const i of (scan?.ideas ?? [])) if ((i.grade === 'A+' || i.grade === 'A') && i.ctx?.sector) m.set(i.ctx.sector, (m.get(i.ctx.sector) ?? 0) + 1); return [...m.entries()].sort((a, b) => b[1] - a[1]); }, [scan]);
@@ -160,6 +163,7 @@ function ScanTab({ market }: { market: Mkt }) {
         {(['all', 'CALL', 'PUT'] as const).map((s) => <button key={s} style={chip(side === s)} onClick={() => setSide(s)}>{s === 'all' ? 'Calls + puts' : s === 'CALL' ? 'Calls' : 'Puts'}</button>)}
         <span style={{ width: 10 }} />
         <button style={chip(cap === 'sm')} onClick={() => setCap(cap === 'sm' ? 'all' : 'sm')}>Small + mid caps only</button>
+        <button style={chip(adrF !== 'all')} onClick={() => setAdrF(adrF === 'all' ? 'calm' : adrF === 'calm' ? 'wild' : 'all')}>{adrF === 'all' ? 'ADR: all' : adrF === 'calm' ? 'ADR < 3.5% (steadier)' : 'ADR ≥ 3.5% (big movers)'}</button>
         <button style={chip(hideRes)} onClick={() => setHideRes(!hideRes)}>Hide ideas held through results{throughRes ? ` (${throughRes})` : ''}</button>
       </div>
       {heat.length ? <div style={{ fontSize: 13, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}><span style={{ color: 'var(--mc-text-3)' }}>Trade ideas by sector:</span>{heat.map(([sec, n]) => <span key={sec} title={n >= 3 ? 'Three or more ideas in one sector move together — take one or two, not all' : ''} style={{ padding: '2px 8px', borderRadius: 999, border: `1px solid ${n >= 3 ? '#F59E0B' : 'var(--mc-border-1)'}`, color: n >= 3 ? '#F59E0B' : 'var(--mc-text-2)', fontWeight: 700 }}>{sec} {n}{n >= 3 ? ' ⚠ same bet' : ''}</span>)}</div> : null}

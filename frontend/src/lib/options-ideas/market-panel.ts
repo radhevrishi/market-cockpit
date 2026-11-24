@@ -13,7 +13,20 @@ export const PANEL_SYMBOLS: Record<Mkt, { index: string; indexName: string; vix:
   IN: { index: '^NSEI', indexName: 'Nifty 50', vix: '^INDIAVIX', vixName: 'India VIX' },
 };
 
-async function yahooCloses(symbol: string): Promise<number[] | null> {
+/** daily closes, oldest first, with today's live price as the last value; `prev` = the previous session's close (the live
+ *  price is dated by regularMarketTime, so a missing / partial bar for today never shifts the 1-day change by a session) */
+export function closesWithLive(ts: number[], closes: Array<number | null>, live: number | null, liveTime: number | null): { c: number[]; prev: number | null } {
+  const day = (t: number) => new Date(t * 1000).toISOString().slice(0, 10);
+  const pts = ts.map((t, i) => ({ d: day(t), c: closes[i] })).filter((p): p is { d: string; c: number } => typeof p.c === 'number' && Number.isFinite(p.c));
+  if (live != null && Number.isFinite(live) && liveTime) {
+    const ld = day(liveTime);
+    const before = pts.filter((p) => p.d < ld);
+    const c = [...before.map((p) => p.c), live];
+    return { c, prev: before.length ? before[before.length - 1].c : null };
+  }
+  return { c: pts.map((p) => p.c), prev: pts.length > 1 ? pts[pts.length - 2].c : null };
+}
+async function yahooCloses(symbol: string): Promise<{ c: number[]; prev: number | null } | null> {
   const path = `/v8/finance/chart/${encodeURIComponent(symbol)}?range=2y&interval=1d`;
   const relay = (process.env.PROXY_URL || '').replace(/\/$/, ''), secret = process.env.PROXY_SECRET || '';
   const routes = [`https://query1.finance.yahoo.com${path}`, `https://query2.finance.yahoo.com${path}`];
@@ -23,10 +36,8 @@ async function yahooCloses(symbol: string): Promise<number[] | null> {
       const r = await fetch(u, { headers: { 'User-Agent': UA }, cache: 'no-store', signal: AbortSignal.timeout(10_000) });
       if (!r.ok) continue;
       const res = (await r.json())?.chart?.result?.[0];
-      const c: number[] = (res?.indicators?.quote?.[0]?.close ?? []).filter((x: any) => typeof x === 'number' && Number.isFinite(x));
-      const live = res?.meta?.regularMarketPrice;
-      if (c.length && typeof live === 'number' && Number.isFinite(live)) c[c.length - 1] = live;
-      if (c.length > 60) return c;
+      const out = closesWithLive(res?.timestamp ?? [], res?.indicators?.quote?.[0]?.close ?? [], typeof res?.meta?.regularMarketPrice === 'number' ? res.meta.regularMarketPrice : null, typeof res?.meta?.regularMarketTime === 'number' ? res.meta.regularMarketTime : null);
+      if (out.c.length > 60) return out;
     } catch { /* next route */ }
   }
   return null;
@@ -48,13 +59,13 @@ export interface PanelMarket {
 }
 
 /** pure: everything from closes + snapshot rows (exported for tests) */
-export function buildPanel(m: Mkt, idx: number[] | null, vix: number[] | null, rows: any[]): PanelMarket {
+export function buildPanel(m: Mkt, idx: number[] | null, vix: number[] | null, rows: any[], prev: { idx?: number | null; vix?: number | null } = {}): PanelMarket {
   const sym = PANEL_SYMBOLS[m];
   let index: PanelMarket['index'] = null, momP = 50, retP = 50;
   if (idx && idx.length > 210) {
     const L = idx.length - 1, c = idx[L];
     const s50 = avg(idx.slice(-50)), s200 = avg(idx.slice(-200)), s200p = avg(idx.slice(-220, -20));
-    index = { name: sym.indexName, last: Math.round(c * 100) / 100, chg1d: r1((c / idx[L - 1] - 1) * 100), vs50: r1((c / s50 - 1) * 100), vs200: r1((c / s200 - 1) * 100), ret20: r1((c / idx[L - 20] - 1) * 100), above200: c > s200, rising200: s200 >= s200p };
+    index = { name: sym.indexName, last: Math.round(c * 100) / 100, chg1d: r1((c / (prev.idx ?? idx[L - 1]) - 1) * 100), vs50: r1((c / s50 - 1) * 100), vs200: r1((c / s200 - 1) * 100), ret20: r1((c / idx[L - 20] - 1) * 100), above200: c > s200, rising200: s200 >= s200p };
     const mom: number[] = [], ret: number[] = [];
     for (let i = 145; i < idx.length; i++) { mom.push(idx[i] / avg(idx.slice(i - 124, i + 1)) - 1); ret.push(idx[i] / idx[i - 20] - 1); }
     momP = pctRank(mom, mom[mom.length - 1]); retP = pctRank(ret, ret[ret.length - 1]);
@@ -66,7 +77,7 @@ export function buildPanel(m: Mkt, idx: number[] | null, vix: number[] | null, r
     const pct = pctRank(year, v);
     const fearLine = FEAR_VIX[m];
     const band = v >= fearLine ? 'fear' : v < (m === 'US' ? 15 : 13) ? 'calm' : pct >= 70 || v >= (m === 'US' ? 20 : 16) ? 'elevated' : 'normal';
-    vx = { name: sym.vixName, last: Math.round(v * 100) / 100, chg1d: r1((v / vix[L - 1] - 1) * 100), pct1y: pct, avg20: Math.round(avg(vix.slice(-20)) * 100) / 100, band, fearLine };
+    vx = { name: sym.vixName, last: Math.round(v * 100) / 100, chg1d: r1((v / (prev.vix ?? vix[L - 1]) - 1) * 100), pct1y: pct, avg20: Math.round(avg(vix.slice(-20)) * 100) / 100, band, fearLine };
     volP = 100 - pct;
   }
   let breadth: PanelMarket['breadth'] = null, brP = 50;
@@ -88,7 +99,7 @@ export function buildPanel(m: Mkt, idx: number[] | null, vix: number[] | null, r
   const vn = sym.vixName;
   const verdict: PanelMarket['verdict'] = {
     calls: fear ? { act: 'TAKE', why: `${vn} ${vx!.last} is at fear level (≥ ${vx!.fearLine}). Over 10 years calls bought in fear made +0.49× the risk a trade, positive in 8 of 9 years — grade A ideas qualify now even with the market below its 200-day.` }
-      : up ? { act: 'TAKE', why: `${sym.indexName} is above its 200-day average and rising — the condition grade A / A+ calls need.` }
+      : up ? { act: 'TAKE', why: `${sym.indexName} is above its 200-day average and up ${index!.ret20}% in 20 sessions — the condition grade A / A+ calls need. Stocks must also beat the index over 3 months (it is ${index!.ret20 >= 8 ? 'a fast rally, so few do — expect few grade A' : 'a normal pace'}).` }
       : { act: 'SELECTIVE', why: `${sym.indexName} is ${index && !index.above200 ? 'below its 200-day average' : 'not rising'} and fear is not high (${vn} ${vx?.last ?? '—'}, fear line ${FEAR_VIX[m]}). Calls in this state did not pay — wait for grade A (market back above its 200-day, or ${vn} ≥ ${FEAR_VIX[m]}).` },
     puts: { act: 'AVOID', why: fear ? `Buying puts in fear was the worst trade in the 10-year replay (−0.55× the risk at VIX ≥ 30): the drop has usually happened and rallies are sharp.` : `Buying puts on single stocks or the index lost money in every state over 10 years, including 2022 (falling markets bounce hard and stop puts out). To protect holdings, cut size or sell covered calls instead.` },
     sellPuts: fear ? { act: 'TAKE', why: `Selling puts on healthy stocks you want to own paid best in fear: +2.2% of the strike a month held to expiry, 67% profitable (premiums are rich). Keep the cash to buy the shares.` }
@@ -103,7 +114,7 @@ export async function marketPanel(): Promise<PanelMarket[]> {
   const out: PanelMarket[] = [];
   for (const m of ['US', 'IN'] as Mkt[]) {
     const [idx, vix, snap] = await Promise.all([yahooCloses(PANEL_SYMBOLS[m].index), yahooCloses(PANEL_SYMBOLS[m].vix), getSnapshot(m).catch(() => null)]);
-    out.push(buildPanel(m, idx, vix, snap?.rows ?? []));
+    out.push(buildPanel(m, idx?.c ?? null, vix?.c ?? null, snap?.rows ?? [], { idx: idx?.prev ?? null, vix: vix?.prev ?? null }));
   }
   if (out.some((p) => p.index || p.vix)) memo = { at: Date.now(), v: out };
   return out;

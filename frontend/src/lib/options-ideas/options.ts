@@ -205,13 +205,16 @@ export function planOption(p: PlanInput): OptionPlan | null {
       absDelta: Math.abs(now.delta), liquid,
     });
   }
-  const liquidPool = priced.filter((x) => x.liquid);
-  const thin = !liquidPool.length && priced.length > 0;
-  const pool = thin ? priced : liquidPool;
+  // the delta band decides first (0.25–0.8); liquidity chooses within it — a liquid strike far from the money is not a substitute
+  const band = priced.filter((x) => x.absDelta >= 0.25 && x.absDelta <= 0.8);
+  const liquidPool = band.filter((x) => x.liquid);
+  let thin = !liquidPool.length && band.length > 0;
+  let pool = thin ? band : liquidPool;
   if (!pool.length) return null;
-  const near = (d: number) => [...pool].sort((a, b) => Math.abs(a.absDelta - d) - Math.abs(b.absDelta - d))[0] ?? null;
+  const near = (d: number) => { const p = [...pool].sort((a, b) => Math.abs(a.absDelta - d) - Math.abs(b.absDelta - d))[0] ?? null; return p && Math.abs(p.absDelta - d) <= 0.2 ? p : null; };
   const td = p.targetDelta ?? 0.5;
-  const best = near(td);
+  let best = near(td);
+  if (!best && !thin && band.length) { pool = band; thin = true; best = near(td); }   // no liquid strike near the money: use the band, say it is thin
   if (!best) return null;
   const strip = (x: (typeof pool)[number] | null): OptionPick | null => { if (!x) return null; const { absDelta: _a, liquid: _l, ...o } = x; return o; };
   const saferC = near(0.7), aggC = near(0.35);

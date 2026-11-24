@@ -8,7 +8,11 @@
 //     sector weaker than the index: +0.16 R before / −0.17 R after; in a stronger one +0.34 / +0.44.
 import type { PBar } from '../chart-patterns';
 
-export interface ExtraCtx { gap60: boolean; gapDaysAgo: number | null; rvol: number; hv20: number; hvPct: number }
+export interface ExtraCtx { gap60: boolean; gapDaysAgo: number | null; rvol: number; hv20: number; hvPct: number;
+  /** ADR% — average daily range over 20 sessions, TradingView's formula: 100 × (average of high ÷ low − 1) */
+  adr: number }
+/** ADR% bands: how much the stock normally moves in a day */
+export function adrBand(adr: number): 'calm' | 'normal' | 'active' | 'wild' { return adr < 2 ? 'calm' : adr < 3.5 ? 'normal' : adr < 5.5 ? 'active' : 'wild'; }
 const hvAt = (c: number[], end: number, n: number) => {
   if (end - n < 1) return NaN;
   const r: number[] = []; for (let i = end - n + 1; i <= end; i++) r.push(Math.log(c[i] / c[i - 1]));
@@ -25,7 +29,9 @@ export function extraCtx(b: PBar[], t = b.length - 1): ExtraCtx {
   const hv20 = hvAt(c, t, 20);
   const hist: number[] = []; for (let i = t - 250; i <= t; i += 5) { const h = hvAt(c, i, 20); if (Number.isFinite(h)) hist.push(h); }
   const hvPct = hist.length >= 20 && Number.isFinite(hv20) ? Math.round((hist.filter((x) => x <= hv20).length / hist.length) * 100) : 50;
-  return { gap60: gapDaysAgo != null, gapDaysAgo, rvol: Math.round(rvol * 100) / 100, hv20: Number.isFinite(hv20) ? Math.round(hv20 * 1000) / 10 : 0, hvPct };
+  let ar = 0, an = 0; for (let i = Math.max(0, t - 19); i <= t; i++) if (b[i].l > 0) { ar += b[i].h / b[i].l; an++; }
+  const adr = an ? Math.round(100 * (ar / an - 1) * 100) / 100 : 0;
+  return { gap60: gapDaysAgo != null, gapDaysAgo, rvol: Math.round(rvol * 100) / 100, hv20: Number.isFinite(hv20) ? Math.round(hv20 * 1000) / 10 : 0, hvPct, adr };
 }
 export const CATALYST_RVOL = 1.3;
 export const HV_EXPENSIVE_PCT = 70;

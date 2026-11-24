@@ -7,6 +7,7 @@ const ACT_COL: Record<string, string> = { TAKE: '#10B981', SELECTIVE: '#F59E0B',
 const BAND: Record<string, { t: string; c: string }> = { calm: { t: 'Calm', c: '#10B981' }, normal: { t: 'Normal', c: '#94A3B8' }, elevated: { t: 'Elevated', c: '#F59E0B' }, fear: { t: 'FEAR', c: '#EF4444' } };
 const box: CSSProperties = { background: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)', borderRadius: 12, padding: 12 };
 const lab: CSSProperties = { fontSize: 11, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase', color: 'var(--mc-text-3)' };
+const ord = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`;
 const sgn = (x: number | null | undefined, d = 1) => (x == null ? '—' : `${x > 0 ? '+' : ''}${x.toFixed(d)}%`);
 const col = (x: number | null | undefined) => (x == null ? 'var(--mc-text-2)' : x > 0 ? '#10B981' : x < 0 ? '#EF4444' : 'var(--mc-text-2)');
 
@@ -33,7 +34,7 @@ function One({ p }: { p: any }) {
         </div>
         <div><div style={lab}>{p.vix?.name ?? 'VIX'}</div>
           {p.vix ? <><div style={{ fontSize: 18, fontWeight: 800 }}>{p.vix.last.toFixed(2)} <span style={{ fontSize: 12, fontWeight: 800, color: b!.c, border: `1px solid ${b!.c}`, borderRadius: 999, padding: '0 7px' }}>{b!.t}</span></div>
-            <div style={{ fontSize: 12 }}>{sgn(p.vix.chg1d)} today · {p.vix.pct1y}th pct of its year · fear line {p.vix.fearLine}</div></> : <div>—</div>}
+            <div style={{ fontSize: 12 }}>{sgn(p.vix.chg1d)} today · {ord(p.vix.pct1y)} percentile of its year · fear line {p.vix.fearLine}</div></> : <div>—</div>}
         </div>
         <div><div style={lab}>Breadth</div>
           {p.breadth ? <><div style={{ fontSize: 18, fontWeight: 800 }}>{p.breadth.above200}% <span style={{ fontSize: 12, fontWeight: 600 }}>above 200-day</span></div>

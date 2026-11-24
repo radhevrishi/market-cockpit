@@ -4480,4 +4480,6 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   from the screener snapshot, our own fear & greed (CNN refuses servers, HTTP 418), calls / buy puts / sell puts verdicts.
   Card: position sizer (`mc:options-ideas:sizer:v1`, India lot > budget warning), one-click alerts (trigger / stop / T1 via
   createAlertApi), sector heat chips, hide-through-results filter. zzz1301g: no-setup companies get `structure` (describeStructure:
-  trendlines, 3-touch levels, cup rims, "what would make it a setup" nearest first) + StructureChart.
+  trendlines, 3-touch levels, cup rims, "what would make it a setup" nearest first) + StructureChart. zzz1301h: ADR% (20-session,
+  TradingView formula, `ctx.adr`, stop / T1 in days of range, scanner column + filter); panel 1-day change dated by regularMarketTime
+  (`closesWithLive`); strike chosen inside the 0.25–0.8 delta band before liquidity.
