@@ -30,7 +30,8 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { getConvictionList } from '@/lib/conviction-beats';
-import { openPassport } from '@/lib/engines';     // zzz524 — click a ticker → Stock Passport
+import { openPassport, getEngineViews } from '@/lib/engines';     // zzz524 — click a ticker → Stock Passport
+import { suggestSize, fmtMoney } from '@/lib/sizing';             // zzz1302 — position size per row (from the old Bounce Desk)
 import { logSignals } from '@/lib/signal-log';    // zzz524 — feed the Signal Scoreboard
 import Sparkline from '@/components/Sparkline';    // zzz536 — inline price trend
 import { cheatSetup, type CheatSetupKind, type CheatStopMa } from '@/lib/cheat-entry-setup';   // zzz1061
@@ -60,7 +61,15 @@ interface Candidate {
   benchTier: 'BLOCKBUSTER' | 'STRONG' | null;
   sources: string[];
   setupScore: number; qualityScore: number; score: number;
+  rs: number | null;
+  // zzz1302 — the Bounce Desk's oversold read, now on the same row
+  bounce: boolean; bounceScore: number; bounceWhy: string[]; bounceBlock: string | null;
 }
+
+type RegimeKind = 'BULL' | 'PULLBACK' | 'CORRECTION' | 'BEAR' | 'RECOVERY' | 'UNKNOWN';
+interface RegimeSide { kind: RegimeKind; note?: string; drawdownPct?: number }
+type Regimes = { IND: RegimeSide | null; USA: RegimeSide | null };
+type Lens = 'best' | 'support' | 'bounce' | 'both' | 'all';
 
 interface LiveQuote { price: number; chg: number | null; company?: string }
 
@@ -77,7 +86,9 @@ const SETUP_META: Record<SetupKind, { label: string; color: string; blurb: strin
 
 // ── assemble the board from localStorage engines + an (optionally empty) live
 //    quote map. Pure enough to run twice: instant pass, then the live re-score.
-function assemble(live: Map<string, LiveQuote>): { cands: Candidate[]; skipped: number } {
+function assemble(live: Map<string, LiveQuote>, regimes: Regimes = { IND: null, USA: null }): { cands: Candidate[]; skipped: number } {
+  let decay = new Map<string, string>();
+  try { for (const [k, v] of getEngineViews()) if (v.decay?.severity) decay.set(norm(k), v.decay.severity); } catch { decay = new Map(); }
   // 1 · fundamentals (Multibagger rankings)
   const fundo = new Map<string, { score: number | null; grade: string | null; sector?: string }>();
   for (const key of ['mb_excel_scored_v2', 'mb_usa_scored_v2']) {
@@ -148,6 +159,28 @@ function assemble(live: Map<string, LiveQuote>): { cands: Candidate[]; skipped: 
     if (engineCount >= 2) quality += engineCount >= 3 ? 8 : 5;
     quality = Math.min(40, quality);
 
+    // zzz1302 — oversold bounce (rules from the old Bounce Desk / Oversold Bounce Playbook). Needs a live day move for the
+    // "hard down day" leg; the 21-EMA and 50-day legs work on synced prices too.
+    const dayChg = lq?.chg ?? null;
+    const why: string[] = [];
+    if (dayChg != null && dayChg <= -3) why.push(`down ${Math.abs(dayChg).toFixed(1)}% today`);
+    if (d21 != null && d21 <= -3) why.push(`${Math.abs(d21).toFixed(1)}% under the 21-day EMA`);
+    if (d50 != null && d50 <= 1 && d200 != null && d200 >= 0) why.push(d50 < 0 ? `${Math.abs(d50).toFixed(1)}% under the 50-day, above the 200-day` : 'back at the 50-day, above the 200-day');
+    let block: string | null = null;
+    const rk = regimes[t.market]?.kind;
+    if (why.length) {
+      if (rk === 'BEAR') block = 'market regime is BEAR — oversold readings tend to keep falling, bounce lane closed';
+      else if (decay.get(sym) === 'high') block = 'Conviction decay is high — falling knife, not a dip';
+    }
+    let bScore = 40;
+    const depth = Math.min(d21 ?? Infinity, d50 ?? Infinity);
+    if (Number.isFinite(depth) && depth < 0) bScore += Math.min(20, Math.abs(depth) * 3);
+    if (f?.score != null) bScore += f.score >= 70 ? 15 : f.score >= 60 ? 8 : 0;
+    if (b) bScore += b.tier === 'BLOCKBUSTER' ? 12 : 8;
+    if (t.rs != null && t.rs >= 80) bScore += 5;
+    if (d200 != null && d200 < 0) bScore -= 15;
+    bScore = Math.max(0, Math.min(100, Math.round(bScore)));
+
     cands.push({
       symbol: sym, market: t.market,
       company: b?.company || live.get(sym)?.company || t.company || '',
@@ -160,6 +193,8 @@ function assemble(live: Map<string, LiveQuote>): { cands: Candidate[]; skipped: 
       benchTier: b?.tier ?? null, sources,
       setupScore: Math.round(setupScore), qualityScore: Math.round(quality),
       score: Math.round(setupScore + quality),
+      rs: t.rs ?? null,
+      bounce: why.length > 0 && !block, bounceScore: why.length ? bScore : 0, bounceWhy: why, bounceBlock: block,
     });
   }
   cands.sort((a, b) => b.score - a.score || (a.riskPct ?? 99) - (b.riskPct ?? 99));
@@ -193,43 +228,102 @@ async function fetchLiveQuotes(): Promise<Map<string, LiveQuote>> {
   return live;
 }
 
+const LENS_META: Record<Lens, { label: string; color: string; hint: string }> = {
+  best:    { label: '✅ Best entries', color: 'var(--mc-bullish)', hint: 'On a rising 50- or 200-day average, or an oversold dip in a trusted name' },
+  both:    { label: '⭐ Both signals', color: '#A855F7', hint: 'On support AND oversold — the strongest dip-buy read' },
+  support: { label: '🎯 On support', color: 'var(--mc-cyan)', hint: 'Resting on a rising 50- or 200-day average (the old Cheat Entry board)' },
+  bounce:  { label: '🌊 Oversold bounce', color: '#A78BFA', hint: 'Hard down day, under the 21-day EMA, or into the 50-day band — above the 200-day (the old Bounce Desk)' },
+  all:     { label: 'All', color: 'var(--mc-text-3)', hint: 'Every ranked name, extended and drifting included' },
+};
+const LENSES: Lens[] = ['best', 'both', 'support', 'bounce', 'all'];
+const PREFS_KEY = 'mc:entry-desk:v1';
+const isSupport = (c: Candidate) => c.setup === 'AT_200' || c.setup === 'AT_50';
+const inLens = (c: Candidate, l: Lens) =>
+  l === 'all' ? true : l === 'support' ? isSupport(c) : l === 'bounce' ? c.bounce : l === 'both' ? isSupport(c) && c.bounce : isSupport(c) || c.bounce;
+const REGIME_COL: Record<string, string> = { BULL: 'var(--mc-bullish)', RECOVERY: 'var(--mc-cyan)', PULLBACK: 'var(--mc-warn)', CORRECTION: 'var(--mc-warn)', BEAR: 'var(--mc-bearish)' };
+const REGIME_RULE: Record<string, string> = {
+  BULL: 'dips are buyable — full size',
+  PULLBACK: 'dips are buyable — wait for the average to hold',
+  CORRECTION: 'half size, wait for a green day off support',
+  BEAR: 'bounce lane closed — only support entries with tight stops',
+  RECOVERY: 'post-sell-off window — the best time for bounces',
+};
+
 export default function CheatEntryPage() {
   const [cands, setCands] = useState<Candidate[] | null>(null);
   const [skipped, setSkipped] = useState(0);
   const [liveCount, setLiveCount] = useState(0);
   const [quotesState, setQuotesState] = useState<'loading' | 'live' | 'failed'>('loading');
   const [marketF, setMarketF] = useState<'ALL' | Market>('ALL');
-  const [setupF, setSetupF] = useState<'ACTIONABLE' | 'ALL' | SetupKind>('ACTIONABLE');
+  const [lens, setLens] = useState<Lens>('best');
+  const [regimes, setRegimes] = useState<Regimes>({ IND: null, USA: null });
   const [refreshTick, setRefreshTick] = useState(0);
   const [sparks, setSparks] = useState<Map<string, number[]>>(new Map()); // zzz536 — inline price context
+  const [ready, setReady] = useState(false);
+
+  // zzz1302 — lens from the address (?lens=bounce — the old /bounce-desk forwards here), market + lens remembered
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(PREFS_KEY) || 'null');
+      if (saved?.market === 'IND' || saved?.market === 'USA' || saved?.market === 'ALL') setMarketF(saved.market);
+      if (LENSES.includes(saved?.lens)) setLens(saved.lens);
+      const q = new URLSearchParams(window.location.search).get('lens');
+      if (q && (LENSES as string[]).includes(q)) setLens(q as Lens);
+    } catch { /* defaults */ }
+    setReady(true);
+  }, []);
+  useEffect(() => {
+    if (!ready) return;
+    try {
+      localStorage.setItem(PREFS_KEY, JSON.stringify({ market: marketF, lens }));
+      const u = new URL(window.location.href);
+      if (lens === 'best') u.searchParams.delete('lens'); else u.searchParams.set('lens', lens);
+      window.history.replaceState(window.history.state, '', u.toString());
+    } catch { /* */ }
+  }, [marketF, lens, ready]);
 
   const runRef = useRef(0);       // zzz530 — newest build wins; stale async can't clobber
   const aliveRef = useRef(true);  // zzz530 — no setState after unmount
   const build = useCallback(async () => {
     if (typeof window === 'undefined') return;
     const run = ++runRef.current;
+    // regime first (quick) so the bounce gate is right from the first pass
+    const regP = (async (): Promise<Regimes> => {
+      try {
+        const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), 15000);
+        const r = await fetch('/api/market/regime', { signal: ctl.signal }); clearTimeout(to);
+        const j = r.ok ? await r.json() : null;
+        return { IND: j?.india || null, USA: j?.usa || null };
+      } catch { return { IND: null, USA: null }; }
+    })();
+    const liveP = fetchLiveQuotes();
     // instant pass — synced prices, board up immediately
     const base = assemble(new Map());
     if (!aliveRef.current || run !== runRef.current) return;
     setCands(base.cands); setSkipped(base.skipped);
+    const reg = await regP;
+    if (!aliveRef.current || run !== runRef.current) return;
+    setRegimes(reg);
+    const reg1 = assemble(new Map(), reg);
+    setCands(reg1.cands);
     // live pass — re-score once quotes land
     setQuotesState('loading');
-    const live = await fetchLiveQuotes();
+    const live = await liveP;
     if (!aliveRef.current || run !== runRef.current) return; // a newer REFRESH superseded us
     if (live.size > 0) {
-      const fresh = assemble(live);
+      const fresh = assemble(live, reg);
       setCands(fresh.cands); setSkipped(fresh.skipped);
       setLiveCount(live.size); setQuotesState('live');
-      // zzz524 — log today's top actionable setups for the scoreboard
+      // zzz524 — log today's top setups for the scoreboard (both desks' signal names kept)
       try {
-        logSignals('cheat-entry', fresh.cands
-          .filter((c) => c.setup === 'AT_200' || c.setup === 'AT_50')
-          .slice(0, 10)
+        logSignals('cheat-entry', fresh.cands.filter(isSupport).slice(0, 10)
           .map((c) => ({ ticker: c.symbol, note: `${c.setupLabel} score ${c.score}`, priceAt: c.livePrice })));
+        logSignals('bounce', fresh.cands.filter((c) => c.bounce).sort((a, b) => b.bounceScore - a.bounceScore).slice(0, 10)
+          .map((c) => ({ ticker: c.symbol, note: `bounce ${c.bounceScore}`, priceAt: c.livePrice })));
       } catch { /* never load-bearing */ }
       // zzz536 — decorate the board with sparklines via the existing /api/market/spark route
       try {
-        const syms = fresh.cands.slice(0, 24).map((c) => c.symbol);
+        const syms = Array.from(new Set([...fresh.cands.filter(isSupport).slice(0, 30), ...fresh.cands.filter((c) => c.bounce).slice(0, 20)].map((c) => c.symbol))).slice(0, 48);
         if (syms.length) {
           const ctl = new AbortController();
           const to = setTimeout(() => ctl.abort(), 12000);
@@ -253,19 +347,18 @@ export default function CheatEntryPage() {
 
   useEffect(() => { aliveRef.current = true; build(); return () => { aliveRef.current = false; }; }, [build, refreshTick]);
 
-  const shown = useMemo(() => {
-    if (!cands) return [];
-    let r = cands;
-    if (marketF !== 'ALL') r = r.filter((c) => c.market === marketF);
-    if (setupF === 'ACTIONABLE') r = r.filter((c) => c.setup === 'AT_200' || c.setup === 'AT_50');
-    else if (setupF !== 'ALL') r = r.filter((c) => c.setup === setupF);
-    return r;
-  }, [cands, marketF, setupF]);
-
-  const atSupport = useMemo(() => (cands || []).filter((c) => c.atSupportNow).length, [cands]);
+  const inMarket = useMemo(() => (cands || []).filter((c) => marketF === 'ALL' || c.market === marketF), [cands, marketF]);
+  const counts = useMemo(() => {
+    const o = {} as Record<Lens, number>;
+    for (const l of LENSES) o[l] = inMarket.filter((c) => inLens(c, l)).length;
+    return o;
+  }, [inMarket]);
+  const shown = useMemo(() => inMarket.filter((c) => inLens(c, lens)), [inMarket, lens]);
+  const blocked = useMemo(() => inMarket.filter((c) => c.bounceBlock).length, [inMarket]);
+  const atSupport = useMemo(() => inMarket.filter((c) => c.atSupportNow).length, [inMarket]);
 
   const chip = (active: boolean, color: string): React.CSSProperties => ({
-    padding: '5px 12px', borderRadius: 8, fontSize: 12.5, fontWeight: 800, cursor: 'pointer',
+    padding: '6px 13px', borderRadius: 8, fontSize: 13, fontWeight: 800, cursor: 'pointer',
     border: `1px solid ${active ? color : C.border}`,
     background: active ? `color-mix(in srgb, ${color} 14%, transparent)` : 'transparent',
     color: active ? color : C.muted,
@@ -273,8 +366,12 @@ export default function CheatEntryPage() {
 
   // zzz1301n — chart structure per row (trendlines / breakout + retest / cups, graded like Options Ideas), loaded for the rows shown
   const [briefs, setBriefs] = useState<Map<string, any>>(new Map());
-  const [sortK, setSortK] = useState<'score' | 'risk' | 'd50' | 'd200' | 'struct' | 'today'>('score');
-  const top = useMemo(() => shown.slice(0, 60), [shown]);
+  const [sortK, setSortK] = useState<'score' | 'risk' | 'd50' | 'd200' | 'struct' | 'today' | 'bounce'>('score');
+  useEffect(() => { setSortK(lens === 'bounce' ? 'bounce' : 'score'); }, [lens]);
+  const top = useMemo(() => {
+    const deskScore = (c: Candidate) => (lens === 'bounce' ? c.bounceScore : c.score + (c.bounce && isSupport(c) ? 8 : c.bounce ? 3 : 0));
+    return [...shown].sort((a, b) => deskScore(b) - deskScore(a)).slice(0, 80);
+  }, [shown, lens]);
   useEffect(() => {
     let off = false;
     const need = top.filter((c) => !briefs.has(`${c.market}:${c.symbol}`));
@@ -308,27 +405,29 @@ export default function CheatEntryPage() {
         case 'd50': return Math.abs(c.d50 ?? 99);
         case 'd200': return Math.abs(c.d200 ?? 99);
         case 'struct': return structRank(b);
-        case 'today': return -(c.dayChg ?? -99);
-        default: return -c.score;
+        case 'today': return c.dayChg ?? 99;
+        case 'bounce': return -(c.bounce ? c.bounceScore : c.bounceScore - 200);
+        default: return -(c.score + (c.bounce && isSupport(c) ? 8 : c.bounce ? 3 : 0));
       }
     };
     return r.sort((a, b) => key(a) - key(b));
   }, [top, sortK, briefs]);
 
-  const th: React.CSSProperties = { padding: '8px 8px', textAlign: 'left', fontSize: 11.5, fontWeight: 800, color: C.muted, whiteSpace: 'nowrap', borderBottom: `1px solid ${C.border}`, position: 'sticky', top: 0, background: C.bg };
-  const td: React.CSSProperties = { padding: '8px 8px', fontSize: 13, borderBottom: `1px solid ${C.border}`, verticalAlign: 'middle', fontVariantNumeric: 'tabular-nums' };
+  const th: React.CSSProperties = { padding: '9px 8px', textAlign: 'left', fontSize: 12, fontWeight: 800, color: C.muted, whiteSpace: 'nowrap', borderBottom: `1px solid ${C.border}`, position: 'sticky', top: 0, background: C.bg, zIndex: 1 };
+  const td: React.CSSProperties = { padding: '8px 8px', fontSize: 13.5, borderBottom: `1px solid ${C.border}`, verticalAlign: 'middle', fontVariantNumeric: 'tabular-nums' };
   const H = ({ k, children, title }: { k?: typeof sortK; children: any; title?: string }) => (
     <th style={{ ...th, cursor: k ? 'pointer' : 'default', color: k && sortK === k ? C.cyan : C.muted }} title={title} onClick={() => k && setSortK(k)}>{children}{k && sortK === k ? ' ▼' : ''}</th>
   );
   const pct = (x: number | null, d = 1) => (x == null ? '—' : `${x >= 0 ? '+' : ''}${x.toFixed(d)}%`);
   const GCOL: Record<string, string> = { 'A+': '#A855F7', A: 'var(--mc-bullish)', B: 'var(--mc-warn)', C: 'var(--mc-bearish)' };
+  const markets: Market[] = marketF === 'ALL' ? ['IND', 'USA'] : [marketF];
 
   return (
     <div style={{ padding: '16px 20px', width: '100%', boxSizing: 'border-box' }}>
       {/* ── header ─────────────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <h1 style={{ margin: 0, fontSize: 24, fontWeight: 900, color: C.text }}>🥷 Cheat Entry</h1>
-        <span style={{ fontSize: 13.5, color: C.muted }}>Quality names sitting on a rising 50- or 200-day average — the entry where the stop is closest.</span>
+        <h1 style={{ margin: 0, fontSize: 24, fontWeight: 900, color: C.text }}>🥷 Entry Desk</h1>
+        <span style={{ fontSize: 13.5, color: C.muted }}>When to buy a name you already like: on a rising average (smallest stop) or an oversold dip (Cheat Entry + Bounce Desk in one).</span>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
           {atSupport > 0 && <span style={{ fontSize: 13, fontWeight: 800, color: C.green, border: `1px solid color-mix(in srgb, var(--mc-bullish) 40%, transparent)`, borderRadius: 8, padding: '4px 10px' }}>🔥 {atSupport} at support now</span>}
           <span style={{ fontSize: 12, fontWeight: 700, color: quotesState === 'live' ? C.green : quotesState === 'loading' ? C.dim : C.amber }}>
@@ -339,23 +438,48 @@ export default function CheatEntryPage() {
       </div>
       {quotesState === 'failed' && (
         <div style={{ marginTop: 8, fontSize: 12.5, color: C.amber, border: `1px solid color-mix(in srgb, var(--mc-warn) 35%, transparent)`, borderRadius: 8, padding: '6px 10px' }}>
-          ⚠ The live quote feed didn&rsquo;t answer in time (common right after a deploy). Distances use your last Technicals-sync prices. Refresh in ~30 s.
+          ⚠ The live quote feed didn&rsquo;t answer in time (common right after a deploy). Distances use your last Technicals-sync prices and the &ldquo;down today&rdquo; bounce check is off. Refresh in ~30 s.
         </div>
       )}
+
+      {/* ── regime strip ───────────────────────────────────────────────────── */}
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${markets.length}, minmax(0, 1fr))`, gap: 10, marginTop: 12 }}>
+        {markets.map((mk) => {
+          const r = regimes[mk]; const k = r?.kind || 'UNKNOWN'; const col = REGIME_COL[k] || C.muted;
+          return (
+            <div key={mk} style={{ border: `1px solid color-mix(in srgb, ${col} 45%, transparent)`, background: `color-mix(in srgb, ${col} 6%, transparent)`, borderRadius: 10, padding: '9px 12px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontWeight: 900, fontSize: 14, color: C.text }}>{mk === 'IND' ? '🇮🇳 India' : '🇺🇸 USA'}</span>
+              <span style={{ fontWeight: 900, fontSize: 13, color: col }}>{r ? k : 'regime loading…'}</span>
+              {r?.drawdownPct != null && <span style={{ fontSize: 12.5, color: C.muted }}>{r.drawdownPct.toFixed(1)}% from high</span>}
+              {r && <span style={{ fontSize: 13, color: C.text2 }}>→ {REGIME_RULE[k] || r.note || ''}</span>}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ── lens tiles ─────────────────────────────────────────────────────── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10, marginTop: 12 }}>
+        {LENSES.map((l) => {
+          const m = LENS_META[l]; const on = lens === l;
+          return (
+            <button key={l} onClick={() => setLens(l)} title={m.hint} style={{ textAlign: 'left', cursor: 'pointer', borderRadius: 10, padding: '10px 12px', border: `1px solid ${on ? m.color : C.border}`, background: on ? `color-mix(in srgb, ${m.color} 12%, transparent)` : C.bg }}>
+              <div style={{ fontSize: 12.5, fontWeight: 800, color: on ? m.color : C.muted }}>{m.label}</div>
+              <div style={{ fontSize: 24, fontWeight: 900, color: on ? m.color : C.text, lineHeight: 1.2 }}>{cands ? counts[l] : '…'}</div>
+              <div style={{ fontSize: 11.5, color: C.dim, lineHeight: 1.35 }}>{m.hint}</div>
+            </button>
+          );
+        })}
+      </div>
 
       {/* ── filters ────────────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 12, alignItems: 'center' }}>
         {(['ALL', 'IND', 'USA'] as const).map((m) => (
-          <button key={m} onClick={() => setMarketF(m)} style={chip(marketF === m, C.accent)}>{m === 'ALL' ? 'All markets' : m === 'IND' ? '🇮🇳 India' : '🇺🇸 USA'}</button>
+          <button key={m} onClick={() => setMarketF(m)} style={chip(marketF === m, C.accent)}>{m === 'ALL' ? 'Both markets' : m === 'IND' ? '🇮🇳 India' : '🇺🇸 USA'}</button>
         ))}
-        <span style={{ width: 10 }} />
-        <button onClick={() => setSetupF('ACTIONABLE')} style={chip(setupF === 'ACTIONABLE', C.green)}>✅ Actionable</button>
-        {(['AT_200', 'AT_50'] as SetupKind[]).map((s) => (
-          <button key={s} onClick={() => setSetupF(s)} style={chip(setupF === s, SETUP_META[s].color)}>{SETUP_META[s].label}</button>
-        ))}
-        <button onClick={() => setSetupF('ALL')} style={chip(setupF === 'ALL', C.muted)}>All</button>
-        <span style={{ marginLeft: 'auto', fontSize: 12, color: C.dim }}>
-          {cands ? `${shown.length} of ${cands.length} ranked` : ''}{skipped > 0 ? ` · ${skipped} quality names without moving-average data (add them to a Technicals list)` : ''}
+        <span style={{ marginLeft: 'auto', fontSize: 12.5, color: C.dim }}>
+          {cands ? `${shown.length} names · ${LENS_META[lens].label.replace(/^\S+\s/, '')}` : ''}
+          {blocked > 0 ? ` · ${blocked} oversold names refused (bear regime or decay)` : ''}
+          {skipped > 0 ? ` · ${skipped} quality names without moving-average data (add them to a Technicals list)` : ''}
         </span>
       </div>
 
@@ -369,37 +493,60 @@ export default function CheatEntryPage() {
           plus, optionally, the <Link href="/multibagger" style={{ color: C.cyan }}>Multibagger rankings</Link> and{' '}
           <Link href="/watchlists?tab=conviction" style={{ color: C.cyan }}>Conviction bench</Link>.
         </div>
+      ) : rows.length === 0 ? (
+        <div style={{ marginTop: 20, fontSize: 13.5, color: C.muted, border: `1px dashed ${C.border2}`, borderRadius: 10, padding: 16 }}>
+          Nothing in &ldquo;{LENS_META[lens].label}&rdquo; right now{marketF !== 'ALL' ? ` for ${marketF === 'IND' ? 'India' : 'USA'}` : ''}.
+          {lens === 'bounce' || lens === 'both' ? ' No trusted name is oversold above its 200-day today — that is normal in a rising market.' : ''}{' '}
+          <button onClick={() => setLens('all')} style={chip(false, C.cyan)}>Show all ranked names</button>
+        </div>
       ) : (
         <>
-          <div style={{ marginTop: 10, overflowX: 'auto', border: `1px solid ${C.border}`, borderRadius: 10, background: C.bg }}>
+          <div style={{ marginTop: 10, overflow: 'auto', maxHeight: 'calc(100vh - 120px)', border: `1px solid ${C.border}`, borderRadius: 10, background: C.bg }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'inherit' }}>
               <thead><tr>
-                <H>#</H><H>Company</H><H k="score" title="Setup (0–60) + quality (0–40)">Score</H><H>Entry type</H>
+                <H>#</H><H>Company</H><H k="score" title="Setup (0–60) + quality (0–40); +8 when also oversold">Score</H><H>Entry type</H>
+                <H k="bounce" title="Oversold bounce score 0–100 (depth of the dip + quality). Shown only when the name is oversold.">Bounce</H>
                 <H k="d50" title="Distance from the 50-day average">vs 50-day</H><H k="d200" title="Distance from the 200-day average">vs 200-day</H>
-                <H k="risk" title="Drop to a stop 2% under the average you are buying against">Stop risk</H><H k="today">Today</H><H>3-month trend</H>
+                <H k="risk" title="Drop to a stop 2% under the average you are buying against">Stop risk</H>
+                <H title="Position size that risks your set % of the book at that stop (Position Sizing settings). Halved in a CORRECTION regime.">Size</H>
+                <H k="today" title="Today's move — sort to put the biggest falls first">Today</H><H>3-month trend</H>
                 <H k="struct" title="Trendlines / breakout + retest / cups on the chart, graded like Options Ideas (A+ best). Sort to put the most interesting charts first.">Chart structure</H>
                 <H>Quality</H><H>Sector</H><H>Open</H>
               </tr></thead>
               <tbody>
                 {rows.map((c, i) => {
                   const meta = SETUP_META[c.setup];
-                  const scoreCol = c.score >= 75 ? C.green : c.score >= 55 ? C.cyan : c.score >= 40 ? C.amber : C.muted;
+                  const shownScore = c.score + (c.bounce && isSupport(c) ? 8 : c.bounce ? 3 : 0);
+                  const scoreCol = shownScore >= 75 ? C.green : shownScore >= 55 ? C.cyan : shownScore >= 40 ? C.amber : C.muted;
                   const b = briefs.get(`${c.market}:${c.symbol}`);
                   const m = c.market === 'IND' ? 'IN' : 'US';
+                  const rk = regimes[c.market]?.kind;
+                  const sz = suggestSize({ price: c.livePrice, stopPct: c.riskPct ?? 8 });
+                  const szPct = sz ? sz.pctOfPortfolio * (rk === 'CORRECTION' ? 0.5 : 1) : null;
+                  const both = c.bounce && isSupport(c);
                   return (
-                    <tr key={c.symbol + c.market} style={{ background: c.atSupportNow ? 'color-mix(in srgb, var(--mc-bullish) 6%, transparent)' : undefined }}>
+                    <tr key={c.symbol + c.market} style={{ background: both ? 'color-mix(in srgb, #A855F7 7%, transparent)' : c.atSupportNow ? 'color-mix(in srgb, var(--mc-bullish) 6%, transparent)' : undefined }}>
                       <td style={{ ...td, color: C.dim, width: 28 }}>{i + 1}</td>
-                      <td style={{ ...td, minWidth: 200 }}>
-                        <span onClick={() => openPassport(c.symbol)} title="Open Stock Passport" style={{ fontWeight: 900, cursor: 'pointer', color: C.text }}>{c.symbol}</span>
+                      <td style={{ ...td, minWidth: 210 }}>
+                        <span onClick={() => openPassport(c.symbol)} title="Open Stock Passport" style={{ fontWeight: 900, cursor: 'pointer', color: C.text, fontSize: 14 }}>{c.symbol}</span>
                         <span style={{ marginLeft: 5, fontSize: 11 }}>{c.market === 'IND' ? '🇮🇳' : '🇺🇸'}</span>
-                        {c.atSupportNow && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 900, color: C.green }}>{c.testingSupport ? '🧪 testing support' : '🔥 at support'}</span>}
-                        <div style={{ fontSize: 11.5, color: C.muted, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.company}</div>
+                        {both && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 900, color: '#A855F7' }}>⭐ both</span>}
+                        {!both && c.atSupportNow && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 900, color: C.green }}>{c.testingSupport ? '🧪 testing support' : '🔥 at support'}</span>}
+                        <div style={{ fontSize: 12, color: C.muted, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.company}</div>
                       </td>
-                      <td style={{ ...td, fontWeight: 900, fontSize: 15, color: scoreCol }} title={`Setup ${c.setupScore}/60 + Quality ${c.qualityScore}/40`}>{c.score}</td>
+                      <td style={{ ...td, fontWeight: 900, fontSize: 15.5, color: scoreCol }} title={`Setup ${c.setupScore}/60 + Quality ${c.qualityScore}/40${c.bounce ? ` + ${isSupport(c) ? 8 : 3} oversold` : ''}`}>{shownScore}</td>
                       <td style={{ ...td, whiteSpace: 'nowrap' }}><span title={meta.blurb} style={{ fontWeight: 800, color: meta.color }}>{meta.label}</span></td>
+                      <td style={{ ...td, minWidth: 150 }}>
+                        {c.bounce ? <span title={c.bounceWhy.join(' · ')}><b style={{ color: '#A78BFA', fontSize: 14 }}>🌊 {c.bounceScore}</b><div style={{ fontSize: 11.5, color: C.muted, maxWidth: 220 }}>{c.bounceWhy[0]}{c.bounceWhy.length > 1 ? ` +${c.bounceWhy.length - 1}` : ''}</div></span>
+                          : c.bounceBlock ? <span title={c.bounceBlock} style={{ fontSize: 12, color: C.red }}>🛑 refused<div style={{ fontSize: 11, color: C.dim, maxWidth: 220 }}>{c.bounceBlock.split(' — ')[0]}</div></span>
+                          : <span style={{ color: C.dim }}>—</span>}
+                      </td>
                       <td style={{ ...td, color: c.d50 != null && Math.abs(c.d50) <= 3 ? C.green : C.text2 }}>{pct(c.d50)}</td>
                       <td style={{ ...td, color: c.d200 != null && Math.abs(c.d200) <= 4 ? C.cyan : C.text2 }}>{pct(c.d200)}</td>
                       <td style={{ ...td, fontWeight: 800, color: c.riskPct == null ? C.muted : c.riskPct <= 4 ? C.green : c.riskPct <= 8 ? C.amber : C.red }} title={c.stopMa ? `Stop 2% under the ${c.stopMa}` : ''}>{c.riskPct != null ? `${c.riskPct.toFixed(1)}%` : '—'}{c.stopMa ? <span style={{ fontSize: 10.5, color: C.dim, fontWeight: 600 }}> under {c.stopMa}</span> : null}</td>
+                      <td style={{ ...td, whiteSpace: 'nowrap' }} title={sz ? `≈ ${fmtMoney(sz.value * (rk === 'CORRECTION' ? 0.5 : 1), c.market)} · stop ${fmtMoney(sz.stopPrice, c.market)}${rk === 'CORRECTION' ? ' · halved: CORRECTION regime' : ''}` : ''}>
+                        {szPct != null ? <><b>{szPct.toFixed(1)}%</b>{rk === 'CORRECTION' ? <span style={{ fontSize: 10.5, color: C.amber }}> ½</span> : null}<div style={{ fontSize: 11, color: C.dim }}>stop {fmtMoney(sz!.stopPrice, c.market)}</div></> : '—'}
+                      </td>
                       <td style={{ ...td, color: c.dayChg == null ? C.dim : c.dayChg >= 0 ? C.green : C.red }}>{c.dayChg != null ? pct(c.dayChg) : (quotesState === 'live' ? <span title="No live quote — synced price">synced</span> : '—')}</td>
                       <td style={td}>{sparks.get(c.symbol) ? <Sparkline data={sparks.get(c.symbol)} width={80} height={22} /> : <span style={{ color: C.dim }}>—</span>}</td>
                       <td style={{ ...td, minWidth: 190 }}>
@@ -412,6 +559,7 @@ export default function CheatEntryPage() {
                       <td style={td}>
                         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                           {c.sources.filter((s) => !s.startsWith('Tech')).map((s, k) => <span key={k} style={{ fontSize: 11, fontWeight: 700, color: C.text2, background: C.bg2, border: `1px solid ${C.border2}`, borderRadius: 5, padding: '1px 6px', whiteSpace: 'nowrap' }}>{s}</span>)}
+                          {c.rs != null && c.rs >= 80 && <span style={{ fontSize: 11, fontWeight: 700, color: C.green, border: `1px solid ${C.border2}`, borderRadius: 5, padding: '1px 6px' }}>RS {Math.round(c.rs)}</span>}
                         </div>
                       </td>
                       <td style={{ ...td, fontSize: 12, color: C.muted, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.sector || '—'}</td>
@@ -425,11 +573,12 @@ export default function CheatEntryPage() {
               </tbody>
             </table>
           </div>
-          {shown.length > 60 && <div style={{ fontSize: 12, color: C.dim, marginTop: 8 }}>Top 60 shown of {shown.length} — narrow the filters to see the rest.</div>}
-          <div style={{ fontSize: 12, color: C.dim, marginTop: 12, lineHeight: 1.6 }}>
-            <b style={{ color: C.muted }}>Score</b> = setup (0–60) + quality (0–40). The setup is the nearest rising average underneath (200-day scores highest, then 50-day); names more than 15% above the 50-day are extended; names graded below 45 by the Multibagger engine are left out unless the Conviction bench vouches.
-            <b style={{ color: C.muted }}> Stop risk</b> = the drop to a stop 2% under that average — small is the point. 🔥 within ±1% of it; 🧪 1–3% under it.
-            <b style={{ color: C.muted }}> Chart structure</b> = trendlines, 3-touch levels and cups found on the daily chart, graded like Options Ideas — sort by it to open the most interesting charts first. Not a recommendation.
+          {shown.length > 80 && <div style={{ fontSize: 12, color: C.dim, marginTop: 8 }}>Top 80 shown of {shown.length} — pick a narrower view or market to see the rest.</div>}
+          <div style={{ fontSize: 12.5, color: C.dim, marginTop: 12, lineHeight: 1.65 }}>
+            <b style={{ color: C.muted }}>Score</b> = setup (0–60) + quality (0–40), +8 when the name is also oversold on support (+3 oversold elsewhere). The setup is the nearest rising average underneath (200-day scores highest, then 50-day); names more than 15% above the 50-day are extended; names graded below 45 by the Multibagger engine are left out unless the Conviction bench vouches.
+            <b style={{ color: C.muted }}> Bounce</b> = oversold (down 3%+ today, 3%+ under the 21-day EMA, or back into the 50-day band) while still above the 200-day. Refused in a BEAR regime and when Conviction decay is high — oversold is not a bottom.
+            <b style={{ color: C.muted }}> Stop risk</b> = drop to a stop 2% under that average; <b style={{ color: C.muted }}>Size</b> risks your set % of the book at that stop, halved in a CORRECTION.
+            <b style={{ color: C.muted }}> Chart structure</b> = trendlines, 3-touch levels and cups on the daily chart, graded like Options Ideas. Not a recommendation.
           </div>
         </>
       )}

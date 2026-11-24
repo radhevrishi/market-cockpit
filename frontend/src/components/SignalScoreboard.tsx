@@ -23,7 +23,7 @@ const SURFACE_LABELS: Record<string, string> = {
   'pullback': '💎 Quality Pullback',
   'cheat-entry': '🥷 Cheat Entry',
   'conviction': '🏆 Conviction',
-  'bounce': '🌊 Bounce Desk',
+  'bounce': '🌊 Entry Desk · bounce',
   'actions': '🎯 Next Best Actions',
 };
 

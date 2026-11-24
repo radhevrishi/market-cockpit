@@ -93,8 +93,8 @@ function buildActions(regime: any | null): Action[] {
       actions.push({
         pri: 92,
         icon: '🌊',
-        text: `${label} in post-capitulation RECOVERY window — the aggressive regime; see Bounce Desk`,
-        href: '/bounce-desk',
+        text: `${label} in post-capitulation RECOVERY window — the aggressive regime; see Entry Desk → Oversold bounce`,
+        href: '/cheat-entry?lens=bounce',
       });
     }
   }

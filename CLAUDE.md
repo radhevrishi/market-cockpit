@@ -4486,3 +4486,9 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   (India had shown the USA scan), one row per company, sector medians from larger companies only (US ≥ $2B, India ≥ ₹10,000 Cr —
   same universe as the replay); `structureBriefs` + `?structure=1&tickers=` feed a "Chart structure" column on Cheat Entry, which is now
   a full-width sortable table with 📈 Chart / 🎯 Setups links.
+- zzz1302 (24 Nov): Cheat Entry + Bounce Desk merged into ONE page, "Entry Desk" at /cheat-entry. Each row carries both reads:
+  support entry (lib/cheat-entry-setup rules, unchanged) and the Bounce Desk's oversold check (down 3%+ today / 3%+ under the
+  21-day EMA / back into the 50-day band, above the 200-day; refused in a BEAR regime or with high Conviction decay — reason shown).
+  Views (?lens=): best (support OR bounce, default) / both / support / bounce / all; market + view kept in `mc:entry-desk:v1`.
+  Regime strip per market (/api/market/regime) with the rule; Size column = suggestSize at the row's stop, halved in CORRECTION.
+  /bounce-desk redirects to /cheat-entry?lens=bounce; nav tab "Entry Desk" (+ Oversold bounces); both signal names still logged.
