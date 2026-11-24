@@ -18,6 +18,7 @@ export interface FcfVsPrice {
   positive: boolean;            // latest FCF/share > 0
   rising: boolean;              // FCF/share up in every year of the span
   yieldNow: number | null;      // latest FCF ÷ today's price, %
+  lowBase: boolean;             // start-year FCF yield under 1% — the growth % comes from a tiny base
   why: string;                  // plain reason when a figure is missing
 }
 
@@ -26,7 +27,7 @@ const r1 = (x: number) => Math.round(x * 10) / 10;
 
 export function fcfVsPrice(years: FcfYear[], priceNow: number | null, span: number): FcfVsPrice {
   const ys = years.filter((y) => fin(y.fcfPs));
-  const none: FcfVsPrice = { from: null, years: 0, fcfG: null, priceG: null, gap: null, faster: false, positive: false, rising: false, yieldNow: null, why: '' };
+  const none: FcfVsPrice = { from: null, years: 0, fcfG: null, priceG: null, gap: null, faster: false, positive: false, rising: false, yieldNow: null, lowBase: false, why: '' };
   if (!ys.length) return { ...none, why: 'no free cash flow per share in the filings' };
   const last = ys[ys.length - 1];
   const positive = last.fcfPs! > 0;
@@ -42,7 +43,8 @@ export function fcfVsPrice(years: FcfYear[], priceNow: number | null, span: numb
   const p0 = first.priceAtEnd;
   const priceG = fin(p0) && p0 > 0 && fin(px) ? r1((px / p0 - 1) * 100) : null;
   if (priceG == null) return { ...base, fcfG, why: `no share price at the ${first.label} year end (listed later)` };
-  return { ...base, fcfG, priceG, gap: r1(fcfG - priceG), faster: fcfG > priceG };
+  const lowBase = first.fcfPs! / p0! < 0.01;
+  return { ...base, fcfG, priceG, gap: r1(fcfG - priceG), faster: fcfG > priceG, lowBase };
 }
 
 export type FcfFilterKey = 'faster' | 'flat' | 'positive' | 'rising' | 'yield5';

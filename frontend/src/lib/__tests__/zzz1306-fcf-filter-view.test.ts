@@ -9,7 +9,8 @@ test('FCF/share growth vs price growth over the chosen span', () => {
   const v = fcfVsPrice(yrs([1, 1.5, 2, 3], [50, 52, 55, 60]), 60, 3);
   assert.equal(v.fcfG, 200); assert.equal(v.priceG, 20); assert.equal(v.gap, 180);
   assert.ok(v.faster && v.rising && v.positive);
-  assert.equal(v.yieldNow, 5);
+  assert.equal(v.yieldNow, 5); assert.equal(v.lowBase, false);
+  assert.equal(fcfVsPrice(yrs([0.1, 5], [50, 60]), 60, 3).lowBase, true);
   assert.ok(passesFcfFilters(v, new Set(['faster', 'flat'] as any)) === false);   // price +20% is not flat
   assert.ok(passesFcfFilters(v, new Set(['faster', 'yield5', 'rising'] as any)));
   const one = fcfVsPrice(yrs([1, 1.5, 2, 3], [50, 52, 55, 60]), 60, 1);

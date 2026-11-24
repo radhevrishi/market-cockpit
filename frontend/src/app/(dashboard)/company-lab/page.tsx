@@ -465,7 +465,7 @@ function MultiFcf({ cards }: { cards: LabCard[] }) {
   const rows = useMemo(() => {
     const r = ok.map((c) => ({ c, v: fcfVsPrice(c.years as any, c.price ?? null, span) }));
     const kept = r.filter((x) => passesFcfFilters(x.v, on));
-    if (sortGap) kept.sort((a, b) => (b.v.gap ?? -1e9) - (a.v.gap ?? -1e9));
+    if (sortGap) kept.sort((a, b) => (Number(a.v.lowBase) - Number(b.v.lowBase)) || ((b.v.gap ?? -1e9) - (a.v.gap ?? -1e9)));
     return { all: r.length, kept };
   }, [ok, on, span, sortGap]);
   if (ok.length < 2) return null;
@@ -500,6 +500,7 @@ function MultiFcf({ cards }: { cards: LabCard[] }) {
             <div style={{ fontSize: 12.5, color: R.dim, marginTop: 2 }} title={v.why || undefined}>
               {v.from ? <>Since {v.from}: FCF/share <b style={{ color: (v.fcfG ?? 0) >= 0 ? '#16A34A' : '#DC2626' }}>{sg(v.fcfG)}</b> · price <b style={{ color: R.text }}>{sg(v.priceG)}</b>{v.gap != null && <> · gap <b style={{ color: v.gap > 0 ? '#16A34A' : '#DC2626' }}>{v.gap > 0 ? '+' : ''}{v.gap} pts</b></>}</> : null}
               {v.yieldNow != null && <> · FCF yield {v.yieldNow}%</>}
+              {v.lowBase && <span style={{ color: '#D97706', fontWeight: 800 }} title="FCF per share was under 1% of the share price in the start year, so the growth % is from a tiny base. Ranked after the others."> · low base</span>}
               {v.why && <span style={{ color: R.faint }}> · {v.why}</span>}
             </div>
           </div>
